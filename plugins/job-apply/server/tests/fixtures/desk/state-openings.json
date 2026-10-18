@@ -7,7 +7,8 @@
   ],
   "titles": [],
   "path": "~/.job-apply/profile.yaml",
-  "degree": "associate"
+  "degree": "associate",
+  "requires_sponsorship": false
  },
  "settings": {
   "submit_mode": "review",
@@ -28,7 +29,8 @@
    "remote",
    "hybrid"
   ],
-  "job_types": []
+  "job_types": [],
+  "systems": []
  },
  "tailoring": 0,
  "passwords": {
@@ -113,6 +115,7 @@
     "sort": 107040.0
    },
    "ats": "workday",
+   "system": {"key": "workday", "name": "Workday"},
    "fit": {
     "score": 88,
     "reasons": [
@@ -184,6 +187,7 @@
     "sort": 58240.0
    },
    "ats": "icims",
+   "system": {"key": "icims", "name": "iCIMS"},
    "fit": {
     "score": 64,
     "reasons": [
@@ -207,6 +211,7 @@
      "read": true,
      "clearance": false,
      "clearance_later": true,
+     "no_sponsorship": true,
      "clearance_sure": false
     }
    },
@@ -236,6 +241,7 @@
    "posted_days": 3,
    "pay": null,
    "ats": "greenhouse",
+   "system": {"key": "greenhouse", "name": "Greenhouse"},
    "fit": {
     "score": 61,
     "reasons": [
@@ -286,6 +292,7 @@
    "posted_days": 3,
    "pay": null,
    "ats": "greenhouse",
+   "system": {"key": "greenhouse", "name": "Greenhouse"},
    "fit": {
     "score": 61,
     "reasons": [
@@ -329,6 +336,7 @@
    "posted_days": 17,
    "pay": null,
    "ats": "",
+   "system": {"key": "company_site", "name": "Employer's own site"},
    "fit": {
     "score": 20,
     "reasons": [],
@@ -359,6 +367,7 @@
    "posted_days": 17,
    "pay": null,
    "ats": "",
+   "system": {"key": "company_site", "name": "Employer's own site"},
    "fit": {
     "score": 20,
     "reasons": [],

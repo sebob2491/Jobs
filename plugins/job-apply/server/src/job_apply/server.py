@@ -30,11 +30,12 @@ from . import employment
 from . import workplace as wplace
 from .ats import ATS_NAMES, detect_ats, greenhouse_form_url, shared_system, workday_parts
 from .autofill import common_questions as bank_questions
-from .autofill import (is_eeo_rule, is_empty_value, is_how_heard, is_name_rule, is_school_rule, place_words,
+from .autofill import (is_eeo_rule, is_empty_value, is_how_heard, is_name_rule, is_school_rule, norm, place_words,
                        plan_autofill, profile_entries, resolve_field)
 from .browser import BrowserSession, BrowserUnavailable, SiteDown, SubmitBlocked
 from .mailbox import MailboxError, site_domain
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
+from .recommend import avoided_title
 from .render import KINDS, render_pdf, to_html
 from .search import (ICIMS_FRAME, companies_path, eightfold_page_url, employer_lists, every_employer,
                      icims_search, icims_state, infor_search, keep_listings, load_companies, location_terms,
@@ -294,24 +295,29 @@ def setup_status() -> dict[str, Any]:
 
 @tool()
 async def search_area(places: list[str] | None = None, lists: list[str] | None = None,
-                      titles: list[str] | None = None) -> dict[str, Any]:
+                      titles: list[str] | None = None, avoid_titles: list[str] | None = None) -> dict[str, Any]:
     """What and where Find jobs (and search_company_jobs) looks: the job titles the person wants (`titles`; the first
-    `searched_titles` are searched, and all of them count toward an opening's fit; none, `default_titles`), the places
-    they want work in (`places`, each a city and state: ["Phoenix, AZ", "Las Vegas, NV"]; their states are searched)
+    `searched_titles` are searched, and all of them count toward an opening's fit; none, `default_titles`), the words
+    or titles they leave out (`avoid_titles`), the places they want work in (`places`, each a city and state: ["Phoenix, AZ", "Las Vegas, NV"]; their states are searched)
     and the plugin's employer lists to search (`lists`; `choices` names them all, with what each covers and how many
     employers). The Job Desk's What and where to search window changes the same. With no arguments it only says
     what they are now.
 
     titles: the job titles, replacing the ones there (kept in profile.yaml's preferences.titles), one title each.
+    avoid_titles: words or titles to leave out ("Senior", "Call Center"), replacing the ones there (kept in
+    profile.yaml's preferences.avoid_titles): an opening whose title has one as whole words is shown on the Job Desk's
+    All tab but never recommended.
     places: the places, replacing the ones there (kept in profile.yaml's preferences.locations).
     lists: the lists' names, replacing the ones there (kept in ~/.job-apply/companies.yaml's `lists:`, which is made
     when the person has none; their own employers in it stay). Only what the person asked for."""
-    if places is None and lists is None and titles is None:
+    if places is None and lists is None and titles is None and avoid_titles is None:
         return search_area_now()
-    area = set_search_area(places=places, lists=lists, titles=titles)
+    area = set_search_area(places=places, lists=lists, titles=titles, avoid_titles=avoid_titles)
     from . import desk
 
-    if desk._desk is not None:  # (an open desk's openings were found elsewhere: Find jobs searches again)
+    # (an open desk's openings were found and scored for others, the titles to leave out among them: Find jobs
+    # searches again)
+    if desk._desk is not None:
         desk._desk._forget_openings()
     return area
 
@@ -495,6 +501,7 @@ async def search_company_jobs(
     posted_within_days: int | None = None,
     workplace: str | None = None,
     employment_type: str | None = None,
+    exclude: list[str] | None = None,
 ) -> dict[str, Any]:
     """Search employers' own careers sites for openings through their applicant tracking
     system's public search: Workday, Greenhouse, Lever, Eightfold, SmartRecruiters, Oracle,
@@ -524,7 +531,11 @@ async def search_company_jobs(
     employment_type: "full_time", "part_time", "contract", "temporary", "internship" or "per_diem", or several
     ("full_time, contract"): leaves out an opening its site (or its job in the tracker) says is only of other types.
     Most lists don't say: those stay. Results that say carry `employment_type` (the site's words) and
-    `employment_types` (these names); `other_employment_type` counts what it left out."""
+    `employment_types` (these names); `other_employment_type` counts what it left out.
+    exclude: words or titles to leave out (["Senior", "Call Center"]): an opening whose title has one as whole words,
+    any case, is left out ("Senior" leaves out a Senior Technician, never a Seniority Clerk); `excluded_titles` counts
+    them (say how many). Pass the profile's preferences.avoid_titles (`search_area`'s `avoid_titles`) by default,
+    unless the person asks to see those too; the Job Desk shows them under All, never recommended."""
     _check_min_pay(min_pay)
     places = _check_workplace(workplace)
     kinds = employment.parse_choice(employment_type)
@@ -584,9 +595,13 @@ async def search_company_jobs(
                 f" ({len(failures)} of {len(wordings)} searches failed)" if found else "")
         out["results"].extend(keep_listings(name, found, location_terms(location), limit_per_company, query,
                                             posted_within_days))
+    avoid = [w for w in config.avoid_list(exclude or []) if norm(w)]  # ("Senior, Call Center": two)
     t = tracker()
-    kept, below, elsewhere, other_types = [], 0, 0, 0
+    kept, below, elsewhere, other_types, avoided = [], 0, 0, 0, 0
     for r in out["results"]:
+        if avoid and avoided_title(str(r.get("title") or ""), avoid):
+            avoided += 1
+            continue
         job = t.find_by_url(r["url"])
         if job:
             r["tracked"] = {"id": job["id"], "status": job["status"]}
@@ -615,6 +630,8 @@ async def search_company_jobs(
         out["other_workplace"] = elsewhere
     if kinds:
         out["other_employment_type"] = other_types
+    if avoid:
+        out["excluded_titles"] = avoided
     out["count"] = len(out["results"])
     return out
 

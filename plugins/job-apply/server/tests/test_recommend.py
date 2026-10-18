@@ -755,7 +755,8 @@ def test_a_read_postings_requirements_are_its_facts_and_an_unread_one_says_none(
     # only a line labelled with them is)
     assert facts == {"level": "senior", "read": True, "degree": "bachelor", "degree_or_equivalent": False,
                      "degree_sure": False, "clearance": True, "clearance_later": False, "clearance_sure": False,
-                     "travel": 50, "travel_sure": True, "shift": "other", "shift_sure": True}
+                     "travel": 50, "travel_sure": True, "shift": "other", "shift_sure": True,
+                     "no_sponsorship": False}
     labelled = text + "\nRequired Education: Bachelor's Degree\nClearance Type: Secret"
     facts = score_listing({"title": "Equipment Technician"}, tech(), labelled, TODAY).to_dict()["facts"]
     assert (facts["degree"], facts["degree_sure"], facts["clearance"], facts["clearance_sure"]) == \
@@ -768,3 +769,92 @@ def test_a_read_postings_requirements_are_its_facts_and_an_unread_one_says_none(
     assert (facts["travel"], facts["travel_sure"]) == (100, False)  # (requirements' wider reading: never hides)
     assert (facts["shift"], facts["shift_sure"]) == ("", False)
     assert score_listing({"title": "Equipment Technician"}, tech(), today=TODAY).to_dict()["facts"] == {"level": ""}
+
+
+# ------------------------------------------------------------------ titles to leave out (the design of Oct 18, F4)
+
+
+def test_a_title_to_leave_out_is_matched_as_whole_words_and_never_recommended():
+    """preferences.avoid_titles: an opening whose title has one of them as whole words, any case, is left out with a
+    concern (shown under All, never recommended); "Senior" is never found inside "Seniority", nor "Lead" in "Leader"."""
+    from job_apply.recommend import avoided_title
+
+    avoid = ["Senior", "call center", "Lead"]
+    assert avoided_title("Senior Equipment Technician", avoid) == "Senior"
+    assert avoided_title("SENIOR FIELD SERVICE ENGINEER", avoid) == "Senior"
+    assert avoided_title("Sr. Technician, Senior-Level", avoid) == "Senior"
+    assert avoided_title("Call Center Agent - Equipment Support", avoid) == "call center"
+    assert avoided_title("Equipment Technician (Lead)", avoid) == "Lead"
+    for kept in ("Seniority Records Clerk", "Equipment Technician", "Team Leader, Equipment", "Callcenter Analyst",
+                 "Call Centre Agent", "Center for Call Quality"):
+        assert avoided_title(kept, avoid) is None, kept
+    assert avoided_title("Senior Technician", []) is None
+
+    wants = tech(preferences={**tech().get("preferences"), "avoid_titles": ["Senior", " senior ", "Call  Center", ""]})
+    assert wants.avoid_titles == ["Senior", "Call Center"]  # (each once, as written)
+    assert tech(preferences={"avoid_titles": "Senior"}).avoid_titles == ["Senior"]  # (one written bare)
+    # (the review of F4) several written as one, by hand: each of them
+    assert tech(preferences={"avoid_titles": "Senior, Call Center; Night | senior"}).avoid_titles == \
+        ["Senior", "Call Center", "Night"]
+    assert tech(preferences={"avoid_titles": ["Lead, Principal"]}).avoid_titles == ["Lead", "Principal"]
+    listing = {"title": "Senior Equipment Technician", "location": "Phoenix, AZ", "posted": "2026-10-01"}
+    plain = score_listing(listing, tech(), today=TODAY)
+    left = score_listing(listing, wants, today=TODAY)
+    assert left.avoided == "Senior" and not left.recommended and left.score == plain.score - 25
+    assert not left.blocked and left.to_dict()["avoided"] == "Senior"  # (no requirement unmet: a title left out)
+    assert "title has “Senior”, which you leave out" in left.concerns
+    assert {"why": "title has “Senior”, which you leave out", "points": -25} in left.parts
+    fine = score_listing({**listing, "title": "Seniority Equipment Technician"}, wants, today=TODAY)
+    assert not fine.avoided and not any("leave out" in c for c in fine.concerns)
+
+
+def test_a_title_to_leave_out_folds_accents_and_reads_a_short_word_as_the_whole():
+    """The review of F4: accents folded on both sides ("Técnico" is "Tecnico"), and "Sr", "Jr" and "Mgr" the same
+    words as "Senior", "Junior" and "Manager", both ways; never inside a word still. Only for titles to leave out: the
+    answer rules' norm() is as it was."""
+    from job_apply.autofill import norm
+    from job_apply.recommend import avoided_title
+
+    assert avoided_title("Técnico de Campo", ["Tecnico"]) == "Tecnico"
+    assert avoided_title("Tecnico de Campo", ["Técnico"]) == "Técnico"
+    assert avoided_title("Café Attendant", ["cafe"]) == "cafe"
+    assert avoided_title("Sr. Field Service Technician", ["Senior"]) == "Senior"
+    assert avoided_title("Senior Field Service Technician", ["Sr"]) == "Sr"
+    assert avoided_title("Sr Technician", ["Sr."]) == "Sr."
+    assert avoided_title("Jr. Accountant", ["Junior"]) == "Junior"
+    assert avoided_title("Junior Accountant", ["jr"]) == "jr"
+    assert avoided_title("Operations Mgr", ["Manager"]) == "Manager"
+    assert avoided_title("Manager, Operations", ["Mgr"]) == "Mgr"
+    for kept, avoid in (("Seniority Clerk", "Sr"), ("Srinivasan Fellowship Technician", "Senior"),
+                        ("Mgrs Assistant", "Manager"), ("Técnico de Campo", "Tec")):
+        assert avoided_title(kept, [avoid]) is None, (kept, avoid)
+    assert norm("Técnico") == "t cnico"  # (unchanged for the answer rules)
+
+
+# ------------------------------------------------------------------ sponsorship offered (the design of Oct 18, F7)
+
+# a made-up posting (no fixture says it yet), its second requirement the employer's word on sponsorship
+WONT_SPONSOR = ("Equipment Technician\nMinimum Qualifications:\n- Associate's degree in electronics.\n"
+                "- Must be authorized to work in the U.S. without sponsorship, now or in the future.\n"
+                "Benefits: medical, dental, 401(k).")
+
+
+def test_a_posting_that_wont_sponsor_blocks_only_a_person_who_needs_sponsorship():
+    """requirements()["no_sponsorship"], read from the posting's plain words: -30 and blocked (shown, never
+    recommended) only for a profile whose work_authorization.requires_sponsorship is true; for anyone else it's
+    information only (the fit's facts), with no point taken."""
+    assert requirements(WONT_SPONSOR)["no_sponsorship"] is True
+    open_text = WONT_SPONSOR.replace("without sponsorship", "with or without sponsorship")
+    assert requirements(open_text)["no_sponsorship"] is False
+    listing = {"title": "Equipment Technician", "location": "Phoenix, AZ", "posted": "2026-10-01"}
+    needs = tech(work_authorization={"us_person": True, "requires_sponsorship": True})
+    blocked = score_listing(listing, needs, WONT_SPONSOR, TODAY)
+    open_to = score_listing(listing, needs, open_text, TODAY)
+    assert blocked.blocked and not blocked.recommended and blocked.score == open_to.score - 30
+    assert "says it won't sponsor a work visa (your profile says you need sponsorship)" in blocked.concerns
+    assert {"why": "says it won't sponsor a work visa", "points": -30} in blocked.parts
+    assert blocked.facts["no_sponsorship"] is True and open_to.facts["no_sponsorship"] is False
+    for who in (tech(), tech(work_authorization={"us_person": True, "requires_sponsorship": False})):
+        fit = score_listing(listing, who, WONT_SPONSOR, TODAY)
+        assert not fit.blocked and fit.recommended and fit.facts["no_sponsorship"] is True
+        assert not any("sponsor" in p["why"] for p in fit.parts) and not any("sponsor" in c for c in fit.concerns)

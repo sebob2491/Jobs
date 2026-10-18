@@ -38,7 +38,7 @@ from . import autofill, config, employment, history, pay, report, workplace
 from .browser import _cookie_setting
 from .pipeline import (DESK_PASSWORDS, QUEUE_NO_LOCK, Applier, _may_accept_notices, _may_manage_accounts,
                        _test_identity, placed_key, question_key)
-from .ats import JOB_BOARDS, detect_ats, job_board
+from .ats import ATS_NAMES, JOB_BOARDS, detect_ats, job_board
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .recommend import applicant_degree, days_since, not_interested_in, recommend, score_listing
 from .search import (MAX_ALTERNATIVES, alternatives, every_employer, load_companies, own_companies_path, search_area,
@@ -606,7 +606,9 @@ class Desk:
         for name, choices in CHIP_FILTERS.items():
             if name in body and body[name] is not None and _chips(name, body[name]) is None:
                 return self._bad(ValueError(f"{name} should be a list of some of {', '.join(choices)} "
-                                            "(an empty list, or null, for none)"))
+                                            "(an empty list, or null, for none)" if choices else
+                                            f"{name} should be a list of job systems' keys, such as workday or "
+                                            "oracle_hcm (an empty list, or null, for none)"))
         for name in CHIP_FILTERS:
             if name in body:
                 self.chips[name] = _chips(name, body[name]) or []
@@ -659,17 +661,19 @@ class Desk:
             _recommendations_path().unlink()
 
     async def area_view(self, request: Request) -> Response:
-        """What and where Find jobs searches (the What and where to search window): the job titles, the places, and
-        the plugin's employer lists. The openings found for others are cleared, for Find jobs to search again."""
+        """What and where Find jobs searches (the What and where to search window): the job titles, the titles to
+        leave out, the places, and the plugin's employer lists. The openings found for others are cleared, for Find
+        jobs to search again."""
         if not self._allowed(request, api=True):
             return self._forbidden()
         try:
             body = await self._body(request)
             places, lists, titles = body.get("places"), body.get("lists"), body.get("titles")
-            for value, what in ((places, "places"), (lists, "lists"), (titles, "titles")):
+            avoid = body.get("avoid_titles")
+            for value, what in ((places, "places"), (lists, "lists"), (titles, "titles"), (avoid, "avoid_titles")):
                 if value is not None and (not isinstance(value, list) or not all(isinstance(v, str) for v in value)):
                     raise ValueError(f"{what} should be a list of words")
-            area = set_search_area(places=places, lists=lists, titles=titles)
+            area = set_search_area(places=places, lists=lists, titles=titles, avoid_titles=avoid)
         except ValueError as e:
             return self._bad(e)
         self._forget_openings()
@@ -1065,7 +1069,8 @@ class Desk:
                 "location": item.get("location"), "posted": item.get("posted"),
                 "posted_days": days_since(str(item.get("posted") or "")),
                 "pay": pay_of(item, job), "ats": item.get("ats") or (job or {}).get("ats") or "",
-                "workplace": workplace_of(item, job), "job_types": job_types_of(item, job),
+                "system": system_of(item, job), "workplace": workplace_of(item, job),
+                "job_types": job_types_of(item, job),
                 "fit": item.get("fit") if said else fit_for(item.get("fit"), item.get("company"), employers),
                 "notes": item.get("notes") or [], "job_id": jid, "status": job["status"] if job else None,
                 "run": run,
@@ -1096,8 +1101,8 @@ class Desk:
                 "url": job["url"], "title": job.get("title"), "company": job.get("company"),
                 "location": job.get("location"), "posted": job.get("posted_at"),
                 "posted_days": days_since(str(job.get("posted_at") or "")),
-                "pay": pay_of(None, job), "ats": job.get("ats") or "", "workplace": workplace_of(None, job),
-                "job_types": job_types_of(None, job),
+                "pay": pay_of(None, job), "ats": job.get("ats") or "", "system": system_of(None, job),
+                "workplace": workplace_of(None, job), "job_types": job_types_of(None, job),
                 "fit": fit if said else fit_for(fit, job.get("company"), employers), "notes": [],
                 "job_id": job["id"], "status": job["status"], "run": runs.get(job["id"]), "added": True,
                 "handled": str(job.get("company") or "").strip().casefold() in handled,
@@ -1115,7 +1120,9 @@ class Desk:
             "profile": {"name": prof.full_name, "missing": prof.missing_required(), "gaps": prof.profile_gaps(),
                         "titles": prof.get("preferences.titles") or [], "path": str(config.profile_path()),
                         # the highest degree it says the person has (for the filter row's "My degree is enough")
-                        "degree": applicant_degree(prof)},
+                        "degree": applicant_degree(prof),
+                        # whether it says they need a work visa sponsored (for a card's "won't sponsor a work visa")
+                        "requires_sponsorship": prof.get("work_authorization.requires_sponsorship") is True},
             "settings": {"submit_mode": settings.submit_mode, "dry_run": settings.dry_run,
                          "manage_accounts": settings.may_manage_accounts,
                          "manage_accounts_chosen": settings.manage_accounts_chosen,
@@ -1498,17 +1505,41 @@ CHIP_FILTERS: dict[str, tuple[str, ...]] = {
     "workplace": workplace.WORKPLACES,
     # its employment type (employment.py): an opening that says only others is hidden
     "job_types": employment.TYPES,
+    # the job system it's applied for on (system_of): an opening on another is hidden. Any system's key: the chips are
+    # the systems of the openings listed
+    "systems": (),
 }
+_SYSTEM_KEY = re.compile(r"[a-z0-9_]{1,40}")
+# the System chips' names: the job systems' own (ats.ATS_NAMES), short, and the few the search names that it hasn't
+SYSTEM_NAMES = {**ATS_NAMES, "successfactors": "SuccessFactors", "taleo": "Taleo", "oracle_hcm": "Oracle",
+                "company_site": "Employer's own site", "jibe": "iCIMS Jibe", "talemetry": "Talemetry",
+                "amazon": "amazon.jobs"}
+# what the search calls an employer's own site: one System chip
+_OWN_SITE = {"", "custom", "unknown", "company_site"}
 
 
 def _chips(name: str, value: Any) -> list[str] | None:
-    """A chip setting as saved or sent: a list of its choices (CHIP_FILTERS), each once, in their order; [] for none
-    (None, or an empty list); None when it isn't one."""
+    """A chip setting as saved or sent: a list of its choices (CHIP_FILTERS), each once, in their order (for systems,
+    any system's key, in the order sent); [] for none (None, or an empty list); None when it isn't one."""
     if value is None:
         return []
-    if not isinstance(value, list) or not all(isinstance(v, str) and v in CHIP_FILTERS[name] for v in value):
+    choices = CHIP_FILTERS[name]
+    if not isinstance(value, list) or not all(
+            isinstance(v, str) and (v in choices if choices else bool(_SYSTEM_KEY.fullmatch(v))) for v in value):
         return None
-    return [c for c in CHIP_FILTERS[name] if c in value]
+    return [c for c in choices if c in value] if choices else list(dict.fromkeys(value))
+
+
+def system_of(item: dict[str, Any] | None, job: dict[str, Any] | None) -> dict[str, str]:
+    """The job system an opening is applied for on, for its row's System chip: the one its search or the tracker
+    named (Listing.ats), else the one its address is on (ats.detect_ats, as the queue's order reads it); an employer's
+    own site (a custom search, or an address no system is known by) is one, "company_site". Its key and name."""
+    said = str((item or {}).get("ats") or (job or {}).get("ats") or "").strip().lower()
+    if said in _OWN_SITE:
+        urls = [str(x.get(k) or "") for x in (item, job) if x for k in ("apply_url", "url") if x.get(k)]
+        said = next((s for s in map(detect_ats, urls) if s not in _OWN_SITE), "company_site")
+    key = said if _SYSTEM_KEY.fullmatch(said) else "company_site"
+    return {"key": key, "name": SYSTEM_NAMES.get(key) or key.replace("_", " ").title()}
 
 
 def _min_pay(value: Any) -> int | None:

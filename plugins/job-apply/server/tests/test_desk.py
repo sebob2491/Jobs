@@ -849,7 +849,7 @@ def test_the_tailoring_switch_is_kept_and_its_waiting_jobs_listed(srv, job_apply
                 r = await c.post("/api/settings", headers=h, json={"tailor_resumes": True})
                 assert r.json() == {"auto_submit": False, "tailor_resumes": True, "handled_only": False, "troubleshoot": False,
                                     "min_pay": None, "posted_within": None, "requirements": [], "workplace": [],
-                                    "job_types": [],
+                                    "job_types": [], "systems": [],
                                     "auto_search": False, "jobs_at_once": 1}  # (the tests' profile: one at a time)
                 await desk.applier.stop()  # hold the queue still while the waiting job is set up
                 desk.applier.runs[job["id"]] = Run(job["id"], "FSE", "Example Fab", status="needs_you", need="tailor")
@@ -1579,6 +1579,159 @@ def test_the_chip_settings_refuse_what_isnt_one(srv, job_apply_home):
                 assert r.status_code == 400 and "job_types should be a list of some of full_time, part_time" in r.text
                 r = await c.post("/api/settings", headers=h, json={"job_types": ["per_diem", "full_time"]})
                 assert r.json()["job_types"] == ["full_time", "per_diem"]
+                for bad in ({"systems": "workday"}, {"systems": ["Workday!"]}, {"systems": [1]}):
+                    r = await c.post("/api/settings", headers=h, json=bad)
+                    assert r.status_code == 400 and "systems should be a list of job systems' keys" in r.text, bad
+                r = await c.post("/api/settings", headers=h, json={"systems": ["oracle_hcm", "workday", "oracle_hcm"]})
+                assert r.json()["systems"] == ["oracle_hcm", "workday"]
+        finally:
+            await desk.stop()
+
+    run(go())
+
+
+def test_the_system_chips_show_only_the_jobs_on_the_systems_pressed(srv, job_apply_home):
+    """The design of Oct 18, F9: each row says the job system it's applied for on (its search's, else its address's;
+    an employer's own site is one too), and the filter row's System chips, one for each system the openings are on
+    (most first), show only the jobs on the systems pressed. Nothing hidden is picked; the chips are kept in desk.json;
+    with one system only, there's nothing to choose and no System chips show."""
+    desk = Desk(srv)
+
+    def opening(title, score, url, ats):
+        return {**_facts_opening(title, score), "url": url, "ats": ats}
+
+    desk.listings = [
+        opening("Workday Technician", 95, "https://acme.wd1.myworkdayjobs.com/en-US/External/job/Phoenix-AZ/Tech_R1",
+                "workday"),
+        opening("Oracle Technician", 90, "https://eeho.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/"
+                "CX/job/123", "oracle_hcm"),
+        opening("Own Site Technician", 85, "https://careers.example.com/job/own", "custom"),
+        # (its search named none: its address is Workday's)
+        opening("Unnamed Technician", 80, "https://acme.wd1.myworkdayjobs.com/en-US/External/job/Mesa-AZ/Tech_R2", ""),
+    ]
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    every = ["Workday Technician", "Oracle Technician", "Own Site Technician", "Unnamed Technician"]
+    rows = {r["title"]: r["system"] for r in desk.state()["listings"]}
+    assert rows == {"Workday Technician": {"key": "workday", "name": "Workday"},
+                    "Oracle Technician": {"key": "oracle_hcm", "name": "Oracle"},
+                    "Own Site Technician": {"key": "company_site", "name": "Employer's own site"},
+                    "Unnamed Technician": {"key": "workday", "name": "Workday"}}
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("text=Unnamed Technician")
+                assert await page.is_visible("#system-chips")
+                chips = await page.locator("[data-chip='systems']").all_inner_texts()
+                assert chips == ["Employer's own site", "Oracle", "Workday"], chips  # (by name: a steady row)
+                assert await page.get_attribute("[data-chip='systems'][data-value='workday']", "title") == \
+                    "2 openings listed on Workday"
+                # (the review of F9) while a search fills the list, the row stays put: more openings on a system it
+                # shows are said in place, the chips neither redrawn nor moved; a new system waits while the focus is
+                # in the row, and comes in its place by name after
+                steady = await page.evaluate("""() => {
+                  const marked = [...document.querySelectorAll("[data-chip='systems']")];
+                  marked.forEach((b) => { b.dataset.old = "1"; });
+                  const more = (key, name, n) => Array.from({length: n}, (_, i) => ({...state.listings[0],
+                    url: `https://example.com/${key}/${i}`, title: `More ${i}`, system: {key, name}}));
+                  state.listings = [...state.listings, ...more("oracle_hcm", "Oracle", 3)];
+                  renderRows();
+                  const same = [...document.querySelectorAll("[data-chip='systems']")].every((b) => b.dataset.old === "1");
+                  const oracle = document.querySelector("[data-chip='systems'][data-value='oracle_hcm']");
+                  oracle.focus();
+                  state.listings = [...state.listings, ...more("icims", "iCIMS", 1)];
+                  renderRows();
+                  const kept = document.querySelectorAll("[data-chip='systems']").length === 3 && document.activeElement === oracle;
+                  oracle.blur();
+                  renderRows();
+                  return {same, title: oracle.title, kept,
+                          after: [...document.querySelectorAll("[data-chip='systems']")].map((b) => b.textContent)};
+                }""")
+                assert steady == {"same": True, "title": "4 openings listed on Oracle", "kept": True,
+                                  "after": ["Employer's own site", "iCIMS", "Oracle", "Workday"]}, steady
+                await page.reload()
+                await page.wait_for_selector("text=Unnamed Technician")
+                await _chip(page, "systems", "workday", ["Workday Technician", "Unnamed Technician"])
+                await _chip(page, "systems", "company_site", ["Workday Technician", "Own Site Technician",
+                                                              "Unnamed Technician"])
+                await _chip(page, "systems", "workday", ["Own Site Technician"])
+                await _chip(page, "systems", "company_site", every)
+                await _chip(page, "systems", "oracle_hcm", ["Oracle Technician"])
+                assert await page.get_attribute("[data-value='oracle_hcm']", "aria-pressed") == "true"
+                await page.click("text=Select recommended")
+                picked = await page.evaluate("() => [...selected].filter(selectable)")
+                assert picked == [desk.listings[1]["url"]], picked
+                assert desk.chips["systems"] == ["oracle_hcm"]
+                await page.reload()
+                await page.wait_for_selector("text=Oracle Technician")
+                assert await _shown_titles(page) == ["Oracle Technician"]
+                assert await page.get_attribute("[data-value='oracle_hcm']", "aria-pressed") == "true"
+                await _chip(page, "systems", "oracle_hcm", every)
+                # openings on one system only: nothing to choose
+                hidden = await page.evaluate("""() => { document.activeElement.blur();
+                  state.listings = state.listings.filter((r) => r.system.key === 'workday');
+                  renderRows(); return document.getElementById('system-chips').hidden; }""")
+                assert hidden is True
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert json.loads((job_apply_home / "desk.json").read_text(encoding="utf-8"))["systems"] == []
+
+
+def test_a_posting_that_wont_sponsor_a_visa_says_so_only_to_a_person_who_needs_sponsorship(srv, job_apply_home):
+    """The design of Oct 18, F7 (and the coordinator's call): a posting that says plainly it won't sponsor a work visa
+    says so on its card ("won't sponsor a work visa") only for a person whose profile says they need sponsorship
+    (work_authorization.requires_sponsorship: true); for anyone else it's noise, and only the row's data keeps it. Where
+    the score's own concern says it already, it's said once; a posting that doesn't say it shows neither."""
+    desk = Desk(srv)
+    blocked = {**_fit(30, facts={"level": "", "read": True, "no_sponsorship": True}), "blocked": True,
+               "concerns": ["says it won't sponsor a work visa (your profile says you need sponsorship)"]}
+    desk.listings = [_facts_opening("Visa Technician", 90, level="", read=True, no_sponsorship=True),
+                     {**_facts_opening("Needs Technician", 30), "fit": blocked},
+                     _facts_opening("Plain Technician", 80, level="", read=True, no_sponsorship=False)]
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    rows = {r["title"]: r for r in desk.state()["listings"]}
+    assert rows["Visa Technician"]["fit"]["facts"]["no_sponsorship"] is True  # (kept in the row's data either way)
+    assert desk.state()["profile"]["requires_sponsorship"] is False
+
+    def needs_sponsorship(needs: bool) -> None:
+        path = job_apply_home / "profile.yaml"
+        profile = yaml.safe_load(path.read_text(encoding="utf-8"))
+        profile["work_authorization"] = {**(profile.get("work_authorization") or {}), "requires_sponsorship": needs}
+        path.write_text(yaml.safe_dump(profile), encoding="utf-8")
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+
+                def chips(title):
+                    return page.locator("li.row", has_text=title).locator(".chips")
+
+                async def shown():
+                    await page.goto(desk.url)
+                    await page.click("[data-filter='all']")
+                    await page.wait_for_selector("text=Needs Technician")
+                    return {t: (await chips(t).inner_text()).count("won't sponsor a work visa")
+                            for t in ("Visa Technician", "Needs Technician", "Plain Technician")}
+
+                # a person who doesn't need sponsorship (or doesn't say): only the score's own concern, where it's made
+                needs_sponsorship(False)
+                assert await shown() == {"Visa Technician": 0, "Needs Technician": 1, "Plain Technician": 0}
+                # one who does: on the card, once
+                needs_sponsorship(True)
+                assert await shown() == {"Visa Technician": 1, "Needs Technician": 1, "Plain Technician": 0}
+                said = chips("Visa Technician").locator(".chip", has_text="won't sponsor a work visa")
+                assert "requires_sponsorship" in await said.get_attribute("title")
+                await browser.close()
         finally:
             await desk.stop()
 

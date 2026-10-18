@@ -52,6 +52,7 @@ import json
 import math
 import re
 import time
+import unicodedata
 from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -264,15 +265,17 @@ TITLE_IDEAS = {
 
 def search_area() -> dict[str, Any]:
     """What and where Find jobs searches: the profile's job titles (preferences.titles; the first MAX_ALTERNATIVES
-    are searched, and every one counts toward an opening's fit) and places (preferences.locations), the plugin's
-    lists the person's own companies.yaml names (the semiconductor list when they have none), each list's label and
-    size, and how many employers of their own they added."""
+    are searched, and every one counts toward an opening's fit), the titles to leave out (preferences.avoid_titles:
+    an opening whose title has one is never recommended) and places (preferences.locations), the plugin's lists the
+    person's own companies.yaml names (the semiconductor list when they have none), each list's label and size, and
+    how many employers of their own they added."""
     try:
         prof = config.Profile.load()
         places = [str(p) for p in config.listed(prof.get("preferences.locations")) if str(p).strip()]
         titles = [str(t).strip() for t in config.listed(prof.get("preferences.titles")) if str(t).strip()]
+        avoid = prof.avoid_titles
     except ValueError:  # (a profile that doesn't read: said elsewhere)
-        places, titles = [], []
+        places, titles, avoid = [], [], []
     own_path = own_companies_path()
     own: list[dict[str, Any]] = []
     names = [BUILTIN_LIST]
@@ -285,7 +288,7 @@ def search_area() -> dict[str, Any]:
     lists = employer_lists()
     states = list(dict.fromkeys(s for p in places for s in _place_states(p)))
     return {"titles": titles, "default_titles": DEFAULT_TITLES, "searched_titles": MAX_ALTERNATIVES,
-            "places": places, "states": states, "lists": [n for n in names if n in lists], "own": len(own),
+            "avoid_titles": avoid, "places": places, "states": states, "lists": [n for n in names if n in lists], "own": len(own),
             "choices": [{"name": name, "label": LIST_LABELS.get(name, name), "count": _list_size(path)}
                         for name, path in lists.items()],
             "place_ideas": PLACE_IDEAS, "title_ideas": TITLE_IDEAS}
@@ -317,15 +320,68 @@ def _place_states(place: str) -> list[str]:
     return states + [code for code, name in US_STATES.items() if f" {norm(name)} " in padded and code not in states]
 
 
+# a title to leave out of one letter would leave out nearly everything; a level's ("Technician I", "V") is one
+_LEVEL_LETTER = {"i", "v", "x"}
+
+
+def _own_titles() -> list[str]:
+    """The job titles the profile names (preferences.titles); none when it doesn't read."""
+    try:
+        return [t for t in (str(t).strip() for t in config.listed(config.Profile.load().get("preferences.titles"))) if t]
+    except ValueError:
+        return []
+
+
+# words a person might leave out, the first not in their job titles given as the example in a refusal
+_AVOID_EXAMPLES = ("Senior", "Intern", "Call Center", "Night Shift", "Driver")
+
+
+def _avoid_clash(avoid: list[str], titles: list[str]) -> None:
+    """A ValueError, in plain words, when one of the titles to leave out is in a job title the person looks for
+    (`titles`, theirs; the plugin's own when they have none): every one of those jobs would be left out."""
+    targets = titles or DEFAULT_TITLES
+    for word in avoid:
+        if mine := next((t for t in targets if avoided_title(t, [word])), None):
+            example = next((e for e in _AVOID_EXAMPLES
+                            if not any(avoided_title(t, [e]) for t in targets) and e.casefold() != word.casefold()),
+                           "another word")
+            whose, them = ("a job title you look for", "your job titles") if titles else \
+                ("one of the plugin's default job titles (you have none of your own)", "them")
+            raise ValueError(f"“{word}” is in “{mine}”, {whose}: every one of those jobs would be left out. Leave out "
+                             f"a word that isn't in {them}, such as {example}")
+
+
+def _avoid_checked(avoid_titles: list[str], titles: list[str] | None) -> list[str]:
+    """Titles to leave out as the person gave them (config.avoid_list: "Senior, Call Center" is two), refused in
+    plain words when one would leave out what they look for (_avoid_clash: `titles`, or the profile's) or nearly
+    everything (one letter), when one has no Latin letters to match, or when there are too many or one is too long."""
+    avoid = config.avoid_list(avoid_titles)
+    if len(avoid) > 20 or any(len(a) > 60 for a in avoid):
+        raise ValueError("A few words or titles to leave out, each a few words such as Senior or Call Center")
+    for word in avoid:
+        words = _title_words(word)
+        if not words and any(c.isalpha() for c in word):  # ("Менеджер": norm() keeps Latin letters only)
+            raise ValueError(f"“{word}” has no Latin letters: titles to leave out are matched in Latin letters only "
+                             "(A to Z, accents or not), such as Senior or Técnico")
+        if not words:  # (only signs: no word a title could have)
+            raise ValueError(f"“{word}” has no word to leave out: a word or a few, such as Senior or Call Center")
+        if len(words) == 1 and not words.isdigit() and words not in _LEVEL_LETTER:
+            raise ValueError(f"“{word}” is a single letter, in nearly every job title: leave out a word or a few, "
+                             "such as Senior or Call Center")
+    _avoid_clash(avoid, _own_titles() if titles is None else titles)
+    return avoid
+
+
 def set_search_area(places: list[str] | None = None, lists: list[str] | None = None,
-                    titles: list[str] | None = None) -> dict[str, Any]:
-    """Change what and where Find jobs searches: the profile's job titles and places, and the plugin's lists in the
-    person's own companies.yaml (made for them, with nothing else in it, when they have none), each changed in
-    place. A place without its state, a title holding more than one, a list the plugin hasn't, nothing left to
-    search, or a file this can't change is a ValueError, and then neither file is written."""
+                    titles: list[str] | None = None, avoid_titles: list[str] | None = None) -> dict[str, Any]:
+    """Change what and where Find jobs searches: the profile's job titles, the titles to leave out and places, and the
+    plugin's lists in the person's own companies.yaml (made for them, with nothing else in it, when they have none),
+    each changed in place. A place without its state, a title holding more than one, a list the plugin hasn't,
+    nothing left to search, or a file this can't change is a ValueError, and then neither file is written."""
     writes: list[tuple[Path, str]] = []
     kept: list[str] | None = None
     named: list[str] | None = None
+    avoid: list[str] | None = None
     if titles is not None:
         named = []
         for title in (" ".join(str(t).split()) for t in titles):
@@ -335,6 +391,14 @@ def set_search_area(places: list[str] | None = None, lists: list[str] | None = N
             raise ValueError("A few job titles, each a few words such as Help Desk Technician")
         if any(re.search(r"\||\sOR\s", t) for t in named):  # (the search reads either as two titles)
             raise ValueError("One job title each: add the others one at a time")
+    if avoid_titles is not None:
+        avoid = _avoid_checked(avoid_titles, named)
+    elif named is not None:  # (new job titles, against the titles to leave out the profile has: one in them refused)
+        try:
+            kept_avoid = config.Profile.load().avoid_titles
+        except ValueError:
+            kept_avoid = []
+        _avoid_clash(kept_avoid, named)
     if places is not None:
         kept = list(dict.fromkeys(" ".join(str(p).split()) for p in places if str(p).strip()))
         if len(kept) > 12 or any(len(p) > 80 for p in kept):
@@ -347,8 +411,8 @@ def set_search_area(places: list[str] | None = None, lists: list[str] | None = N
                 raise ValueError(f"Add {place!r}'s state, such as Las Vegas, NV: Find jobs searches by state")
             if len(states) > 1:
                 raise ValueError(f"{place!r} names {len(states)} states: one place each, separated with semicolons")
-    if kept is not None or named is not None:
-        writes.append(config.search_profile_text(places=kept, titles=named))
+    if kept is not None or named is not None or avoid is not None:
+        writes.append(config.search_profile_text(places=kept, titles=named, avoid_titles=avoid))
     if lists is not None:
         known = employer_lists()
         names = list(dict.fromkeys(str(n) for n in lists))
@@ -420,6 +484,25 @@ def title_words(title: str) -> str:
                                                        for m in _TECHNICIAN_TECH.finditer(str(title or "")))):
             text += "".join(f" {full}" for full in fulls)
     return text
+
+
+# a title's short ways of writing a word, the same word as the whole one, both ways ("Sr" for "Senior")
+_SAME_WORD = {"sr": "senior", "jr": "junior", "mgr": "manager"}
+
+
+def _title_words(text: str) -> str:
+    """A title's words as avoided_title compares them: accents folded ("Técnico" is "Tecnico"), then norm()'s, each
+    short way of writing a word as the word (_SAME_WORD). Only here: the answer rules keep norm() as it is."""
+    folded = "".join(c for c in unicodedata.normalize("NFKD", str(text or "")) if not unicodedata.combining(c))
+    return " ".join(_SAME_WORD.get(w, w) for w in norm(folded).split())
+
+
+def avoided_title(title: str, avoid: list[str]) -> str | None:
+    """The first of `avoid` (preferences.avoid_titles, the person's words) that the title has as whole words, any
+    case or accent: "Senior" in "Senior Technician" and "Sr. Technician", "call center" in "Call Center Agent"; never
+    inside a word ("Senior" isn't in "Seniority Clerk")."""
+    words = f" {_title_words(title)} "
+    return next((a for a in avoid if _title_words(a) and f" {_title_words(a)} " in words), None)
 
 
 def title_matches(title: str, query: str) -> bool:

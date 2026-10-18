@@ -21,8 +21,8 @@ from . import pay, workplace
 from .autofill import _PARTIAL_STUDY, degree_key, entry_dates, norm, school_under_way
 from .config import Profile, listed
 from .postings import QUESTIONS_HEADING, Posting, fetch_posting
-from .search import (DEFAULT_TITLES, MAX_ALTERNATIVES, US_STATES, location_matches, location_terms, title_matches,
-                     title_words)
+from .search import (DEFAULT_TITLES, MAX_ALTERNATIVES, US_STATES, avoided_title, location_matches, location_terms,
+                     title_matches, title_words)
 
 RECOMMEND_AT = 60  # scores from here up are preselected in the Job Desk
 
@@ -165,6 +165,115 @@ _YEARS = re.compile(r"(\d{1,2})(?:\s*(?:-|\u2013|to)\s*\d{1,2})?\s*\+?\s*(?:\+|o
 _TRAVEL = re.compile(r"(\d{2,3})\s*%\s*(?:of\s+(?:the\s+)?time\s+)?(?:domestic\s+|international\s+)?travel|"
                      r"travel[^.\n]{0,40}?(\d{2,3})\s*%")
 _SHIFTS = re.compile(r"night shift|nights|weekend|rotating shift|12[- ]hour|on[- ]call")
+# The posting's plain word that it won't sponsor a work visa (the design of Oct 18, F7): "We will not sponsor", "unable
+# to sponsor", "no visa sponsorship", "Sponsorship is not available", "not eligible for visa sponsorship", "must be
+# authorized to work in the US without sponsorship", "Visa Sponsorship: No". Never a hedge or the other way ("may
+# sponsor", "Sponsorship available", "with or without sponsorship", "Sponsorship may not be available", "..., but"), a
+# question, or a sponsorship of something else (a security clearance, a license, relocation, a green card, an event).
+# Unsure, it says nothing: a missed one only leaves a job unmarked, a wrong one keeps a job from a person who needs a
+# visa (the review of F7). For ranking only: never an application's answer
+_SPONSOR_NOUN = (r"(?:(?:employment-based\s+)?(?:visa|work\s+visa|employment\s+visa|immigration|employment|employer|"
+                 r"company|h-?1-?b|work\s+authori[sz]ation|work\s+permit)\s+)?sponsorship")
+_WONT = (r"(?:will\s+not|won't|do\s+not|don't|does\s+not|doesn't|cannot|can\s*not|can't|is\s+not|isn't|are\s+not|"
+         r"aren't|unable\s+to|not\s+able\s+to|not\s+in\s+a\s+position\s+to|never)")
+_NOW = r"(?:(?:currently|presently|be|able\s+to|at\s+this\s+time|now)\s+)*"
+_OTHER_THINGS = r"(?:[\w-]+\s+(?:or|and)\s+)?"  # ("relocation or visa sponsorship")
+_WHO_NEEDS = (r"(?:candidates|applicants|individuals|anyone|those)\s+(?:who|that)\s+(?:will\s+)?(?:now\s+or\s+in\s+the\s+"
+              rf"future\s+)?(?:require|need)\s+(?:any\s+)?{_SPONSOR_NOUN}")
+_NO_SPONSORSHIP = re.compile(
+    rf"\b{_WONT}\s+{_NOW}sponsor(?:ing)?\b(?!ship)|"
+    rf"\bnot\s+(?:currently\s+)?sponsoring\b|"
+    rf"\b{_WONT}\s+{_NOW}(?:offer|offering|provide|providing|support|supporting|consider|considering)\s+"
+    rf"(?:any\s+|a\s+|the\s+)?{_OTHER_THINGS}{_SPONSOR_NOUN}|"
+    rf"\b{_WONT}\s+{_NOW}consider\s+{_WHO_NEEDS}|\bnot\s+open\s+to\s+{_WHO_NEEDS}|"
+    rf"\bno\s+{_SPONSOR_NOUN}\b(?!\s+(?:is\s+|will\s+be\s+)?(?:required|needed|necessary|needs?|requirements?))|"
+    rf"{_SPONSOR_NOUN}(?:\s+for\s+(?:work\s+authori[sz]ation|employment|work\s+visas?|visas?))?\s+"
+    rf"(?:(?:is|are|will)\s+not\s+(?:be\s+)?|isn't\s+|aren't\s+|not\s+|(?:is|are)\s+un)"
+    rf"(?:currently\s+)?(?:available|offered|provided|possible|supported|considered|an\s+option)\b|"
+    rf"\b(?:not\s+eligible|ineligible|(?:does|do)\s+not\s+qualify)\s+(?:for|to\s+receive)\s+(?:any\s+)?{_OTHER_THINGS}"
+    rf"{_SPONSOR_NOUN}|"
+    rf"(?<!with or )(?<!with and )\bwithout\s+(?:(?:the\s+)?need\s+(?:for|of)\s+|needing\s+|requiring\s+|"
+    rf"(?:the\s+)?requirement\s+(?:of|for)\s+|any\s+|current\s+or\s+future\s+|now\s+or\s+in\s+the\s+future\s+)*"
+    rf"{_SPONSOR_NOUN}(?!\s+from\b)|"
+    rf"\bmust\s+not\s+(?:now\s+or\s+in\s+the\s+future\s+|currently\s+or\s+in\s+the\s+future\s+)?(?:require|need)\s+"
+    rf"(?:any\s+)?{_SPONSOR_NOUN}|"
+    # ("Applicants requiring sponsorship will not be considered", "...are not eligible for this role"; not "...are not
+    # eligible for the expedited interview track")
+    rf"\b(?:requir(?:e|es|ing)|need(?:s|ing)?)\s+(?:[\w-]+\s+){{0,6}}?{_SPONSOR_NOUN}[^.;]{{0,60}}?\b(?:will\s+not\s+"
+    rf"be\s+considered|(?:are|is)\s+(?:not\s+eligible|ineligible)(?!\s+for\s+(?!(?:this|the)\s+(?:position|role|job|"
+    rf"opening|opportunity)\b|employment\b|hire\b))|need\s+not\s+apply|should\s+not\s+apply|cannot\s+be\s+"
+    rf"considered)")
+# a line labelled with it: "Visa Sponsorship: No", "Sponsorship Available: None", "Visa Sponsorship Offered? No"
+_SPONSORSHIP_LINE = re.compile(r"(?im)^[ \t*•·-]*(?:visa\s+|immigration\s+|h-?1-?b\s+)?sponsorship(?:\s+(?:available|"
+                               r"offered|provided|eligible|eligibility))?[ \t]*(?:\??[ \t]*:|\?)[ \t]*(?:no|none|not\s+"
+                               r"(?:available|offered|provided))\b[ \t.]*$")
+# a sponsorship of something else ("Security clearance sponsorship is not available", "We will not sponsor relocation",
+# "We do not sponsor professional licenses", "...are not eligible for the sign-on bonus"), and what makes it a visa's
+_ELSE = (r"clearances?|cdls?|licen[cs]es?|licensure|licensing|tuition|training|certifications?|degrees?|education|"
+         r"courses?|exams?|events?|corporate|community|programs?|relocat\w*|housing|travel\w*|memberships?|"
+         r"societ(?:y|ies)|bonus(?:es)?|green\s+cards?|perm|conferences?|athletes?|teams?|sports?|clubs?|"
+         r"organi[sz]ations?|politic\w*|endorse\w*|charit\w*|booths?|tournaments?|golf|internships?|interns?|"
+         r"supervis\w*|managers?|faculty|letters?|famil(?:y|ies)|dependents?|spouses?|relatives?")
+_SPONSORED_ELSE = re.compile(rf"\b(?:{_ELSE})\b")
+# (never a visa of theirs: "sponsorship of family members' visas")
+_NOT_THEIRS = re.compile(r"\b(?:famil(?:y|ies)|dependents?|spouses?|relatives?)\b")
+# ("Relocation and sponsorship are not available": two things, the second a visa's)
+_ALSO_RELOCATION = re.compile(r"\brelocation\s*,?\s+(?:and|or)\s+(?=(?:visa\s+)?sponsorship\b)")
+_VISA = re.compile(r"\bvisas?\b|\bh-?1-?b\b|\bimmigration\b|\bwork\s+(?:authori[sz]ation|permit)\b")
+# a sponsor of a work visa, said so ("sponsor applicants", "sponsor for this position"), not a bare "we don't sponsor"
+_VISA_CONTEXT = re.compile(rf"{_VISA.pattern}|\bsponsorship\b|\bauthori[sz]|\bemployment\b|\bcandidates?\b|"
+                           r"\bapplicants?\b|\bindividuals?\b|\bforeign\b|\bcitizenship\b|\bstatus\b|"
+                           r"\bfor\s+this\s+(?:position|role|job|opportunity)\b")
+# a hedge, a limit, or sponsorship said the other way in the same sentence ("...for interns, but full-time hires may
+# be", "...for internships; full-time roles are eligible", "We will sponsor visas, but...")
+_SPONSOR_HEDGE = re.compile(r"\b(?:may|might|could|possibly|potentially|case[- ]by[- ]case|unless|except|generally|"
+                            r"typically|usually|in\s+most\s+cases|not\s+always|some\s+(?:positions|roles|cases)|"
+                            r"certain\s+(?:positions|roles|cases)|preferred|preferably|ideally|a\s+plus|transfers?|"
+                            r"but|however|(?:is|are)\s+eligible|will\s+sponsor|we\s+sponsor|"
+                            # (a need for one not held against anyone, sponsorship limited to some: "...will not be
+                            # considered a negative factor", "...in hiring decisions", "...any less favorably", "...not
+                            # available to contractors; employees hired directly receive sponsorship")
+                            r"factors?|negative\w*|against|in\s+(?:hiring|employment|our)\s+decisions?|"
+                            r"less\s+favou?rabl\w*|any\s+less|contractors?|receives?\s+(?:visa\s+)?sponsorship|"
+                            r"(?<!no )(?<!no visa )(?<!no h-1b )(?<!no h1b )(?<!no immigration )sponsorship\s+is\s+"
+                            r"available)\b|\?")
+
+
+def _sponsors_else(sentence: str, m: re.Match[str]) -> bool:
+    """Whether a match is of another thing's sponsorship: the word right before its "sponsorship" names one
+    ("relocation sponsorship"), or its clause does with no visa in it ("We will not sponsor relocation", "...not
+    eligible for the sign-on bonus"), or it's a family's."""
+    for at in (m.start() + s.start() for s in re.finditer(r"sponsorship", m.group())):
+        words = re.findall(r"[\w-]+", sentence[:at])
+        if words and _SPONSORED_ELSE.fullmatch(words[-1]):
+            return True
+    start = sentence.rfind(";", 0, m.start()) + 1
+    stop = sentence.find(";", m.end())
+    clause = _ALSO_RELOCATION.sub(" ", sentence[start:stop if stop >= 0 else len(sentence)])
+    return bool(_NOT_THEIRS.search(clause) or _SPONSORED_ELSE.search(clause) and not _VISA.search(clause))
+
+
+def no_sponsorship_said(text: str) -> bool:
+    """Whether a posting says plainly that it won't sponsor a work visa (_NO_SPONSORSHIP): in a sentence of its own,
+    with no hedge in it, of a visa (not a clearance's, a license's or relocation's sponsorship), or on a line labelled
+    so ("Visa Sponsorship: No", "Visa Sponsorship Offered? No"). A question, "may not sponsor", "sponsorship
+    available" or a "but" says nothing."""
+    text = _prepared(text)
+    if _SPONSORSHIP_LINE.search(text):
+        return True
+    low = re.sub(r"\bu\.\s?s\.(?:\s?a\.)?", "us", text.lower())  # ("in the U.S. without sponsorship": one sentence)
+    for sentence in _sentences(low):
+        if _SPONSOR_HEDGE.search(sentence):
+            continue
+        for m in _NO_SPONSORSHIP.finditer(sentence):
+            if _sponsors_else(sentence, m):
+                continue
+            if "sponsorship" not in m.group() and not _VISA_CONTEXT.search(sentence):
+                continue  # ("We do not sponsor." alone: of what?)
+            return True
+    return False
+
+
 _DRIVERS = re.compile(r"\b(?:driver'?s?|driving) licen[cs]e|\bcdl\b")
 # the license's own "not required", not another requirement's in the same sentence
 _NO_DRIVERS = re.compile(r"(?:licen[cs]e|\bcdl)(?: is| are)? not (?:\w+ )?(?:required|needed|necessary)\b|"
@@ -180,6 +289,7 @@ class Fit:
     reasons: list[str] = field(default_factory=list)
     concerns: list[str] = field(default_factory=list)
     blocked: bool = False  # a hard requirement the profile says isn't met
+    avoided: str = ""  # the title has one of the person's titles to leave out (this one): never recommended
     held: bool = False  # not preselected until checked: its posting unread, or it's outside the area
     # what the title and the posting say of the job, for the desk's filter row (posting_facts): its level always, its
     # requirements once the posting is read. A filter hides an opening only for a fact said here that fails it
@@ -190,7 +300,7 @@ class Fit:
 
     @property
     def recommended(self) -> bool:
-        return not self.blocked and not self.held and self.score >= RECOMMEND_AT
+        return not self.blocked and not self.held and not self.avoided and self.score >= RECOMMEND_AT
 
     def add(self, points: int, why: str) -> None:
         """`points` added to the score (taken off, below 0), with what for, among its parts."""
@@ -227,6 +337,10 @@ def not_interested_in(fit: dict[str, Any], company: str, points: int = NOT_INTER
 def target_titles(prof: Profile) -> list[str]:
     titles = [str(t).strip() for t in listed(prof.get("preferences.titles")) if str(t).strip()]
     return titles or list(DEFAULT_TITLES)
+
+
+AVOIDED = "which you leave out"  # (said in each concern and part a title to leave out makes)
+AVOID_POINTS = 25
 
 
 def target_query(prof: Profile) -> str:
@@ -414,7 +528,7 @@ def requirements(text: str) -> dict[str, Any]:
     required, _ = _split_sections(text)
     out: dict[str, Any] = {"degree": None, "degree_or_equivalent": False, "years": None, "clearance": False,
                            "clearance_later": False, "us_person": False, "travel": None, "shifts": False,
-                           "drivers_license": False}
+                           "drivers_license": False, "no_sponsorship": no_sponsorship_said(text)}
     degree_levels: list[int] = []
     years: list[int] = []
     sentences = _sentences(required.lower())
@@ -692,8 +806,9 @@ def posting_facts(title: str, req: dict[str, Any] | None = None, text: str = "")
     None when none is asked; `degree_or_equivalent` when experience is taken instead; `degree_sure` when degree_said
     reads it surely, else requirements()'s reading, shown only), its security clearance (`clearance` held now,
     `clearance_later` to be got; `clearance_sure` from clearance_said, else requirements()'s reading, shown only), its
-    travel (`travel`, a share of its time; `travel_sure` when said as the job's) and its shift (`shift`: day, other,
-    mixed or ""; `shift_sure` from its own shift line). A filter hides an opening only for a fact said and sure that
+    travel (`travel`, a share of its time; `travel_sure` when said as the job's), its shift (`shift`: day, other,
+    mixed or ""; `shift_sure` from its own shift line) and whether it says it won't sponsor a work visa
+    (`no_sponsorship`). A filter hides an opening only for a fact said and sure that
     fails it; an unread posting says none of these, and stays."""
     out: dict[str, Any] = {"level": title_rank(title)}
     if req is None:
@@ -710,7 +825,9 @@ def posting_facts(title: str, req: dict[str, Any] | None = None, text: str = "")
                 "clearance_later": later or (not clearance_sure and req["clearance_later"]),
                 "clearance_sure": clearance_sure,
                 "travel": travel if travel is not None else req["travel"], "travel_sure": travel is not None,
-                "shift": shift, "shift_sure": shift_sure})
+                "shift": shift, "shift_sure": shift_sure,
+                # (said plainly, or not at all: no_sponsorship_said)
+                "no_sponsorship": bool(req.get("no_sponsorship"))})
     return out
 
 
@@ -732,6 +849,12 @@ def score_listing(listing: dict[str, Any], prof: Profile, description: str = "",
     else:  # even fresh, nearby and qualified, not what the person looks for: shown, not preselected
         fit.add(-25, "not one of your target titles")
         fit.concerns.append("not one of your target titles")
+    # a title the person leaves out (preferences.avoid_titles, the What and where window): shown under All, never
+    # recommended (the design of Oct 18, F4)
+    if avoided := avoided_title(title, prof.avoid_titles):
+        fit.add(-AVOID_POINTS, f"title has “{avoided}”, {AVOIDED}")
+        fit.avoided = avoided
+        fit.concerns.append(f"title has “{avoided}”, {AVOIDED}")
 
     years = applicant_years(prof, today)
     level = title_level(title)
@@ -829,6 +952,12 @@ def _score_requirements(fit: Fit, req: dict[str, Any], prof: Profile, years: flo
         fit.add(-30, "requires an active security clearance")
         fit.blocked = True
         fit.concerns.append("requires an active security clearance")
+    # a posting that says plainly it won't sponsor a work visa, for a person who needs one: shown, not preselected (the
+    # design of Oct 18, F7). Ranking only: no application's question is answered from it
+    if req.get("no_sponsorship") and prof.get("work_authorization.requires_sponsorship") is True:
+        fit.add(-30, "says it won't sponsor a work visa")
+        fit.blocked = True
+        fit.concerns.append("says it won't sponsor a work visa (your profile says you need sponsorship)")
     if req["us_person"]:
         us_person = prof.get("work_authorization.us_person")
         if us_person is False:
@@ -939,7 +1068,7 @@ async def recommend(prof: Profile, search: Search, limit_per_company: int = 10, 
     for item in items:
         fit = item["fit"]
         if "posting" not in item or not _has_text(item["posting"]):
-            if fit.score >= RECOMMEND_AT and not fit.blocked:
+            if fit.score >= RECOMMEND_AT and not fit.blocked and not fit.avoided:
                 fit.held = True
                 fit.concerns.append("posting not read yet: its requirements are unchecked" if "posting" not in item
                                     else "the posting's text couldn't be read: its requirements are unchecked")

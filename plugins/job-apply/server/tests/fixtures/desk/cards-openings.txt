@@ -38,6 +38,11 @@ Day shift
 Travel ≤ 25%
 Entry level
 Not senior
+System
+Employer's own site
+Greenhouse
+iCIMS
+Workday
 Any 3
 New 1
 Not started 3

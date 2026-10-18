@@ -443,6 +443,12 @@ class Profile:
         return Settings.from_dict(self.data.get("settings"), email=self.get("personal.email"))
 
     @property
+    def avoid_titles(self) -> list[str]:
+        """preferences.avoid_titles: words or titles the person leaves out ("Senior", "Call Center"), each once as
+        written; an opening whose title has one as whole words is never recommended (recommend.avoided_title)."""
+        return avoid_list(listed(self.get("preferences.avoid_titles")))
+
+    @property
     def full_name(self) -> str:
         parts = [self.get("personal.first_name"), self.get("personal.last_name")]
         return " ".join(str(p) for p in parts if p)
@@ -749,16 +755,30 @@ def _checked(text: str, out: str, keys: tuple[str, ...], value: Any, before: dic
     return out
 
 
+def avoid_list(values: list[Any]) -> list[str]:
+    """Titles to leave out as given (a profile's, the window's, a tool's): each split at a comma, semicolon or bar
+    ("Senior, Call Center" is two), its spaces folded, each once (any case) as first written, none empty."""
+    out: list[str] = []
+    for value in values:
+        for part in re.split(r"[,;|]", str(value)):
+            said = " ".join(part.split())
+            if said and said.casefold() not in {o.casefold() for o in out}:
+                out.append(said)
+    return out
+
+
 def listed(value: Any) -> list[Any]:
     """A profile's list as a list, one written as a single value too ("titles: Help Desk Technician"), never its
     letters."""
     return [value] if isinstance(value, (str, int, float)) else list(value or [])
 
 
-def search_profile_text(places: list[str] | None = None, titles: list[str] | None = None) -> tuple[Path, str]:
+def search_profile_text(places: list[str] | None = None, titles: list[str] | None = None,
+                        avoid_titles: list[str] | None = None) -> tuple[Path, str]:
     """profile.yaml with these places as preferences.locations (where the person looks for work: "Phoenix, AZ",
-    "Las Vegas, NV"; Find jobs searches their states, a form asking where they'd like to work gets the first) and
-    these titles as preferences.titles (the jobs Find jobs looks for), worked out but not written: a ValueError when
+    "Las Vegas, NV"; Find jobs searches their states, a form asking where they'd like to work gets the first), these
+    titles as preferences.titles (the jobs Find jobs looks for) and these as preferences.avoid_titles (the titles to
+    leave out; none, in a profile without the key, isn't written there), worked out but not written: a ValueError when
     it can't be."""
     path = profile_path()
     if not path.exists():
@@ -768,6 +788,16 @@ def search_profile_text(places: list[str] | None = None, titles: list[str] | Non
         text = set_yaml_value(text, ("preferences", "locations"), places)
     if titles is not None:
         text = set_yaml_value(text, ("preferences", "titles"), titles)
+    if avoid_titles == []:
+        try:
+            had = yaml.safe_load(text) or {}
+        except yaml.YAMLError:
+            had = {}
+        preferences = had.get("preferences") if isinstance(had, dict) else None
+        if not isinstance(preferences, dict) or "avoid_titles" not in preferences:
+            avoid_titles = None  # (nothing to clear)
+    if avoid_titles is not None:
+        text = set_yaml_value(text, ("preferences", "avoid_titles"), avoid_titles)
     return path, text
 
 
