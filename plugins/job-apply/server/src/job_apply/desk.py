@@ -389,6 +389,8 @@ class Desk:
                 a.end_round()
             elif action == "usual_resume":
                 a.use_usual_resume(job_id)
+            elif action == "apply_anyway":  # a job that may be one begun or applied to on another site: it isn't
+                a.apply_anyway(job_id)
             elif action == "applied":
                 self.srv.tracker().update(job_id, status="applied", note="marked applied in the Job Desk")
                 a.mark_applied(job_id)

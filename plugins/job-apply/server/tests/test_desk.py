@@ -2872,28 +2872,32 @@ def test_submit_for_me_goes_on_after_a_restart_only_while_it_is_still_on(srv):
 def test_a_kept_queue_naming_a_job_made_one_with_another_goes_on_with_the_one_kept(srv):
     """One posting saved twice before (from Indeed and from the employer's site) is one job once the tracker opens
     after an update (Tracker._merge_copies), and the queue the desk kept may name the one gone. It never crashes: the
-    queue goes on with the job kept, once, and never with one applied to on Indeed; Submit for me only for one never
-    begun (begun on Indeed, it may have gone in there)."""
+    queue goes on with the job kept, once, in the first one's place. With both in the kept queue, Submit for me only if
+    both had it, never either (the review of 0.3.206), and a Submit pressed, or one that may have gone in, for the one
+    gone holds for the one kept."""
     t = srv.tracker()
 
-    def older(url, status, company, title, source=""):  # (as a version before saved it)
+    def older(url, company, title, source=""):  # (as a version before saved it)
         with t._lock:
             cur = t.conn.execute("INSERT INTO jobs (url, status, company, title, location, source, created_at, "
-                                 "updated_at) VALUES (?, ?, ?, ?, 'Chandler, AZ', ?, 'x', 'x')",
-                                 (url, status, company, title, source))
+                                 "updated_at) VALUES (?, 'saved', ?, ?, 'Chandler, AZ', ?, "
+                                 "'2026-10-01T00:00:00+00:00', 'x')", (url, company, title, source))
             t.conn.commit()
         return cur.lastrowid
 
-    intel_indeed = older(INDEED_JOB, "saved", "Intel Corporation", "Equipment Technician", "indeed")
-    intel = older(INTEL_JOB, "saved", "Intel", "Equipment Technician")
-    lam_indeed = older("https://www.indeed.com/viewjob?jk=1111111111111111", "applied", "Lam Research",
-                       "Field Service Engineer", "indeed")
-    lam = older("https://careers.lamresearch.com/careers/job/1", "saved", "Lam Research", "Field Service Engineer")
-    kla_indeed = older("https://www.indeed.com/viewjob?jk=2222222222222222", "in_progress", "KLA", "Technician",
+    intel_indeed = older(INDEED_JOB, "Intel Corporation", "Equipment Technician", "indeed")
+    intel = older(INTEL_JOB, "Intel", "Equipment Technician")
+    lam_indeed = older("https://www.indeed.com/viewjob?jk=1111111111111111", "Lam Research", "Field Service Engineer",
                        "indeed")
-    kla = older("https://kla.wd1.myworkdayjobs.com/Search/job/Chandler-AZ/Technician_1", "saved", "KLA", "Technician")
+    lam = older("https://careers.lamresearch.com/careers/job/1", "Lam Research", "Field Service Engineer")
+    kla_indeed = older("https://www.indeed.com/viewjob?jk=2222222222222222", "KLA", "Technician", "indeed")
+    kla = older("https://kla.wd1.myworkdayjobs.com/Search/job/Chandler-AZ/Technician_1", "KLA", "Technician")
     (other,) = _jobs(srv, 1)
-    _keep_queue([lam, intel, other, intel_indeed, kla], submit=True)
+    jobs = [{"id": intel, "state": "queued", "submit": True}, {"id": other, "state": "queued", "submit": True},
+            {"id": intel_indeed, "state": "queued"},
+            {"id": lam_indeed, "state": "queued", "submit": True}, {"id": lam, "state": "queued", "pressed": True},
+            {"id": kla, "state": "queued", "may_have_gone": True}]
+    (config.home() / "desk-queue.json").write_text(json.dumps({"paused": False, "jobs": jobs}), encoding="utf-8")
     t.close()
     srv._tracker = None  # (the update: the tracker opens again)
 
@@ -2902,13 +2906,77 @@ def test_a_kept_queue_naming_a_job_made_one_with_another_goes_on_with_the_one_ke
     desk.applier.restore()
     q = desk.applier
     try:
-        assert [j for _, j in q.tasks] == [intel_indeed, other, kla_indeed]
-        assert q.runs[intel_indeed].submit and q.runs[other].submit and not q.runs[kla_indeed].submit
-        assert not {intel, lam, lam_indeed, kla} & set(q.runs)
-        assert [e["id"] for e in _kept_queue()["jobs"]] == [intel_indeed, other, kla_indeed]
+        assert [j for _, j in q.tasks] == [intel_indeed, other]
+        assert not q.runs[intel_indeed].submit and q.runs[other].submit  # (one of the two without it: without)
+        r = q.runs[lam_indeed]  # (its Submit pressed, under the other's number: a card, never queued by itself)
+        assert (r.status, r.need, r.submit_unsent, r.submit) == ("needs_you", "restarted", True, False)
+        assert (q.runs[kla_indeed].need, q.runs[kla_indeed].pressed_before) == ("check_submit", True)
+        assert not {intel, lam, kla} & set(q.runs)
         assert srv.tracker().get(intel) is None and srv.tracker().get(intel_indeed)["url"] == INTEL_JOB
     finally:
         run(q.stop())
+
+
+def test_a_job_that_may_be_one_begun_or_applied_to_on_indeed_waits_for_the_persons_say(srv, monkeypatch):
+    """The review of 0.3.206 (HIGH): an employer's posting alike an Indeed job applied to or begun is kept apart (the
+    tracker can't be sure it's that one), and the desk asks before applying to it: a card, with nothing opened, Submit
+    for me or not. Apply anyway goes on (for this job only: it's asked no more), and Skip job skips it."""
+    applied = srv.add_job(url=INDEED_JOB, title="Equipment Technician", company="Intel Corporation",
+                          location="Chandler, AZ", source="indeed")["job"]
+    srv.update_job(applied["id"], status="applied")
+    begun = srv.add_job(url="https://www.indeed.com/viewjob?jk=1111111111111111", title="Field Service Engineer",
+                        company="Lam Research", location="Tempe, AZ", source="indeed")["job"]
+    srv.update_job(begun["id"], status="in_progress")
+    intel = srv.add_job(url=INTEL_JOB, title="Equipment Technician", company="Intel", location="Chandler, AZ")["job"]
+    lam = srv.add_job(url="https://careers.lamresearch.com/careers/job/1", title="Field Service Engineer",
+                      company="Lam Research", location="Tempe, AZ")["job"]
+    assert len({applied["id"], begun["id"], intel["id"], lam["id"]}) == 4  # (kept apart)
+    opened: list[int] = []
+
+    async def open_(self, r):  # (where the application's page would open)
+        opened.append(r.job_id)
+        r.status, r.reason = "ready", "Filled and waiting on the review page."
+        return False
+
+    monkeypatch.setattr(pipeline.Applier, "_open", open_)
+    desk = Desk(srv)
+    desk.search.update(status="done", at=time.time())  # (no search of the real sites)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            q = desk.applier
+            q.auto_submit = True
+            assert desk.apply(urls=[], job_ids=[intel["id"], lam["id"]], submit=True)[0] == [intel["id"], lam["id"]]
+            await _until(lambda: all(q.runs[j].status == "needs_you" for j in (intel["id"], lam["id"])),
+                         about=lambda: {j: (q.runs[j].status, q.runs[j].reason) for j in q.runs})
+            day = srv.tracker().get(applied["id"])["applied_at"][:10]
+            r = q.runs[intel["id"]]
+            assert (r.need, r.submit, opened) == ("maybe_duplicate", True, [])
+            assert r.reason == (f"This may be the job you already applied to on Indeed on {day} (job {applied['id']}: "
+                                "Equipment Technician at Intel Corporation). Apply anyway, or Skip?")
+            assert q.runs[lam["id"]].reason.startswith("This may be the job you already started on Indeed on ")
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                card = page.locator("#needs .task", has_text="Lam Research")
+                await card.wait_for()
+                assert await card.locator("button").all_inner_texts() == ["Apply anyway", "Skip job", "Report a problem"]
+                await card.locator("button", has_text="Skip job").click()
+                await _until(lambda: srv.tracker().get(lam["id"])["status"] == "skipped")
+                await page.locator("#needs .task", has_text="Intel").locator("button", has_text="Apply anyway").click()
+                await _until(lambda: opened == [intel["id"]], about=lambda: opened)
+                await browser.close()
+            # asked once, for this job alone: the Indeed job is still asked about, should it be started again
+            assert srv.tracker().maybe_same(intel["id"]) == []
+            assert [o["id"] for o in srv.tracker().maybe_same(applied["id"])] == [intel["id"]]
+            q.enqueue(intel["id"], submit=True)
+            await _until(lambda: opened == [intel["id"], intel["id"]], about=lambda: opened)
+            assert lam["id"] not in opened
+        finally:
+            await desk.stop()
+
+    run(go())
 
 
 def test_a_queue_kept_long_ago_comes_back_paused_and_says_how_old_it_is(srv, monkeypatch):

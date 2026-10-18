@@ -38,7 +38,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 from . import config, history, mailbox, report
 from .search import every_employer
-from .ats import ATS_NAMES, detect_ats, shared_system
+from .ats import ATS_NAMES, JOB_BOARDS, detect_ats, shared_system
 from .autofill import (classes_only, clean_label, degree_kinds_listed, degree_not_listed, entry_list_unloaded, entry_of,
                        _CHOICE_KINDS, is_empty_value, no_choice_for_no_degree, norm,
                        plan_autofill, profile_entries, site_default, unset_choice,
@@ -142,6 +142,7 @@ def _take_code(mail: tuple[str, str, float], job_id: int) -> None:
 
 
 FINISHED = {"applied", "interviewing", "offer", "rejected", "withdrawn"}  # tracker statuses never applied to again
+BEGUN = {"in_progress", "ready_to_submit"}  # tracker statuses of a job begun and not sent in yet
 UNSKIP_WAIT = 10  # seconds an Undo waits for the worker to finish the step a job was skipped in
 # The Job Desk's queue, kept in the person's own folder as it changes so a restart of the desk (a Claude app restart, a
 # crash, a plugin update) picks it up again (the review of Oct 15): each job's number in its place in line, whether it
@@ -1411,6 +1412,19 @@ class Applier:
         run.usual_resume = True
         return self.enqueue(job_id, submit=run.submit, front=True)
 
+    def apply_anyway(self, job_id: int) -> Run:
+        """The person's Apply anyway on a job that may be one they began or applied to on another site
+        (_maybe_done_elsewhere): it isn't, for this job only (the other is still asked about), and it goes on now."""
+        run = self.runs.get(job_id)
+        if run is None or run.status != "needs_you" or run.need != "maybe_duplicate":
+            raise ValueError("That job isn't waiting on that question any more.")
+        self.srv.tracker().clear_maybe_same(job_id)
+        self._log(run, "Apply anyway: you said it isn't the job begun or applied to on the other site")
+        run = self.enqueue(job_id, submit=run.submit, front=True)
+        self.go_on_for(run)
+        self.pressed.add(job_id)  # (the person's own press: it goes even while the queue is paused)
+        return run
+
     def tailoring(self) -> list[Run]:
         """The jobs waiting for a resume written for them."""
         return [r for r in self.runs.values() if r.status == "needs_you" and r.need == "tailor"]
@@ -1674,7 +1688,12 @@ class Applier:
         held_before = set(self._restored_ids)
         self._restoring = True  # (the kept queue isn't written over until it's all back)
         try:
-            for entry in saved["jobs"]:
+            try:
+                entries = self._merged_entries(saved["jobs"])
+            except Exception:  # (the queue comes back as it was kept)
+                logging.getLogger(__name__).warning("couldn't look for jobs made one in the kept queue", exc_info=True)
+                entries = saved["jobs"]
+            for entry in entries:
                 try:
                     self._restore_job(entry)
                 except Exception:  # (one job that won't come back never keeps the others out)
@@ -1690,16 +1709,32 @@ class Applier:
         self._wake.set()
         self._save_queue()
 
+    def _merged_entries(self, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """The kept queue's entries with one posting saved twice (from Indeed and the employer's site, say), made one
+        job as the tracker opened, named by the job kept: once, in the first one's place. Submit for me only if each
+        entry for it had it, and the job kept was never begun (begun on the job board, it may have gone in there); a
+        Submit pressed, or one that may have gone in, for either holds for it, and so does either being begun."""
+        t, out = self.srv.tracker(), dict[int, dict[str, Any]]()
+        for entry in entries:
+            into = t.merged_into(entry["id"]) if t.get(entry["id"], with_description=False) is None else None
+            if into is not None:
+                kept = t.get(into, with_description=False) or {}
+                entry = {**entry, "id": into, "submit": entry.get("submit") is True and kept.get("status") == "saved"}
+            was = out.get(entry["id"])
+            if was is None:
+                out[entry["id"]] = entry
+                continue
+            both = {**was, "submit": was.get("submit") is True and entry.get("submit") is True}
+            for flag in ("pressed", "may_have_gone", "tailor"):
+                if entry.get(flag) is True:
+                    both[flag] = True
+            if entry.get("state") != "queued":
+                both["state"] = entry.get("state")
+            out[entry["id"]] = both
+        return list(out.values())
+
     def _restore_job(self, entry: dict[str, Any]) -> None:
         job_id, t = entry["id"], self.srv.tracker()
-        into = t.merged_into(job_id) if t.get(job_id, with_description=False) is None else None
-        if into is not None:
-            # one posting saved twice (from Indeed and the employer's site, say), made one job as the tracker opened:
-            # the queue goes on with the job kept, once (never applied to again, as any job: below), and Submit for me
-            # only where that one was never begun (begun on the job board, it may have gone in there)
-            kept = t.get(into, with_description=False) or {}
-            job_id, entry = into, {**entry, "id": into, "submit": entry.get("submit") is True
-                                   and kept.get("status") == "saved"}
         if job_id in self.runs:  # (queued already, since the desk started)
             return
         job = t.get(job_id, with_description=False)
@@ -2836,10 +2871,30 @@ class Applier:
             self._log(run, "the page changed as I clicked one of its buttons, so I looked at it again")
             await self._drive(run)
 
+    def _maybe_done_elsewhere(self, run: Run) -> str | None:
+        """The card's words when this job may be the same posting as one begun or applied to on another site (the
+        tracker kept them apart, as it couldn't be sure: Tracker.maybe_same), until the person's Apply anyway; else None.
+        Never for one the other is only saved for."""
+        others = [o for o in self.srv.tracker().maybe_same(run.job_id) if o.get("status") in FINISHED | BEGUN]
+        if not others:
+            return None
+        other = max(others, key=lambda o: (o["status"] in FINISHED, -o["id"]))
+        done = other["status"] in FINISHED
+        when = str((other.get("applied_at") if done else "") or other.get("updated_at") or "")[:10]
+        where = JOB_BOARDS.get(other.get("board") or "", "the employer's site")
+        return (f"This may be the job you already {'applied to' if done else 'started'} on {where}"
+                f"{f' on {when}' if when else ''} (job {other['id']}: {other.get('title') or 'a job'} at "
+                f"{other.get('company') or 'the same employer'}). Apply anyway, or Skip?")
+
     async def _drive(self, run: Run) -> None:
         srv = self.srv
         if self._already_done(run):
             return
+        # one that may be a job begun or applied to on another site: the person's say first, before any page opens
+        # (Submit for me included: it never goes past this)
+        held = self._maybe_done_elsewhere(run)
+        if held:
+            return self._pause(run, "maybe_duplicate", held)
         if not run.draft_changed:  # (a draft the desk changed before it was restarted: still held, its card's lines back)
             _restore_draft_changes(srv, run)
         run.status, run.need, run.reason = "running", "", "Working on it"
