@@ -67,6 +67,14 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
     commit whose tests passed in another run or attempt), then each job family's runs, failed jobs and tests, and
     the Windows-only rate (runs that failed on Windows alone). `windows` can be made a required check once that
     rate stays under about 2% for four weeks (the owner's call).
+  - The mutation pass (`uv run python scripts/mutation_pass.py --sample 120 --jobs 2`, about 5 minutes; also a
+    `weekly` job that fails under its `FLOOR`): small changes to the answer rules (`_resolve_field`, `choose_option`,
+    `_answer_bank`, `never.py`), each run against `test_autofill.py` and `test_never_for_them.py`. A survivor (a
+    change no test noticed) gets a test, or an entry with its reason in `scripts/mutation_equivalents.txt`; `--ids`
+    reruns it once the test is written.
+  - The answer rules' fuzz (`tests/test_properties.py::test_resolve_field_never_claims_more_than_the_profile_says`):
+    4,000 seeded labels, none of whose answers may say more than conftest's profile does (a planted "Master's: Yes"
+    rule fails it). A new word real questions use goes in its `FUZZ_WORDS`.
 - Live checks against real employer sites: `uv run python scripts/live_smoke.py`.
   - Add `--pipeline --fake-passwords --parallel 4` to drive the Job Desk pipeline. The full run takes about 6 minutes.
   - Add `--lists phoenix-metro` to check another list, and `--role hr` (or `--role finance`) to look

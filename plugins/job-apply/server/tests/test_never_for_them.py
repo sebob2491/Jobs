@@ -500,3 +500,23 @@ def test_each_path_still_refuses_every_word_of_the_lists_it_read_before(path):
                     read = re.sub(r"\baffiliat\w*|\boffers? of employment", "", word, flags=re.I)
                 if re.search(alternative, read, re.I | re.S):
                     assert not agreed(word), (path, name, alternative, word)
+
+
+# The weekly mutation pass's first sample (scripts/mutation_pass.py, Oct 18): words of a kind's list no test read as
+# that kind
+
+@pytest.mark.parametrize("said", ["Get email alerts", "Send me e-mail alerts", "an email alert"])
+def test_email_alerts_are_job_alerts_wherever_they_are_read(said):
+    """"email alerts" is a job alert in so many words: a path that reads only the precise kinds refuses it too, not
+    only the paragraph above a bare "I agree", whose own words read any "alerts"."""
+    assert _never_for_them(said, only=PRECISE) == "job alerts"
+
+
+@pytest.mark.parametrize("more", ["new jobs", "special offers", "open roles", "open positions", "our newsletter",
+                                  "hiring events", "other news", "career opportunities"])
+def test_mail_about_the_application_that_brings_more_with_it_is_refused(more):
+    """Emails about the application are the application's own, but not when they bring more ("..., including special
+    offers"): a choice read for mail and messages alone (pipeline's agreed choices) refuses each."""
+    assert _never_for_them("I agree to receive emails about my application", only={EMAILS, MAIL}) is None
+    assert _never_for_them(f"I agree to receive emails about my application, including {more}",
+                           only={EMAILS, MAIL}) == MAIL

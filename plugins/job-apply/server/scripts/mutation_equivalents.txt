@@ -1,0 +1,14 @@
+# The mutation pass's accepted survivors (scripts/mutation_pass.py): mutants no test can kill because they change
+# nothing a form could see. Each is matched by its file, its operator and its lines' text before and after the change
+# (spaces aside), never by a line number, so code moving above it doesn't lose it; one whose text no mutant has any
+# more is named in the pass's summary, to be taken out.
+#
+# One entry per block, a blank line between blocks; a before or after of several lines goes on indented lines under
+# its key. Every entry says why it is equivalent. A survivor that shows a decision no test holds is never listed here:
+# it gets a test (in tests/test_autofill.py or tests/test_never_for_them.py).
+
+file: never.py
+op: drop-alternative
+before: "texts or calls": CALLS_OR_TEXTS + r"|text messages?|\bsms\b",
+after: "texts or calls": CALLS_OR_TEXTS + r"|\bsms\b",
+reason: CALLS_OR_TEXTS's \btext (?:messag\w*|me|you)\b already reads every "text message(s)"; the two differ only inside another word ("context messages")
