@@ -4,7 +4,11 @@ name: weekly
 # - the packages uv.lock pins, against the advisories PyPI and OSV know of: a finding fails the run, and GitHub
 #   mails the repository's owner about a failed scheduled run;
 # - the tests that failed in the week's CI runs, a flake (its commit's tests passed in another run or attempt)
-#   told from a real failure, in the run's summary.
+#   told from a real failure, in the run's summary;
+# - a mutation pass over the answer rules (T6, the review of Oct 18): 120 small changes to the code that decides an
+#   answer, seeded by the ISO week, each run against their tests. It fails under the kill rate scripts/mutation_pass.py
+#   keeps (FLOOR), and lists each change no test noticed, with its diff, in the summary: a test for it, or an entry in
+#   scripts/mutation_equivalents.txt with the reason it changes nothing.
 on:
   schedule:
     - cron: "23 14 * * 1"  # Mondays, 7:23 in Arizona
@@ -41,3 +45,30 @@ jobs:
       - run: python3 scripts/flake_rate.py --repo "$GITHUB_REPOSITORY" --days 7 >> "$GITHUB_STEP_SUMMARY"
         env:
           GH_TOKEN: ${{ github.token }}
+
+  mutation:
+    name: mutation pass (the answer rules)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: plugins/job-apply/server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: plugins/job-apply/server/uv.lock
+      - run: uv sync --frozen --extra dev
+      # (no browser: the two test files each mutant runs, test_autofill.py and test_never_for_them.py, open none. Four
+      # mutants at a time on the runner's four cores: about 5 minutes for 120)
+      - run: >-
+          uv run --frozen python scripts/mutation_pass.py --sample 120 --jobs 4 --check
+          --out "$RUNNER_TEMP/mutants.json" --summary "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutants
+          path: ${{ runner.temp }}/mutants.json
+          retention-days: 30

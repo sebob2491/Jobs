@@ -4151,3 +4151,36 @@ def test_an_is_sponsorship_text_area_that_asks_for_an_explanation_is_left():
                   "Is sponsorship required? Please describe your current immigration status.",
                   "Is sponsorship required? Explain."):
         assert _answer(label, p, kind="textarea") is None, label
+
+
+# The weekly mutation pass's first sample (scripts/mutation_pass.py, Oct 18): each test below holds a decision a changed
+# rule got past every other test
+
+
+def test_a_degree_finds_its_field_in_a_list_that_names_no_degree_level():
+    """A degree among choices that name no level at all (a list of fields of study) is still matched by its words:
+    the degree step narrows to the same level only where some choice names one."""
+    assert choose_option("BS Electrical Engineering", ["Electrical Engineering", "Mechanical Engineering"]) == \
+        "Electrical Engineering"
+
+
+def test_the_persons_answers_skip_a_stray_line_an_empty_answer_and_a_missing_pattern():
+    """answers.yaml's entries that say nothing (a line that isn't an entry, an answer left empty or None, an answer
+    with no pattern) are passed over, and the entry after them that answers is taken."""
+    from job_apply.autofill import _answer_bank
+
+    p = Profile({"answers": ["a stray line", {"match": "widget", "answer": None}, {"match": "widget", "answer": ""},
+                            {"answer": "No"}, {"match": "", "answer": "No"}, {"match": "widget", "answer": "Yes"}]})
+    a = _answer_bank(p, "Have you worked with widgets?")
+    assert a is not None and (a.value, a.rule) == ("Yes", "answers[widget]")
+
+
+def test_an_answers_pattern_that_is_no_regex_is_matched_as_plain_words():
+    """A pattern the person wrote that isn't a valid regex ("C++") is read as the words themselves, in any case: it
+    answers a label that holds them, and only such a label."""
+    from job_apply.autofill import _answer_bank
+
+    p = Profile({"answers": [{"match": "C++", "answer": "Yes"}]})
+    a = _answer_bank(p, "Do you know c++ well?")
+    assert a is not None and (a.value, a.rule) == ("Yes", "answers[C++]")
+    assert _answer_bank(p, "Do you know Java?") is None
