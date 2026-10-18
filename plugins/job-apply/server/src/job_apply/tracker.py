@@ -186,10 +186,18 @@ def _values(posting: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _pay(row: Any, new: Any) -> dict[str, Any]:
+def _pay(row: Any, new: Any, again: bool = False) -> dict[str, Any]:
     """The pay fields to set on a job (`row`) from another posting of it (`new`): all four, where the job has no pay
-    or the other's source is better (structured > indeed > text: pay.better); else none."""
-    return {k: new[k] for k in _PAY_FIELDS} if pay.better(dict(new), row) else {}
+    or the other's source is better (structured > indeed > text: pay.better); else none. Its own posting read again
+    (`again`: at the job's own address, with its text) also replaces a pay of the same rank (the newer read: a parser's
+    fix corrects an older one's), and clears a pay read from the words that the new read no longer finds there."""
+    new = dict(new)
+    if pay.better(new, row, again):
+        return {k: new[k] for k in _PAY_FIELDS}
+    found = new.get("pay_min") is not None or new.get("pay_max") is not None
+    if again and new.get("description") and not found and row["pay_source"] == "text":
+        return {"pay_min": None, "pay_max": None, "pay_period": "", "pay_source": ""}
+    return {}
 
 
 # where a job is applied for: the employer's own, once a job board's copy of its posting is one job with it, never
@@ -811,7 +819,7 @@ class Tracker:
         board = _board(url, values["source"])
         if existing:
             updates = {k: v for k, v in values.items() if k not in _PAY_FIELDS and v and not existing[k]}
-            updates.update(_pay(existing, values))
+            updates.update(_pay(existing, values, again=existing["url"] == url))
             if board and _board(existing["url"], existing["source"] or "") is None:
                 # a job board's copy of a job kept at the employer's site: never where it's applied for
                 updates = {k: v for k, v in updates.items() if k not in _PLACE_FIELDS}

@@ -1177,6 +1177,12 @@ def test_the_openings_sort_by_pay_or_date_and_the_filters_hide_only_what_says_it
                 await page.click("[data-sort='newest']")
                 assert await order(page) == ["Lam", "Onto", "Ebara"]
                 await page.click("[data-sort='pay']")
+                # (the review) a figure the desk refuses isn't applied on the page either: nothing hidden
+                await page.fill("#min-pay", "20000000")
+                await page.press("#min-pay", "Enter")
+                await page.wait_for_selector("#toast:has-text('more than any job pays')")
+                assert await order(page) == ["Onto", "Ebara", "Lam"] and desk.min_pay is None
+                assert await page.evaluate("state.settings.min_pay") is None
                 # Pay at least $60k: Ebara's tops out at $58,240 and goes; Lam's isn't listed and stays
                 await page.fill("#min-pay", "60k")
                 await page.press("#min-pay", "Enter")

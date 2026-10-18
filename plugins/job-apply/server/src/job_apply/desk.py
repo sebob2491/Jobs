@@ -1493,7 +1493,8 @@ def whats_new(tracker: Any, since: float) -> list[dict[str, Any]]:
     another way (by Claude, from Indeed or a link), none of them begun, sent or skipped since, and none the person said
     Not interested in. Each with its title, company, location, score (lower at an employer they said Not interested in),
     whether it's recommended, its address, its job number once saved, when it was first saved, its pay in a few words
-    ("" when it isn't listed) with the most it pays a year, and its applicant tracking system."""
+    ("" when it isn't listed) with the most it pays a year (for "from $X", X a year), and its applicant tracking
+    system."""
     try:
         saved = json.loads(_recommendations_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):

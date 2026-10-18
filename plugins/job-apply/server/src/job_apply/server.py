@@ -8,6 +8,7 @@ import functools
 import inspect
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -465,6 +466,13 @@ async def read_icims_posting(url: str) -> Posting:
     return posting
 
 
+def _check_min_pay(min_pay: float | None) -> None:
+    """A min_pay a tool was given: dollars a year, 0 or more (0 or none: any pay)."""
+    if min_pay is not None and not (math.isfinite(min_pay) and min_pay >= 0):
+        raise ToolError(f"min_pay is dollars a year, 0 or more (an hourly rate × 2,080); {min_pay} isn't. Leave it out "
+                        "for any pay.")
+
+
 @tool()
 async def search_company_jobs(
     query: str,
@@ -495,6 +503,10 @@ async def search_company_jobs(
     posted_within_days: leaves out openings posted longer ago (7, 14, 30...); one whose site gives no date stays
     (ApplicantStack, Talemetry, Jobvite, Avature and a few others never do). `below_min_pay` counts what min_pay left
     out."""
+    _check_min_pay(min_pay)
+    if posted_within_days is not None and posted_within_days < 1:
+        raise ToolError(f"posted_within_days is a number of days, 1 or more (7, 14, 30); {posted_within_days} isn't. "
+                        "Leave it out for any day.")
     listed = every_employer() if every_list else load_companies()  # once: the person's own file may name several lists
     out = await search_companies(query, companies, location, limit_per_company, companies=listed,
                                  posted_within_days=posted_within_days)
@@ -609,13 +621,16 @@ def list_jobs(status: str | None = None, company: str | None = None, limit: int 
     `not_interested_reason` (title, company, location, pay, other, or "" for none): ask
     before applying to it.
 
-    A job whose pay is listed has `pay` ("$26–$28/hr (≈$54k–$58k/yr)") and `pay_yearly` (the most it pays a year).
-    min_pay (dollars a year; hourly pay counts 2,080 hours) leaves out a job whose pay is listed and below it; a job
-    that doesn't list its pay stays."""
+    A job whose pay is listed has `pay` ("$26–$28/hr (≈$54k–$58k/yr)") and `pay_yearly` (the most it pays a year;
+    for "from $X", X a year). min_pay (dollars a year; hourly pay counts 2,080 hours) leaves out a job whose pay is
+    listed and below it; a job that doesn't list its pay stays. Up to `limit` jobs either way."""
+    _check_min_pay(min_pay)
     t = tracker()
-    jobs = t.list(status=status, company=company, limit=limit)
     if min_pay:
-        jobs = [j for j in jobs if pay.meets(pay.from_fields(j), min_pay) is not False]
+        jobs = [j for j in t.list(status=status, company=company, limit=100000)
+                if pay.meets(pay.from_fields(j), min_pay) is not False][:limit]
+    else:
+        jobs = t.list(status=status, company=company, limit=limit)
     sent = any(j["status"] in APPLICATION_STATUSES for j in jobs)  # (none sent: neither the emails nor the profile read)
     heard, days = (t.last_heard(), _follow_up_days()) if sent else ({}, config.FOLLOW_UP_DAYS_DEFAULT)
     marks = t.not_interested_marks(_listed())
@@ -1258,7 +1273,8 @@ def whats_new(since: str | None = None) -> dict[str, Any]:
     begun, sent or skipped, and none the user said Not interested in on the desk; best score
     first, each with its title, company, location, score (out of 100; `recommended` from 60),
     address and job number once saved, its pay ("$26–$28/hr (≈$54k–$58k/yr)", "" when its posting
-    doesn't list it or isn't read yet) and `ats`. `summary` lists them in a few lines, and
+    doesn't list it or isn't read yet), `pay_yearly` (the most it pays a year; for "from $X",
+    X a year) and `ats`. `summary` lists them in a few lines, and
     `searched_at` says when the desk last searched. It never searches by itself: for fresh
     openings, search first (the desk's Find jobs, or search_company_jobs with the find-jobs
     skill), then call this. Each morning: search, then whats_new."""

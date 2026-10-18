@@ -940,6 +940,33 @@ def test_a_better_source_of_pay_replaces_the_jobs_and_a_worse_one_never_does(job
     t.close()
 
 
+def test_a_new_read_of_the_same_posting_corrects_or_clears_its_text_pay(job_apply_home):
+    """The review of pay-listing: a pay read wrong from a posting's words stayed wrong, a parser's fix or not, as only a
+    better source replaced it. The same posting read again (its own address, with its text) replaces a pay of the
+    same rank, and clears a pay read from its words that the new read no longer finds; never one from a better
+    source, and nothing for an update without the posting's text."""
+    t = Tracker()
+    url = "https://careers.example.com/job/8"
+    wrong = {"url": url, "title": "Technician", "company": "Example Fab", "description": "Pay: $95,000/mo",
+             "pay_min": 95000, "pay_max": 110000, "pay_period": "month", "pay_source": "text"}
+    t.upsert(wrong)
+    job, _ = t.upsert({**wrong, "pay_min": 95000, "pay_max": 110000, "pay_period": "year"})
+    assert _pay_of(job) == (95000.0, 110000.0, "year", "text")
+    assert _pay_of(t.upsert({"url": url, "location": "Tempe, AZ"})[0]) == (95000.0, 110000.0, "year", "text")
+    cleared = {"url": url, "description": "Benefits: car allowance $500/month.", "pay_min": None, "pay_max": None,
+               "pay_period": "", "pay_source": ""}
+    assert _pay_of(t.upsert(cleared)[0]) == (None, None, "", "")
+    t.upsert({"url": url, "pay_min": 80000, "pay_max": 90000, "pay_period": "year", "pay_source": "structured"})
+    assert _pay_of(t.upsert(cleared)[0]) == (80000.0, 90000.0, "year", "structured")  # (never a better source's)
+    assert _pay_of(t.upsert({**wrong, "pay_period": "year"})[0]) == (80000.0, 90000.0, "year", "structured")
+    # another posting of the job (Indeed's copy) never replaces a pay of the same rank, nor clears one
+    job, _ = t.upsert(_intels(pay_min=26, pay_max=28, pay_period="hour", pay_source="text"))
+    joined, _ = t.upsert(_indeed(description="Duties. " * 40, pay_min=20, pay_max=21, pay_period="hour",
+                                 pay_source="text"))
+    assert joined["id"] == job["id"] and _pay_of(joined) == (26.0, 28.0, "hour", "text")
+    t.close()
+
+
 def test_two_copies_made_one_keep_the_better_sourced_pay(job_apply_home):
     """Jobs saved twice before (an Indeed job and the employer's posting of it) made one as the tracker opens: the one
     kept has the pay from the better source of the two, whole, whichever of them is kept."""

@@ -503,6 +503,20 @@ def test_min_pay_leaves_out_only_openings_whose_listed_pay_is_below_it(srv, monk
     assert sorted(j["title"] for j in jobs) == ["FSE 3", "Tech 2"]
     assert [j.get("pay") for j in jobs if j["title"] == "FSE 3"] == ["$80k–$95k/yr"]
     assert len(srv.list_jobs()["jobs"]) == 3
+    # (the review) up to `limit` jobs that meet it, the floor applied first; and what isn't a floor or a number of
+    # days is refused in plain words
+    for n in range(4):
+        srv.add_job(url=f"https://careers.example.com/job/low{n}", title=f"Low {n}", company="Example Fab",
+                    salary="$15 an hour")
+    assert sorted(j["title"] for j in srv.list_jobs(min_pay=60000, limit=2)["jobs"]) == ["FSE 3", "Tech 2"]
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    with pytest.raises(ToolError, match="min_pay is dollars a year"):
+        srv.list_jobs(min_pay=-1)
+    with pytest.raises(ToolError, match="min_pay is dollars a year"):
+        asyncio.run(server.search_company_jobs("field service", min_pay=-5))
+    with pytest.raises(ToolError, match="posted_within_days is a number of days"):
+        asyncio.run(server.search_company_jobs("field service", posted_within_days=0))
 
 
 def test_tool_falls_back_to_browser_for_eightfold(srv, monkeypatch):

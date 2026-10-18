@@ -248,6 +248,25 @@ def ukg_posting(raw_html: str, url: str) -> Posting | None:
                    posted_at=str(d.get("PostedDate") or ""), parse_method="ukg-page", full_text=text)
 
 
+_US_COUNTRIES = {"us", "usa", "u.s.", "u.s.a.", "united states", "united states of america"}
+
+
+def _in_us(loc: Any) -> bool:
+    """Whether a JSON-LD jobLocation is in the United States: its country says so, or its region is a US state."""
+    states = {code.lower() for code in US_STATES} | {name.lower() for name in US_STATES.values()}
+    for item in loc if isinstance(loc, list) else [loc]:
+        addr = item.get("address", item) if isinstance(item, dict) else None
+        if not isinstance(addr, dict):
+            continue
+        country = _first(addr.get("addressCountry"))
+        country = country.get("name") if isinstance(country, dict) else country
+        if str(country or "").strip().lower() in _US_COUNTRIES:
+            return True
+        if not country and str(addr.get("addressRegion") or "").strip().lower() in states:
+            return True
+    return False
+
+
 def posting_from_jsonld(ld: dict[str, Any], url: str) -> Posting:
     org = ld.get("hiringOrganization") or {}
     ident = ld.get("identifier") or {}
@@ -264,7 +283,8 @@ def posting_from_jsonld(ld: dict[str, Any], url: str) -> Posting:
         employment_type=", ".join(ld["employmentType"]) if isinstance(ld.get("employmentType"), list) else str(ld.get("employmentType") or ""),
         posted_at=str(ld.get("datePosted") or ""),
         parse_method="json-ld",
-        **pay_fields(pay_from_ld(ld.get("baseSalary"))),  # (its figures, not only the words _salary_from_ld prints)
+        # (its figures, not only the words _salary_from_ld prints; dollars when it names no currency only in the US)
+        **pay_fields(pay_from_ld(ld.get("baseSalary"), in_us=_in_us(ld.get("jobLocation")))),
     )
     if ld.get("jobLocationType") == "TELECOMMUTE" and "remote" not in p.location.lower():
         p.location = (p.location + "; Remote").strip("; ")

@@ -451,6 +451,7 @@ let preflightSeen = "";  // what Apply last said would stop the ticked jobs, and
 // seconds: with "Search by itself" on (off unless the person turns it on: issue #112, note 44), openings older than
 // this are searched again, also on a desk left open; never while the queue is paused
 const STALE_SEARCH = 12 * 3600;
+const MIN_PAY_MOST = 10000000;  // dollars a year: the most "Pay at least" takes (desk.MIN_PAY_MOST)
 
 // The person looking at the openings (the page loading, or coming to the front, and now and then while it's in front),
 // told to the desk (/api/seen), which keeps the time (desk.json's last_seen): an opening first saved after the visit
@@ -1887,8 +1888,10 @@ document.addEventListener("change", (e) => {
     // "60000", "$60,000", "60k": dollars a year; empty (or 0) for any pay
     const said = t.value.trim().replace(/[$,\s]/g, "").replace(/\/?(yr|year)$/i, "");
     const m = /^(\d+(?:\.\d+)?)(k?)$/i.exec(said);
-    if (said && !m) { toast("Pay at least: a yearly figure in dollars, like 60000 or 60k"); return; }
+    if (said && !m) { toast("Pay at least wasn't a figure. Type dollars a year, like 60000 or 60k."); return; }
     const pay = m ? Math.round(Number(m[1]) * (m[2] ? 1000 : 1)) || null : null;
+    // (the desk's own limit, desk.MIN_PAY_MOST: a figure it would refuse isn't applied here either)
+    if (pay && pay > MIN_PAY_MOST) { toast("That Pay at least is more than any job pays. Type dollars a year, like 60000."); return; }
     state.settings.min_pay = pay;  // (shown at once; kept in desk.json)
     t.value = pay ? pay.toLocaleString("en-US") : "";
     renderRows();

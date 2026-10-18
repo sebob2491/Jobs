@@ -98,6 +98,22 @@ def test_a_runs_saved_results_say_each_employers_rounds_and_where_it_stopped(tmp
     assert ns.steps(rec).splitlines()[1] == "  pay: not listed"
 
 
+def test_artifacts_print_a_pay_on_a_console_that_cant_show_its_signs(tmp_path):
+    """The review of pay-listing: Windows' console is cp1252, which has no "≈": --artifacts printing an employer's pay
+    ("$26–$28/hr (≈$54k–$58k/yr)") stopped with a UnicodeEncodeError. What it can't show is replaced."""
+    import os
+    import subprocess
+
+    rec = {"company": "Ebara Technologies", "posting": {"title": "Technician", "pay": "$26–$28/hr (≈$54k–$58k/yr)"},
+           "rounds": []}
+    (tmp_path / "pipeline.json").write_text(json.dumps([rec]), encoding="utf-8")
+    said = subprocess.run([sys.executable, str(SCRIPTS / "nightly_summary.py"), "--artifacts", str(tmp_path)],
+                          capture_output=True, env={**os.environ, "PYTHONIOENCODING": "cp1252"}, timeout=120)
+    err = said.stderr.decode("utf-8", "replace")
+    assert said.returncode == 0 and "UnicodeEncodeError" not in err, err
+    assert "pay: $26–$28/hr (?$54k–$58k/yr)" in said.stdout.decode("cp1252", "replace")
+
+
 COMMENT = """6 changes since the last nightly live check ([run](https://example.com/run/2)):
 
 **Apply pipeline, Phoenix list (HR jobs): where it ended on one posting per employer**
