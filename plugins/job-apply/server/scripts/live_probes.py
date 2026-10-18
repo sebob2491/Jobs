@@ -53,8 +53,8 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import live_compare  # noqa: E402  (scripts/live_compare.py, beside this one: the live check's outcome words)
-import live_identity  # noqa: E402  (scripts/live_identity.py, beside this one)
+import live_compare  # (scripts/live_compare.py, beside this one: the live check's outcome words)
+import live_identity  # (scripts/live_identity.py, beside this one)
 
 SMOKE = Path(__file__).with_name("live_smoke.py")
 

@@ -11,6 +11,9 @@ from typing import TYPE_CHECKING, Any
 
 from playwright.async_api import Error as PlaywrightError, Frame, Locator, Page, TimeoutError as PlaywrightTimeout
 
+from .formjs import (KEPT_DELETE_JS, KEPT_ROWS_JS, KEPT_STATE_JS, UNKEPT_DELETE_JS, UNKEPT_FORGET_JS,
+                     UNKEPT_PRESSED_SHOWN_JS, UNKEPT_SHOWN_JS, UPLOAD_NOT_KEPT_JS, UPLOAD_STATE_JS)
+
 
 class UploadsMixin:
     """BrowserSession's uploads."""
@@ -37,7 +40,7 @@ class UploadsMixin:
             page = await self.page()
             for frame in page.frames:
                 try:
-                    if name := await browser._bounded(frame.evaluate(browser.UPLOAD_NOT_KEPT_JS)):
+                    if name := await browser._bounded(frame.evaluate(UPLOAD_NOT_KEPT_JS)):
                         return str(name)
                 except (PlaywrightError, browser._Hung):  # a frame that went away meanwhile, or hung
                     continue
@@ -55,7 +58,7 @@ class UploadsMixin:
             page = await self.page()
             for frame in page.frames:
                 try:
-                    if not await frame.evaluate(browser.UNKEPT_DELETE_JS, name):
+                    if not await frame.evaluate(UNKEPT_DELETE_JS, name):
                         continue
                     button = frame.locator('[data-ja-unkept="1"]').first
                     self._check_clickable(await button.evaluate(browser.ELEMENT_INFO_JS, timeout=3000), page.url)
@@ -72,12 +75,12 @@ class UploadsMixin:
             await asyncio.sleep(0.5)
             async with self._lock:
                 with contextlib.suppress(PlaywrightError):
-                    if not await pressed.evaluate(browser.UNKEPT_SHOWN_JS, name):
-                        await pressed.evaluate(browser.UNKEPT_FORGET_JS, name)
+                    if not await pressed.evaluate(UNKEPT_SHOWN_JS, name):
+                        await pressed.evaluate(UNKEPT_FORGET_JS, name)
                         return "deleted"
         async with self._lock:
             with contextlib.suppress(PlaywrightError):
-                if not await pressed.evaluate(browser.UNKEPT_PRESSED_SHOWN_JS):
+                if not await pressed.evaluate(UNKEPT_PRESSED_SHOWN_JS):
                     return "gone"
         return "pressed"
 
@@ -94,7 +97,7 @@ class UploadsMixin:
                     box = self._locator(page, box_id)
                     if not await box.count():
                         return "gone"
-                    return str(await box.evaluate(browser.KEPT_STATE_JS, timeout=3000) or "")
+                    return str(await box.evaluate(KEPT_STATE_JS, timeout=3000) or "")
                 except PlaywrightTimeout:
                     pass
                 except (PlaywrightError, KeyError):
@@ -114,9 +117,9 @@ class UploadsMixin:
             page = await self.page()
             try:
                 frame = self._frame_for(page, box_id)
-                if not await self._locator(page, box_id).evaluate(browser.KEPT_DELETE_JS, name, timeout=3000):
+                if not await self._locator(page, box_id).evaluate(KEPT_DELETE_JS, name, timeout=3000):
                     return ""
-                before = int(await frame.evaluate(browser.KEPT_ROWS_JS, name))
+                before = int(await frame.evaluate(KEPT_ROWS_JS, name))
                 button = frame.locator('[data-ja-kept-delete="1"]').first
                 self._check_clickable(await button.evaluate(browser.ELEMENT_INFO_JS, timeout=3000), page.url)
                 await button.click(timeout=5000)
@@ -126,7 +129,7 @@ class UploadsMixin:
             await asyncio.sleep(0.5)
             async with self._lock:
                 with contextlib.suppress(PlaywrightError):
-                    if int(await frame.evaluate(browser.KEPT_ROWS_JS, name)) < before:
+                    if int(await frame.evaluate(KEPT_ROWS_JS, name)) < before:
                         return "deleted"
         return "pressed"
 
@@ -138,7 +141,7 @@ class UploadsMixin:
             states = []
             for frame in page.frames:
                 with contextlib.suppress(PlaywrightError):
-                    states.append(await frame.evaluate(browser.UPLOAD_STATE_JS, name))
+                    states.append(await frame.evaluate(UPLOAD_STATE_JS, name))
             return "kept" if "kept" in states else "not kept" if "not kept" in states else ""
 
     async def _send_dialog_upload(self, page: Page, box: Locator, path: Path) -> str:

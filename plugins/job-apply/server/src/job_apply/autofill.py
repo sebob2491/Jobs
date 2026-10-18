@@ -795,8 +795,8 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     """Has the person worked for this employer before? Only for a question about working
     for this employer: "Have you ever worked in a cleanroom?" and "Have you worked on Lam
     etch tools?" aren't. The answer comes from the employers in the profile, past and present
-    (history.previous_employers, work_history), and says which: "Yes, previously" picks ASM's
-    "I was PREVIOUSLY employed by ASM", not "I am CURRENTLY employed"."""
+    (previous_employers in the profile's history section, and work_history), and says which:
+    "Yes, previously" picks ASM's "I was PREVIOUSLY employed by ASM", not "I am CURRENTLY employed"."""
     company = norm(job.get("company"))
     if not company:
         return None
@@ -944,7 +944,7 @@ def _not_staff_choice(field: dict, prof: Profile, job: dict) -> str | None:
 
 
 def _employee_id(prof: Profile, job: dict) -> str | None:
-    """The person's ID at the employer applied to (history.employee_ids, by employer), for its
+    """The person's ID at the employer applied to (employee_ids in the profile's history section, by employer), for its
     "Employee ID (if applicable)" or "please provide your WWID": never another employer's."""
     company = norm(job.get("company"))
     ids = prof.get("history.employee_ids")
@@ -1588,7 +1588,6 @@ _READS_QUESTION = {_relatives, _government, _travel, _previously_employed, _no_s
 HOW_HEARD = (r"(how|where) did you (first )?(hear|find|learn (about|of|that))|source of (application|referral)|^source$")
 # ("Where did you learn to weld?" is no source: the review of Oct 15)
 # (rule name, label regex, getter, max label length or None, allowed kinds or None)
-_TEXTY = {"text", "textarea", "select", "listbox", "combobox", "radio_group"}
 RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("how_heard", HOW_HEARD, _p("preferences.how_did_you_hear"), None, None),
     # contact details: short labels only, so long questions that merely mention

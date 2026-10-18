@@ -145,12 +145,6 @@ def _parts(msg: email.message.EmailMessage) -> tuple[list[str], list[str]]:
     return texts + ([html.unescape(words)] if markup else []), links
 
 
-def _text(msg: email.message.EmailMessage) -> tuple[str, list[str]]:
-    """A message's words (plain text, or its HTML without tags) and the links in its HTML."""
-    texts, links = _parts(msg)
-    return (texts[0] if texts else ""), links
-
-
 def find_code(text: str) -> str | None:
     """The code in a sign-up email: digits (or capitals with digits) soon after "code",
     "verification" or "one-time", not a year, a phone number, a price or a job's number.

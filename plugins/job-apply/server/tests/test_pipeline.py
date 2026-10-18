@@ -15,7 +15,7 @@ from conftest import browser_available, fixture_url, run
 
 import job_apply.browser as browser_module
 import job_apply.pipeline as pipeline
-from job_apply import config, mailbox
+from job_apply import config, formjs, mailbox
 from job_apply.pipeline import Applier, Run, classify, pick_next, question_key
 
 pytestmark = pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")
@@ -3301,7 +3301,7 @@ def test_a_kept_files_box_that_reads_slowly_is_never_taken_for_one_gone(srv, mon
                 return getattr(loc, name)
 
             async def evaluate(self, script, *args, **kwargs):
-                if script == browser_module.KEPT_STATE_JS and len(tries) < slow:
+                if script == formjs.KEPT_STATE_JS and len(tries) < slow:
                     tries.append(1)
                     raise PlaywrightTimeout("Timeout 3000ms exceeded.")
                 return await loc.evaluate(script, *args, **kwargs)

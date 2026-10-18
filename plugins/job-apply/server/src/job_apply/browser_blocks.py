@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Any
 
 from playwright.async_api import Error as PlaywrightError, Frame, Page, TimeoutError as PlaywrightTimeout
 
+from .formjs import ADDED_BLOCKS_JS, ADD_UNWATCH_JS, ADD_WATCH_JS, ENTRIES_JS
+
 
 class BlocksMixin:
     """BrowserSession's blocks."""
@@ -42,7 +44,7 @@ class BlocksMixin:
         for frame in self._form_frames(page):
             prefix = self._frame_prefix(frame, page)
             try:
-                read.append((frame, prefix, await frame.evaluate(browser.ENTRIES_JS, [kind_pattern, prefix])))
+                read.append((frame, prefix, await frame.evaluate(ENTRIES_JS, [kind_pattern, prefix])))
             except PlaywrightError:  # (a frame that refused, or navigated mid-read: not the form's)
                 if frame is page.main_frame:
                     raise
@@ -60,14 +62,14 @@ class BlocksMixin:
             before, clicks, covered = state["entries"], 0, False
 
             async def entries() -> dict[str, Any]:
-                return await frame.evaluate(browser.ENTRIES_JS, [kind_pattern, prefix])
+                return await frame.evaluate(ENTRIES_JS, [kind_pattern, prefix])
 
             # the block a press draws is marked as the desk's own (only such a block is ever deleted again: the review
             # of 0.3.173): watched from just before each press, and no longer after one that drew none
             async def watch(on: bool) -> None:
                 with contextlib.suppress(PlaywrightError):
-                    await (frame.evaluate(browser.ADD_WATCH_JS, kind_pattern) if on
-                           else frame.evaluate(browser.ADD_UNWATCH_JS))
+                    await (frame.evaluate(ADD_WATCH_JS, kind_pattern) if on
+                           else frame.evaluate(ADD_UNWATCH_JS))
 
             try:
                 # a page opened again draws the blocks saved earlier a moment after itself (Baker Tilly's and U.S.
@@ -151,7 +153,7 @@ class BlocksMixin:
             marks: list[str] = []
             for frame in self._form_frames(page):
                 with contextlib.suppress(PlaywrightError):
-                    marks.extend(await frame.evaluate(browser.ADDED_BLOCKS_JS))
+                    marks.extend(await frame.evaluate(ADDED_BLOCKS_JS))
             return marks
 
 

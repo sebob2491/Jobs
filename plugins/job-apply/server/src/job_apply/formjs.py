@@ -1100,11 +1100,11 @@ ENTRIES_JS = r"""
 }
 """
 
-# Before an Add is pressed (browser.add_entries): the numbered block headings of its kind on the page now are marked as
-# had, and the first new one drawn after the press is marked as the desk's own (data-ja-added). The account's saved
-# block drawn late beside it (Hitachi High-Tech America's Workday, run 92) is never taken for it: only a block so
-# marked is ever deleted again (pipeline._drop_added_extra). A list drawn again from scratch loses the marks: then
-# nothing is.
+# Before an Add is pressed (add_entries, in browser_blocks.py): the numbered block headings of its kind on the page
+# now are marked as had, and the first new one drawn after the press is marked as the desk's own (data-ja-added). The
+# account's saved block drawn late beside it (Hitachi High-Tech America's Workday, run 92) is never taken for it: only
+# a block so marked is ever deleted again (pipeline._drop_added_extra). A list drawn again from scratch loses the
+# marks: then nothing is.
 ADD_WATCH_JS = r"""
 (kindPattern) => {
   const kind = new RegExp(kindPattern, 'i');

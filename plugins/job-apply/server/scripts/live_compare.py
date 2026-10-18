@@ -644,7 +644,7 @@ def write_trend(issues_path: Path | None, out: Path, current: dict[str, dict[str
             print(f"::warning::the trend issue #{issue.get('number')} has no saved history to add to; starting afresh")
         new = add_run(trend, current, at=at, run_url=run_url, partial=partial, seconds=seconds)
         body = render_trend(new)
-    except Exception as e:  # noqa: BLE001 - the history is a look back, never a reason to lose tonight's results
+    except Exception as e:  # the history is a look back, never a reason to lose tonight's results
         print(f"::warning::the trend issue's body wasn't written ({type(e).__name__}: {e})")
         return issue
     out.write_text(body, encoding="utf-8")

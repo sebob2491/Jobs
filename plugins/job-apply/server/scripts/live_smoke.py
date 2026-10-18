@@ -389,13 +389,13 @@ async def read_posting(url: str) -> Posting:
     refused: Exception | None = None
     try:
         posting = await fetch_posting(url)
-    except Exception as e:  # noqa: BLE001 - as the desk: the browser gets a go
+    except Exception as e:  # as the desk: the browser gets a go
         refused = e
     if posting is None or not posting.is_useful:
         try:
             seen = await asyncio.wait_for(
                 server.read_icims_posting(url) if detect_ats(url) == "icims" else _tab_posting(url), TAB_READ_SECONDS)
-        except Exception as e:  # noqa: BLE001 - said with the HTTP read's
+        except Exception as e:  # said with the HTTP read's
             if posting is None:
                 raise FetchError(f"{refused}; in a tab: {type(e).__name__}: {str(e)[:150]}") from e
         else:
@@ -434,7 +434,7 @@ async def check_company(company: dict[str, Any], out: Path, fixtures: bool, rec:
             "location": posting.location, "description_chars": len(posting.description), "ats": posting.ats,
             "apply_url": posting.apply_url, "external_id": posting.external_id, "warnings": posting.warnings,
         }
-    except Exception as e:  # noqa: BLE001 - report everything
+    except Exception as e:  # report everything
         rec["posting"] = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
 
     job = server.add_job(url=first["url"], title=first["title"], company=company["name"],
@@ -548,7 +548,7 @@ REQ_LINKS_JS = r"""() => {
 
 async def probe_form(name: str, url: str, press: str) -> dict[str, Any]:
     await server.browser.page()
-    ctx = server.browser._ctx  # noqa: SLF001 - test script reaching into the session on purpose
+    ctx = server.browser._ctx  # test script reaching into the session on purpose
     assert ctx is not None  # (page() opened it)
     tab = await ctx.new_page()
     sent: list[dict[str, Any]] = []
@@ -563,7 +563,7 @@ async def probe_form(name: str, url: str, press: str) -> dict[str, Any]:
     async def _reply(r: Any) -> dict[str, Any]:
         try:
             body = await r.text()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             body = f"unreadable: {e}"
         return {"url": r.url[:300], "type": r.headers.get("content-type", "")[:60], "chars": len(body),
                 "body": body[:6000]}
@@ -630,7 +630,7 @@ async def probe_form(name: str, url: str, press: str) -> dict[str, Any]:
             rec["posting_http"] = {"status": r.status_code, "final_url": str(r.url)[:300], "chars": len(r.text),
                                    "has_title": i >= 0, "around_title": text[max(0, i - 200):i + 1500] if i >= 0
                                    else text[:1500]}
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         rec["error"] = f"{type(e).__name__}: {str(e)[:300]}"
     finally:
         await tab.close()
@@ -679,7 +679,7 @@ async def probe_json(name: str, url: str, warm: str | None = None) -> dict[str, 
                     out.update(summary(r.json()))
                 except ValueError:
                     out["text"] = r.text[:1500]
-            except Exception as e:  # noqa: BLE001 - each way of asking on its own
+            except Exception as e:  # each way of asking on its own
                 out = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
             rec[label] = out
             client.cookies.clear()
@@ -689,7 +689,7 @@ async def probe_json(name: str, url: str, warm: str | None = None) -> dict[str, 
             data = await server.browser.capture_json(
                 warm, part, timeout=40000, rewrite_url=lambda u: re.sub(r"pagesize=\d+", "pagesize=200", u))
             rec["browser"] = summary(data)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             rec["browser"] = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
     return rec
 
@@ -721,7 +721,7 @@ MENU_JS = r"""(needle) => {
 
 async def probe_menu(name: str, url: str, press: str, needle: str) -> dict[str, Any]:
     await server.browser.page()
-    ctx = server.browser._ctx  # noqa: SLF001 - test script reaching into the session on purpose
+    ctx = server.browser._ctx  # test script reaching into the session on purpose
     assert ctx is not None  # (page() opened it)
     tab = await ctx.new_page()
     rec: dict[str, Any] = {"menu_probe": name, "url": url}
@@ -749,7 +749,7 @@ async def probe_menu(name: str, url: str, press: str, needle: str) -> dict[str, 
             shown: !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length),
             html: e.outerHTML.replace(/\\s+/g, ' ').slice(0, 300)}))""")
         rec["url_after"] = tab.url
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         rec["error"] = f"{type(e).__name__}: {str(e)[:300]}"
     finally:
         await tab.close()
@@ -823,7 +823,7 @@ def _places(value: Any, key: str = "", depth: int = 0) -> list[str]:
 
 async def probe_page(name: str, url: str) -> dict[str, Any]:
     await server.browser.page()
-    ctx = server.browser._ctx  # noqa: SLF001 - test script reaching into the session on purpose
+    ctx = server.browser._ctx  # test script reaching into the session on purpose
     assert ctx is not None
     tab = await ctx.new_page()  # a tab of its own, not a popup, so it never becomes the current one
     seen: list[dict[str, Any]] = []
@@ -848,7 +848,7 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
     async def _sample(r: Any, keep: int = 1500) -> dict[str, Any]:
         try:
             body = await r.text()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             body = f"unreadable: {e}"
         out: dict[str, Any] = {"url": r.url[:600], "request": (r.request.post_data or "")[:3000], "response": body[:keep]}
         try:  # a list of openings (SUSS; Paycom's under a key): the fields one has, and a whole one
@@ -864,7 +864,7 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
                 # where each one is: any location-like values, wherever they sit in the item
                 out["places"] = [{"title": str(i.get("position") or i.get("jobTitle") or i.get("title") or "")[:80],
                                   "lang": i.get("language"), "where": _places(i)[:6]} for i in items[:100]]
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
         try:  # the answer's shape: totals, filter names and values, where the openings are
             out["widgets"] = [{
@@ -873,7 +873,7 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
                 "facets": {f.get("name"): [v.get("text") for v in f.get("value") or []][:20] for f in w.get("facet") or []},
                 "locations": [c.get("job_location") for c in w.get("content") or []],
             } for w in json.loads(body).get("widgets") or []]
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
         return out
 
@@ -895,7 +895,7 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
         for frame in tab.frames:
             try:
                 job_links += await frame.evaluate(JOB_LINKS_JS)
-            except Exception:  # noqa: BLE001 - a frame that went away
+            except Exception:  # a frame that went away
                 continue
         rec["job_links"] = job_links[:12]
         # Phenom career sites (Thermo Fisher) draw their search results from data in the page
@@ -927,7 +927,7 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
         hrefs = await tab.evaluate("() => [...document.querySelectorAll('a[href], iframe[src]')].map(e => e.href || e.src)")
         rec["ats_links"] = sorted({h for h in hrefs if ATS_HOST.search(h)})[:10]
         rec["frames"] = [f.url[:200] for f in tab.frames if f is not tab.main_frame][:5]
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         rec["error"] = f"{type(e).__name__}: {str(e)[:300]}"
     finally:
         await tab.close()
@@ -940,7 +940,7 @@ async def check_sitecore(company: dict[str, Any]) -> dict[str, Any]:
     rec: dict[str, Any] = {"sitecore_check": company["name"]}
     try:
         await sitecore_search(server.browser.capture_json, company["search"]["sitecore"], "field service", found)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         rec["error"] = f"{type(e).__name__}: {str(e)[:200]}"
     rec["count"] = len(found)
     rec["us_locations"] = sorted({f.location for f in found if re.search(r"\bUS\b|United States", f.location)})
@@ -973,7 +973,7 @@ async def page_state() -> dict[str, Any]:
         form = await asyncio.wait_for(server.inspect_form(include_dropdown_options=False), 20)
         return {"url": form["url"], "headings": form["headings"][:6], "fields": len(form["fields"]),
                 "actions": [a["text"] for a in form["actions"]][:20]}
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return {"error": f"{type(e).__name__}: {str(e)[:200]}"}
 
 
@@ -1097,7 +1097,7 @@ async def main() -> int:
                 await asyncio.wait_for(check_company(company, args.out, args.fixtures, rec), COMPANY_TIMEOUT)
             else:
                 await asyncio.wait_for(check_careers_page(company, rec), 60)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             rec["crash"] = f"{type(e).__name__}: {str(e)[:300]}"
             rec["trace"] = traceback.format_exc()[-1500:]
             rec["page_at_crash"] = await page_state()
@@ -1115,7 +1115,7 @@ async def main() -> int:
             continue  # (one group checks these, not every one)
         try:
             probe = await asyncio.wait_for(probe_page(name, url), 90)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             probe = {"probe": name, "error": f"{type(e).__name__}: {str(e)[:200]}"}
         print("LIVE_PROBE " + json.dumps(probe, default=str), flush=True)
     for name, (url, press, needle) in MENU_PROBES.items():
@@ -1123,7 +1123,7 @@ async def main() -> int:
             continue
         try:
             probe = await asyncio.wait_for(probe_menu(name, url, press, needle), 90)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             probe = {"menu_probe": name, "error": f"{type(e).__name__}: {str(e)[:200]}"}
         print("LIVE_MENU " + json.dumps(probe, default=str), flush=True)
     for name, (url, press) in FORM_PROBES.items():
@@ -1131,7 +1131,7 @@ async def main() -> int:
             continue
         try:
             probe = await asyncio.wait_for(probe_form(name, url, press), 150)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             probe = {"form_probe": name, "error": f"{type(e).__name__}: {str(e)[:200]}"}
         print("LIVE_FORM " + json.dumps(probe, default=str), flush=True)
     for name, (url, warm) in JSON_PROBES.items():
@@ -1139,7 +1139,7 @@ async def main() -> int:
             continue
         try:
             probe = await asyncio.wait_for(probe_json(name, url, warm), 90)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             probe = {"json_probe": name, "error": f"{type(e).__name__}: {str(e)[:200]}"}
         print("LIVE_JSON " + json.dumps(probe, default=str), flush=True)
     for name, (url, selector) in HTTP_PROBES.items():
@@ -1147,7 +1147,7 @@ async def main() -> int:
             continue
         try:
             probe = await asyncio.wait_for(probe_http(name, url, selector), 60)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             probe = {"http_probe": name, "error": f"{type(e).__name__}: {str(e)[:200]}"}
         print("LIVE_HTTP " + json.dumps(probe, default=str), flush=True)
 
@@ -1208,7 +1208,7 @@ async def print_shot(name: str, page: Any) -> None:
                 print(f"\nLIVE_SHOT {json.dumps(name)} {shot}", flush=True)
                 return
         print(f"\nLIVE_SHOT {json.dumps(name)} too large to print", flush=True)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"\nLIVE_SHOT {json.dumps(name)} failed: {e}", flush=True)
 
 
@@ -1255,7 +1255,7 @@ async def _question_markup(run: Any) -> list[str]:
             out.append(await run.page.evaluate(
                 """(id) => { const e = document.querySelector(`[data-ja-id="${id}"]`);
                   return e ? e.outerHTML.replace(/\\s+/g, ' ').slice(0, 700) : 'not found'; }""", str(q.get("id"))))
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             out.append(f"{type(e).__name__}: {str(e)[:100]}")
     return out
 
@@ -1294,7 +1294,7 @@ async def _words_above(run: Any) -> list[str | None]:
     for q in run.questions[:12]:
         try:
             above = await run.page.evaluate(_WORDS_ABOVE_JS, [str(q.get("id")), str(q.get("label") or "")])
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             above = f"{type(e).__name__}: {str(e)[:100]}"
         out.append(_mask(above) if isinstance(above, str) else None)
     return out
@@ -1394,7 +1394,7 @@ async def account_form() -> dict[str, Any]:
             if sum(f["kind"] == "password" for f in after["fields"]) != 1:
                 break
         return rec
-    except Exception as e:  # noqa: BLE001 - a probe; the run's record stands without it
+    except Exception as e:  # a probe; the run's record stands without it
         return {"error": f"{type(e).__name__}: {str(e)[:200]}"}
 
 
@@ -1503,7 +1503,7 @@ async def _desk_steps(page: Any, loc: Any, fid: str, typed: str) -> dict[str, An
         out["raw"] = await loc.evaluate(FIELD_OPTIONS_JS)
         out["geometry_after"] = await loc.evaluate(_GEOMETRY_JS)
         out["menu_after"] = await loc.evaluate(_MENU_JS)
-    except Exception as e:  # noqa: BLE001 - a probe
+    except Exception as e:  # a probe
         out["error"] = f"{type(e).__name__}: {str(e)[:300]}"
     finally:
         with contextlib.suppress(Exception):
@@ -1544,7 +1544,7 @@ async def final_form() -> dict[str, Any]:
     privacy link: live check, Oct 11)."""
     try:
         data = await asyncio.wait_for(server.inspect_form(include_dropdown_options=True), 90)
-    except Exception as e:  # noqa: BLE001 - a diagnostic; the run's record stands without it
+    except Exception as e:  # a diagnostic; the run's record stands without it
         return {"error": f"{type(e).__name__}: {str(e)[:200]}"}
     errors = [str(e)[:200] for e in data.get("errors") or []]
     said = " ".join(errors).lower()
@@ -1593,7 +1593,7 @@ async def list_probe(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     # reads it (_MENU_JS), and as it is a moment and a few seconds after the click
                     try:
                         await loc.click(timeout=3000)
-                    except Exception:  # noqa: BLE001 - covered: as the desk does, focus and open it from the keys
+                    except Exception:  # covered: as the desk does, focus and open it from the keys
                         await loc.evaluate("el => el.focus()")
                         await loc.press("ArrowDown")
                     await asyncio.sleep(2)
@@ -1628,10 +1628,10 @@ async def list_probe(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         info["after_click"] = await page.evaluate(_LIST_JS, str(q["id"])) or {}
                         await print_shot(f"after picking {typed!r}", page)
                 await page.keyboard.press("Escape")
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 info = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
             out.append({"label": q.get("label"), "typed": m.group(1) or m.group(2) or m.group(3), **opened, **info})
-    except Exception as e:  # noqa: BLE001 - a probe; the run's record stands without it
+    except Exception as e:  # a probe; the run's record stands without it
         out.append({"error": f"{type(e).__name__}: {str(e)[:200]}"})
     return out
 
@@ -1678,7 +1678,7 @@ async def pick_list_probe(run: Any) -> list[dict[str, Any]]:
             seen["reopened_3s"] = {**_slim(await page.evaluate(_LIST_JS, str(q["id"]))),
                                    "menu": await loc.evaluate(_MENU_JS)}
             await page.keyboard.press("Escape")
-        except Exception as e:  # noqa: BLE001 - a probe; the round's record stands without it
+        except Exception as e:  # a probe; the round's record stands without it
             seen["error"] = f"{type(e).__name__}: {str(e)[:200]}"
         out.append({"label": q.get("label"), **seen})
     return out
@@ -1851,7 +1851,7 @@ async def take_assessment(run: Any, rec: dict[str, Any]) -> None:
     rec["assessment"] = {"steps": steps}
     try:
         rec["assessment"]["end"] = await _take_assessment(run, steps, rec)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         rec["assessment"]["end"] = f"stopped: {type(e).__name__}: {str(e)[:160]}"
     browser = server.browser
     browser.use_tab(run.page)
@@ -2115,7 +2115,7 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
     apply_url = ""
     try:  # as the desk does: the posting's own apply link, when it has one
         apply_url = (await fetch_posting(first["url"])).apply_url
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         rec["posting"]["read_error"] = f"{type(e).__name__}: {str(e)[:200]}"
     rec["posting"]["apply_url"] = apply_url
     job = server.add_job(url=first["url"], title=first["title"], company=company["name"], apply_url=apply_url)["job"]
@@ -2226,7 +2226,7 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
             if fixtures and (rec.get("rounds") or [{}])[-1].get("need") in ("questions", "stuck"):
                 # the page it stopped on, as a test fixture (the fake applicant's details only)
                 rec["fixture"] = make_fixture(dest, f"pipeline-{slug(company['name'])}", out)
-        except Exception as e:  # noqa: BLE001 - the record matters more than the snapshot
+        except Exception as e:  # the record matters more than the snapshot
             rec["snapshot_error"] = f"{type(e).__name__}: {str(e)[:200]}"
         if run is not None and (rec.get("rounds") or [{}])[-1].get("status") != "ready":
             rec["final_form"] = await final_form()  # (after the snapshot: reading lists opens them)
@@ -2251,7 +2251,7 @@ async def drop_tailored_resume(job: dict[str, Any]) -> dict[str, Any]:
         folder.mkdir(parents=True, exist_ok=True)
         pages = await render.render_pdf(render.to_html(markdown, "resume", title="Tailored test resume"), folder / name)
         picked = tailored_document(tracked, "resume")
-    except Exception as e:  # noqa: BLE001 - said in the record: the probe fails with it
+    except Exception as e:  # said in the record: the probe fails with it
         return {"file": name, "error": f"{type(e).__name__}: {str(e)[:200]}"}
     picked_name = Path(picked).name if picked else None
     if picked_name != name:
@@ -2286,7 +2286,7 @@ async def report_inbox(company: str, applier: Any, run: Any) -> None:
         report.update(await asyncio.to_thread(live_identity.inbox_report, os.environ, senders, run.paused_at))
         report["mail_problem"] = applier.mail_problem  # (what the desk itself said of reading the inbox)
         report["desk"] = {"looks": getattr(run, "mail_looks", None), "last": getattr(run, "mail_last", None)}  # (its own looks)
-    except Exception as e:  # noqa: BLE001 - a diagnostic: the run's record stands without it
+    except Exception as e:  # a diagnostic: the run's record stands without it
         report["error"] = f"{type(e).__name__}: {str(e)[:200]}"
     print("LIVE_INBOX " + json.dumps(report, default=str), flush=True)
 
@@ -2304,7 +2304,7 @@ async def pipeline_main(companies: list[dict[str, Any]], out: Path, fixtures: bo
         rec["profile"] = profile_values()  # (what its review page should show: live_audit.py's values check)
         try:
             await asyncio.wait_for(check_pipeline(company, out, rec, fixtures), wait)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             rec["crash"] = f"{type(e).__name__}: {str(e)[:300]}"
             rec["trace"] = traceback.format_exc()[-1500:]
             await server.close_browser()

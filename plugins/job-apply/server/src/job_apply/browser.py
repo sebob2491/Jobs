@@ -43,12 +43,6 @@ from .browser_tabs import TabsMixin
 from .browser_uploads import UploadsMixin
 from .formjs import (CHALLENGE_JS, CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS, EXTRACT_JS, LOST_BOXES_JS,
                      NOTICE_OVER_JS, PEEK_JS, QUIET_JS, TWIN_TICKED_JS, VISIBLE_TEXT_JS, WORKDAY_PROMPT_JS)
-# The page scripts only the mixins (browser_*.py) run: held here, where they read them (as browser.<name>), so a test's
-# patch of one reaches them
-from .formjs import (ADD_UNWATCH_JS, ADD_WATCH_JS, ADDED_BLOCKS_JS, DAY_CELL_JS, ENTRIES_JS,  # noqa: F401
-                     FIELD_OPTIONS_JS, KEPT_DELETE_JS, KEPT_ROWS_JS, KEPT_STATE_JS, MARK_OPTIONS_JS, OPEN_MENU_JS,
-                     OPEN_PICKERS_JS, OUTSIDE_CLICK_JS, SHOWN_VALUE_JS, UNKEPT_DELETE_JS, UNKEPT_FORGET_JS,
-                     UNKEPT_PRESSED_SHOWN_JS, UNKEPT_SHOWN_JS, UPLOAD_NOT_KEPT_JS, UPLOAD_STATE_JS, WORKDAY_CHOSEN_JS)
 
 SUBMIT_RE = re.compile(r"\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application", re.I)
 # A form's own submit button with one of these labels is the final step too ("Apply", "Send").
