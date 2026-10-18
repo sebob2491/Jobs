@@ -1546,18 +1546,29 @@ function render() {
 }
 
 let loading = null;  // the refresh under way: one at a time, so an older state never lands after a newer one
+// Changes made on the page (act's): a state asked for before the latest one is out of date when it comes (on a busy
+// machine, a chip pressed while the state was on its way came back unpressed, and a second press then was made from
+// the old chips: the first was lost). It's dropped, and a fresh one asked after it
+let changes = 0;
+let loadingAt = -1;  // the changes the refresh under way was asked after
 function refresh() {
   if (busy) return Promise.resolve();
-  if (!loading) loading = load().finally(() => { loading = null; });
-  return loading;
+  if (loading && loadingAt === changes) return loading;
+  const at = loadingAt = changes;
+  const mine = loading = (loading || Promise.resolve()).then(() => load(at)).finally(() => {
+    if (loading === mine) loading = null;
+  });
+  return mine;
 }
 
-async function load() {
+async function load(at = changes) {
   try {
     // (the first look told before the first state, whose New marks go from it; then now and then while in front)
     if (!seenSent) await sawOpenings();
     else if (document.visibilityState === "visible" && document.hasFocus()) sawOpenings(SEEN_STAYING);
-    state = await api("/api/state");
+    const fresh = await api("/api/state");
+    if (at !== changes) return;  // (a change made on the page since it was asked: the next refresh asks again)
+    state = fresh;
     render();
     const sr = state.search;
     const now = Date.now() / 1000;
@@ -1574,6 +1585,7 @@ async function load() {
 }
 
 async function act(fn, hold = true) {
+  changes += 1;  // (any state asked before it is out of date: load)
   if (hold) busy = true;  // a long one (reading pasted links) lets the page keep refreshing
   try { await fn(); } catch (e) { alert(e.message); } finally { if (hold) busy = false; await refresh(); }
 }
