@@ -12,7 +12,7 @@ import html
 import json
 import re
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timezone
 from typing import Any
 from urllib.parse import urljoin
 
@@ -412,20 +412,54 @@ def _find_apply_link(soup: BeautifulSoup, base_url: str) -> str:
     return ""
 
 
+# A posting's date written out: "Oct 2, 2026", "October 2, 2026" (a search's own "July  9, 2026" too: a space in a
+# format matches any run of them), "2 Oct 2026", "Fri Oct 02 00:00:00 2026" (its zone dropped first), and the
+# looser "7/9/2026" and "2026-7-9" the numbered shapes don't take
+_DATE_FORMATS = ("%b %d, %Y", "%B %d, %Y", "%d %b %Y", "%m/%d/%Y", "%Y-%m-%d", "%a %b %d %H:%M:%S %Y")
+_MS_EPOCH = 10**11  # (seconds past it are the year 5138: a number this big is milliseconds)
+
+
+def _day(year: int, month: int, day: int) -> str:
+    try:
+        return date(year, month, day).isoformat()
+    except ValueError:  # (no such day: "13/45/2026")
+        return ""
+
+
+def posted_date(value: Any) -> str:
+    """A posting's date as YYYY-MM-DD, from any of the shapes the job systems give it, tried in this order: an ISO
+    date or timestamp ("2026-10-01T08:00:00Z"); an epoch, as a number, in seconds or milliseconds (Eightfold's
+    t_create, Lever's createdAt); month/day/year, the year in two digits or four ("7/27/26", Paycom's "10/9/2026
+    8:00 AM"); a date written out ("Oct 2, 2026", EY's microdata "Fri Oct 02 00:00:00 UTC 2026"). "" for anything
+    else (a place in a date's column, "soon", nothing), or for a day that doesn't exist."""
+    if value is None or isinstance(value, bool):
+        return ""
+    if isinstance(value, (int, float)):
+        seconds = value // 1000 if value >= _MS_EPOCH else value
+        try:
+            return datetime.fromtimestamp(seconds, timezone.utc).date().isoformat() if seconds > 0 else ""
+        except (OverflowError, OSError, ValueError):
+            return ""
+    text = str(value).strip()
+    if iso := re.match(r"(\d{4})-(\d{2})-(\d{2})(?!\d)", text):
+        return _day(int(iso[1]), int(iso[2]), int(iso[3]))
+    if us := re.match(r"(\d{1,2})/(\d{1,2})/(\d{4}|\d{2})(?!\d)", text):
+        year = int(us[3])
+        return _day(year + 2000 if year < 100 else year, int(us[1]), int(us[2]))
+    text = re.sub(r"(\d{2}:\d{2}:\d{2}) [A-Za-z]{2,5} (\d{4})$", r"\1 \2", text)  # its zone (UTC, EDT): the day is enough
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(text, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return ""
+
+
 def microdata_date(soup: BeautifulSoup) -> str:
     """The date a page gives as microdata rather than JSON-LD (SuccessFactors career sites,
     EY's: itemprop="datePosted" content="Fri Oct 02 00:00:00 UTC 2026"), as YYYY-MM-DD."""
     tag = soup.select_one("[itemprop=datePosted]")
-    value = str((tag.get("content") or tag.get_text()) if tag else "").strip()
-    if re.match(r"\d{4}-\d{2}-\d{2}", value):
-        return value[:10]
-    value = re.sub(r"(\d{2}:\d{2}:\d{2}) [A-Za-z]{2,5} (\d{4})$", r"\1 \2", value)  # its zone (UTC, EDT): the day is enough
-    for fmt in ("%a %b %d %H:%M:%S %Y", "%b %d, %Y", "%B %d, %Y"):
-        try:
-            return datetime.strptime(value, fmt).date().isoformat()
-        except ValueError:
-            continue
-    return ""
+    return posted_date(str((tag.get("content") or tag.get_text()) if tag else ""))
 
 
 def _description_meta(soup: BeautifulSoup) -> str:

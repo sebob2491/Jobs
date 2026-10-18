@@ -106,7 +106,7 @@ from job_apply.postings import (_ORACLE_HOST, USER_AGENT, FetchError, Posting, c
                                 finalize, parse_html)
 from job_apply.search import title_matches  # noqa: E402
 from job_apply.autofill import is_empty_value, polarity  # noqa: E402
-from job_apply.ats import detect_ats  # noqa: E402
+from job_apply.ats import detect_ats, host_of  # noqa: E402
 from job_apply.search import load_companies, sitecore_search  # noqa: E402
 
 import live_compare  # noqa: E402  (scripts/live_compare.py: a page's form as the nightly's compare keeps it)
@@ -2067,8 +2067,8 @@ async def take_assessment(run: Any, rec: dict[str, Any]) -> None:
 async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str, Any]) -> str:
     browser = server.browser
     browser.use_tab(run.page)
-    home = (urlsplit(run.page.url).hostname or "").lower()
-    application = {h for h in (home, (urlsplit(getattr(run, "url", "") or "").hostname or "").lower()) if h}
+    home = host_of(run.page.url)
+    application = {h for h in (home, host_of(getattr(run, "url", ""))) if h}
     start = time.monotonic()
     take = None
     while take is None:  # (drawn a moment after the page: looked for again for a few seconds, CI's Windows runner)
@@ -2091,7 +2091,7 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
     deadline = time.monotonic() + ASSESSMENT_OPEN_WAIT
     while time.monotonic() < deadline:
         fresh = [p for p in ctx.pages if not p.is_closed() and (id(p) not in before or p is run.page)]
-        away = next((p for p in reversed(fresh) if (h := (urlsplit(p.url).hostname or "").lower())
+        away = next((p for p in reversed(fresh) if (h := host_of(p.url))
                      and h not in application and detect_ats(p.url) == "company_site"), None)
         if away is not None:
             browser.use_tab(away)
@@ -2111,7 +2111,7 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
         page = await browser.page()
         with contextlib.suppress(Exception):
             await page.wait_for_load_state("load", timeout=15000)
-        host = (urlsplit(page.url).hostname or "").lower()
+        host = host_of(page.url)
         if not host:  # (a tab just opened, its address not there yet)
             await page.wait_for_timeout(ASSESSMENT_TAB_WAIT)
             continue

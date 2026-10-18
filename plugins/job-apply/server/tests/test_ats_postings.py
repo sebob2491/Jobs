@@ -4,10 +4,10 @@ import json
 import httpx
 from conftest import FIXTURES
 
-from job_apply.ats import (csod_parts, detect_ats, greenhouse_form_url, greenhouse_parts, lever_parts, linkedin_job_id,
-                           workday_parts)
+from job_apply.ats import (csod_parts, detect_ats, greenhouse_form_url, greenhouse_parts, host_of, lever_parts,
+                           linkedin_job_id, workday_parts)
 from job_apply.postings import (FetchError, Posting, csod_context, fetch_posting, finalize, html_to_text, parse_html,
-                                place_in_text, public_apply_url)
+                                place_in_text, posted_date, public_apply_url)
 
 
 def test_detect_ats():
@@ -52,6 +52,44 @@ def test_url_parts():
     assert csod_parts("https://MathesonGas.csod.com/ux/ats/careersite/1/home/requisition/9402?c=mathesongas") == {
         "host": "mathesongas.csod.com", "site": "1", "corp": "mathesongas", "requisition": "9402"}
     assert csod_parts("https://evil.example/linde.csod.com/ux/ats/careersite/23/home") is None
+
+
+def test_an_addresses_host_is_read_one_way():
+    """The one reader of an address's host the modules share: lowercased, without its port or a user's name and
+    password, an IPv6 address without its brackets; "" for no address, or one that doesn't parse."""
+    cases = {
+        "https://Careers.Example.COM/job/1": "careers.example.com",
+        "https://careers.example.com:8443/job/1": "careers.example.com",
+        "https://someone:secret@careers.example.com/": "careers.example.com",
+        "https://[2001:DB8::1]:8443/job/1": "2001:db8::1",
+        "https://[::1": "",  # (an unclosed bracket: urlparse raises ValueError)
+        "not an address": "",
+        "careers.example.com/job/1": "",  # (no scheme: a path)
+        "": "",
+        None: "",
+    }
+    for url, host in cases.items():
+        assert host_of(url) == host, url
+
+
+def test_a_postings_date_is_read_from_every_shape_the_systems_give():
+    """The one reader of a posting's date (Paycom's and Cornerstone's m/d/yyyy, SuccessFactors' m/d/yy and written
+    dates, Eightfold's and Lever's epochs, EY's microdata), as YYYY-MM-DD; "" for anything else."""
+    cases = [
+        ("2026-10-01", "2026-10-01"), ("2026-10-01T08:00:00Z", "2026-10-01"), (" 2026-10-01 ", "2026-10-01"),
+        (1790000000, "2026-09-21"), (1790000000000, "2026-09-21"), (1790000000.7, "2026-09-21"),  # seconds, ms
+        ("10/9/2026", "2026-10-09"), ("09/27/2026", "2026-09-27"), ("10/9/2026 8:00 AM", "2026-10-09"),
+        ("7/27/26", "2026-07-27"),
+        ("Oct 2, 2026", "2026-10-02"), ("August 5, 2026", "2026-08-05"), ("July  9, 2026", "2026-07-09"),
+        ("2 Oct 2026", "2026-10-02"), ("Fri Oct 02 00:00:00 UTC 2026", "2026-10-02"),
+        ("Sat Sep 26 07:00:00 EDT 2026", "2026-09-26"), ("2026-7-9", "2026-07-09"),
+        # not a date: a place in a date's column, words, nothing, a day that doesn't exist, an epoch that isn't one
+        ("Arizona-Tempe", ""), ('["Texas-Dallas"]', ""), ("soon", ""), ("", ""), (None, ""), (" ", ""),
+        ("2026-13-45", ""), ("13/45/2026", ""), ("Feb 30, 2026", ""), ("7/27/202", ""), ("2026-10-1234", ""),
+        (0, ""), (-5, ""), (True, ""), (10**20, ""),
+    ]
+    for value, day in cases:
+        assert posted_date(value) == day, value
 
 
 def test_greenhouse_postings_open_at_greenhouses_own_form():
