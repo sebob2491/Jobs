@@ -20,6 +20,13 @@ Any
 7 days
 14 days
 30 days
+Within
+Any
+10 mi
+25 mi
+50 mi
+100 mi
+needs your home town
 Workplace
 Remote
 Hybrid

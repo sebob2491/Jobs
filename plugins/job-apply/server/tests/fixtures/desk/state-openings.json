@@ -8,7 +8,9 @@
   "titles": [],
   "path": "~/.job-apply/profile.yaml",
   "degree": "associate",
-  "requires_sponsorship": false
+  "requires_sponsorship": false,
+  "home": "Tempe, AZ",
+  "home_problem": ""
  },
  "settings": {
   "submit_mode": "review",
@@ -21,6 +23,7 @@
   "troubleshoot": false,
   "min_pay": null,
   "posted_within": null,
+  "within_miles": null,
   "auto_search": false,
   "jobs_at_once": 1,
   "follow_up_days": 10,
@@ -103,6 +106,7 @@
    "title": "Field Service Engineer",
    "company": "Example Fab",
    "location": "Phoenix, AZ; Chandler, AZ; Austin, TX; Hillsboro, OR",
+   "miles": {"miles": 7.9, "place": "Phoenix, AZ", "sure": false, "home": false},
    "posted": "2026-10-12",
    "posted_days": 6,
    "pay": {
@@ -175,6 +179,7 @@
    "title": "Equipment Technician",
    "company": "Example Litho",
    "location": "Tempe, AZ",
+   "miles": {"miles": 0.0, "place": "Tempe, AZ", "sure": true, "home": true},
    "posted": "",
    "posted_days": null,
    "pay": {
@@ -237,6 +242,7 @@
    "title": "Maintenance Technician",
    "company": "Example Vacuum",
    "location": "Mesa, AZ",
+   "miles": {"miles": 6.3, "place": "Mesa, AZ", "sure": true, "home": false},
    "posted": "Posted 3 Days Ago",
    "posted_days": 3,
    "pay": null,
@@ -288,6 +294,7 @@
    "title": "Onsite Technician",
    "company": "Example Vacuum",
    "location": "Mesa, AZ",
+   "miles": {"miles": 6.3, "place": "Mesa, AZ", "sure": true, "home": false},
    "posted": "Posted 3 Days Ago",
    "posted_days": 3,
    "pay": null,
@@ -332,6 +339,7 @@
    "title": "Accountant",
    "company": "Example Bank",
    "location": "Phoenix, AZ",
+   "miles": {"miles": 7.9, "place": "Phoenix, AZ", "sure": true, "home": false},
    "posted": "2026-10-01",
    "posted_days": 17,
    "pay": null,
@@ -363,6 +371,7 @@
    "title": "Payroll Clerk",
    "company": "Example Bank",
    "location": "Phoenix, AZ",
+   "miles": {"miles": 7.9, "place": "Phoenix, AZ", "sure": true, "home": false},
    "posted": "2026-10-01",
    "posted_days": 17,
    "pay": null,

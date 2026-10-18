@@ -73,6 +73,18 @@ The goal is a short, deduplicated list of real openings saved to the tracker
      the person changes them in the desk's What and where window or with
      `search_area(avoid_titles=[...])`. The Job Desk shows such jobs under All, never
      recommended.
+   - `within_miles=25` (any distance in miles) leaves out an opening every place of which is
+     farther than that from the person's home town (`personal.address.city` and `state` in the
+     profile), in a straight line between town centres (`farther_away` counts them). The plugin
+     knows the towns of Arizona and the Las Vegas and Reno areas (`data/places.yaml`); nothing
+     is looked up online. An opening whose place it doesn't know ("2 Locations", a town
+     elsewhere), that names places it can't place ("Tempe, AZ (+3 more)"), or that is remote
+     always stays; a hybrid one is judged by its place. Results whose place it knows carry
+     `miles` to the nearest place it names (`miles_to`), and `miles_sure`: true when those are all
+     its places (say "about 12 miles from home, in a straight line"); false when it names others
+     it can't place (say "about 12 miles to the nearest place it names; another may be nearer"). With
+     no home town it knows, the tool says so: pass that on, and search without it. Ask for it
+     only when the user names a distance ("within 20 miles", "close to home").
    - Results already in the tracker carry `tracked`. Skip those.
    - Eightfold sites (Lam Research, Micron, Infineon) refuse direct API calls, and
      ASML's, Daifuku's (iCIMS), Ebara's (Paycom), Nikon Precision's (UKG Pro), Edwards' and

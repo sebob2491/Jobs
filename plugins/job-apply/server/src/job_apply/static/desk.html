@@ -74,6 +74,8 @@ section.card { background: var(--surface); border: 1px solid var(--line); border
 .filters .group { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .filters button { padding: 3px 10px; font-size: 13px; border-radius: 999px; }
 .filters button[aria-pressed="true"] { background: var(--chip); border-color: var(--muted); font-weight: 600; }
+.filters .hint { color: var(--muted); }
+.filters button:disabled { opacity: .55; cursor: default; }
 .filters input { width: 7em; font: inherit; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
 /* My applications' groups: the openings bar's look, in a bar of its own (padding: under the card's head) */
 #app-groups { padding-top: 10px; }
@@ -252,6 +254,10 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
       <label class="group" title="Hides an opening whose posting gives its pay on its pay line (or in its own data) and the most it pays is below this (hourly pay counted as 2,080 hours a year). One that doesn't list its pay, or whose pay is only read from its text (≈), always stays.">Pay at least $<input type="text" id="min-pay" inputmode="numeric" placeholder="any" aria-label="Pay at least, dollars a year" autocomplete="off">/yr</label>
       <span class="group" role="group" aria-label="Posted within" title="Hides an opening posted longer ago. One whose site gives no date always stays.">Posted
         <button data-posted="" aria-pressed="true">Any</button><button data-posted="7" aria-pressed="false">7 days</button><button data-posted="14" aria-pressed="false">14 days</button><button data-posted="30" aria-pressed="false">30 days</button></span>
+      <!-- miles from the person's home town (desk.json's within_miles; places.py): its title says from where, or why it's off -->
+      <span class="group" role="group" aria-label="Within miles of home" id="within-group">Within
+        <button data-within="" aria-pressed="true">Any</button><button data-within="10" aria-pressed="false">10 mi</button><button data-within="25" aria-pressed="false">25 mi</button><button data-within="50" aria-pressed="false">50 mi</button><button data-within="100" aria-pressed="false">100 mi</button>
+        <span class="hint" id="within-why" hidden>needs your home town</span></span>
       <span class="group" role="group" aria-label="Workplace" title="Shows only the jobs done the ways pressed, and every job that doesn't say. One whose posting only mentions it in its text (likely remote) always stays.">Workplace
         <button data-chip="workplace" data-value="remote" aria-pressed="false" title="Remote jobs, and every job that doesn't say where it's done">Remote</button><button data-chip="workplace" data-value="hybrid" aria-pressed="false" title="Hybrid jobs, and every job that doesn't say where it's done">Hybrid</button><button data-chip="workplace" data-value="onsite" aria-pressed="false" title="On-site jobs, and every job that doesn't say where it's done">On-site</button></span>
       <span class="group" role="group" aria-label="Employment type" title="Shows only the jobs of the types pressed, and every job whose job system doesn't say its type. A job system may say a job's hours (full or part time), its kind (contract, temporary, internship, per diem), or both: only what it says is judged, so a full-time internship stays when Internship is pressed.">Type
@@ -363,6 +369,8 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
     <div class="pw-row"><input type="text" id="area-place-new" placeholder="Add a place: a city and state, such as Reno, NV"
       aria-label="A place to add, a city and state"><button type="button" data-act="area-place-add">Add</button></div>
     <div class="ideas" id="area-place-ideas"></div>
+    <!-- where "Within __ miles" measures from (the profile's home town), or why it's off -->
+    <p class="small" id="area-home"></p>
     <h3>Titles to leave out</h3>
     <div class="pills" id="area-avoid"></div>
     <p class="small" id="area-avoid-note"></p>
@@ -964,6 +972,15 @@ const postedText = (r) => !r.posted
 // tooltip; nothing when it doesn't say
 const workplaceText = (r) => r.workplace && r.workplace.shown
   ? `<span class="nowrap workplace" title="${esc(r.workplace.from)}">${esc(r.workplace.shown)}</span>` : "";
+// How far it is from home ("about 12 mi", "in your town"; from where to where in the tooltip); nothing when its place
+// isn't a town the desk knows, the profile has no home town it knows, or the job is remote
+const milesText = (r) => {
+  const m = r.miles, home = state.profile && state.profile.home;
+  if (!m || !home || isRemote(r)) return "";
+  const tip = `From your home, ${home}, to ${m.place}: a straight line between town centres, not a drive`
+    + (m.sure ? "" : ". It names other places too, which may be nearer: Within never hides it");
+  return `<span class="nowrap miles" title="${esc(tip)}">${m.home ? "in your town" : `about ${Math.max(1, Math.round(m.miles))} mi`}</span>`;
+};
 // Its employment type ("Full-time", "Part-time / Per diem"), the job system's words in the tooltip; nothing when it
 // doesn't say
 const jobTypesText = (r) => r.job_types && r.job_types.shown
@@ -1055,7 +1072,7 @@ function renderRows() {
       ${score}
       <div>${link(r.url, esc(r.title), "title")}
         <div class="meta">${[esc(r.company), r.location ? `<span title="${esc(r.location)}">${esc(places(r.location))}</span>` : "",
-          postedText(r), payText(r), workplaceText(r), jobTypesText(r)].filter(Boolean).join(" · ")}</div>
+          milesText(r), postedText(r), payText(r), workplaceText(r), jobTypesText(r)].filter(Boolean).join(" · ")}</div>
         ${also ? `<div class="meta also-on" title="The same posting, saved from a job board too. It's applied for on the employer's site.">${also}</div>` : ""}
         <div class="chips">${chips}</div>${sum}</div>
       <div class="state">${statusPill(r)}${undo}${ni}</div></li>`};
@@ -1064,10 +1081,12 @@ function renderRows() {
     const msg = stopFilter !== "any" && listed.some(shown) ? "None here right now. Press Any to see them all."
       : state.search.status === "running" ? "Searching employers' career sites…"
       : onlyHandled && listed.length ? "Nothing here from the employers where the desk goes all the way. Turn off that switch to see the rest."
-      : (state.settings.min_pay || state.settings.posted_within) && !chipsOn() && listed.length
+      : (state.settings.min_pay || state.settings.posted_within) && !state.settings.within_miles && !chipsOn() && listed.length
         ? "Nothing here at that pay or posting date. Empty Pay at least, or press Posted: Any, to see the rest."
-      : (state.settings.min_pay || state.settings.posted_within || chipsOn()) && listed.length
-        ? "Nothing here with the filters above. Empty Pay at least, press Posted: Any, or press a pressed filter again to see the rest."
+      : state.settings.within_miles && !state.settings.min_pay && !state.settings.posted_within && !chipsOn() && listed.length
+        ? "Nothing here that near your home. Press Within: Any, or a farther one, to see the rest."
+      : (state.settings.min_pay || state.settings.posted_within || state.settings.within_miles || chipsOn()) && listed.length
+        ? "Nothing here with the filters above. Empty Pay at least, press Posted: Any or Within: Any, or press a pressed filter again to see the rest."
       : troubleshooting ? "Nothing here yet from the employers where the desk doesn't go all the way. Press Find jobs: troubleshooting searches every list's employers."
       : (state.listings || []).length ? "Nothing recommended. Switch to All to see every opening."
       : "Press Find jobs to search every employer's career site for openings that fit your profile.";
@@ -1375,6 +1394,20 @@ function renderHeader() {
   const minPay = $("min-pay");
   if (document.activeElement !== minPay) minPay.value = s.min_pay ? Number(s.min_pay).toLocaleString("en-US") : "";
   document.querySelectorAll("[data-posted]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.posted === String(s.posted_within || ""))));
+  // "Within __ miles": from the profile's home town; without one the desk knows, off, and why (the window says it too).
+  // Any stays pressable then, so a choice kept from before can be let go of, and doesn't come back on unseen when a
+  // home town is added
+  const home = state.profile && state.profile.home;
+  document.querySelectorAll("[data-within]").forEach((b) => {
+    b.setAttribute("aria-pressed", String(b.dataset.within === String(s.within_miles || "")));
+    b.disabled = !home && b.dataset.within !== "";
+  });
+  $("within-why").hidden = !!home;
+  $("within-why").textContent = s.within_miles
+    ? `needs your home town: ${s.within_miles} mi hides nothing until then (Any lets it go)` : "needs your home town";
+  $("within-group").title = home
+    ? `Hides a job whose places are all farther than this from your home, ${home}, in a straight line between town centres. One whose place the desk doesn't know, or that names places it can't place, always stays, as does a remote job; a hybrid job is judged by its place.`
+    : (state.profile && state.profile.home_problem) || "";
   document.querySelectorAll("[data-sort]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.sort === sortBy)));
   document.querySelectorAll("[data-chip]").forEach((b) => b.setAttribute("aria-pressed", String((s[b.dataset.chip] || []).includes(b.dataset.value))));
   // "No degree required", or for a person whose profile names a degree above high school, "My degree is enough"
@@ -1653,6 +1686,10 @@ function renderAreaDraft() {
   const placeIdeas = (area.place_ideas || []).filter((x) => !has(d.places, x));
   $("area-place-ideas").innerHTML = placeIdeas.length ? `<span>Add:</span>${placeIdeas.map((x) =>
     `<button type="button" class="idea" data-area-add="places" data-value="${esc(x)}">+ ${esc(x)}</button>`).join("")}` : "";
+  const prof = state.profile || {};
+  $("area-home").textContent = prof.home
+    ? `Within N miles, over the openings, measures from your home town in your profile, ${prof.home}, in a straight line.`
+    : prof.home_problem || "";
   $("area-avoid").innerHTML = pick("avoid_titles", d.avoid_titles, Infinity);
   $("area-avoid-note").textContent = d.avoid_titles.length
     ? "A job whose title has one of these, as whole words, shows under All but is never recommended."
@@ -1750,8 +1787,14 @@ function selectable(url) {
 function shown(r) {
   const s = state.settings || {};
   return (s.handled_only ? kept(r) : s.troubleshoot ? keptElse(r) : true)
-    && (theirs(r) || (paysEnough(r, s.min_pay) && postedWithin(r, s.posted_within) && fitsChips(r, s)));
+    && (theirs(r) || (paysEnough(r, s.min_pay) && postedWithin(r, s.posted_within) && withinMiles(r, s.within_miles)
+                      && fitsChips(r, s)));
 }
+// "Within __ miles" hides only an opening surely farther from home (places.away: every place it names is a town the
+// desk knows); one whose place it doesn't know, or that names others it can't place, stays, as does a remote one (any
+// reading of it); a hybrid one is judged by its place
+const isRemote = (r) => !!(r.workplace && r.workplace.value === "remote");
+const withinMiles = (r, most) => !most || !r.miles || !r.miles.sure || isRemote(r) || r.miles.miles <= most;
 // The filter row's chips (desk.CHIP_FILTERS), each a test an opening fails only for a fact it says (sure) that doesn't
 // fit: its title's level, or its posting's requirements once read (recommend.posting_facts); where it's done
 // (workplace.py) one of those pressed, unless it doesn't say or only its text does. Nothing said, it stays.
@@ -1925,6 +1968,15 @@ document.addEventListener("click", (e) => {
     state.settings.posted_within = days;  // (shown at once; kept in desk.json)
     renderRows();
     act(() => api("/api/settings", {posted_within: days}));
+    return;
+  }
+  if (t.dataset.within !== undefined) {
+    if (!state) return;
+    const most = t.dataset.within ? Number(t.dataset.within) : null;
+    document.querySelectorAll("[data-within]").forEach((b) => b.setAttribute("aria-pressed", String(b === t)));
+    state.settings.within_miles = most;  // (shown at once; kept in desk.json)
+    renderRows();
+    act(() => api("/api/settings", {within_miles: most}));
     return;
   }
   if (t.dataset.chip) {

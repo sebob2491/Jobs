@@ -34,7 +34,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
-from . import autofill, config, employment, history, pay, report, workplace
+from . import autofill, config, employment, history, pay, places, report, workplace
 from .browser import _cookie_setting
 from .pipeline import (DESK_PASSWORDS, QUEUE_NO_LOCK, Applier, _may_accept_notices, _may_manage_accounts,
                        _test_identity, placed_key, question_key)
@@ -160,6 +160,8 @@ class Desk:
         # and below it, and "Posted" one posted more days ago than it; neither hides one that doesn't say (None: off)
         self.min_pay: int | None = None
         self.posted_within: int | None = None
+        # "Within __ miles" of home (places.py): hides an opening surely farther from the person's home town (None: off)
+        self.within_miles: int | None = None
         # and its chips (CHIP_FILTERS: the requirements an opening may not ask), each hiding an opening only for a fact
         # it says and that fails it ([]: none pressed)
         self.chips: dict[str, list[str]] = {name: [] for name in CHIP_FILTERS}
@@ -213,6 +215,7 @@ class Desk:
             self.handled_only = saved.get("handled_only") is True
             self.min_pay = _min_pay(saved.get("min_pay"))
             self.posted_within = saved.get("posted_within") if saved.get("posted_within") in POSTED_WITHIN else None
+            self.within_miles = saved.get("within_miles") if saved.get("within_miles") in WITHIN_MILES else None
             self.chips = {name: _chips(name, saved.get(name)) or [] for name in CHIP_FILTERS}
             self.auto_search = saved.get("auto_search") is True
             self.troubleshoot = saved.get("troubleshoot") is True and not self.handled_only
@@ -236,7 +239,7 @@ class Desk:
                                                 "tailor_resumes": self.applier.tailor,
                                                 "handled_only": self.handled_only,
                                                 "min_pay": self.min_pay, "posted_within": self.posted_within,
-                                                **self.chips,
+                                                "within_miles": self.within_miles, **self.chips,
                                                 "troubleshoot": self.troubleshoot,
                                                 "auto_search": self.auto_search,
                                                 "jobs_at_once": self.applier.jobs_at_once,
@@ -603,6 +606,9 @@ class Desk:
             return self._bad(ValueError("min_pay should be a yearly figure in dollars, or null for any pay"))
         if "posted_within" in body and body["posted_within"] not in (None, *POSTED_WITHIN):
             return self._bad(ValueError("posted_within should be 7, 14, 30 or null for any day"))
+        if "within_miles" in body and body["within_miles"] not in (None, *WITHIN_MILES):
+            return self._bad(ValueError(f"within_miles should be {', '.join(map(str, WITHIN_MILES))} or null for any "
+                                        "distance"))
         for name, choices in CHIP_FILTERS.items():
             if name in body and body[name] is not None and _chips(name, body[name]) is None:
                 return self._bad(ValueError(f"{name} should be a list of some of {', '.join(choices)} "
@@ -616,6 +622,8 @@ class Desk:
             self.min_pay = _min_pay(body["min_pay"])
         if "posted_within" in body:
             self.posted_within = body["posted_within"]
+        if "within_miles" in body:
+            self.within_miles = body["within_miles"]
         if "jobs_at_once" in body:
             self.applier.jobs_at_once = at_once
             written = _profile_jobs_at_once()  # (as profile.yaml has it now: a later change there is the newer choice)
@@ -640,11 +648,12 @@ class Desk:
                 self._forget_openings()
         self.applier.hold_submits = self.troubleshoot
         if any(k in body for k in ("auto_submit", "tailor_resumes", "handled_only", "troubleshoot", "auto_search",
-                                   "jobs_at_once", "min_pay", "posted_within", *CHIP_FILTERS)):
+                                   "jobs_at_once", "min_pay", "posted_within", "within_miles", *CHIP_FILTERS)):
             self._save_settings()
         return JSONResponse({"auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor,
                              "handled_only": self.handled_only, "troubleshoot": self.troubleshoot,
-                             "min_pay": self.min_pay, "posted_within": self.posted_within, **self.chips,
+                             "min_pay": self.min_pay, "posted_within": self.posted_within,
+                             "within_miles": self.within_miles, **self.chips,
                              "auto_search": self.auto_search, "jobs_at_once": self.applier.at_once()})
 
     def _forget_openings(self) -> None:
@@ -1047,6 +1056,11 @@ class Desk:
         marks = t.not_interested_marks(self.listings)  # (by the job each row is too: NotInterested)
         employers = unwanted_employers(marks)
         since = self.seen_since
+        # the person's home town, for each opening's distance ("Within __ miles"), or why there's none
+        home, home_problem = places.home(prof)
+        if profile_problem:  # (a profile.yaml that doesn't read: not one without a home town)
+            home_problem = ("Within N miles can't find your home town just now: your profile can't be read "
+                            f"({profile_problem}).")
 
         def news(url: str, job: dict[str, Any] | None, run: Any) -> tuple[float | None, bool]:
             """When an opening was first saved (found by a search, or saved to the tracker), and whether it's New: first
@@ -1071,6 +1085,8 @@ class Desk:
                 "pay": pay_of(item, job), "ats": item.get("ats") or (job or {}).get("ats") or "",
                 "system": system_of(item, job), "workplace": workplace_of(item, job),
                 "job_types": job_types_of(item, job),
+                "miles": places.away(home, item.get("location"), (item.get("posting") or {}).get("location"),
+                                     (job or {}).get("location")) if home else None,
                 "fit": item.get("fit") if said else fit_for(item.get("fit"), item.get("company"), employers),
                 "notes": item.get("notes") or [], "job_id": jid, "status": job["status"] if job else None,
                 "run": run,
@@ -1103,6 +1119,7 @@ class Desk:
                 "posted_days": days_since(str(job.get("posted_at") or "")),
                 "pay": pay_of(None, job), "ats": job.get("ats") or "", "system": system_of(None, job),
                 "workplace": workplace_of(None, job), "job_types": job_types_of(None, job),
+                "miles": places.away(home, job.get("location")) if home else None,
                 "fit": fit if said else fit_for(fit, job.get("company"), employers), "notes": [],
                 "job_id": job["id"], "status": job["status"], "run": runs.get(job["id"]), "added": True,
                 "handled": str(job.get("company") or "").strip().casefold() in handled,
@@ -1122,13 +1139,16 @@ class Desk:
                         # the highest degree it says the person has (for the filter row's "My degree is enough")
                         "degree": applicant_degree(prof),
                         # whether it says they need a work visa sponsored (for a card's "won't sponsor a work visa")
-                        "requires_sponsorship": prof.get("work_authorization.requires_sponsorship") is True},
+                        "requires_sponsorship": prof.get("work_authorization.requires_sponsorship") is True,
+                        # the home town each opening's distance is from ("Within __ miles"), or why there's none
+                        "home": home.label if home else None, "home_problem": home_problem},
             "settings": {"submit_mode": settings.submit_mode, "dry_run": settings.dry_run,
                          "manage_accounts": settings.may_manage_accounts,
                          "manage_accounts_chosen": settings.manage_accounts_chosen,
                          "auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor,
                          "handled_only": self.handled_only, "troubleshoot": self.troubleshoot,
-                         "min_pay": self.min_pay, "posted_within": self.posted_within, **self.chips,
+                         "min_pay": self.min_pay, "posted_within": self.posted_within,
+                         "within_miles": self.within_miles, **self.chips,
                          "auto_search": self.auto_search, "jobs_at_once": self.applier.at_once(),
                          "follow_up_days": settings.follow_up_days},
             "tailoring": len(self.applier.tailoring()),
@@ -1496,6 +1516,7 @@ def likely_order(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
 PAY_KEYS = pay.FIELDS
 POSTED_WITHIN = (7, 14, 30)  # the page's "Posted" choices, in days (none: any day)
 MIN_PAY_MOST = pay.MIN_PAY_MOST  # a "Pay at least" over this is a typo
+WITHIN_MILES = places.WITHIN_MILES  # the page's "Within" choices, in miles from home (none: any distance)
 # The filter row's chips, by the setting each is kept as (desk.json, /api/settings), with what each may hold: the
 # requirements an opening may not ask (posting_facts: no clearance, no degree above the person's, a day shift, travel
 # of 25% or less, an entry-level or not a senior title)

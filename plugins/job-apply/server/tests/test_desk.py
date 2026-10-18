@@ -848,7 +848,7 @@ def test_the_tailoring_switch_is_kept_and_its_waiting_jobs_listed(srv, job_apply
             async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{desk.port}", timeout=20, trust_env=False) as c:
                 r = await c.post("/api/settings", headers=h, json={"tailor_resumes": True})
                 assert r.json() == {"auto_submit": False, "tailor_resumes": True, "handled_only": False, "troubleshoot": False,
-                                    "min_pay": None, "posted_within": None, "requirements": [], "workplace": [],
+                                    "min_pay": None, "posted_within": None, "within_miles": None, "requirements": [], "workplace": [],
                                     "job_types": [], "systems": [],
                                     "auto_search": False, "jobs_at_once": 1}  # (the tests' profile: one at a time)
                 await desk.applier.stop()  # hold the queue still while the waiting job is set up
@@ -1429,6 +1429,179 @@ def test_the_workplace_chips_hide_only_a_job_that_surely_says_its_done_another_w
         "Remote Technician": ("remote", "location"), "Onsite Technician": ("onsite", "structured"),
         "Maybe Technician": ("hybrid", "text"), "Plain Technician": ("", ""),
         "Read Technician": ("hybrid", "structured")}
+
+
+async def _within(page, miles: str, titles: list[str]) -> None:
+    """Press one of the filter row's Within choices ("" for Any), its choice saved, and wait for the page to show the
+    openings it leaves: `titles`, in order."""
+    async with page.expect_response("**/api/settings"):
+        await page.click(f"[data-within='{miles}']")
+    try:
+        await page.wait_for_function(
+            "want => JSON.stringify([...document.querySelectorAll('li.row a.title')].map((a) => a.innerText)) === want",
+            arg=json.dumps(titles, separators=(",", ":")), timeout=15000)
+    except Exception:
+        assert await _shown_titles(page) == titles  # (says which differ)
+        raise
+
+
+def test_within_miles_hides_only_a_job_surely_farther_from_home(srv, job_apply_home):
+    """The design of Oct 18, F8: each row says how far it is from the profile's home town (made up: Chandler, AZ), in
+    a straight line ("about 8 mi", "in your town"), and "Within __ miles" hides an opening only when every place it
+    names is a town the desk knows and the nearest is farther. One whose place it doesn't know ("2 Locations", a town
+    in another state), that names more places than it places ("+2 more"), or that is remote stays; a hybrid one is
+    judged by its place. Nothing hidden is picked, and the choice is kept in desk.json."""
+    desk = Desk(srv)
+
+    def opening(title, score, location, **said):
+        return {**_facts_opening(title, score), "location": location, **said}
+
+    desk.listings = [opening("Chandler Technician", 95, "Chandler, AZ"),
+                     opening("Mesa Technician", 90, "Mesa, AZ"),
+                     opening("Tucson Technician", 85, "Tucson, AZ"),
+                     # (far, but remote: its own field says so)
+                     opening("Remote Technician", 80, "Las Vegas, NV", workplace="remote", workplace_source="structured"),
+                     opening("Hybrid Technician", 75, "Flagstaff, AZ (Hybrid)", workplace="hybrid",
+                             workplace_source="location"),
+                     opening("Unsaid Technician", 70, "2 Locations"),
+                     opening("More Technician", 65, "Tucson, AZ (+2 more)"),
+                     opening("Elsewhere Technician", 60, "Austin, TX"),
+                     # (its list's place far; its posting, read, names a nearer one too)
+                     opening("Read Technician", 60, "Tucson, AZ", posting={"location": "Tucson, AZ; Gilbert, AZ"})]
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    every = [o["title"] for o in desk.listings]
+
+    def but(*hidden):
+        return [t for t in every if t not in hidden]
+
+    rows = {r["title"]: r for r in desk.state()["listings"]}
+    assert rows["Chandler Technician"]["miles"] == {"miles": 0, "place": "Chandler, AZ", "sure": True, "home": True}
+    assert rows["Unsaid Technician"]["miles"] is None and rows["Elsewhere Technician"]["miles"] is None
+    assert rows["More Technician"]["miles"]["sure"] is False
+    assert rows["Read Technician"]["miles"]["place"] == "Gilbert, AZ"
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("text=Read Technician")
+                assert await _shown_titles(page) == every
+
+                def meta(title):
+                    return page.locator("li.row", has_text=title).locator(".meta").first
+
+                assert "in your town" in await meta("Chandler Technician").inner_text()
+                assert "about 8 mi" in await meta("Mesa Technician").inner_text()
+                tip = await meta("Mesa Technician").locator(".miles").get_attribute("title")
+                assert tip == "From your home, Chandler, AZ, to Mesa, AZ: a straight line between town centres, not a drive"
+                assert "never hides" in await meta("More Technician").locator(".miles").get_attribute("title")
+                assert await meta("Remote Technician").locator(".miles").count() == 0  # (remote: no distance)
+                assert await meta("Unsaid Technician").locator(".miles").count() == 0
+                assert "Chandler, AZ" in await page.get_attribute("#within-group", "title")
+                assert await page.is_hidden("#within-why")
+                await _within(page, "100", but("Hybrid Technician"))
+                await _within(page, "25", but("Tucson Technician", "Hybrid Technician"))
+                await _within(page, "10", but("Tucson Technician", "Hybrid Technician"))
+                await _within(page, "", every)
+                await _within(page, "50", but("Tucson Technician", "Hybrid Technician"))
+                assert await page.get_attribute("[data-within='50']", "aria-pressed") == "true"
+                await page.click("text=Select recommended")
+                picked = await page.evaluate("() => [...selected].filter(selectable)")
+                assert sorted(picked) == sorted(o["url"] for o in desk.listings
+                                                if o["title"] not in ("Tucson Technician", "Hybrid Technician")), picked
+                assert desk.within_miles == 50
+                await page.reload()
+                await page.wait_for_selector("text=Read Technician")
+                assert await _shown_titles(page) == but("Tucson Technician", "Hybrid Technician")
+                assert await page.get_attribute("[data-within='50']", "aria-pressed") == "true"
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert json.loads((job_apply_home / "desk.json").read_text(encoding="utf-8"))["within_miles"] == 50
+    assert Desk(srv).within_miles == 50  # (kept for next time)
+
+
+def test_within_miles_is_off_and_the_window_says_why_without_a_home_town(srv, job_apply_home):
+    """A profile with no personal.address.city (made up), or one the desk doesn't know where it is: nothing breaks,
+    no row says a distance or is hidden for one (Within 10 kept from before), the Within choices are off, and the What
+    and where window says why in plain words."""
+    profile = yaml.safe_load((job_apply_home / "profile.yaml").read_text(encoding="utf-8"))
+    del profile["personal"]["address"]["city"]
+    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(profile), encoding="utf-8")
+    (job_apply_home / "desk.json").write_text(json.dumps({"within_miles": 10}), encoding="utf-8")
+    desk = Desk(srv)
+    desk.listings = [{**_facts_opening("Tucson Technician", 90), "location": "Tucson, AZ"}]
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    state = desk.state()
+    assert state["listings"][0]["miles"] is None and state["settings"]["within_miles"] == 10
+    assert state["profile"]["home"] is None and "personal.address.city" in state["profile"]["home_problem"]
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("text=Tucson Technician")
+                assert await page.is_disabled("[data-within='25']")
+                assert "your profile doesn't say it" in await page.get_attribute("#within-group", "title")
+                # (the review, L3) the 10 miles kept from before shows, hiding nothing, and Any lets it go, so it
+                # doesn't come back on unseen once a home town is added
+                assert await page.get_attribute("[data-within='10']", "aria-pressed") == "true"
+                assert "10 mi hides nothing until then" in await page.inner_text("#within-why")
+                assert await page.is_enabled("[data-within='']")
+                async with page.expect_response("**/api/settings"):
+                    await page.click("[data-within='']")
+                assert desk.within_miles is None
+                await page.wait_for_function("document.querySelector('#within-why').innerText === 'needs your home town'")
+                await page.click("#area-btn")
+                note = await page.inner_text("#area-home")
+                assert note == ("Within N miles needs your home town, and your profile doesn't say it: add "
+                                "personal.address.city (and personal.address.state) to your profile.")
+                await page.click("[data-act='area-close']")
+                # a town the desk doesn't know: said by its name
+                profile["personal"]["address"]["city"] = "Springfield"
+                (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(profile), encoding="utf-8")
+                await page.reload()
+                await page.wait_for_selector("text=Tucson Technician")
+                await page.click("#area-btn")
+                assert "how far jobs are from Springfield, AZ" in await page.inner_text("#area-home")
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    # (the review, L4) a profile.yaml that doesn't read is said as that, not as one without a home town
+    (job_apply_home / "profile.yaml").write_text("personal: [unclosed\n", encoding="utf-8")
+    problem = desk.state()["profile"]["home_problem"]
+    assert "your profile can't be read" in problem and "doesn't say" not in problem
+
+
+def test_the_within_setting_refuses_what_isnt_one(srv, job_apply_home):
+    desk = Desk(srv)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            h = {"x-desk-token": desk.token}
+            async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{desk.port}", timeout=20, trust_env=False) as c:
+                for bad in ({"within_miles": 7}, {"within_miles": "25"}, {"within_miles": -10}):
+                    r = await c.post("/api/settings", headers=h, json=bad)
+                    assert r.status_code == 400 and "within_miles should be 10, 25, 50, 100" in r.text, bad
+                r = await c.post("/api/settings", headers=h, json={"within_miles": 25})
+                assert r.json()["within_miles"] == 25 and desk.within_miles == 25
+                r = await c.post("/api/settings", headers=h, json={"within_miles": None})
+                assert r.json()["within_miles"] is None
+        finally:
+            await desk.stop()
+
+    run(go())
 
 
 def test_the_type_chips_hide_only_a_job_whose_system_says_its_of_other_types(srv, job_apply_home):
