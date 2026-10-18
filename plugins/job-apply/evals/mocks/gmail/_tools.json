@@ -1,0 +1,38 @@
+{
+ "tools": [
+  {
+   "name": "search_threads",
+   "description": "Search the user's Gmail threads with a Gmail search query. Returns thread ids, subjects, senders, dates and snippets.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "query": {
+      "type": "string",
+      "description": "A Gmail search query"
+     },
+     "max_results": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "query"
+    ]
+   }
+  },
+  {
+   "name": "get_thread",
+   "description": "Read one Gmail thread's messages by its id.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "thread_id": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "thread_id"
+    ]
+   }
+  }
+ ]
+}

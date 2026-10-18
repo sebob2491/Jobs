@@ -1,0 +1,12 @@
+{
+ "id": "t-interview-45",
+ "messages": [
+  {
+   "from": "Riley Example <recruiting@examplewafer.example>",
+   "to": "jordan.sample@example.com",
+   "date": "2026-10-16T14:40:00-07:00",
+   "subject": "Phone screen: Facilities Technician",
+   "body": "Hi Jordan, thanks for applying for the Facilities Technician role at Example Wafer Works. Our facilities maintenance manager, Sam Example, would like a 30-minute phone screen on Thursday, October 22, 2026 at 10:00 AM Central. He will call you at the number on your application. Please reply to confirm the time."
+  }
+ ]
+}

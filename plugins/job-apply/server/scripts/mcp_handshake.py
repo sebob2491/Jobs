@@ -16,6 +16,10 @@ runs `job-apply-doctor --json` there, as the one-step installer does: on a clean
 no job-apply folder, profile or resume yet (and, on Windows, that UV_PYTHON_INSTALL_DIR isn't set, which the
 installer sets), each a problem by design until setup, so it exits 1 then.
 
+--save-tools PATH also writes the tools/list answer ({"tools": [{name, description, inputSchema}]}, by name) to PATH:
+the skills evals' mocks read it (plugins/job-apply/evals/mocks/job-apply/_tools.json), so the stand-in server shows
+Claude the real tools' descriptions and arguments.
+
 Exits 0 when all is well, 1 with the reason otherwise (a server that won't start, a timeout, a tool missing). The
 server is always stopped: its input closed, then terminated, then killed.
 """
@@ -193,8 +197,9 @@ class Server:
 
 
 def handshake(plugin_root: Path, env: dict[str, str], timeout: float, mcp_json: Path | None = None,
-              server_py: Path | None = None) -> list[str]:
-    """Start the server as .mcp.json says, list its tools and check them. Returns the tool names."""
+              server_py: Path | None = None, save_tools: Path | None = None) -> list[str]:
+    """Start the server as .mcp.json says, list its tools and check them. Returns the tool names. With `save_tools`,
+    the tools as listed (name, description, inputSchema; by name) are written there too."""
     cmd, extra = server_command(plugin_root, mcp_json)
     expected = expected_tools(server_py or plugin_root / "server" / "src" / "job_apply" / "server.py")
     if len(expected) < 10:
@@ -233,6 +238,9 @@ def handshake(plugin_root: Path, env: dict[str, str], timeout: float, mcp_json: 
             raise Failed(f"tools/list doesn't match server.py's @tool functions: missing {missing}, "
                          f"not in server.py {extra_tools}, {len(names)} listed")
         print(f"tools/list: {len(names)} tools, as server.py registers them", flush=True)
+        if save_tools is not None:
+            write_tools(save_tools, listed.get("tools", []))
+            print(f"Saved the tools to {save_tools}", flush=True)
         return names
     except Failed as e:
         server.stop()
@@ -240,6 +248,15 @@ def handshake(plugin_root: Path, env: dict[str, str], timeout: float, mcp_json: 
         raise Failed(f"{e}" + (f"\nThe server's stderr (last lines):\n{tail}" if tail else "")) from None
     finally:
         server.stop()
+
+
+def write_tools(path: Path, tools: list[Any]) -> None:
+    """A tools/list answer as the evals' mocks read it (`_tools.json`): each tool's name, description and inputSchema,
+    by name, so a change shows in a diff as that tool's lines."""
+    keep = [{k: t[k] for k in ("name", "description", "inputSchema") if k in t} for t in tools if isinstance(t, dict)]
+    keep.sort(key=lambda t: str(t.get("name")))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"tools": keep}, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def install(env: dict[str, str], marketplace: Path) -> Path:
@@ -304,6 +321,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="first install the plugin from this checkout's marketplace with the claude CLI, and "
                              "check the installed copy")
     parser.add_argument("--doctor", action="store_true", help="then run job-apply-doctor --json and check its report")
+    parser.add_argument("--save-tools", type=Path, metavar="PATH",
+                        help="also write the tools/list answer there (the skills evals' mocks/job-apply/_tools.json)")
     parser.add_argument("--timeout", type=float, default=300.0,
                         help="seconds for the server to start and list its tools (the first start installs its "
                              "packages)")
@@ -316,7 +335,8 @@ def main(argv: list[str] | None = None) -> int:
         env = clean_env(Path(temp))
         try:
             root = install(env, MARKETPLACE) if args.install else args.plugin_root.resolve()
-            handshake(root, env, args.timeout, args.mcp_json)
+            handshake(root, env, args.timeout, args.mcp_json,
+                      save_tools=args.save_tools.resolve() if args.save_tools else None)
             if args.doctor:
                 doctor(root, env)
         except (Failed, subprocess.TimeoutExpired, OSError) as e:

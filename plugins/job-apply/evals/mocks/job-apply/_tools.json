@@ -1,0 +1,941 @@
+{
+ "tools": [
+  {
+   "name": "add_entries",
+   "description": "Create the repeated blocks for work history or education before filling them.\n\n    section is \"work\" or \"education\". Clicks the section's Add / Add Another button until\n    there is one numbered block (\"Work Experience 1\", \"Education 1\"…) per entry in the\n    profile's work_history / education_history (or `count`). Then call autofill, which\n    fills each block from the matching profile entry.",
+   "inputSchema": {
+    "properties": {
+     "section": {
+      "title": "Section",
+      "type": "string"
+     },
+     "count": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Count"
+     }
+    },
+    "required": [
+     "section"
+    ],
+    "type": "object",
+    "title": "add_entriesArguments"
+   }
+  },
+  {
+   "name": "add_job",
+   "description": "Save a job from details you already have (e.g. from the Indeed connector or text the\n    user pasted) when ingest_job can't read the page.",
+   "inputSchema": {
+    "properties": {
+     "url": {
+      "title": "Url",
+      "type": "string"
+     },
+     "title": {
+      "title": "Title",
+      "type": "string"
+     },
+     "company": {
+      "title": "Company",
+      "type": "string"
+     },
+     "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+     },
+     "location": {
+      "default": "",
+      "title": "Location",
+      "type": "string"
+     },
+     "apply_url": {
+      "default": "",
+      "title": "Apply Url",
+      "type": "string"
+     },
+     "salary": {
+      "default": "",
+      "title": "Salary",
+      "type": "string"
+     },
+     "source": {
+      "default": "",
+      "title": "Source",
+      "type": "string"
+     }
+    },
+    "required": [
+     "url",
+     "title",
+     "company"
+    ],
+    "type": "object",
+    "title": "add_jobArguments"
+   }
+  },
+  {
+   "name": "autofill",
+   "description": "Fill every field on the current page that the profile answers with confidence\n    (contact details, address, work authorization, sponsorship, EEO choices, resume upload,\n    saved answers). Returns what was filled and the fields still needing a decision —\n    draft those from the profile/resume and confirm anything subjective with the user.\n    `refresh`: on an application saved earlier (a draft), also put the profile's answer into\n    boxes that show a different one (never a box the profile doesn't answer, nor one holding\n    the user's own saved answer, nor the ids in `keep`); those are marked \"refreshed\".",
+   "inputSchema": {
+    "properties": {
+     "job_id": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Job Id"
+     },
+     "overwrite": {
+      "default": false,
+      "title": "Overwrite",
+      "type": "boolean"
+     },
+     "redo": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Redo"
+     },
+     "refresh": {
+      "default": false,
+      "title": "Refresh",
+      "type": "boolean"
+     },
+     "keep": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Keep"
+     }
+    },
+    "type": "object",
+    "title": "autofillArguments"
+   }
+  },
+  {
+   "name": "click",
+   "description": "Click a button/link by its id from inspect_form, or by visible text (\"Next\",\n    \"Save and Continue\", \"Apply\", \"Easy Apply\", \"Add\"). Refuses final submit buttons —\n    those go through submit_application. Returns a summary of the resulting page.",
+   "inputSchema": {
+    "properties": {
+     "target": {
+      "title": "Target",
+      "type": "string"
+     }
+    },
+    "required": [
+     "target"
+    ],
+    "type": "object",
+    "title": "clickArguments"
+   }
+  },
+  {
+   "name": "close_browser",
+   "description": "Close the automation browser (sign-ins are kept in the profile for next time).",
+   "inputSchema": {
+    "properties": {},
+    "type": "object",
+    "title": "close_browserArguments"
+   }
+  },
+  {
+   "name": "common_questions",
+   "description": "The common questions most applications ask that a profile doesn't answer (how they heard of jobs, desired\n    pay, start date, shifts, relocating...), as the Job Desk's \"Common questions\" card asks them: each with its\n    id, the question to ask the person (`ask`), its `kind` (\"choice\", with its `choices`, or \"text\") and their\n    `answer` so far. Ask the unanswered in setup, the choices with AskUserQuestion.\n\n    answers: the person's answers to keep, [{\"id\": \"shift\", \"answer\": \"Nights\"}]: each fills every wording of its\n    question at every employer (kept in ~/.job-apply/answers.yaml); an empty answer takes one out. Only what the\n    person said: never a guess. One that isn't among its question's choices is turned away (`errors`).",
+   "inputSchema": {
+    "properties": {
+     "answers": {
+      "anyOf": [
+       {
+        "items": {
+         "additionalProperties": true,
+         "type": "object"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Answers"
+     }
+    },
+    "type": "object",
+    "title": "common_questionsArguments"
+   }
+  },
+  {
+   "name": "debug_snapshot",
+   "description": "Save the current page (HTML of every frame, full screenshot, extracted fields) to the\n    job's debug folder. Use it when a page behaves unexpectedly — a field that won't fill,\n    a button that does nothing, a missed label — so the case can become a regression test\n    (see the README's \"Turning a failure into a test\").",
+   "inputSchema": {
+    "properties": {
+     "note": {
+      "default": "",
+      "title": "Note",
+      "type": "string"
+     }
+    },
+    "type": "object",
+    "title": "debug_snapshotArguments"
+   }
+  },
+  {
+   "name": "desk_history",
+   "description": "How the Job Desk's last `days` days went (its \"This week\" window), from the line it\n    writes in ~/.job-apply/runs.jsonl each time it's done with a job for now (the desk\n    needn't be open): jobs filled up to their review page (`reviewed`, ones the desk sent\n    included), sent by the desk (`submitted`), marked as applied by the user or found\n    already applied (`marked`), `failed`, `skipped`, passes cut short by the desk stopping\n    (`stopped`), its stops for the user by kind (`pauses`: questions, sign_in, bot_check,\n    email_code, ...), the time with the desk (`minutes` in all and `median_minutes` a job:\n    waits for sites and the inbox included, and jobs filled at once overlap, so it's more\n    than the work itself), the employers it stopped at most (`stops`, with the kind of\n    stop), and its newest `recent` lines, newest first (each with the job, when it began and\n    ended, its minutes, how it ended and why, the steps it went through, the desk's rounds\n    that took the user to it and their Resumes). `any` is false when there's no history\n    yet. Use it for \"how did this week go?\".",
+   "inputSchema": {
+    "properties": {
+     "days": {
+      "default": 7,
+      "title": "Days",
+      "type": "integer"
+     },
+     "recent": {
+      "default": 20,
+      "title": "Recent",
+      "type": "integer"
+     }
+    },
+    "type": "object",
+    "title": "desk_historyArguments"
+   }
+  },
+  {
+   "name": "doctor",
+   "description": "Check this computer's setup for the plugin, as the `job-apply-doctor` command does:\n    Python, uv, the plugin's version and whether a newer one is out, the browser, ~/.job-apply,\n    the profile and the resume, and on Windows UV_PYTHON_INSTALL_DIR. Each check is ok, a\n    problem (with what to do about it), advice, or skipped; `ok` is false when something\n    needed is missing. Run it when something seems broken, and pass on its fixes in plain\n    words. launch_browser=True also starts the browser, out of sight, to be sure it opens.\n    It changes nothing.",
+   "inputSchema": {
+    "properties": {
+     "launch_browser": {
+      "default": false,
+      "title": "Launch Browser",
+      "type": "boolean"
+     }
+    },
+    "type": "object",
+    "title": "doctorArguments"
+   }
+  },
+  {
+   "name": "export_jobs_csv",
+   "description": "Write every tracked job to a CSV (default ~/.job-apply/applications.csv) for a spreadsheet.",
+   "inputSchema": {
+    "properties": {
+     "path": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Path"
+     }
+    },
+    "type": "object",
+    "title": "export_jobs_csvArguments"
+   }
+  },
+  {
+   "name": "fill_form",
+   "description": "Fill specific fields: values = [{\"id\": \"12\", \"value\": \"...\"}]. Ids come from\n    inspect_form/autofill. Options are matched loosely (\"Yes\", \"AZ\" -> \"Arizona\"). For\n    checkbox_group pass a list. For file fields pass a local file path.",
+   "inputSchema": {
+    "properties": {
+     "values": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Values",
+      "type": "array"
+     }
+    },
+    "required": [
+     "values"
+    ],
+    "type": "object",
+    "title": "fill_formArguments"
+   }
+  },
+  {
+   "name": "fill_secret",
+   "description": "Type a stored secret (e.g. a career-site password) into a field without the value\n    passing through the conversation. Secrets come from env JOB_APPLY_SECRET_<NAME> or\n    ~/.job-apply/secrets.yaml. A system's password (workday_password) goes only onto that\n    system's sites; one named for a site (linkedin_password, or the safer linkedin_com_password)\n    only onto that site's own domain, or its tenant on a shared job system (honeywell_password\n    on honeywell.wd5.myworkdayjobs.com).",
+   "inputSchema": {
+    "properties": {
+     "field_id": {
+      "title": "Field Id",
+      "type": "string"
+     },
+     "secret_name": {
+      "title": "Secret Name",
+      "type": "string"
+     }
+    },
+    "required": [
+     "field_id",
+     "secret_name"
+    ],
+    "type": "object",
+    "title": "fill_secretArguments"
+   }
+  },
+  {
+   "name": "forget_saved_pages",
+   "description": "Delete the pages saved of the person's applications: each job folder's debug/ (the pages saved to look into a\n    stop) and its screenshot-*.jpg (the screenshot tool's), and the problem reports' pages and report.zip; one job's\n    with job_id, else every job's and the home's own debug/. They hold each frame's HTML or a picture of the page as\n    it was, the person's details on it among them. What stays: the pictures of a page before and after its Submit (the\n    record of what was sent), a report's text, and everything else in the folders.",
+   "inputSchema": {
+    "properties": {
+     "job_id": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Job Id"
+     }
+    },
+    "type": "object",
+    "title": "forget_saved_pagesArguments"
+   }
+  },
+  {
+   "name": "get_job",
+   "description": "Full record for one job, including description and status history. One the user\n    marked Not interested on the Job Desk has `not_interested: true` and\n    `not_interested_reason`: ask before applying to it.",
+   "inputSchema": {
+    "properties": {
+     "job_id": {
+      "title": "Job Id",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "job_id"
+    ],
+    "type": "object",
+    "title": "get_jobArguments"
+   }
+  },
+  {
+   "name": "get_profile",
+   "description": "Return the applicant profile (~/.job-apply/profile.yaml) used to answer forms.\n    Edit that file directly to change answers.",
+   "inputSchema": {
+    "properties": {},
+    "type": "object",
+    "title": "get_profileArguments"
+   }
+  },
+  {
+   "name": "ingest_job",
+   "description": "Fetch a job posting (LinkedIn, Indeed, Workday, Greenhouse, Lever, any careers page),\n    parse title/company/location/description/ATS, and save it to the tracker.\n\n    Plain HTTP is tried first. LinkedIn and Indeed usually refuse that; pass\n    use_browser=true to read the page through the user's signed-in browser instead.\n    Returns the job record including its full description.",
+   "inputSchema": {
+    "properties": {
+     "url": {
+      "title": "Url",
+      "type": "string"
+     },
+     "use_browser": {
+      "default": false,
+      "title": "Use Browser",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "url"
+    ],
+    "type": "object",
+    "title": "ingest_jobArguments"
+   }
+  },
+  {
+   "name": "inspect_form",
+   "description": "List the fields and buttons on the current page (all frames). Each field has an id,\n    kind (text, textarea, select, listbox, combobox, radio_group, checkbox_group, checkbox,\n    file, password), label, required flag, options and current value. Buttons are listed\n    under `actions`; is_submit marks the final submit button. A CAPTCHA on show is said\n    under `captcha` (its own frame isn't listed): it's the user's to solve. A dialog open over\n    the page (a notice to answer first) is listed under `dialogs` with its buttons; nothing is\n    filled behind one. `busy` says a loading indicator is on show (the step isn't drawn yet: look\n    again in a moment). Ids stay valid until the page changes; call this again after navigating.",
+   "inputSchema": {
+    "properties": {
+     "include_dropdown_options": {
+      "default": true,
+      "title": "Include Dropdown Options",
+      "type": "boolean"
+     }
+    },
+    "type": "object",
+    "title": "inspect_formArguments"
+   }
+  },
+  {
+   "name": "list_jobs",
+   "description": "List tracked jobs, newest activity first. status is one of:\n    saved, in_progress, ready_to_submit, applied, interviewing, offer, rejected, withdrawn, skipped.\n\n    A job sent in (ready_to_submit and after) also has `last_heard`, the newest employer\n    email logged for it with log_email (category, day, one-line summary; null for none\n    yet), and `follow_up_due`: the day a follow-up became due, for one applied to\n    settings.follow_up_days days ago (10 unless the profile says) or more with no email\n    logged, not even a confirmation; null otherwise. The Job Desk's My applications\n    marks those \"Follow up?\".\n\n    A job the user marked Not interested on the Job Desk has `not_interested: true` and\n    `not_interested_reason` (title, company, location, pay, other, or \"\" for none): ask\n    before applying to it.\n\n    A job whose pay is listed has `pay` (\"$26–$28/hr (≈$54k–$58k/yr)\") and `pay_yearly` (the most it pays a year;\n    for \"from $X\", X a year). min_pay (dollars a year; hourly pay counts 2,080 hours) leaves out a job whose pay is\n    listed on its pay line (or in its own data) and below it; a job that doesn't list its pay, or whose pay is only\n    read from its words, stays. Up to `limit` jobs either way.",
+   "inputSchema": {
+    "properties": {
+     "status": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Status"
+     },
+     "company": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Company"
+     },
+     "limit": {
+      "default": 50,
+      "title": "Limit",
+      "type": "integer"
+     },
+     "min_pay": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Min Pay"
+     }
+    },
+    "type": "object",
+    "title": "list_jobsArguments"
+   }
+  },
+  {
+   "name": "log_email",
+   "description": "Record an employer's email about an application and update its status.\n\n    category: confirmation, assessment, interview, offer, rejection or other.\n    thread_id is the Gmail thread id, and received_at the date of the message: the same\n    message is never counted twice (already_logged=true), while a later one in the same\n    thread (a rejection under the confirmation) is. Status only moves forward\n    (applied -> interviewing -> offer); a rejection sets rejected unless there's already\n    an offer.",
+   "inputSchema": {
+    "properties": {
+     "job_id": {
+      "title": "Job Id",
+      "type": "integer"
+     },
+     "thread_id": {
+      "title": "Thread Id",
+      "type": "string"
+     },
+     "category": {
+      "title": "Category",
+      "type": "string"
+     },
+     "summary": {
+      "default": "",
+      "title": "Summary",
+      "type": "string"
+     },
+     "received_at": {
+      "default": "",
+      "title": "Received At",
+      "type": "string"
+     }
+    },
+    "required": [
+     "job_id",
+     "thread_id",
+     "category"
+    ],
+    "type": "object",
+    "title": "log_emailArguments"
+   }
+  },
+  {
+   "name": "logged_emails",
+   "description": "Gmail threads already recorded with log_email, with the date of the message logged\n    (received_at), so a status check can skip them unless a newer message has arrived.",
+   "inputSchema": {
+    "properties": {
+     "since_days": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": 90,
+      "title": "Since Days"
+     }
+    },
+    "type": "object",
+    "title": "logged_emailsArguments"
+   }
+  },
+  {
+   "name": "open_application",
+   "description": "Open a job's application (or its posting page, when there is no separate apply URL)\n    in the visible browser and make it the current job. Returns a summary of the page:\n    headings, number of fields, buttons and errors.\n\n    Next steps are usually click(\"Apply\") / click(\"Easy Apply\"), then autofill().\n    `maybe_same`, when present: this job may be one already started or applied to on\n    another site (an Indeed job and the employer's posting kept apart). Ask the person\n    before applying. `not_interested`, when present: the person marked this job Not\n    interested on the Job Desk. Ask before applying.",
+   "inputSchema": {
+    "properties": {
+     "job_id": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Job Id"
+     },
+     "url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Url"
+     }
+    },
+    "type": "object",
+    "title": "open_applicationArguments"
+   }
+  },
+  {
+   "name": "open_job_desk",
+   "description": "Open the Job Desk: a page on this computer that lists recommended openings from\n    every employer, ranked against the profile, and applies to the ones the user picks\n    with one button. It fills each application in the automation browser up to its\n    review page, pauses for anything that needs the user (questions it can't answer,\n    sign-ins, bot checks, emailed codes), and submits only when they press Submit or turn\n    on \"Submit for me\". Returns the page's address; it stays up while Claude Code runs.",
+   "inputSchema": {
+    "properties": {
+     "open_browser": {
+      "default": true,
+      "title": "Open Browser",
+      "type": "boolean"
+     }
+    },
+    "type": "object",
+    "title": "open_job_deskArguments"
+   }
+  },
+  {
+   "name": "page_text",
+   "description": "Visible text of the current tab, for reading instructions, errors or a confirmation page.",
+   "inputSchema": {
+    "properties": {
+     "max_chars": {
+      "default": 8000,
+      "title": "Max Chars",
+      "type": "integer"
+     }
+    },
+    "type": "object",
+    "title": "page_textArguments"
+   }
+  },
+  {
+   "name": "render_document",
+   "description": "Turn a tailored resume or cover letter written in Markdown into a PDF in the job's\n    folder. autofill uploads it there ahead of the profile's default documents.\n    With default=true (no job), it writes the user's default document into ~/.job-apply\n    instead, for setup; then point documents.resume / documents.cover_letter at it.\n\n    kind: \"resume\" or \"cover_letter\".\n    Resume layout: `# Full Name`, a contact line, `## Section` headings,\n    `### Job Title — Company, City *Mar 2021 – Present*` (the *italic* dates sit on the\n    right) and bullet lists. Cover letter: `# Full Name`, a contact line, then paragraphs.\n    Only reorder, trim and rephrase what the user's real resume says.",
+   "inputSchema": {
+    "properties": {
+     "kind": {
+      "title": "Kind",
+      "type": "string"
+     },
+     "markdown": {
+      "title": "Markdown",
+      "type": "string"
+     },
+     "job_id": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Job Id"
+     },
+     "default": {
+      "type": "boolean",
+      "default": false,
+      "title": "Default"
+     }
+    },
+    "required": [
+     "kind",
+     "markdown"
+    ],
+    "type": "object",
+    "title": "render_documentArguments"
+   }
+  },
+  {
+   "name": "report_problem",
+   "description": "Write a problem report for a job that went wrong: what the Job Desk did and the fields\n    of the pages it saved (the page it stopped on among them), with the person's details taken\n    out (no screenshots). Show the user `preview`, all of it, before anything else, and say the\n    issue will be public and shows which job they applied for, unless it's anonymous. Only with\n    their OK, give them `issue_url` to open (a new issue on the plugin's public GitHub repository\n    with that text). Never file it without their OK. `zip` also holds the saved pages, scrubbed\n    but possibly still showing their answers: it stays on their computer, and never goes on the\n    public issue.\n\n    anonymous=True says the job by its job system alone (\"a Workday employer\") and the step it\n    stopped at: the employer, the job's title, its addresses and its requisition number are left\n    out of the issue's title, its text and the saved pages. Offer it when the user would rather\n    not show which job they applied for.",
+   "inputSchema": {
+    "properties": {
+     "job_id": {
+      "title": "Job Id",
+      "type": "integer"
+     },
+     "anonymous": {
+      "default": false,
+      "title": "Anonymous",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "job_id"
+    ],
+    "type": "object",
+    "title": "report_problemArguments"
+   }
+  },
+  {
+   "name": "screenshot",
+   "description": "Screenshot of the current browser tab (JPEG). Use it to check tricky widgets and to\n    show the user the review page before submitting. Saved into the job's folder too.",
+   "inputSchema": {
+    "properties": {
+     "full_page": {
+      "default": false,
+      "title": "Full Page",
+      "type": "boolean"
+     },
+     "job_id": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Job Id"
+     }
+    },
+    "type": "object",
+    "title": "screenshotArguments"
+   }
+  },
+  {
+   "name": "search_area",
+   "description": "What and where Find jobs (and search_company_jobs) looks: the job titles the person wants (`titles`; the first\n    `searched_titles` are searched, and all of them count toward an opening's fit; none, `default_titles`), the places\n    they want work in (`places`, each a city and state: [\"Phoenix, AZ\", \"Las Vegas, NV\"]; their states are searched)\n    and the plugin's employer lists to search (`lists`; `choices` names them all, with what each covers and how many\n    employers). The Job Desk's What and where to search window changes the same. With no arguments it only says\n    what they are now.\n\n    titles: the job titles, replacing the ones there (kept in profile.yaml's preferences.titles), one title each.\n    places: the places, replacing the ones there (kept in profile.yaml's preferences.locations).\n    lists: the lists' names, replacing the ones there (kept in ~/.job-apply/companies.yaml's `lists:`, which is made\n    when the person has none; their own employers in it stay). Only what the person asked for.",
+   "inputSchema": {
+    "properties": {
+     "places": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Places"
+     },
+     "lists": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Lists"
+     },
+     "titles": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Titles"
+     }
+    },
+    "type": "object",
+    "title": "search_areaArguments"
+   }
+  },
+  {
+   "name": "search_company_jobs",
+   "description": "Search employers' own careers sites for openings through their applicant tracking\n    system's public search: Workday, Greenhouse, Lever, Eightfold, SmartRecruiters, Oracle,\n    ApplicantStack, Taleo, Talemetry, iCIMS Jibe, Jobvite, Cornerstone, Phenom, amazon.jobs and Phoenix\n    Children's own site. ASML's site, iCIMS portals, Paycom and UKG Pro boards and SuccessFactors'\n    newer search (Edwards) and older career sites (Amkor) and Infor CloudSuite boards (Benchmark)\n    are read in a background browser tab.\n\n    query: keywords; separate alternatives with \"|\", e.g. \"field service | equipment engineer\".\n    companies: names from the plugin's companies list (default: all of them).\n    location: state code/name or city alternatives (\"AZ\", \"Phoenix|Chandler\"); null for anywhere.\n    Results already in the tracker carry `tracked`. Companies in `browser_only` have no\n    search the plugin can use, and some turn automated browsers away: give the user their\n    careers_url to search in their own browser.\n    every_list: every plugin list's employers too, not only the person's (the desk's troubleshooting).\n    min_pay: dollars a year (hourly pay counts 2,080 hours): leaves out an opening whose pay is listed (by its\n    site's list, or its job in the tracker) on its pay line or in its own data, and the most it pays is below this\n    (pay only read from a posting's other words never leaves one out). Most lists don't give pay: those openings\n    stay, with no `pay` (read the posting, or ingest_job, for it). Results with pay carry `pay`.\n    posted_within_days: leaves out openings posted longer ago (7, 14, 30...); one whose site gives no date stays\n    (ApplicantStack, Talemetry, Jobvite, Avature and a few others never do). `below_min_pay` counts what min_pay left\n    out.",
+   "inputSchema": {
+    "properties": {
+     "query": {
+      "title": "Query",
+      "type": "string"
+     },
+     "companies": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Companies"
+     },
+     "location": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": "AZ",
+      "title": "Location"
+     },
+     "limit_per_company": {
+      "default": 20,
+      "title": "Limit Per Company",
+      "type": "integer"
+     },
+     "every_list": {
+      "default": false,
+      "title": "Every List",
+      "type": "boolean"
+     },
+     "min_pay": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Min Pay"
+     },
+     "posted_within_days": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Posted Within Days"
+     }
+    },
+    "required": [
+     "query"
+    ],
+    "type": "object",
+    "title": "search_company_jobsArguments"
+   }
+  },
+  {
+   "name": "setup_status",
+   "description": "Check what the plugin needs before it can apply: profile fields, resume file,\n    browser. Creates ~/.job-apply and a profile template on first run.",
+   "inputSchema": {
+    "properties": {},
+    "type": "object",
+    "title": "setup_statusArguments"
+   }
+  },
+  {
+   "name": "submit_application",
+   "description": "Click the final Submit button on the current page and record the result.\n\n    Only call after showing the user the filled review page and they said to submit\n    (user_confirmed=true), or when settings.submit_mode is \"auto\" for this ATS.\n    On LinkedIn and Indeed this never clicks: it marks the job ready_to_submit and\n    the user clicks Submit in the browser; then call update_job(status=\"applied\").\n    A job that may be one already started or applied to on another site (`maybe_same`\n    from open_application), or one the user marked Not interested on the Job Desk\n    (`not_interested`), is never pressed without user_confirmed=true.",
+   "inputSchema": {
+    "properties": {
+     "job_id": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Job Id"
+     },
+     "user_confirmed": {
+      "default": false,
+      "title": "User Confirmed",
+      "type": "boolean"
+     }
+    },
+    "type": "object",
+    "title": "submit_applicationArguments"
+   }
+  },
+  {
+   "name": "tabs",
+   "description": "List open browser tabs, or switch to tab number `switch_to`.",
+   "inputSchema": {
+    "properties": {
+     "switch_to": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Switch To"
+     }
+    },
+    "type": "object",
+    "title": "tabsArguments"
+   }
+  },
+  {
+   "name": "tailoring_queue",
+   "description": "Jobs the Job Desk is holding until Claude writes a resume tailored to each one (its\n    \"Tailor my resume for each job\" switch is on). For each job, write the resume in\n    Markdown from the user's real resume (base_resume, or resume_file and the profile's\n    work and education history), following `rules`, then call\n    render_document(\"resume\", markdown, job_id). The desk carries on with that job as soon\n    as its PDF is saved.",
+   "inputSchema": {
+    "properties": {},
+    "type": "object",
+    "title": "tailoring_queueArguments"
+   }
+  },
+  {
+   "name": "update_job",
+   "description": "Change a job's status / notes / apply URL. Use status=\"applied\" after the user\n    submits an application themselves. Valid statuses: saved, in_progress,\n    ready_to_submit, applied, interviewing, offer, rejected, withdrawn, skipped.",
+   "inputSchema": {
+    "properties": {
+     "job_id": {
+      "title": "Job Id",
+      "type": "integer"
+     },
+     "status": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Status"
+     },
+     "notes": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Notes"
+     },
+     "apply_url": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Apply Url"
+     },
+     "event_note": {
+      "default": "",
+      "title": "Event Note",
+      "type": "string"
+     }
+    },
+    "required": [
+     "job_id"
+    ],
+    "type": "object",
+    "title": "update_jobArguments"
+   }
+  },
+  {
+   "name": "whats_new",
+   "description": "A morning check: the openings first saved since `since` (a date or time like \"2026-10-17\" or\n    \"2026-10-17T08:00\", or \"12h\", \"3d\"), or since this tool's last call (kept in ~/.job-apply;\n    the last 24 hours at the first call). From the Job Desk's openings (each by when a search\n    first found it) and the jobs saved to the tracker another way (ingest_job, add_job), none\n    begun, sent or skipped, and none the user said Not interested in on the desk; best score\n    first, each with its title, company, location, score (out of 100; `recommended` from 60),\n    address and job number once saved, its pay (\"$26–$28/hr (≈$54k–$58k/yr)\", \"\" when its posting\n    doesn't list it or isn't read yet), `pay_yearly` (the most it pays a year; for \"from $X\",\n    X a year) and `ats`. `summary` lists them in a few lines, and\n    `searched_at` says when the desk last searched. It never searches by itself: for fresh\n    openings, search first (the desk's Find jobs, or search_company_jobs with the find-jobs\n    skill), then call this. Each morning: search, then whats_new.",
+   "inputSchema": {
+    "properties": {
+     "since": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Since"
+     }
+    },
+    "type": "object",
+    "title": "whats_newArguments"
+   }
+  }
+ ]
+}

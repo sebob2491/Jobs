@@ -1,0 +1,23 @@
+{
+ "job": {
+  "id": 12,
+  "title": "Equipment Technician II",
+  "company": "Example Fab Co",
+  "location": "Chandler, AZ",
+  "status": "saved",
+  "ats": "greenhouse",
+  "url": "https://careers.examplefab.example/jobs/4012",
+  "pay": "$27–$32/hr (≈$56k–$67k/yr)",
+  "description": "Example Fab Co is hiring an Equipment Technician II for its Chandler fab. You will perform preventive and corrective maintenance on etch and deposition tools, troubleshoot vacuum, RF and pneumatic systems, and document repairs. Requirements: 3+ years of semiconductor equipment maintenance; able to work in a cleanroom; able to lift 35 lb; 12-hour rotating shifts. Preferred: associate degree in electronics or equivalent experience.",
+  "apply_url": null,
+  "notes": "",
+  "folder": "~/.job-apply/applications/12-example-fab-co"
+ },
+ "history": [
+  {
+   "at": "2026-10-03T09:12:00",
+   "status": "saved",
+   "note": "saved"
+  }
+ ]
+}

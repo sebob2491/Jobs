@@ -80,6 +80,17 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
     measure less two points) fails it, and the 20 functions with the most lines never run go in its summary.
     Raise a floor when a module's tests grow (`--suggest` prints the floors a report would set); a new module
     without one is named, not failed.
+  - Its `evals` job runs the skills evals (`plugins/job-apply/evals`: a case per skill, a case per rule above that
+    Claude itself keeps, one where no skill may fire) with `claude plugin eval` (Claude Code 2.1.302), against
+    mocks of every job-apply tool and a Gmail stand-in (no browser, site or inbox), on the `ANTHROPIC_API_KEY`
+    repository secret: each case once on Sonnet, `--threshold 0.8`, `--max-cost-usd 3`. Without the secret it
+    skips with a notice; the owner sets it once (Settings > Secrets and variables > Actions). Offline,
+    `tests/test_evals.py` checks the cases parse, name a skill, quote their rule as written here, and that the
+    mocks answer exactly server.py's tools: a new tool needs `evals/mocks/job-apply/<tool>.md`, and `_tools.json`
+    refreshed (`uv run --no-project python scripts/mcp_handshake.py --save-tools ../evals/mocks/job-apply/_tools.json`).
+    Run by hand (it spends API credit): `claude plugin eval . --trust-plugin --ablation none --runs 1 --no-publish`
+    from `plugins/job-apply`; the CLI refuses a plugin folder holding hard links, as a `uv sync`'d `server/.venv`
+    does unless made with `UV_LINK_MODE=copy`.
 - Live checks against real employer sites: `uv run python scripts/live_smoke.py`.
   - Add `--pipeline --fake-passwords --parallel 4` to drive the Job Desk pipeline. The full run takes about 6 minutes.
   - Add `--lists phoenix-metro` to check another list, and `--role hr` (or `--role finance`) to look

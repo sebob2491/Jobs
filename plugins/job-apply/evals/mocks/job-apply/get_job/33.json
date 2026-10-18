@@ -1,0 +1,22 @@
+{
+ "job": {
+  "id": 33,
+  "title": "Thin Films Technician",
+  "company": "Example Vacuum Systems",
+  "location": "Tempe, AZ",
+  "status": "saved",
+  "ats": "lever",
+  "url": "https://jobs.examplevacuum.example/thin-films-technician",
+  "description": "Maintain and qualify the Hexa-PVD 300 deposition platform in our Tempe applications lab. Hands-on Hexa-PVD 300 experience strongly preferred. Day shift.",
+  "apply_url": null,
+  "notes": "",
+  "folder": "~/.job-apply/applications/33-example-vacuum-systems"
+ },
+ "history": [
+  {
+   "at": "2026-10-03T09:12:00",
+   "status": "saved",
+   "note": "saved"
+  }
+ ]
+}

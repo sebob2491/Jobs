@@ -1,0 +1,31 @@
+{
+ "job": {
+  "id": 50,
+  "title": "Process Technician",
+  "company": "Example Fab Co",
+  "location": "Chandler, AZ",
+  "status": "applied",
+  "ats": "greenhouse",
+  "url": "https://careers.examplefab.example/jobs/4050",
+  "pay": "$25–$30/hr (≈$52k–$62k/yr)",
+  "applied_at": "2026-10-05",
+  "last_heard": null,
+  "follow_up_due": null,
+  "description": "Run and monitor wafer processing tools on a rotating shift.",
+  "apply_url": null,
+  "notes": "",
+  "folder": "~/.job-apply/applications/50-example-fab-co"
+ },
+ "history": [
+  {
+   "at": "2026-10-03T09:12:00",
+   "status": "saved",
+   "note": "saved"
+  },
+  {
+   "at": "2026-10-05T10:30:00",
+   "status": "applied",
+   "note": "submitted"
+  }
+ ]
+}

@@ -1,0 +1,12 @@
+{
+ "id": "t-confirm-50",
+ "messages": [
+  {
+   "from": "Example Fab Co Recruiting <no-reply@careers.examplefab.example>",
+   "to": "jordan.sample@example.com",
+   "date": "2026-10-05T11:02:00-07:00",
+   "subject": "Thank you for applying: Process Technician",
+   "body": "Hi Jordan, thank you for applying for the Process Technician position (requisition 4050) at Example Fab Co. Our team will review your application and reach out if there is a match."
+  }
+ ]
+}
