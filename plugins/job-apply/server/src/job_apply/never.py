@@ -12,8 +12,8 @@ review's structure list, Oct 18): a word added here reaches every path that read
 Most kinds say what they are wherever they're read (PRECISE). A few hold words that are a sign-up only where one list
 read them before 0.3.208 ("text", "partners", "notified" in the paragraph above a bare "I agree"; "receive" or "future"
 in a Create Account box's own words), and are read only there (the review of 0.3.208: read everywhere, they refused
-"under penalty of perjury", "the text box below", "our background screening partners"). Which kinds a path reads, and
-its exceptions, are said where it reads."""
+"the text box below", "our background screening partners"). Which kinds a path reads, and its exceptions, are said
+where it reads."""
 
 from __future__ import annotations
 
@@ -35,9 +35,6 @@ BOX_WORDS = "more than the terms"
 #   "our background screening partners", "how we share your personal information", "Example Staffing", "keeping your
 #   personal data secure", "the future vacancies we fill")
 PARAGRAPH_WORDS = "a paragraph's sign-up words"
-# - a waiver's words inside other words ("injury", "perjury", "unwaivable"), as the agreements' and notices' own list
-#   read them before 0.3.208: kept there, never read anywhere else
-IN_A_WORD = "waive or jury in another word"
 # - the future roles a person is kept on file for, which a certification names as what false statements cost
 #   ("... may disqualify me from future opportunities"): read in an agreement's or a notice's words, as before
 FUTURE_ROLES = "future roles"
@@ -51,10 +48,12 @@ EMAILS = "emails or updates"
 # lists, word for word, and check each path still refuses them)
 NEVER: dict[str, re.Pattern[str]] = {kind: re.compile(words, re.I | re.S) for kind, words in {
     # a legal waiver, however deep in a notice's words it sits: an arbitration agreement, a jury trial waived, a
-    # non-compete (the review of 0.3.165)
+    # non-compete (the review of 0.3.165). Whole words: the agreements' and notices' own list read "waive" and "jury"
+    # inside any word before 0.3.208, which found only "injury" and "perjury" ("waiver", "waived" begin with it), and
+    # that reach was dropped on purpose (Oct 18): a notice of a work-related injury, or a certification under penalty
+    # of perjury, is no waiver
     "arbitration": r"arbitrat",
     "waiver": r"\bwaive|\bjury\b|non-?compete|non-?solicit",
-    IN_A_WORD: r"waive|jury",
     # the terms of employment, never a site's terms of use: an at-will statement, "the terms and conditions of my
     # employment", an employment agreement (BrassRing's "Employment At Will" step, Edward Jones' run 89)
     "at-will": r"\bat[- ]will\b|\b(?:terms|conditions)\b[^.]{0,30}\bof (?:my |your |this |the )?employment\b|"
@@ -87,7 +86,7 @@ NEVER: dict[str, re.Pattern[str]] = {kind: re.compile(words, re.I | re.S) for ki
 }.items()}
 
 # The kinds whose words say what they are wherever they're read: every path that agrees for the person reads these
-PRECISE = frozenset(NEVER) - {BOX_WORDS, PARAGRAPH_WORDS, IN_A_WORD, FUTURE_ROLES, EMAILS}
+PRECISE = frozenset(NEVER) - {BOX_WORDS, PARAGRAPH_WORDS, FUTURE_ROLES, EMAILS}
 # What a long notice's or page's words are read for wherever in them they sit: a legal waiver, and a sign-up in so many
 # words. The rest of such words name the employer's practices (its affiliates, its marketing, its cookies: APS's privacy
 # statement, live) and the other positions it may suggest (Micron's AI notice, live), so they're read where the notice

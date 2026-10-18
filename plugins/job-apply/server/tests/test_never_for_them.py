@@ -9,7 +9,7 @@ import pytest
 
 from job_apply import config, formjs, pipeline
 from job_apply.autofill import _CONSENT_KINDS, _answer_bank
-from job_apply.never import (ANYWHERE, BOX_WORDS, EMAILS, FUTURE_ROLES, IN_A_WORD, NEVER, PARAGRAPH_WORDS, PRECISE,
+from job_apply.never import (ANYWHERE, BOX_WORDS, EMAILS, FUTURE_ROLES, NEVER, PARAGRAPH_WORDS, PRECISE,
                              _never_for_them)
 
 # One sentence for each kind never agreed to for the person, worded as the tests of each path word theirs, and
@@ -17,7 +17,6 @@ from job_apply.never import (ANYWHERE, BOX_WORDS, EMAILS, FUTURE_ROLES, IN_A_WOR
 SAID = {
     "arbitration": "settle any dispute through binding arbitration",
     "waiver": "waive the right to a trial by jury",
-    IN_A_WORD: "swear to it under penalty of perjury",
     "at-will": "understand that employment with Example Corp is at-will",
     "signs up": "join our Talent Community",
     "newsletter": "get the monthly newsletter",
@@ -36,17 +35,16 @@ SAID = {
     PARAGRAPH_WORDS: "hear from staffing firms",
     BOX_WORDS: "let a third party process my application",
 }
-# (a sign-up in so many words names what it signs up for; a waiver's word is one inside other words too; a box's and a
-# paragraph's own words hold some precise ones' words)
-ALSO = {"signs up": {"talent community"}, "waiver": {IN_A_WORD}, EMAILS: {BOX_WORDS}, FUTURE_ROLES: {BOX_WORDS},
+# (a sign-up in so many words names what it signs up for; a box's and a paragraph's own words hold some precise ones')
+ALSO = {"signs up": {"talent community"}, EMAILS: {BOX_WORDS}, FUTURE_ROLES: {BOX_WORDS},
         "job alerts": {PARAGRAPH_WORDS}, "texts or calls": {PARAGRAPH_WORDS}}
 EVERY = frozenset(NEVER)
 # What each kind of path reads (pipeline.py says why): an agreement's own words or a notice's heading or opening, an
 # attestation's (which reads emails beyond the application too), a Create Account box's own words, the words above a
 # bare "I agree", an attestation's label
-AGREEMENT = PRECISE | {IN_A_WORD, FUTURE_ROLES}
+AGREEMENT = PRECISE | {FUTURE_ROLES}
 ATTESTATION = AGREEMENT | {EMAILS}
-BOX = EVERY - {PARAGRAPH_WORDS, IN_A_WORD}
+BOX = EVERY - {PARAGRAPH_WORDS}
 ABOVE = EVERY - {BOX_WORDS}
 ATTESTED = PRECISE | {EMAILS}
 
@@ -248,6 +246,30 @@ STILL_AGREED = {
 }
 
 
+# A waiver's words inside other words ("injury", "perjury") are no waiver: every path that reads a waiver agrees to
+# them wherever it agrees otherwise (the agreements' and notices' own list read them so before 0.3.208; that reach was
+# dropped on purpose, Oct 18)
+INJURY, PERJURY = "report any work-related injury", "swear to it under penalty of perjury"
+for _path, (_agreed, _refuses) in PATHS.items():
+    if "waiver" in _refuses:
+        STILL_AGREED[f"{_path}: an injury"] = lambda a=_agreed: a(INJURY)
+        STILL_AGREED[f"{_path}: under penalty of perjury"] = lambda a=_agreed: a(PERJURY)
+SWORN = f"{CERTIFY} under penalty of perjury"
+STILL_AGREED.update({
+    "a Yes/No question certified under penalty of perjury": lambda: pipeline._attestation(
+        {"kind": "select", "label": SWORN, "required": True, "options": ["Yes", "No"]}) == "Yes",
+    "a one-choice question certified under penalty of perjury": lambda: pipeline._attestation(
+        {"kind": "combobox", "label": SWORN, "required": True, "options": ["I Agree"]}) == "I Agree",
+    "a lone radio sworn under penalty of perjury": lambda: pipeline._attestation(
+        {"kind": "radio_group", "label": SWORN, "required": True, "options": ["I agree"]}) == "I agree",
+    "a group under a perjury heading": lambda: pipeline._attestation(
+        {"kind": "checkbox_group", "label": "Certified under penalty of perjury", "required": True, "options": GROUP})
+        == [GROUP[0]],
+    "an injury in a privacy notice's opening": lambda: pipeline._terms_notice(
+        POLICY, "This notice covers the records we keep of a work-related injury. " + POLICY_TEXT)[0],
+})
+
+
 @pytest.mark.parametrize("wording", list(STILL_AGREED))
 def test_what_each_path_agreed_to_before_it_still_agrees_to(wording):
     assert STILL_AGREED[wording](), wording
@@ -312,6 +334,8 @@ OLD_LISTS = {
     "_SIGNS_UP": r"\b(?:join\w*|subscrib\w*|sign(?:s|ed|ing)? (?:you )?up|receiv\w*|enrol\w*|added to|"
                  r"opt(?:s|ed)? (?:you )?in)\b.{0,60}?\b(?:talent (?:community|network|pool)|newsletters?|"
                  r"job alerts?|marketing|promotion\w*)",
+    # (its "waive" and "jury" were read inside any word too, which found only "injury" and "perjury": that reach was
+    # dropped on purpose, Oct 18, and the words themselves, "waive", "waiver", "jury", "jury trial", are still refused)
     "_NEVER_AGREED": NOT_TERMS + r"|talent pool|future (?:job |career )?(?:opportunities|openings|roles|"
                      r"positions)|keep (?:my|your) (?:profile|information|data|resume)|retain (?:my|your)|"
                      r"campaigns?|cookie|arbitration|waive|jury|non-?compete|non-?solicit",
@@ -353,7 +377,7 @@ WORDS = [
     "alert", "alerts", "text", "texts", "call", "calls",
     "alerts by email", "email alerts", "notify me", "similar openings", "similar roles", "stay connected",
     "stay in touch",
-    "arbitration", "waive", "jury", "non-compete", "noncompete", "non-solicit", "perjury",
+    "arbitration", "waive", "waiver", "jury", "jury trial", "non-compete", "noncompete", "non-solicit",
     "join our talent community", "subscribe to the newsletter", "sign up for job alerts", "signs you up for marketing",
     "receive promotional", "enroll in the talent pool", "added to our talent network", "opt in to marketing",
     "opts you in to newsletters",

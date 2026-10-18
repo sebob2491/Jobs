@@ -45,8 +45,7 @@ from .autofill import (classes_only, clean_label, degree_kinds_listed, degree_no
                        polarity, tailored_document, works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
                       confirmations, declines_cookies, final_text, may_accept_cookies, questions_shown)
-from .never import (ANYWHERE, CALLS_OR_TEXTS, EMAILS, FUTURE_ROLES, IN_A_WORD, NEVER, PARAGRAPH_WORDS, PRECISE,
-                    _never_for_them)
+from .never import ANYWHERE, CALLS_OR_TEXTS, EMAILS, FUTURE_ROLES, NEVER, PARAGRAPH_WORDS, PRECISE, _never_for_them
 
 NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before calling it a stall
 ONCE_SETTLE = 1.0  # seconds after filling the person's answers before checking they stayed in
@@ -422,15 +421,14 @@ _ATTESTS_ABOVE = re.compile(r"of employment|certif|true and complete|background 
 # The kinds of what's never agreed to (never.py) each path reads: what it read before 0.3.208, and besides only words
 # that are a sign-up or a consent wherever they stand (PRECISE: the review of 0.3.208)
 # - an agreement's own words (_agrees_to_terms, the consent to other positions), a notice's heading and opening, a terms
-#   gate's headings, as the agreements' and notices' own list read them: with a waiver's words inside others and the
-#   future roles kept on file for. Emails beyond the application are an attestation's to read (_ATTESTED_KINDS), as
+#   gate's headings, as the agreements' and notices' own list read them: with the future roles kept on file for. Emails beyond the application are an attestation's to read (_ATTESTED_KINDS), as
 #   before: elsewhere they're said in passing ("you consent to receive communications electronically")
-_AGREEMENT_KINDS = PRECISE | {IN_A_WORD, FUTURE_ROLES}
-# - a Create Account box's own words (_more_than_terms): every kind but a paragraph's and a waiver's inside other words
-_BOX_KINDS = frozenset(NEVER) - {PARAGRAPH_WORDS, IN_A_WORD}
+_AGREEMENT_KINDS = PRECISE | {FUTURE_ROLES}
+# - a Create Account box's own words (_more_than_terms): every kind but a paragraph's
+_BOX_KINDS = frozenset(NEVER) - {PARAGRAPH_WORDS}
 # - the words above a bare "I agree" (_terms_above): an agreement's, a paragraph's sign-up words, and emails less an
 #   account's own (_ACCOUNT_MAIL)
-_ABOVE_KINDS = PRECISE | {PARAGRAPH_WORDS, IN_A_WORD, FUTURE_ROLES}
+_ABOVE_KINDS = PRECISE | {PARAGRAPH_WORDS, FUTURE_ROLES}
 # An email to verify, confirm or activate the account, which a terms paragraph names in passing ("Accept our Terms of
 # Use. You will receive an email to verify your account.", the review's; "You will receive a verification email.", "...
 # an email with a link to activate your account", "... a confirmation email shortly": the review of 0.3.208), and
@@ -652,9 +650,9 @@ _OWN_INFO_TRUE = re.compile(r"\b(?:information|answers?|responses?)\b[^.]{0,80}\
 # and only for the kinds they'd be read as (_PASSING_KINDS): every other kind is read in the whole label
 _ATTESTED_IN_PASSING = re.compile(r"\baffiliat\w*|\boffers? of employment", re.I)
 _PASSING_KINDS = frozenset({"their data shared", "offers"})
-# - an attestation's label: the precise kinds and the emails it may sign up for. Not a waiver's words inside others
-#   ("under penalty of perjury") nor the future opportunities false statements cost ("... may disqualify me from
-#   future opportunities"), which a certification names; an agreement's are _agrees_to_terms's to read, as before
+# - an attestation's label: the precise kinds and the emails it may sign up for. Not the future opportunities false
+#   statements cost ("... may disqualify me from future opportunities"), which a certification names; an agreement's
+#   are _agrees_to_terms's to read, as before
 _ATTESTED_KINDS = PRECISE | {EMAILS}
 # - a group of ticks' own label: a legal waiver and the terms of employment alone, as before ("Privacy and Marketing
 #   Preferences" over its "I accept the privacy notice": the review of 0.3.208); each tick's words are read in full
