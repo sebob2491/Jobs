@@ -1881,12 +1881,13 @@ def test_worked_there_before_only_where_the_profile_names_the_employer_itself():
     employed with Example Fab before?" with Yes, previously, as one name held the other. It's Yes only where a job in the
     profile is at the employer itself, its whole name but for case, punctuation, "The" and its legal words ("Intel
     Corporation" is Intel). A name that only holds the employer's, or is held in it, may be it or not: the question is
-    the person's, never a Yes (nor a No). A name that's neither ("ASM Pacific Technology" for ASM International) is No."""
+    the person's, never a Yes (nor a No). A name that's neither ("Intelligent Fabrication" for Intel) is No."""
     from job_apply.autofill import _same_employer
 
     same = [("Intel Corporation", "Intel"), ("Microchip Technology Inc.", "Microchip Technology"),
             ("The Example Fab Group, Inc.", "example fab"), ("Example Fab, LLC", "EXAMPLE FAB CO."),
-            ("Smith & Sons Holdings", "Smith and Sons"), ("Example Fab Ltd", "Example Fab Corp")]
+            ("Smith & Sons Holdings", "Smith and Sons"), ("Example Fab Ltd", "Example Fab Corp"),
+            ("Wells Fargo & Company", "Wells Fargo")]
     other = [("Example Fab Services", "Example Fab"), ("ASM Pacific Technology", "ASM International"),
              ("Intel", "Intelligent Fabrication"), ("Intel Federal", "Intel"), ("ASM", "ASM Pacific Technology"),
              ("Fab", "Example Fab"), ("", ""), ("Inc", "LLC")]
@@ -1906,7 +1907,7 @@ def test_worked_there_before_only_where_the_profile_names_the_employer_itself():
     assert worked(["Example Fab Services"], "Example Fab") is None  # (was Yes)
     assert worked(["Example Fab"], "Example Fab Services") is None
     assert worked(["Intel"], "Intelligent Fabrication", "Have you ever been employed with Intelligent Fabrication?") == "No"
-    assert worked(["ASM Pacific Technology"], "ASM International", "Have you ever worked for ASM International?") == "No"
+    assert worked(["ASM Pacific Technology"], "ASM International", "Have you ever worked for ASM International?") is None
     assert worked(["Intel"], "Intel Corporation", "Have you previously been employed by Intel?") == "Yes"
     assert worked(["Microchip Technology Inc."], "Microchip Technology",
                   "Have you previously been employed by Microchip?") == "Yes"
@@ -1921,6 +1922,46 @@ def test_worked_there_before_only_where_the_profile_names_the_employer_itself():
     keeps = Profile({"history": {"employee_ids": {"Example Fab": "E1234567"}}})
     assert resolve_field(f("Employee ID (if applicable)"), keeps, {"company": "Example Fab Services"}) is None
     assert resolve_field(f("Employee ID (if applicable)"), keeps, {"company": "Example Fab, Inc."}).value == "E1234567"
+
+
+@pytest.mark.parametrize("ours,theirs,answer", [
+    # may be the same employer: asked, never No (the security review of the framed sign-in)
+    ("ASU", "Arizona State University", None), ("TI", "Texas Instruments", None),
+    ("APS", "Arizona Public Service", None), ("Global Foundries", "GlobalFoundries", None),
+    ("Banner - University Medicine", "Banner Health", None), ("ASM Pacific Technology", "ASM International", None),
+    ("Example Fab Services", "Example Fab", None),
+    # two employers: No
+    ("Intel", "Intelligent Fabrication", "No"), ("Arizona State University", "Arizona Public Service", "No"),
+    ("American Express", "American Airlines", "No"), ("United Airlines", "United Health Group", "No"),
+    ("Example Fab Services", "Example Litho", "No"),
+    # the employer itself: Yes
+    ("Wells Fargo & Company", "Wells Fargo", "Yes"), ("Texas Instruments Incorporated", "Texas Instruments", "Yes"),
+])
+def test_an_employer_whose_name_may_be_this_ones_is_asked_never_answered_no(ours, theirs, answer):
+    """Worked there before, from a profile job at `ours`, for an employer named `theirs`: No only where neither name may
+    be the other's (_may_be_employer: one holding the other, the same but for spaces, one the other's initials, a first
+    word of their own in common, never a state's or a common one). "ASU" for Arizona State University was answered No."""
+    from job_apply.autofill import _may_be_employer, works_there_now
+
+    person = _person(work_history=[{"company": ours, "title": "Technician", "start": "2019-01", "end": "2022-05"}])
+    asked = f"Have you ever been employed by {theirs}?"
+    assert _answer(asked, person, kind="radio_group", options=["Yes", "No"], job={"company": theirs}) == answer
+    assert _may_be_employer(ours, theirs) == _may_be_employer(theirs, ours) == (answer != "No")
+    # a "new candidate, not a current employee" box: never for someone whose job now may be there
+    now = _person(work_history=[], experience={"current_company": ours})
+    assert works_there_now(now, theirs) == (answer != "No")
+
+
+def test_a_current_company_is_an_employer_worked_for():
+    """experience.current_company was left out of the employers worked for: someone at Intel now answered No to "Have
+    you ever been employed by Intel?" and to "Are you a current or former employee?"."""
+    person = _person(work_history=[], experience={"current_company": "Intel"})
+    for asked in ("Have you ever been employed by Intel?", "Are you a current or former employee?"):
+        assert _answer(asked, person, kind="radio_group", options=["Yes", "No"], job={"company": "Intel Corporation"}) \
+            == "Yes", asked
+    asm = ["I am CURRENTLY employed by Intel", "I was PREVIOUSLY employed by Intel", "I have NEVER been employed by Intel"]
+    assert _answer("Have you ever been employed with Intel before?", person, kind="radio_group", options=asm,
+                   job={"company": "Intel"}) == "I am CURRENTLY employed by Intel"
 
 
 def test_an_employee_id_goes_only_on_its_own_employers_forms():

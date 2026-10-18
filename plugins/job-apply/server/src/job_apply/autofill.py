@@ -788,9 +788,25 @@ def _employer_key(name: str) -> str:
     words = norm(name).split()
     if len(words) > 1 and words[0] == "the":
         words = words[1:]
-    while len(words) > 1 and words[-1] in _LEGAL_ENDINGS:
+    while len(words) > 1 and (words[-1] in _LEGAL_ENDINGS or words[-1] == "and"):  # ("Wells Fargo & Company")
         words.pop()
     return " ".join(words)
+
+
+# First words many employers' names share, which don't say two of them may be one: a state's ("Arizona State
+# University", "Arizona Public Service"), and the like ("American", "United", "National", "First", "General")
+_COMMON_FIRST = {name.split()[0] for name in _STATE_BY_NAME} | {
+    "the", "american", "america", "united", "national", "first", "general", "global", "international", "advanced",
+    "applied", "pacific", "western", "eastern", "northern", "southern", "central", "great", "new", "us", "usa", "city",
+    "county", "state", "university", "community", "citizens", "premier", "standard", "universal", "allied", "midwest",
+    "example"}  # (made-up employers' names begin with it: "Example Fab" and "Example Litho" are two)
+
+
+def _initials(key: str) -> set[str]:
+    """A name's initials, with and without its small words ("Arizona State University": asu; "University of Arizona":
+    uoa, ua)."""
+    words = key.split()
+    return {"".join(w[0] for w in words), "".join(w[0] for w in words if w not in ("of", "and", "the", "for", "at"))}
 
 
 def _same_employer(a: str, b: str) -> bool:
@@ -803,11 +819,25 @@ def _same_employer(a: str, b: str) -> bool:
 
 
 def _may_be_employer(a: str, b: str) -> bool:
-    """One name holds the other as whole words ("Example Fab Services" and "Example Fab", "Intel" and "Intel Federal"):
-    perhaps the same employer, perhaps not (not "Intelligent Systems" and Intel). Never said to be another employer's:
-    what says the person never worked there (a No, a "not a current employee" box) isn't said of it either."""
+    """Two names that may be one employer's, or not: the same name (_same_employer); one holding the other as whole words
+    ("Example Fab Services" and "Example Fab", "Intel" and "Intel Federal"); the same but for its spaces ("Global
+    Foundries", "GlobalFoundries"); one the other's initials ("ASU", "Arizona State University"; "TI", "Texas
+    Instruments"); or a first word of their own in common ("Banner - University Medicine", "Banner Health"; never a
+    state's or a common one: "Arizona State University" and "Arizona Public Service" are two). Not "Intelligent
+    Fabrication" and Intel. Never said to be another employer's: what says the person never worked there (a No, a "not
+    a current employee" box) is said only of a name that's none of these."""
     a, b = _employer_key(a), _employer_key(b)
-    return bool(a and b and (re.search(rf"(^| ){re.escape(a)}( |$)", b) or re.search(rf"(^| ){re.escape(b)}( |$)", a)))
+    if not (a and b):
+        return False
+    if re.search(rf"(^| ){re.escape(a)}( |$)", b) or re.search(rf"(^| ){re.escape(b)}( |$)", a):
+        return True
+    if a.replace(" ", "") == b.replace(" ", ""):
+        return True
+    for short, long in ((a, b), (b, a)):
+        if " " not in short and len(short) >= 2 and " " in long and short in _initials(long):
+            return True
+    first = a.split()[0]
+    return first == b.split()[0] and len(first) >= 3 and first not in _COMMON_FIRST
 
 
 def _listed(value: Any) -> list[Any]:
@@ -822,7 +852,7 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     """Has the person worked for this employer before? Only for a question about working
     for this employer: "Have you ever worked in a cleanroom?" and "Have you worked on Lam
     etch tools?" aren't. The answer comes from the employers in the profile, past and present
-    (previous_employers in the profile's history section, and work_history), and says which:
+    (previous_employers in the profile's history section, work_history and experience.current_company), and says which:
     "Yes, previously" picks ASM's "I was PREVIOUSLY employed by ASM", not "I am CURRENTLY employed"."""
     company = norm(job.get("company"))
     if not company:
@@ -849,6 +879,7 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     past = [norm(c) for c in _listed(prof.get("history.previous_employers"))]
     entries = [e for e in _listed(prof.get("work_history")) if isinstance(e, dict)]
     past += [norm(e.get("company")) for e in entries]
+    past += _current_employers(prof)  # (experience.current_company too: someone at Intel now has worked for Intel)
     if not any(_same_employer(c, company) for c in past if c):
         # an employer whose name only holds this one's, or is held in it ("Example Fab Services" for Example Fab): the
         # profile doesn't say whether it's this one, so neither Yes nor No; and "...or any of its subsidiaries or
