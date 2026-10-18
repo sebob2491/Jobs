@@ -7,6 +7,7 @@ import contextlib
 import functools
 import inspect
 import json
+import logging
 import os
 import re
 import shutil
@@ -63,6 +64,10 @@ mcp = MCPServer("job-apply", instructions=INSTRUCTIONS, version=config.plugin_ve
 # failing to start: mcp turns anything else into a bare "Error executing tool <name>".
 _ANTICIPATED = (ValueError, KeyError, OSError, RuntimeError, sqlite3.Error, PlaywrightError, httpx.HTTPError,
                 MailboxError, SiteDown, BrowserUnavailable, SubmitBlocked, FetchError)
+# The failures that are the tool's own words to the person. Any other of those above may be a fault in the code too, so
+# its traceback goes to the server's log as well (mcp logs none for a ToolError: the review of 0.3.210)
+_SAID_AS_MEANT = (ValueError, KeyError, FileNotFoundError, PermissionError, BrowserUnavailable, SubmitBlocked, FetchError)
+_log = logging.getLogger(__name__)
 # The most of a failure's words Claude is handed: its first line (Playwright adds its call log after it)
 _SAID_MAX = 300
 
@@ -105,6 +110,11 @@ def tool(drives: Callable[[dict[str, Any]], bool] | bool = False, **options: Any
         first = said.strip().split("\n", 1)[0].strip() or type(e).__name__
         return first if len(first) <= _SAID_MAX else first[:_SAID_MAX - 1] + "…"
 
+    def said(e: Exception, fn: Any) -> ToolError:
+        if not isinstance(e, _SAID_AS_MEANT):
+            _log.warning("%s failed", getattr(fn, "__name__", "a tool"), exc_info=e)
+        return ToolError(message(e))
+
     def check(kwargs: dict[str, Any]) -> None:
         if drives is True or (callable(drives) and drives(kwargs)):
             busy = _desk_driving()
@@ -120,7 +130,7 @@ def tool(drives: Callable[[dict[str, Any]], bool] | bool = False, **options: Any
                 try:
                     return await fn(*args, **kwargs)
                 except _ANTICIPATED as e:
-                    raise ToolError(message(e)) from e
+                    raise said(e, fn) from e
         else:
             @functools.wraps(fn)
             def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -128,7 +138,7 @@ def tool(drives: Callable[[dict[str, Any]], bool] | bool = False, **options: Any
                 try:
                     return fn(*args, **kwargs)
                 except _ANTICIPATED as e:
-                    raise ToolError(message(e)) from e
+                    raise said(e, fn) from e
         mcp.tool(**options)(wrapper)
         return fn
     return register

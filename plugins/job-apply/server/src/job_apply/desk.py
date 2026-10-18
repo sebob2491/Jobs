@@ -43,7 +43,7 @@ from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .recommend import not_interested_in, recommend, score_listing
 from .search import (MAX_ALTERNATIVES, alternatives, every_employer, load_companies, own_companies_path, search_area,
                      set_search_area)
-from .tracker import APPLICATION_STATUSES, NotInterested, company_key, normalize_url, standing
+from .tracker import APPLICATION_STATUSES, NotInterested, company_key, damaged, normalize_url, standing
 from .updates import UpdateCheck
 
 PAGE = Path(__file__).resolve().parent / "static" / "desk.html"
@@ -1089,6 +1089,7 @@ class Desk:
             # a settings line that does nothing (a typo, a value it can't read), said where the person looks
             "settings_warnings": list(settings.warnings),
             "tracker_problem": tracker_problem,
+            "tracker_damaged": damaged(tracker_problem or ""),
             "tracker_path": str(config.db_path()),
             "version": config.plugin_version(),
             "update": self.updates.notice(),

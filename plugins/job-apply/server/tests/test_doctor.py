@@ -392,3 +392,22 @@ def test_a_list_of_jobs_that_cant_be_read_is_a_problem_said_with_what_to_do(fine
     c = check(report(), "tracker")
     assert c.status == doctor.PROBLEM and "can't be read" in c.say and "tracker.db" in c.fix
     assert config.db_path().read_bytes() == before  # (read only)
+
+
+
+def test_a_list_of_jobs_in_use_is_advice_not_a_problem_to_move(fine, loop, job_apply_home):
+    """The review of 0.3.210: a tracker.db another program is writing (or one with a journal a crash left, which the
+    desk's own open rolls back) was told to be moved aside, which could lose it. That's advice to look again."""
+    import sqlite3
+
+    from job_apply.tracker import Tracker
+
+    Tracker().close()
+    writer = sqlite3.connect(config.db_path())
+    writer.execute("BEGIN EXCLUSIVE")
+    try:
+        c = check(report(), "tracker")
+    finally:
+        writer.rollback()
+        writer.close()
+    assert c.status == doctor.ADVICE and "move" not in c.fix.lower(), (c.status, c.say, c.fix)

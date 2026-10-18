@@ -12,6 +12,7 @@ import difflib
 import json
 import os
 import re
+import time
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -770,6 +771,10 @@ def search_profile_text(places: list[str] | None = None, titles: list[str] | Non
     return path, text
 
 
+# how many times a replace refused on Windows is tried, 0.1 s apart
+REPLACE_TRIES = 5
+
+
 def write_text_atomic(path: Path, text: str) -> None:
     """All or nothing (a crash mid-write can't leave half a file), into the file a link points at, through a
     temporary file of its own (two writers never share one)."""
@@ -780,7 +785,16 @@ def write_text_atomic(path: Path, text: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:  # (on Windows its lines end as Windows writes them)
             f.write(text)
-        os.replace(tmp, target)
+        for attempt in range(REPLACE_TRIES):
+            try:
+                os.replace(tmp, target)
+                break
+            except PermissionError:
+                # Windows refuses to replace a file another program has open at that moment (another session's
+                # desk reading it on its poll): a moment later it's free (the review of 0.3.210)
+                if attempt == REPLACE_TRIES - 1:
+                    raise
+                time.sleep(0.1)
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(tmp)

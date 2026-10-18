@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from job_apply import config
 from job_apply.tracker import Tracker, normalize_url
 
 
@@ -674,6 +675,49 @@ def test_a_tracker_from_an_older_release_is_brought_up_to_date_and_takes_every_w
             or "user_version =" in s] == []
     t.close()
 
+
+
+def test_a_column_a_later_release_adds_is_added_without_raising_the_schema_version(job_apply_home, monkeypatch):
+    """The review of 0.3.210 (HIGH): _migrate looked at the columns only below SCHEMA_VERSION, so a release that
+    added a column to _SCHEMA and, as the comment said, nothing more, left every file at version 1 without it."""
+    from job_apply import tracker
+
+    Tracker().close()  # (at SCHEMA_VERSION)
+    monkeypatch.setattr(tracker, "_SCHEMA", tracker._SCHEMA.replace(
+        "    applied_at TEXT DEFAULT ''\n);", "    applied_at TEXT DEFAULT '',\n    pay_period TEXT DEFAULT ''\n);", 1))
+    t = Tracker()
+    assert "pay_period" in {r[1] for r in t.conn.execute("PRAGMA table_info(jobs)")}
+    t.close()
+
+
+def test_two_sessions_opening_one_old_tracker_add_each_column_once(job_apply_home, monkeypatch):
+    """The review of 0.3.210: the columns were added outside a transaction, so a second session opening the same old
+    file at the same moment failed on "duplicate column name". What's missing is looked at again under the lock."""
+    import sqlite3
+
+    path = config.db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    old = sqlite3.connect(path)
+    old.executescript(_OLD_JOBS)
+    old.close()
+    real = Tracker._missing
+    raced = []
+
+    def missing(self, want):
+        said = real(self, want)
+        if said and not raced:  # (the other session adds them between this look and the lock)
+            raced.append(True)
+            other = sqlite3.connect(path)
+            for alter in said:
+                other.execute(alter)
+            other.commit()
+            other.close()
+        return said
+
+    monkeypatch.setattr(Tracker, "_missing", missing)
+    t = Tracker()
+    assert raced and "applied_at" in {r[1] for r in t.conn.execute("PRAGMA table_info(jobs)")}
+    t.close()
 
 def test_a_repost_or_a_job_board_copy_begun_or_done_is_kept_apart_and_asked_about(job_apply_home):
     """The review of 0.3.206 (HIGH and MEDIUM): an Indeed job saved weeks ago took in the employer's repost (and one

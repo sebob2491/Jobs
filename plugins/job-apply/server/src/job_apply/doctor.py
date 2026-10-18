@@ -24,9 +24,11 @@ import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, TextIO
+from urllib.request import pathname2url
 
 from . import config
 from .browser import _NOT_INSTALLED, launch_attempts
+from .tracker import damaged
 from .updates import UPDATE_COMMANDS, UpdateCheck, newer
 
 OK, PROBLEM, ADVICE, SKIPPED = "ok", "problem", "advice", "skipped"
@@ -364,19 +366,30 @@ def check_tracker() -> Check | None:
     path = config.db_path()
     if not path.exists():
         return None
+    # (a URI the way SQLite takes it, without resolve(): on Windows that turns a mapped drive into a UNC path, which as
+    # a file:// address SQLite refuses for its server name)
+    uri = "file:" + pathname2url(str(path.absolute())) + "?mode=ro"
+    refused = False
     try:
-        conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=5)
+        conn = sqlite3.connect(uri, uri=True, timeout=5)
         try:
-            said = conn.execute("PRAGMA quick_check").fetchone()[0]
+            said = "\n".join(str(r[0]) for r in conn.execute("PRAGMA quick_check"))
         finally:
             conn.close()
     except sqlite3.Error as e:
-        said = str(e)
+        said, refused = str(e), True
     if said == "ok":
         return Check("tracker", OK, "Your list of jobs reads")
-    return Check("tracker", PROBLEM, f"Your list of jobs ({path}) can't be read: {said.splitlines()[0][:200]}",
-                 "Close the Job Desk, move tracker.db somewhere else for safekeeping, and open the desk again: it "
-                 "starts a new list. Your job folders, profile and passwords stay as they are.")
+    first = said.splitlines()[0][:200]
+    # what quick_check found wrong is damage; an open that failed is only if its words say so
+    if refused and not damaged(said):
+        # busy (the desk writing), or a journal a crash left that the desk's own open rolls back: not to be moved
+        return Check("tracker", ADVICE, f"Couldn't check your list of jobs just now: {first}",
+                     "Nothing to do: it may be in use. Run this again with the Job Desk closed to check it.")
+    return Check("tracker", PROBLEM, f"Your list of jobs ({path}) can't be read: {first}",
+                 "Close the Job Desk, move tracker.db (and a tracker.db-journal beside it, if there is one) somewhere "
+                 "else for safekeeping, and open the desk again: it starts a new list. Your job folders, profile and "
+                 "passwords stay as they are.")
 
 def check_profile() -> tuple[config.Profile | None, list[Check]]:
     """The profile as setup_status reads it (config.Profile): its required answers, and, once
