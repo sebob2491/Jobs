@@ -1,46 +1,68 @@
 """The never-list (never.py): every path that agrees, ticks or presses for the person reads one list,
 _never_for_them, so none of them misses a kind another refuses (a review's structure list, Oct 18: each path
-kept a list of its own, and they drifted apart)."""
+kept a list of its own, and they drifted apart). Each path reads what it read before 0.3.208, and besides only
+words that are a sign-up or a consent wherever they stand (the review of 0.3.208)."""
 
 import re
 
 import pytest
 
 from job_apply import config, formjs, pipeline
-from job_apply.autofill import _answer_bank
-from job_apply.never import ANYWHERE, IN_PASSING, NEVER, _never_for_them
+from job_apply.autofill import _CONSENT_KINDS, _answer_bank
+from job_apply.never import (ANYWHERE, BOX_WORDS, EMAILS, FUTURE_ROLES, IN_A_WORD, NEVER, PARAGRAPH_WORDS, PRECISE,
+                             _never_for_them)
 
 # One sentence for each kind never agreed to for the person, worded as the tests of each path word theirs, and
 # without words that agree (each path's own words do that)
 SAID = {
     "arbitration": "settle any dispute through binding arbitration",
     "waiver": "waive the right to a trial by jury",
+    IN_A_WORD: "swear to it under penalty of perjury",
     "at-will": "understand that employment with Example Corp is at-will",
     "signs up": "join our Talent Community",
     "newsletter": "get the monthly newsletter",
     "job alerts": "get job alerts for roles like this one",
     "talent community": "have a place in the Talent Network",
-    "marketing": "get marketing and promotional offers",
-    "emails or updates": "receive email communications from Example Corp",
+    "marketing": "get marketing and promotional material",
+    "offers": "get special offers",
+    EMAILS: "receive email communications from Example Corp",
     "texts or calls": "let Example Corp call or text me",
     "being contacted": "be contacted by recruiters",
     "other roles": "be considered for other open roles",
-    "their data shared": "let Example Corp share my profile with staffing agencies",
+    FUTURE_ROLES: "be kept on file for future job openings",
+    "their data shared": "let Example Corp share my profile",
     "their data kept": "let Example Corp keep my resume on file",
     "cookies": "allow the use of cookies",
-    "more than the terms": "let a third party process my application",
+    PARAGRAPH_WORDS: "hear from staffing firms",
+    BOX_WORDS: "let a third party process my application",
 }
-# (a sign-up in so many words names what it signs up for; receiving emails is a box's word too)
-ALSO = {"signs up": {"talent community"}, "emails or updates": {"more than the terms"}}
+# (a sign-up in so many words names what it signs up for; a waiver's word is one inside other words too; a box's and a
+# paragraph's own words hold some precise ones' words)
+ALSO = {"signs up": {"talent community"}, "waiver": {IN_A_WORD}, EMAILS: {BOX_WORDS}, FUTURE_ROLES: {BOX_WORDS},
+        "job alerts": {PARAGRAPH_WORDS}, "texts or calls": {PARAGRAPH_WORDS}}
 EVERY = frozenset(NEVER)
+# What each kind of path reads (pipeline.py says why): an agreement's own words or a notice's heading or opening, an
+# attestation's (which reads emails beyond the application too), a Create Account box's own words, the words above a
+# bare "I agree", an attestation's label
+AGREEMENT = PRECISE | {IN_A_WORD, FUTURE_ROLES}
+ATTESTATION = AGREEMENT | {EMAILS}
+BOX = EVERY - {PARAGRAPH_WORDS, IN_A_WORD}
+ABOVE = EVERY - {BOX_WORDS}
+ATTESTED = PRECISE | {EMAILS}
 
 
 def test_each_sentence_is_its_own_kind_and_every_kind_has_one():
-    """A kind added to the list gets a sentence here, and every path below is then held to refuse it."""
+    """A kind added to the list gets a sentence here, and every path below is then held to read it or not."""
     assert set(SAID) == set(NEVER)
     for kind, said in SAID.items():
         assert {k for k in NEVER if _never_for_them(said, only={k})} == {kind} | ALSO.get(kind, set()), kind
         assert _never_for_them(said) is not None
+
+
+def test_the_kinds_each_path_reads_are_the_ones_pipeline_says():
+    assert pipeline._AGREEMENT_KINDS == AGREEMENT
+    assert pipeline._BOX_KINDS == BOX and pipeline._ATTESTED_KINDS == ATTESTED
+    assert pipeline._ABOVE_KINDS | {EMAILS} == ABOVE  # (emails less a verification email: _ACCOUNT_MAIL)
 
 
 def _and(words, clause):
@@ -57,7 +79,7 @@ PRIVACY = "I have read and agree to the Privacy Notice and Terms of Use"
 CONSENT = ("By clicking the 'I agree' button below, you are acknowledging you have received and had the opportunity to "
            "review the above Privacy Notice")
 TERMS_BOX = "I agree to the Terms of Use and Privacy Policy"
-ABOVE = "Please review and accept our Terms of Use and Candidate Privacy Policy"
+ABOVE_WORDS = "Please review and accept our Terms of Use and Candidate Privacy Policy"
 OTHER_POSITIONS = "I understand that I may be considered for other open positions in my country"  # Northrop's
 STATEMENT_LINK = "Read and accept the data privacy statement"  # SuccessFactors'
 POLICY = "Privacy Policy of Example Corp"
@@ -83,67 +105,64 @@ def _box(label, **more):
     return {"fields": [{"id": "t", "kind": "checkbox", "label": label, "value": False, "required": True, **more}]}
 
 
+def _attests(kind, label, options=None):
+    return pipeline._attestation({"kind": kind, "label": label, "required": True, "options": options or []}) is not None
+
+
 # Each path's own entry point, given its own words with a sentence of one kind in them (None: its own words alone),
 # says whether the desk would agree, tick or press for the person; and the kinds it refuses. A kind left out is
-# that path's own exception, said where it reads (pipeline.py, autofill.py)
+# that path's own exception, or one its words read only elsewhere, said where it reads (pipeline.py, autofill.py)
 PATHS = {
     # an attestation (settings.accept_notices); an at-will sentence may stand beside the application's own
     # information certified true (the second review of 0.3.170)
-    "attestation: a certification's box": (
-        lambda c: pipeline._attestation({"kind": "checkbox", "label": _and(CERTIFY, c), "required": True}) is not None,
-        EVERY - IN_PASSING - {"at-will"}),
-    "attestation: a privacy agreement's box": (
-        lambda c: pipeline._attestation({"kind": "checkbox", "label": _and(PRIVACY, c), "required": True}) is not None,
-        EVERY - IN_PASSING),
-    "attestation: a lone choice": (
-        lambda c: pipeline._attestation({"kind": "radio_group", "label": CONSENT, "required": True,
-                                         "options": [_and("I agree", c)]}) is not None,
-        EVERY),
+    "attestation: a certification's box": (lambda c: _attests("checkbox", _and(CERTIFY, c)), ATTESTED - {"at-will"}),
+    "attestation: a privacy agreement's box": (lambda c: _attests("checkbox", _and(PRIVACY, c)), ATTESTATION),
+    "attestation: a lone choice": (lambda c: _attests("radio_group", CONSENT, [_and("I agree", c)]), ATTESTATION),
     "attestation: a group's tick": (
-        lambda c: pipeline._attestation({"kind": "checkbox_group", "label": "Consents", "required": True,
-                                         "options": [_and("I accept the privacy notice", c)]}) is not None,
-        EVERY - IN_PASSING),
-    # a Create Account's own boxes (settings.manage_accounts): every kind
-    "a Create Account's terms box": (lambda c: bool(pipeline._terms_boxes(_box(_and(TERMS_BOX, c)))), EVERY),
-    "an email-first site's agreement box": (lambda c: bool(pipeline._consent_boxes(_box(_and(TERMS_BOX, c)))), EVERY),
-    "the words above a bare I agree": (lambda c: pipeline._terms_above(_and(ABOVE, c) + "."), EVERY - IN_PASSING),
+        lambda c: _attests("checkbox_group", "Consents", [_and("I accept the privacy notice", c)]), ATTESTATION),
+    "attestation: a group's own label": (
+        lambda c: _attests("checkbox_group", _and("Consents", c), ["I accept the privacy notice"]),
+        frozenset({"arbitration", "waiver", "at-will"})),
+    # a Create Account's own boxes (settings.manage_accounts)
+    "a Create Account's terms box": (lambda c: bool(pipeline._terms_boxes(_box(_and(TERMS_BOX, c)))), BOX),
+    "an email-first site's agreement box": (lambda c: bool(pipeline._consent_boxes(_box(_and(TERMS_BOX, c)))), BOX),
+    "the words above a bare I agree": (lambda c: pipeline._terms_above(_and(ABOVE_WORDS, c) + "."), ABOVE),
     # (its own words, other roles, are the owner's call, Oct 10)
     "a consent to other positions": (
         lambda c: pipeline._other_positions_consent({"kind": "checkbox", "label": _and(OTHER_POSITIONS, c)}) is not None,
-        EVERY - {"other roles"}),
+        AGREEMENT - {"other roles"}),
     "a Create Account's privacy statement link": (
         lambda c: pipeline._privacy_statement({"actions": [{"id": "a", "text": _and(STATEMENT_LINK, c) + ".",
                                                             "in_account_form": True}]}) is not None,
-        EVERY - IN_PASSING),
+        AGREEMENT),
     "a terms gate, by its headings": (
         lambda c: pipeline._terms_gate({"text": "I Accept"},
                                        {"headings": ["Privacy Agreement" + ("" if c is None else f": you {c}")]}),
-        EVERY - IN_PASSING),
+        AGREEMENT),
     # (a framed gate's page has a sign-up of its own beside it: Schwab's, live, Oct 10)
     "a terms gate, by its page's words": (
         lambda c: pipeline._terms_gate({"text": "I Accept"}, {"headings": ["Privacy Agreement"]},
                                        "Please read our privacy agreement." + _by(c)),
         frozenset({"arbitration", "waiver"})),
     "a privacy notice, by its opening": (
-        lambda c: pipeline._terms_notice(POLICY, (_by(c) + " " + POLICY_TEXT).strip())[0], EVERY - IN_PASSING),
+        lambda c: pipeline._terms_notice(POLICY, (_by(c) + " " + POLICY_TEXT).strip())[0], AGREEMENT),
     # (its long text names its affiliates, marketing and cookies as its practices: APS's, live)
-    "a privacy notice, past its opening": (
-        lambda c: pipeline._terms_notice(POLICY, POLICY_TEXT * 5 + _by(c))[0], ANYWHERE),
+    "a privacy notice, past its opening": (lambda c: pipeline._terms_notice(POLICY, POLICY_TEXT * 5 + _by(c))[0], ANYWHERE),
     "a notice not named for its terms": (
         lambda c: pipeline._terms_notice("Before you apply", "Please read and accept our privacy notice." + _by(c))[0],
-        EVERY - IN_PASSING),
+        AGREEMENT),
     "an AI notice, by its heading": (
         lambda c: pipeline._agreeable_notice(AI_HEADING + ("" if c is None else f": you {c}"), AI_TEXT, False)[0],
-        EVERY - IN_PASSING),
+        AGREEMENT),
     # (its words name the other positions it may suggest: Micron's, live)
     "an AI notice, by its words": (lambda c: pipeline._agreeable_notice(AI_HEADING, AI_TEXT + _by(c), False)[0],
                                    ANYWHERE),
-    # the live check's test identity: a legal notice, the data it's given and other roles are its own to agree to (the
-    # owner's call, Oct 13), but the notice's words are read for a waiver too (the review of Oct 15)
+    # the live check's test identity agrees to what a person's desk leaves to them (the owner's call, Oct 13), never a
+    # sign-up in so many words, nor cookies by its opening; a notice's words are read for a waiver (the review of Oct 15)
     "the test identity's notice": (
         lambda c: pipeline._agreeable_notice(STATEMENT, f"{_by(c).strip()} {STATEMENT_TEXT}".strip(), True)[0],
-        EVERY - IN_PASSING - {"at-will", "other roles", "their data shared", "their data kept"}),
-    "a remembered answer at another employer": (_remembered, EVERY - IN_PASSING),
+        frozenset({"signs up", "cookies", "arbitration", "waiver"})),
+    "a remembered answer at another employer": (_remembered, _CONSENT_KINDS),
     # (a cookie banner's is its own rule's; what else a page's agreement button says is _terms_gate's)
     "a page's agreement button": (
         lambda c: pipeline._agreement_button({"actions": [{"id": "a", "text": _and("I accept", c)}]}) is not None,
@@ -159,11 +178,86 @@ def test_each_path_agrees_to_its_own_words(path):
 
 @pytest.mark.parametrize("kind", list(SAID))
 @pytest.mark.parametrize("path", list(PATHS))
-def test_each_path_refuses_every_kind_never_agreed_to_but_its_own_exceptions(path, kind):
-    """For each kind never agreed to for the person, a sentence of it refused by each path's own entry point (and
-    one a path leaves out by its own exception, said where it reads, still agreed: those are the only ones)."""
+def test_each_path_refuses_every_kind_it_reads_and_only_those(path, kind):
+    """For each kind never agreed to for the person, a sentence of it refused by each path's own entry point that reads
+    that kind (and one a path leaves out, by its own exception or as a kind read only elsewhere, still agreed)."""
     agreed, refuses = PATHS[path]
     assert agreed(SAID[kind]) is (kind not in refuses), (path, kind, SAID[kind])
+
+
+def _gate(headings, text=""):
+    return pipeline._terms_gate({"text": "I Accept"}, {"headings": headings}, text)
+
+
+GROUP = ["I accept the privacy notice", "Send me job alerts"]
+# Wordings each path agreed to before 0.3.208, which a word read on every path refused for a while (the review of
+# 0.3.208): agreed again
+STILL_AGREED = {
+    "a certification under penalty of perjury": lambda: _attests(
+        "checkbox", "I certify under penalty of perjury that the information in this application is true and complete"),
+    "a certification signed in the text box": lambda: _attests(
+        "checkbox", "Electronic signature: by typing my name in the text box below, I certify that the information in "
+                    "this application is true and complete"),
+    "a certification to notify of a change": lambda: _attests(
+        "checkbox", f"{CERTIFY}, and I agree to notify Acme promptly of any change to it"),
+    "a certification that references may be called": lambda: _attests(
+        "checkbox", f"{CERTIFY}, and I understand the company may call my references"),
+    "a background check by screening partners": lambda: _attests(
+        "checkbox", "I authorize Acme and its background screening partners to conduct a background check"),
+    "a privacy agreement with updates about the application": lambda: _attests(
+        "checkbox", "I agree to the privacy policy and to receive updates about my application"),
+    "a lone choice that received the privacy notice": lambda: _attests(
+        "radio_group", "By clicking the 'I agree' button below, you are acknowledging the above Privacy Notice",
+        ["I have received and agree to the Privacy Notice"]),
+    "an injury past a privacy policy's opening": lambda: pipeline._terms_notice(
+        POLICY, POLICY_TEXT * 5 + "We may keep records of a work-related injury.")[0],
+    "an injury in a gate's page": lambda: _gate(["Privacy Agreement"], "Please read our privacy agreement. We may keep "
+                                                                       "records of a work-related injury."),
+    "an injury past a privacy dialog's opening": lambda: pipeline._agreeable_notice(
+        POLICY, POLICY_TEXT * 5 + "We may keep records of a work-related injury.", False)[0],
+    "a privacy policy that says how it shares the information": lambda: pipeline._terms_notice(
+        POLICY, "This notice explains how we collect, use and share your personal information. " + POLICY_TEXT)[0],
+    "a staffing firm's privacy agreement": lambda: pipeline._terms_notice(  # (site/privacy-agreement.html)
+        "Privacy Agreement", "Example Staffing collects the personal information you give in your application to "
+                             "consider you for employment.")[0],
+    "a gate headed Data Privacy Notification": lambda: _gate(["Data Privacy Notification"]),
+    "a gate beside a Stay Connected heading": lambda: _gate(["Privacy Agreement", "Stay Connected"]),
+    "terms above a verification email": lambda: pipeline._terms_above(
+        "Accept our Terms of Use. You will receive a verification email."),
+    "terms above an email to activate the account": lambda: pipeline._terms_above(
+        "Accept our Terms of Use. You will receive an email with a link to activate your account."),
+    "terms above a confirmation email": lambda: pipeline._terms_above(
+        "Accept our Terms of Use. You will receive a confirmation email shortly."),
+    "terms above word of the application's status": lambda: pipeline._terms_above(
+        "Accept our Terms of Use. You will receive information about the status of your application by email."),
+    "terms above an email to verify the account": lambda: pipeline._terms_above(
+        "Accept our Terms of Use. You will receive an email to verify your account."),
+    "a group under Privacy and Marketing Preferences": lambda: pipeline._attestation(
+        {"kind": "checkbox_group", "label": "Privacy and Marketing Preferences", "required": True, "options": GROUP})
+        == [GROUP[0]],
+    "a group under Consents and Notifications": lambda: pipeline._attestation(
+        {"kind": "checkbox_group", "label": "Consents and Notifications", "required": True, "options": GROUP})
+        == [GROUP[0]],
+    "the test identity's at-will statement": lambda: pipeline._agreeable_notice(
+        "Employment At-Will Statement", STATEMENT_TEXT, True) == (True, False),
+    "a remembered answer by a notice of on-call work": lambda: _remembered("be on-call some weekends"),
+    "a remembered answer by a notice of a text": lambda: _remembered("get a text when it's reviewed"),
+    "a remembered answer by a staffing firm's notice": lambda: _remembered("apply through Example Staffing"),
+    "a remembered answer by a notice of partners": lambda: _remembered("work at its partners' sites"),
+    "a remembered answer by a notice of the outcome": lambda: _remembered("be notified of the outcome"),
+}
+
+
+@pytest.mark.parametrize("wording", list(STILL_AGREED))
+def test_what_each_path_agreed_to_before_it_still_agrees_to(wording):
+    assert STILL_AGREED[wording](), wording
+
+
+def test_an_email_to_verify_the_account_takes_nothing_else_with_it():
+    """The review of 0.3.208: the verification email taken out of a paragraph's words took what came after it too."""
+    for more in ("news from Acme", "career opportunities"):
+        assert not pipeline._terms_above(f"Accept our Terms of Use. You will receive an email to verify your account and "
+                                         f"{more}."), more
 
 
 def _alternatives(pattern):
@@ -197,33 +291,33 @@ NOT_TERMS = (r"newsletter|mailing list|marketing|job alerts?|text messages?|\bsm
              r"jobs|talent (?:community|network)|keep me|stay informed|send me|contact(?:ed)? me|be contacted|share my|"
              r"other (?:\w+ )?(?:roles|positions|jobs|openings|opportunities)|affiliat|" + CALLS)
 OLD_LISTS = {
-    "pipeline._CALLS_OR_TEXTS": CALLS,
-    "pipeline._NOT_TERMS": NOT_TERMS,
-    "pipeline._MORE_THAN_TERMS": r"receiv\w*|e-?mails?|updates?|notifications?|messages?|partners?|third[- ]part|future|"
-                                 r"talent pool|retain|retention",
-    "pipeline._SIGNS_UP_TOO": r"\breceiv\w*\b.{0,40}\b(?:e-?mails?|communications?|updates?|messages?|news\w*|offers|"
-                              r"information about|texts?)\b|\b(?:e-?mail|marketing|promotional) communications?\b|"
-                              r"\bupdates? (?:about|on|from)\b|\bnewsletter",
-    "pipeline._SIGN_UP_ABOVE": r"talent (?:community|network|pool)|job alerts?|newsletter|subscribe|marketing|"
-                               r"mailing list|\bnotif(?:y|ied|ications?)\b|\bopt(?:ing)?[- ]in\b|\be-?mail (?:me|you)\b|"
-                               r"text messages?|\bsms\b|keep me|stay informed|similar jobs|promotion\w*|offers|send me|"
-                               r"contact(?:ed)? me|be contacted|share my|other (?:\w+ )?(?:roles|positions|jobs|openings|"
-                               r"opportunities)|\breceiv\w*\b.{0,40}\b(?:news\w*|offers|updates?|alerts?|promotions?|"
-                               r"(?:job|career) opportunities|marketing)\b|talent database|future (?:\w+ )?vacanc|"
-                               r"keep\w* (?:my|your) (?:personal )?data|share (?:my|your)|partners|staffing|"
-                               r"recruit\w* agenc|careers? (?:community|network)|\balerts?\b|\btexts?\b|\bcalls?\b",
-    "pipeline._NOT_ATTESTED": r"newsletter|marketing|job alerts?|text messages?|\bsms\b|promotion|subscribe|"
-                              r"talent (?:community|network)|" + CALLS,
-    "pipeline._WAIVES": r"arbitrat|\bwaive|\bjury\b|non-?compete|non-?solicit",
-    "pipeline._SIGNS_UP": r"\b(?:join\w*|subscrib\w*|sign(?:s|ed|ing)? (?:you )?up|receiv\w*|enrol\w*|added to|"
-                          r"opt(?:s|ed)? (?:you )?in)\b.{0,60}?\b(?:talent (?:community|network|pool)|newsletters?|"
-                          r"job alerts?|marketing|promotion\w*)",
-    "pipeline._NEVER_AGREED": NOT_TERMS + r"|talent pool|future (?:job |career )?(?:opportunities|openings|roles|"
-                              r"positions)|keep (?:my|your) (?:profile|information|data|resume)|retain (?:my|your)|"
-                              r"campaigns?|cookie|arbitration|waive|jury|non-?compete|non-?solicit",
-    "pipeline._EMPLOYMENT_TERMS": r"\bat[- ]will\b|\b(?:terms|conditions)\b[^.]{0,30}\bof (?:my |your |this |the )?"
-                                  r"employment\b|\bemployment (?:agreement|contract)\b",
-    "pipeline._agreement_button's": r"cookie",
+    "_CALLS_OR_TEXTS": CALLS,
+    "_NOT_TERMS": NOT_TERMS,
+    "_MORE_THAN_TERMS": r"receiv\w*|e-?mails?|updates?|notifications?|messages?|partners?|third[- ]part|future|"
+                        r"talent pool|retain|retention",
+    "_SIGNS_UP_TOO": r"\breceiv\w*\b.{0,40}\b(?:e-?mails?|communications?|updates?|messages?|news\w*|offers|"
+                     r"information about|texts?)\b|\b(?:e-?mail|marketing|promotional) communications?\b|"
+                     r"\bupdates? (?:about|on|from)\b|\bnewsletter",
+    "_SIGN_UP_ABOVE": r"talent (?:community|network|pool)|job alerts?|newsletter|subscribe|marketing|"
+                      r"mailing list|\bnotif(?:y|ied|ications?)\b|\bopt(?:ing)?[- ]in\b|\be-?mail (?:me|you)\b|"
+                      r"text messages?|\bsms\b|keep me|stay informed|similar jobs|promotion\w*|offers|send me|"
+                      r"contact(?:ed)? me|be contacted|share my|other (?:\w+ )?(?:roles|positions|jobs|openings|"
+                      r"opportunities)|\breceiv\w*\b.{0,40}\b(?:news\w*|offers|updates?|alerts?|promotions?|"
+                      r"(?:job|career) opportunities|marketing)\b|talent database|future (?:\w+ )?vacanc|"
+                      r"keep\w* (?:my|your) (?:personal )?data|share (?:my|your)|partners|staffing|"
+                      r"recruit\w* agenc|careers? (?:community|network)|\balerts?\b|\btexts?\b|\bcalls?\b",
+    "_NOT_ATTESTED": r"newsletter|marketing|job alerts?|text messages?|\bsms\b|promotion|subscribe|"
+                     r"talent (?:community|network)|" + CALLS,
+    "_WAIVES": r"arbitrat|\bwaive|\bjury\b|non-?compete|non-?solicit",
+    "_SIGNS_UP": r"\b(?:join\w*|subscrib\w*|sign(?:s|ed|ing)? (?:you )?up|receiv\w*|enrol\w*|added to|"
+                 r"opt(?:s|ed)? (?:you )?in)\b.{0,60}?\b(?:talent (?:community|network|pool)|newsletters?|"
+                 r"job alerts?|marketing|promotion\w*)",
+    "_NEVER_AGREED": NOT_TERMS + r"|talent pool|future (?:job |career )?(?:opportunities|openings|roles|"
+                     r"positions)|keep (?:my|your) (?:profile|information|data|resume)|retain (?:my|your)|"
+                     r"campaigns?|cookie|arbitration|waive|jury|non-?compete|non-?solicit",
+    "_EMPLOYMENT_TERMS": r"\bat[- ]will\b|\b(?:terms|conditions)\b[^.]{0,30}\bof (?:my |your |this |the )?"
+                         r"employment\b|\bemployment (?:agreement|contract)\b",
+    "_agreement_button's": r"cookie",
     # (its words of a notice of consent, terms or an attestation are still its own)
     "autofill._NOTICE_OF_CONSENT's never-words": r"talent (?:community|network|pool)|job alerts?|newsletter|subscribe|"
                                                  r"marketing|mailing list|text messages?|\bsms\b|promotion|arbitration",
@@ -236,7 +330,7 @@ LIVE_LISTS = {
     "formjs SIDE_BOX": re.search(r"const SIDE_BOX = /(.+?)/i;", formjs.EXTRACT_JS)[1],
     "formjs SIGN_UP": re.search(r"const SIGN_UP = /(.+?)/i;", formjs.EXTRACT_JS)[1],
 }
-# The words they hold, each on its own
+# The words they hold, each on its own (and two as a paragraph says them, beside an email to verify the account)
 WORDS = [
     "texting", "text messages", "text me", "text you", "calls or texts", "calling and texting", "call & text",
     "autodialed", "automated calls", "automated calling", "automated dialing", "automated messages", "automated texts",
@@ -252,12 +346,14 @@ WORDS = [
     "marketing communications", "promotional communications", "updates about", "updates on", "updates from",
     "notify", "notified", "opt in", "opt-in", "opting in", "email me", "e-mail you", "promotions", "receive alerts",
     "receive promotions", "receive job opportunities", "receive career opportunities", "receive marketing",
+    "receive an email to verify your account and news from Acme",
+    "receive an email to verify your account and career opportunities",
     "talent database", "future vacancies", "future job vacancies", "keep my data", "keeping your personal data",
     "share your", "staffing", "recruiting agency", "recruitment agencies", "career community", "careers network",
     "alert", "alerts", "text", "texts", "call", "calls",
     "alerts by email", "email alerts", "notify me", "similar openings", "similar roles", "stay connected",
     "stay in touch",
-    "arbitration", "waive", "jury", "non-compete", "noncompete", "non-solicit",
+    "arbitration", "waive", "jury", "non-compete", "noncompete", "non-solicit", "perjury",
     "join our talent community", "subscribe to the newsletter", "sign up for job alerts", "signs you up for marketing",
     "receive promotional", "enroll in the talent pool", "added to our talent network", "opt in to marketing",
     "opts you in to newsletters",
@@ -271,11 +367,52 @@ WORDS = [
 
 @pytest.mark.parametrize("name, pattern", [*OLD_LISTS.items(), *LIVE_LISTS.items()])
 def test_the_one_list_holds_every_word_each_paths_own_list_held(name, pattern):
-    """No path loses a word: every word of each path's list before the one list (and of the lists that still tell
-    a sign-up's page from an account's) is refused by _never_for_them. A word added to one of those lists needs one
+    """No word is lost from the one list: every word of each path's list before it (and of the lists that still tell
+    a sign-up's page from an account's) is one of _never_for_them's kinds. A word added to one of those lists needs one
     here, and in never.py."""
     for alternative in _alternatives(pattern):
         words = [w for w in WORDS if re.search(alternative, w, re.I | re.S)]
         assert words, f"{name}: no word here for {alternative!r}"
         for word in words:
             assert _never_for_them(word), (name, alternative, word)
+
+
+# The lists each path read before the one list (origin/main at 0.3.207). An attestation's label read _NOT_TERMS without
+# its affiliates and offers of employment (and an at-will sentence beside the application's information certified true)
+MAIN_READ = {
+    "attestation: a certification's box": ("_NOT_ATTESTED", "_WAIVES", "_SIGNS_UP_TOO", "_NOT_TERMS"),
+    "attestation: a privacy agreement's box": ("_NEVER_AGREED", "_EMPLOYMENT_TERMS", "_WAIVES", "_SIGNS_UP_TOO"),
+    "attestation: a lone choice": ("_NEVER_AGREED", "_WAIVES", "_NOT_ATTESTED", "_SIGNS_UP_TOO"),
+    "attestation: a group's tick": ("_NEVER_AGREED", "_EMPLOYMENT_TERMS", "_SIGNS_UP_TOO"),
+    "attestation: a group's own label": ("_WAIVES", "_EMPLOYMENT_TERMS"),
+    "a Create Account's terms box": ("_NOT_TERMS", "_MORE_THAN_TERMS", "_WAIVES", "_EMPLOYMENT_TERMS"),
+    "an email-first site's agreement box": ("_NOT_TERMS", "_MORE_THAN_TERMS"),
+    "the words above a bare I agree": ("_SIGN_UP_ABOVE", "_NEVER_AGREED", "_WAIVES"),
+    "a consent to other positions": ("_NEVER_AGREED",),
+    "a Create Account's privacy statement link": ("_NEVER_AGREED", "_EMPLOYMENT_TERMS"),
+    "a terms gate, by its headings": ("_NEVER_AGREED",),
+    "a terms gate, by its page's words": ("_WAIVES",),
+    "a privacy notice, by its opening": ("_NEVER_AGREED", "_EMPLOYMENT_TERMS", "_WAIVES", "_SIGNS_UP"),
+    "a privacy notice, past its opening": ("_WAIVES", "_SIGNS_UP"),
+    "a notice not named for its terms": ("_NEVER_AGREED", "_EMPLOYMENT_TERMS", "_WAIVES", "_SIGNS_UP"),
+    "an AI notice, by its heading": ("_NEVER_AGREED",),
+    "an AI notice, by its words": ("_WAIVES", "_SIGNS_UP"),
+    "the test identity's notice": ("_SIGNS_UP", "_WAIVES"),
+    "a remembered answer at another employer": ("autofill._NOTICE_OF_CONSENT's never-words",),
+    "a page's agreement button": ("_agreement_button's",),
+}
+
+
+@pytest.mark.parametrize("path", list(MAIN_READ))
+def test_each_path_still_refuses_every_word_of_the_lists_it_read_before(path):
+    """A word lost on one path, which the one list still holds for others, is caught here: each path's entry point
+    refuses every word of each list it read before, in its own words."""
+    agreed, _ = PATHS[path]
+    for name in MAIN_READ[path]:
+        for alternative in _alternatives(OLD_LISTS[name]):
+            for word in WORDS:
+                read = word
+                if path.startswith("attestation: a certification") and name == "_NOT_TERMS":
+                    read = re.sub(r"\baffiliat\w*|\boffers? of employment", "", word, flags=re.I)
+                if re.search(alternative, read, re.I | re.S):
+                    assert not agreed(word), (path, name, alternative, word)
