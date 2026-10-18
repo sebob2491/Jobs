@@ -1,0 +1,962 @@
+{
+ "profile": {
+  "name": "Sam Rivera",
+  "missing": [],
+  "gaps": [
+   "background: relatives_at_employer, government_employee, military, defense_department, restrictive_agreement, intellectual_property, outside_work, board_member"
+  ],
+  "titles": [],
+  "path": "~/.job-apply/profile.yaml"
+ },
+ "settings": {
+  "submit_mode": "review",
+  "dry_run": false,
+  "manage_accounts": false,
+  "manage_accounts_chosen": true,
+  "auto_submit": false,
+  "tailor_resumes": false,
+  "handled_only": false,
+  "troubleshoot": false,
+  "min_pay": null,
+  "posted_within": null,
+  "auto_search": false,
+  "jobs_at_once": 1,
+  "follow_up_days": 10
+ },
+ "tailoring": 1,
+ "passwords": {
+  "workday": false,
+  "successfactors": false,
+  "icims": false,
+  "applicantstack": false,
+  "ukg": false,
+  "infor": false,
+  "taleo": false,
+  "email": false
+ },
+ "password_systems": [
+  {
+   "value": "workday",
+   "label": "Workday: Applied Materials, KLA, Intel and 12 more"
+  },
+  {
+   "value": "successfactors",
+   "label": "SuccessFactors: TSMC Arizona, Amkor Technology, Edwards Vacuum and 4 more"
+  },
+  {
+   "value": "icims",
+   "label": "iCIMS: Daifuku America, Fujifilm"
+  },
+  {
+   "value": "applicantstack",
+   "label": "ApplicantStack: SCREEN SPE USA"
+  },
+  {
+   "value": "ukg",
+   "label": "UKG Pro: Nikon Precision, Ultra Clean Holdings (UCT)"
+  },
+  {
+   "value": "infor",
+   "label": "Infor: Benchmark Electronics"
+  },
+  {
+   "value": "taleo",
+   "label": "Taleo"
+  }
+ ],
+ "mail_problem": null,
+ "profile_problem": null,
+ "settings_warnings": [],
+ "tracker_problem": null,
+ "tracker_damaged": false,
+ "tracker_path": "~/.job-apply/tracker.db",
+ "version": "0.0.0",
+ "update": null,
+ "answers_problem": null,
+ "search": {
+  "status": "done",
+  "at": 1792350000.0,
+  "error": null,
+  "query": "",
+  "location": null,
+  "errors": {},
+  "browser_only": [],
+  "auto": false,
+  "stopped": null
+ },
+ "seen": {
+  "since": null,
+  "last": null
+ },
+ "listings": [
+  {
+   "url": "https://careers.example.com/questions/0",
+   "title": "Equipment Technician",
+   "company": "Example Questions",
+   "location": "Phoenix, AZ",
+   "posted": "2026-10-10",
+   "posted_days": 8,
+   "pay": null,
+   "ats": "workday",
+   "fit": {
+    "score": 72,
+    "reasons": [
+     "title matches"
+    ],
+    "concerns": [],
+    "blocked": false,
+    "recommended": true,
+    "parts": [
+     {
+      "why": "start",
+      "points": 50
+     },
+     {
+      "why": "title matches",
+      "points": 22
+     }
+    ]
+   },
+   "notes": [],
+   "job_id": 1,
+   "status": "saved",
+   "run": {
+    "job_id": 1,
+    "title": "Equipment Technician",
+    "company": "Example Questions",
+    "status": "needs_you",
+    "need": "questions",
+    "reason": "2 questions your profile doesn't answer.",
+    "code": "questions",
+    "blocking": false,
+    "paused_at": 1000.0,
+    "captcha": false,
+    "left_at_restart": false,
+    "questions": [
+     {
+      "id": "9",
+      "label": "Do you have a valid driver's license?",
+      "kind": "select",
+      "options": [
+       "Select One",
+       "Yes",
+       "No"
+      ],
+      "required": true
+     },
+     {
+      "id": "10",
+      "label": "Desired salary",
+      "kind": "text",
+      "required": true
+     }
+    ],
+    "log": [],
+    "log_at": [],
+    "went_in": {
+     "answers": [
+      {
+       "page": "My Information",
+       "section": "",
+       "label": "First Name",
+       "value": "Sam"
+      }
+     ],
+     "files": [],
+     "agreed": [],
+     "accounts": [],
+     "left": [],
+     "full": false
+    }
+   },
+   "handled": false,
+   "also_on": [],
+   "saved_at": null,
+   "new": false,
+   "not_interested": null
+  },
+  {
+   "url": "https://careers.example.com/in/1",
+   "title": "Equipment Technician",
+   "company": "Example Sign In",
+   "location": "Phoenix, AZ",
+   "posted": "2026-10-10",
+   "posted_days": 8,
+   "pay": null,
+   "ats": "workday",
+   "fit": {
+    "score": 72,
+    "reasons": [
+     "title matches"
+    ],
+    "concerns": [],
+    "blocked": false,
+    "recommended": true,
+    "parts": [
+     {
+      "why": "start",
+      "points": 50
+     },
+     {
+      "why": "title matches",
+      "points": 22
+     }
+    ]
+   },
+   "notes": [],
+   "job_id": 2,
+   "status": "saved",
+   "run": {
+    "job_id": 2,
+    "title": "Equipment Technician",
+    "company": "Example Sign In",
+    "status": "needs_you",
+    "need": "sign_in",
+    "reason": "Sign in on Example Sign In's site in the desk's browser window, then press Resume.",
+    "code": "sign_in",
+    "blocking": true,
+    "paused_at": 1001.0,
+    "captcha": false,
+    "left_at_restart": false,
+    "questions": [],
+    "log": [],
+    "log_at": [],
+    "went_in": null
+   },
+   "handled": false,
+   "also_on": [],
+   "saved_at": null,
+   "new": false,
+   "not_interested": null
+  },
+  {
+   "url": "https://careers.example.com/code/2",
+   "title": "Equipment Technician",
+   "company": "Example Code",
+   "location": "Phoenix, AZ",
+   "posted": "2026-10-10",
+   "posted_days": 8,
+   "pay": null,
+   "ats": "workday",
+   "fit": {
+    "score": 72,
+    "reasons": [
+     "title matches"
+    ],
+    "concerns": [],
+    "blocked": false,
+    "recommended": true,
+    "parts": [
+     {
+      "why": "start",
+      "points": 50
+     },
+     {
+      "why": "title matches",
+      "points": 22
+     }
+    ]
+   },
+   "notes": [],
+   "job_id": 3,
+   "status": "saved",
+   "run": {
+    "job_id": 3,
+    "title": "Equipment Technician",
+    "company": "Example Code",
+    "status": "needs_you",
+    "need": "email_code",
+    "reason": "The site emailed a code: type it in the desk's browser window, then press Resume.",
+    "code": "email_code",
+    "blocking": false,
+    "paused_at": 1002.0,
+    "captcha": false,
+    "left_at_restart": false,
+    "questions": [],
+    "log": [],
+    "log_at": [],
+    "went_in": null
+   },
+   "handled": false,
+   "also_on": [],
+   "saved_at": null,
+   "new": false,
+   "not_interested": null
+  },
+  {
+   "url": "https://careers.example.com/bot/3",
+   "title": "Equipment Technician",
+   "company": "Example Bot",
+   "location": "Phoenix, AZ",
+   "posted": "2026-10-10",
+   "posted_days": 8,
+   "pay": null,
+   "ats": "workday",
+   "fit": {
+    "score": 72,
+    "reasons": [
+     "title matches"
+    ],
+    "concerns": [],
+    "blocked": false,
+    "recommended": true,
+    "parts": [
+     {
+      "why": "start",
+      "points": 50
+     },
+     {
+      "why": "title matches",
+      "points": 22
+     }
+    ]
+   },
+   "notes": [],
+   "job_id": 4,
+   "status": "saved",
+   "run": {
+    "job_id": 4,
+    "title": "Equipment Technician",
+    "company": "Example Bot",
+    "status": "needs_you",
+    "need": "bot_check",
+    "reason": "A bot check: solve it in the desk's browser window. The desk never does.",
+    "code": "bot_check",
+    "blocking": false,
+    "paused_at": 1003.0,
+    "captcha": false,
+    "left_at_restart": false,
+    "questions": [],
+    "log": [],
+    "log_at": [],
+    "went_in": null
+   },
+   "handled": false,
+   "also_on": [],
+   "saved_at": null,
+   "new": false,
+   "not_interested": null
+  },
+  {
+   "url": "https://careers.example.com/captcha/4",
+   "title": "Equipment Technician",
+   "company": "Example Captcha",
+   "location": "Phoenix, AZ",
+   "posted": "2026-10-10",
+   "posted_days": 8,
+   "pay": null,
+   "ats": "workday",
+   "fit": {
+    "score": 72,
+    "reasons": [
+     "title matches"
+    ],
+    "concerns": [],
+    "blocked": false,
+    "recommended": true,
+    "parts": [
+     {
+      "why": "start",
+      "points": 50
+     },
+     {
+      "why": "title matches",
+      "points": 22
+     }
+    ]
+   },
+   "notes": [],
+   "job_id": 5,
+   "status": "saved",
+   "run": {
+    "job_id": 5,
+    "title": "Equipment Technician",
+    "company": "Example Captcha",
+    "status": "needs_you",
+    "need": "captcha",
+    "reason": "A CAPTCHA before Submit: tick it, then press Submit here.",
+    "code": "captcha",
+    "blocking": false,
+    "paused_at": 1004.0,
+    "captcha": false,
+    "left_at_restart": false,
+    "questions": [],
+    "log": [],
+    "log_at": [],
+    "went_in": null
+   },
+   "handled": false,
+   "also_on": [],
+   "saved_at": null,
+   "new": false,
+   "not_interested": null
+  },
+  {
+   "url": "https://careers.example.com/stuck/5",
+   "title": "Equipment Technician",
+   "company": "Example Stuck",
+   "location": "Phoenix, AZ",
+   "posted": "2026-10-10",
+   "posted_days": 8,
+   "pay": null,
+   "ats": "workday",
+   "fit": {
+    "score": 72,
+    "reasons": [
+     "title matches"
+    ],
+    "concerns": [],
+    "blocked": false,
+    "recommended": true,
+    "parts": [
+     {
+      "why": "start",
+      "points": 50
+     },
+     {
+      "why": "title matches",
+      "points": 22
+     }
+    ]
+   },
+   "notes": [],
+   "job_id": 6,
+   "status": "saved",
+   "run": {
+    "job_id": 6,
+    "title": "Equipment Technician",
+    "company": "Example Stuck",
+    "status": "needs_you",
+    "need": "stuck",
+    "reason": "I couldn't find the button that moves this application on.",
+    "code": "no_step_button",
+    "blocking": false,
+    "paused_at": 1005.0,
+    "captcha": false,
+    "left_at_restart": false,
+    "questions": [],
+    "log": [],
+    "log_at": [],
+    "went_in": null
+   },
+   "handled": false,
+   "also_on": [],
+   "saved_at": null,
+   "new": false,
+   "not_interested": null
+  },
+  {
+   "url": "https://careers.example.com/sent/6",
+   "title": "Equipment Technician",
+   "company": "Example Not Sent",
+   "location": "Phoenix, AZ",
+   "posted": "2026-10-10",
+   "posted_days": 8,
+   "pay": null,
+   "ats": "workday",
+   "fit": {
+    "score": 72,
+    "reasons": [
+     "title matches"
+    ],
+    "concerns": [],
+    "blocked": false,
+    "recommended": true,
+    "parts": [
+     {
+      "why": "start",
+      "points": 50
+     },
+     {
+      "why": "title matches",
+      "points": 22
+     }
+    ]
+   },
+   "notes": [],
+   "job_id": 7,
+   "status": "saved",
+   "run": {
+    "job_id": 7,
+    "title": "Equipment Technician",
+    "company": "Example Not Sent",
+    "status": "needs_you",
+    "need": "submit_failed",
+    "reason": "Submit was pressed and the form is still there.",
+    "code": "submit_failed",
+    "blocking": false,
+    "paused_at": 1006.0,
+    "captcha": false,
+    "left_at_restart": false,
+    "questions": [],
+    "log": [],
+    "log_at": [],
+    "went_in": null
+   },
+   "handled": false,
+   "also_on": [],
+   "saved_at": null,
+   "new": false,
+   "not_interested": null
+  },
+  {
+   "url": "https://careers.example.com/submit/7",
+   "title": "Equipment Technician",
+   "company": "Example Own Submit",
+   "location": "Phoenix, AZ",
+   "posted": "2026-10-10",
+   "posted_days": 8,
+   "pay": null,
+   "ats": "workday",
+   "fit": {
+    "score": 72,
+    "reasons": [
+     "title matches"
+    ],
+    "concerns": [],
+    "blocked": false,
+    "recommended": true,
+    "parts": [
+     {
+      "why": "start",
+      "points": 50
+     },
+     {
+      "why": "title matches",
+      "points": 22
+     }
+    ]
+   },
+   "notes": [],
+   "job_id": 8,
+   "status": "saved",
+   "run": {
+    "job_id": 8,
+    "title": "Equipment Technician",
+    "company": "Example Own Submit",
+    "status": "needs_you",
+    "need": "your_submit",
+    "reason": "Its send button reads Apply: yours to press.",
+    "code": "your_submit",
+    "blocking": false,
+    "paused_at": 1007.0,
+    "captcha": false,
+    "left_at_restart": false,
+    "questions": [],
+    "log": [],
+    "log_at": [],
+    "went_in": null
+   },
+   "handled": false,
+   "also_on": [],
+   "saved_at": null,
+   "new": false,
+   "not_interested": null
+  },
+  {
+   "url": "https://careers.example.com/check/8",
+   "title": "Equipment Technician",
+   "company": "Example Check",
+   "location": "Phoenix, AZ",
+   "posted": "2026-10-10",
+   "posted_days": 8,
+   "pay": null,
+   "ats": "workday",
+   "fit": {
+    "score": 72,
+    "reasons": [
+     "title matches"
+    ],
+    "concerns": [],
+    "blocked": false,
+    "recommended": true,
+    "parts": [
+     {
+      "why": "start",
+      "points": 50
+     },
+     {
+      "why": "title matches",
+      "points": 22
+     }
+    ]
+   },
+   "notes": [],
+   "job_id": 9,
+   "status": "saved",
+   "run": {
+    "job_id": 9,
+    "title": "Equipment Technician",
+    "company": "Example Check",
+    "status": "needs_you",
+    "need": "check_submit",
+    "reason": "Submit was pressed and no confirmation showed.",
+    "code": "check_submit",
+    "blocking": false,
+    "paused_at": 1008.0,
+    "captcha": false,
+    "left_at_restart": false,
+    "questions": [],
+    "log": [],
+    "log_at": [],
+    "went_in": null
+   },
+   "handled": false,
+   "also_on": [],
+   "saved_at": null,
+   "new": false,
+   "not_interested": null
+  },
+  {
+   "url": "https://careers.example.com/tailor/9",
+   "title": "Equipment Technician",
+   "company": "Example Tailor",
+   "location": "Phoenix, AZ",
+   "posted": "2026-10-10",
+   "posted_days": 8,
+   "pay": null,
+   "ats": "workday",
+   "fit": {
+    "score": 72,
+    "reasons": [
+     "title matches"
+    ],
+    "concerns": [],
+    "blocked": false,
+    "recommended": true,
+    "parts": [
+     {
+      "why": "start",
+      "points": 50
+     },
+     {
+      "why": "title matches",
+      "points": 22
+     }
+    ]
+   },
+   "notes": [],
+   "job_id": 10,
+   "status": "saved",
+   "run": {
+    "job_id": 10,
+    "title": "Equipment Technician",
+    "company": "Example Tailor",
+    "status": "needs_you",
+    "need": "tailor",
+    "reason": "Waiting for Claude to write a resume for this job.",
+    "code": "tailor",
+    "blocking": false,
+    "paused_at": 1009.0,
+    "captcha": false,
+    "left_at_restart": false,
+    "questions": [],
+    "log": [],
+    "log_at": [],
+    "went_in": null
+   },
+   "handled": false,
+   "also_on": [],
+   "saved_at": null,
+   "new": false,
+   "not_interested": null
+  },
+  {
+   "url": "https://careers.example.com/twice/10",
+   "title": "Equipment Technician",
+   "company": "Example Twice",
+   "location": "Phoenix, AZ",
+   "posted": "2026-10-10",
+   "posted_days": 8,
+   "pay": null,
+   "ats": "workday",
+   "fit": {
+    "score": 72,
+    "reasons": [
+     "title matches"
+    ],
+    "concerns": [],
+    "blocked": false,
+    "recommended": true,
+    "parts": [
+     {
+      "why": "start",
+      "points": 50
+     },
+     {
+      "why": "title matches",
+      "points": 22
+     }
+    ]
+   },
+   "notes": [],
+   "job_id": 11,
+   "status": "saved",
+   "run": {
+    "job_id": 11,
+    "title": "Equipment Technician",
+    "company": "Example Twice",
+    "status": "needs_you",
+    "need": "maybe_duplicate",
+    "reason": "This may be a job you began or applied to on Indeed.",
+    "code": "maybe_duplicate",
+    "blocking": false,
+    "paused_at": 1010.0,
+    "captcha": false,
+    "left_at_restart": false,
+    "questions": [],
+    "log": [],
+    "log_at": [],
+    "went_in": null
+   },
+   "handled": false,
+   "also_on": [],
+   "saved_at": null,
+   "new": false,
+   "not_interested": null
+  },
+  {
+   "url": "https://careers.example.com/restart/11",
+   "title": "Equipment Technician",
+   "company": "Example Restart",
+   "location": "Phoenix, AZ",
+   "posted": "2026-10-10",
+   "posted_days": 8,
+   "pay": null,
+   "ats": "workday",
+   "fit": {
+    "score": 72,
+    "reasons": [
+     "title matches"
+    ],
+    "concerns": [],
+    "blocked": false,
+    "recommended": true,
+    "parts": [
+     {
+      "why": "start",
+      "points": 50
+     },
+     {
+      "why": "title matches",
+      "points": 22
+     }
+    ]
+   },
+   "notes": [],
+   "job_id": 12,
+   "status": "saved",
+   "run": {
+    "job_id": 12,
+    "title": "Equipment Technician",
+    "company": "Example Restart",
+    "status": "needs_you",
+    "need": "restarted",
+    "reason": "Begun before the desk restarted.",
+    "code": "restarted",
+    "blocking": false,
+    "paused_at": 1011.0,
+    "captcha": false,
+    "left_at_restart": true,
+    "questions": [],
+    "log": [],
+    "log_at": [],
+    "went_in": null
+   },
+   "handled": false,
+   "also_on": [],
+   "saved_at": null,
+   "new": false,
+   "not_interested": null
+  }
+ ],
+ "others": [],
+ "applications": [],
+ "bank": [
+  {
+   "id": "desired_pay",
+   "ask": "What pay are you looking for? Write it as the site would ask, e.g. \"$28 per hour\" or \"$60,000 per year\".",
+   "kind": "text",
+   "answer": null
+  },
+  {
+   "id": "start_date",
+   "ask": "When could you start after an offer? (e.g. \"Two weeks after an offer\")",
+   "kind": "text",
+   "answer": null
+  },
+  {
+   "id": "background_check",
+   "ask": "Would you agree to a background check if offered a job?",
+   "kind": "choice",
+   "choices": [
+    "Yes",
+    "No"
+   ],
+   "answer": null
+  },
+  {
+   "id": "essential_functions",
+   "ask": "Can you do a job's essential functions, with or without reasonable accommodation?",
+   "kind": "choice",
+   "choices": [
+    "Yes",
+    "No"
+   ],
+   "answer": null
+  },
+  {
+   "id": "terminated",
+   "ask": "Have you ever been fired, or asked to resign, from a job?",
+   "kind": "choice",
+   "choices": [
+    "No",
+    "Yes"
+   ],
+   "answer": null
+  },
+  {
+   "id": "shift",
+   "ask": "Which shifts would you work?",
+   "kind": "choice",
+   "choices": [
+    "Days",
+    "Evenings",
+    "Nights",
+    "Any shift"
+   ],
+   "answer": null
+  },
+  {
+   "id": "schedule_type",
+   "ask": "Are you looking for full-time or part-time work?",
+   "kind": "choice",
+   "choices": [
+    "Full Time",
+    "Part Time",
+    "Either"
+   ],
+   "answer": null
+  },
+  {
+   "id": "language",
+   "ask": "Which language should applications be in?",
+   "kind": "choice",
+   "choices": [
+    "English",
+    "Spanish"
+   ],
+   "answer": null
+  },
+  {
+   "id": "community_college",
+   "ask": "Have you ever attended a community college or taken classes at one?",
+   "kind": "choice",
+   "choices": [
+    "Yes",
+    "No"
+   ],
+   "answer": null
+  },
+  {
+   "id": "military_spouse",
+   "ask": "Are you a current or former military spouse or domestic partner?",
+   "kind": "choice",
+   "choices": [
+    "No",
+    "Yes",
+    "I do not wish to provide"
+   ],
+   "answer": null
+  },
+  {
+   "id": "proof_of_age",
+   "ask": "If hired, could you show proof of your age?",
+   "kind": "choice",
+   "choices": [
+    "Yes",
+    "No"
+   ],
+   "answer": null
+  },
+  {
+   "id": "non_compete",
+   "ask": "Are you bound by a non-compete, non-solicitation or similar agreement with a current or past employer?",
+   "kind": "choice",
+   "choices": [
+    "No",
+    "Yes"
+   ],
+   "answer": null
+  }
+ ],
+ "area": {
+  "titles": [],
+  "default_titles": [
+   "field service",
+   "customer service engineer",
+   "customer engineer",
+   "equipment technician"
+  ],
+  "searched_titles": 4,
+  "places": [],
+  "states": [],
+  "lists": [
+   "semiconductor-az"
+  ],
+  "own": 0,
+  "choices": [
+   {
+    "name": "semiconductor-az",
+    "label": "Arizona chip makers and their suppliers",
+    "count": 39
+   },
+   {
+    "name": "las-vegas",
+    "label": "Las Vegas-area employers that hire IT people (casinos, gaming tech, data centers...)",
+    "count": 37
+   },
+   {
+    "name": "phoenix-metro",
+    "label": "Large Phoenix-area employers (health care, finance, government, staffing...)",
+    "count": 68
+   }
+  ],
+  "place_ideas": [
+   "Phoenix, AZ",
+   "Las Vegas, NV",
+   "Remote"
+  ],
+  "title_ideas": {
+   "IT": [
+    "Help Desk Technician",
+    "IT Support Specialist",
+    "Desktop Support Technician",
+    "Systems Administrator",
+    "Network Technician"
+   ],
+   "Equipment": [
+    "Field Service Engineer",
+    "Equipment Technician",
+    "Customer Engineer",
+    "Maintenance Technician"
+   ],
+   "HR": [
+    "HR Generalist",
+    "HR Coordinator",
+    "Recruiter",
+    "HR Assistant"
+   ]
+  }
+ },
+ "current": null,
+ "queued": [],
+ "paused": false,
+ "restored": null,
+ "queue_note": null,
+ "queue_note_problem": false,
+ "counts": {
+  "saved": 12
+ },
+ "notes": 0
+}
