@@ -3776,7 +3776,8 @@ def test_not_interested_hides_an_opening_until_undone_lowers_its_employer_and_is
 
                 # Undo: shown again, its employer's openings as they were, and Apply queues it
                 assert (await c.post("/api/not_interested/undo", headers=h, json={"url": fse})).json() == {"undone": True}
-                assert (await c.post("/api/not_interested/undo", headers=h, json={"url": fse})).json() == {"undone": False}
+                again = await c.post("/api/not_interested/undo", headers=h, json={"url": fse})
+                assert again.status_code == 409 and "nothing to undo" in again.json()["error"]  # (said, on the page)
                 r = await rows()
                 assert r[fse]["not_interested"] is None and r[tech]["fit"] == _fit(65)
                 queued = (await c.post("/api/apply", headers=h, json={"urls": [fse]})).json()["queued"]
@@ -4117,6 +4118,110 @@ def test_the_queue_never_takes_in_a_job_marked_not_interested(srv, job_apply_hom
         assert saved["id"] not in later.applier.runs and not later.applier.tasks
     finally:
         run(later.applier.stop())  # (its hold on the kept queue given back)
+
+
+def test_undo_on_an_employers_row_hidden_by_its_indeed_jobs_mark_brings_it_back(srv, job_apply_home):
+    """The re-review of 0.3.207 (MEDIUM): a job marked on its Indeed row, then found on the employer's site (not saved
+    yet: its row is that job), was hidden there under Not interested, and Undo by that row did nothing: the route looked
+    only at the employer's address, answered undone false, and the page said nothing. Undo goes by the job the row is
+    now, and when there's nothing to undo, the page says so in plain words."""
+    saved, desk = _marked_on_indeed(srv)
+    desk.listings = [{"url": INTEL_JOB, "title": "Equipment Technician", "company": "Intel",
+                      "location": "US-Arizona-Chandler", "ats": "workday", "fit": _fit(80)}]
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            seen: dict = {}
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 390, "height": 900})
+                said: list[str] = []
+                page.on("dialog", lambda d: (said.append(d.message), asyncio.ensure_future(d.dismiss())))
+                await page.goto(desk.url)
+                await page.click("[data-stop=unwanted]")
+                row = page.locator("li.row", has_text="Equipment Technician")
+                await row.locator(f"[data-ni-undo='{INTEL_JOB}']").click()
+                await page.click("[data-stop=any]")
+                await page.locator("li.row", has_text="Equipment Technician").locator("[data-ni]").wait_for()
+                seen["marked"] = srv.tracker().marked_not_interested(job_id=saved["id"])
+                seen["said"] = said
+                await browser.close()
+            async with _client(desk) as c:
+                again = await c.post("/api/not_interested/undo", headers={"x-desk-token": desk.token},
+                                     json={"url": INTEL_JOB})
+                seen["again"] = (again.status_code, again.json())
+            return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    assert seen["marked"] is None and seen["said"] == [], seen
+    status, body = seen["again"]
+    assert status == 409 and body["error"].startswith("There was nothing to undo"), seen["again"]
+
+
+@pytest.mark.parametrize("cookies", [False, True])
+def test_practice_modes_line_says_what_it_still_agrees_to(srv, job_apply_home, cookies):
+    """The re-review of 0.3.207 (LOW): in practice mode the line said "agrees to nothing for you", but with Accept
+    cookies on a cookie banner with no way to decline is still accepted for the person. Said as the desk does it."""
+    _set_profile_settings(job_apply_home, submit_mode="dry_run", accept_cookies=cookies)
+    said = {line["key"]: line for line in Desk(srv).safety()["lines"]}["practice"]["said"]
+    ends = " but a cookie banner with no way to decline (Accept cookies is on)." if cookies else "."
+    assert said.endswith("It makes no accounts and agrees to nothing for you" + ends), said
+
+
+@pytest.mark.parametrize("own", [False, True])
+def test_the_test_identitys_practice_line_follows_its_own_settings(srv, job_apply_home, monkeypatch, own):
+    """The re-review of 0.3.207 (LOW): the live check's test identity's practice line said it makes accounts and agrees
+    to notices whatever its own manage_accounts and accept_notices said. It goes by the desk's functions now."""
+    monkeypatch.setenv("JOB_APPLY_LIVE_TEST_IDENTITY", "1")
+    monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
+    monkeypatch.setenv("LIVE_TEST_EMAIL", "sam.rivera@example.com")  # (the tests' profile's own: the test identity)
+    _set_profile_settings(job_apply_home, manage_accounts=own, accept_notices=own)
+    said = {line["key"]: line for line in Desk(srv).safety()["lines"]}["practice"]["said"]
+    does = "It makes accounts and agrees to notices for you." if own else \
+        "It makes no accounts and agrees to nothing for you."
+    assert does in said and said.endswith("(The live check's test identity: Submit stays refused.)"), said
+
+
+def test_troubleshooting_with_an_unreadable_profile_says_nothing_is_filled(srv, job_apply_home):
+    """The re-review of 0.3.207 (LOW): Troubleshooting on said "the desk still fills each step" with a profile.yaml
+    that can't be read, though nothing is filled until it's fixed."""
+    desk = Desk(srv)
+    desk.troubleshoot = desk.applier.hold_submits = True
+    (job_apply_home / "profile.yaml").write_text("settings: [unclosed\n", encoding="utf-8")
+    said = {line["key"]: line for line in desk.safety()["lines"]}["troubleshoot"]["said"]
+    assert said.endswith("nothing is filled until profile.yaml is fixed.") and "fills each step" not in said, said
+
+
+def test_a_safety_line_whose_setting_cant_be_read_says_so(srv, job_apply_home, monkeypatch):
+    """The re-review of 0.3.207 (LOW): the desk's own functions the window asks catch a profile with a typo, not a
+    file another program has locked (Windows), and the whole window failed (500). That line says "can't tell right
+    now"; the others are as they are. The desk's functions themselves are as they were."""
+    from job_apply import desk as desk_module
+
+    def locked():
+        raise PermissionError(13, "The process cannot access the file because it is being used by another process")
+
+    monkeypatch.setattr(desk_module, "_may_manage_accounts", locked)
+    desk = Desk(srv)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with _client(desk) as c:
+                got = await c.get("/api/safety", headers={"x-desk-token": desk.token})
+                return got.status_code, got.text
+        finally:
+            await desk.stop()
+
+    status, text = run(go())
+    assert status == 200, (status, text)
+    shown = json.loads(text)
+    s = {line["key"]: line for line in shown["lines"]}
+    assert s["manage_accounts"]["value"] == "can't tell right now", shown
+    assert "couldn't read this setting just now" in s["manage_accounts"]["said"]
+    assert s["accept_notices"]["value"] == "on" and s["practice"]["value"] == "off"
 
 
 @pytest.mark.parametrize("practice", [False, True])

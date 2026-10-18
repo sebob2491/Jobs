@@ -138,6 +138,45 @@ def test_claudes_tools_say_a_job_is_marked_not_interested_and_ask_first(srv):
     assert words not in run(srv.submit_application(job_id=job["id"])).get("reason", "")
 
 
+@needs_browser
+def test_an_employers_posting_marked_before_its_indeed_copy_was_saved_marks_that_copy_too(srv, monkeypatch):
+    """The re-review of 0.3.207 (LOW): an employer's posting marked Not interested on the desk before Claude saved its
+    Indeed copy left that copy unmarked: Claude's tools didn't flag it, and the desk would queue it. A mark with no job
+    is matched to the job saved since that the tracker finds the same posting (same_posting, as the desk lists them as
+    one row), wherever marks are checked."""
+    import time
+
+    from job_apply import desk as desk_module
+    from job_apply.desk import Desk
+
+    monkeypatch.setitem(PAGES, "https://www.indeed.com/viewjob", FORM.format(title="Tech", action="https://x.example/done"))
+    sent = routed(srv)
+    own = "https://examplefab.wd5.myworkdayjobs.com/External/job/Phoenix/Field-Service-Engineer_R77"
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    desk.listings = [{"url": own, "title": "Field Service Engineer", "company": "Example Fab", "location": "Phoenix, AZ",
+                      "fit": {"score": 80, "reasons": [], "concerns": [], "blocked": False, "recommended": True}}]
+    desk.not_interested(own, "location")  # (no job yet: an opening on the employer's site)
+    copy = srv.add_job(url="https://www.indeed.com/viewjob?jk=7777777777777777", title="Field Service Engineer",
+                       company="Example Fab", location="Phoenix, AZ", source="indeed")["job"]
+    listed = {j["id"]: j for j in srv.list_jobs()["jobs"]}
+    assert (listed[copy["id"]].get("not_interested"), listed[copy["id"]].get("not_interested_reason")) == (
+        True, "location"), listed
+    assert srv.get_job(copy["id"])["job"]["not_interested_reason"] == "location"
+    opened = run(srv.open_application(job_id=copy["id"]))
+    assert opened["not_interested"]["reason"] == "location", opened
+    assert run(srv.submit_application(job_id=copy["id"]))["submitted"] is False and sent == []
+    assert desk.apply(urls=[], job_ids=[copy["id"]], submit=True) == ([], [])
+    with pytest.raises(ValueError, match="marked Not interested"):
+        desk.applier.enqueue(copy["id"])
+    assert desk_module.whats_new(srv.tracker(), 0) == []
+    assert desk.state()["listings"][0]["not_interested"]["reason"] == "location"
+    # Undo by the copy's own row (Claude's job): the employer's posting shows again too
+    assert desk.interested_again(copy["url"]) and srv.tracker().marked_not_interested(url=own) is None
+    assert "not_interested" not in srv.get_job(copy["id"])["job"]
+
+
 def test_a_greenhouse_posting_opened_by_its_address_opens_greenhouses_own_form(srv, monkeypatch):
     """A Greenhouse board set to send visitors to the employer's site redirects its postings
     there (Carvana's, behind a Cloudflare check, Oct 2026). Opened by job or by address, the

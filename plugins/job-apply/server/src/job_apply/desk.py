@@ -406,7 +406,11 @@ class Desk:
             if not isinstance(reason, str):
                 raise ValueError("reason should be a word")
             if action == "undo":
-                return JSONResponse({"undone": self.srv.tracker().undo_not_interested(url)})
+                if not self.interested_again(url):  # (said, never silent: the page shows it)
+                    return JSONResponse({"undone": False, "error": "There was nothing to undo: this opening isn't "
+                                         "marked Not interested (any more). The list shows it as it is now."},
+                                        status_code=409)
+                return JSONResponse({"undone": True})
             self.not_interested(url, reason.strip().lower())
         except (KeyError, ValueError) as e:
             return self._bad(e)
@@ -783,7 +787,14 @@ class Desk:
             raise ValueError("This job is already sent in, or waiting on its review page.")
         said = item or job or {}
         t.set_not_interested(url, company=str(said.get("company") or ""), title=str(said.get("title") or ""),
-                             reason=reason, job_id=job["id"] if job is not None else None)
+                             reason=reason, job_id=job["id"] if job is not None else None,
+                             location=str(said.get("location") or ""))
+
+    def interested_again(self, url: str) -> bool:
+        """Undo on an opening's Not interested: the opening, and the job its row is (_job_of: the job saved from a job
+        board that an employer's posting not saved yet is), shown again. Whether anything was marked."""
+        job = self._job_of(url)
+        return self.srv.tracker().undo_not_interested(url, job_id=job["id"] if job is not None else None)
 
     def unwanted(self, url: str) -> dict[str, Any] | None:
         """The person's Not interested mark on an opening, if any: on its address, or on the job its row is (_job_of),
@@ -1074,7 +1085,8 @@ class Desk:
         Each value is the one the desk acts on, from its own functions (the pipeline's _may_accept_notices,
         _may_manage_accounts and _test_identity, the browser's _cookie_setting, the Applier's Submit for me, hold on
         sending, Jobs at once and inbox), so the window can't say otherwise: a profile.yaml that can't be read turns
-        what it allows off until it's fixed, as the desk does."""
+        what it allows off until it's fixed, as the desk does. One of those that fails to answer (a file another program
+        has locked) makes its own line "can't tell right now", never the window fail."""
         try:
             prof, problem = config.Profile.load(), None
         except Exception as e:  # said at the top: the desk can't fill an application until it's fixed
@@ -1082,21 +1094,40 @@ class Desk:
         s, a = prof.settings, self.applier
         unread = problem is not None
         fix = "off until profile.yaml is fixed"
+        unknown = "can't tell right now"
+        busy = ("The desk couldn't read this setting just now (is profile.yaml open in another program?). Open Safety "
+                "again in a moment.")
         profile = "profile.yaml, under settings:"
+
+        def tell(ask: Any) -> bool | None:
+            """What one of the desk's own functions says, or None when it fails to answer."""
+            try:
+                return bool(ask())
+            except Exception:
+                return None
+
         # practice mode, as submit_application's policy has it (the environment's hard switch whatever the profile says)
         dry = config.never_submit() or (not unread and s.dry_run)
-        identity = _test_identity()  # (the live check's test identity: accounts and notices in practice mode too)
-        notices, accounts, cookies = _may_accept_notices(), _may_manage_accounts(), _cookie_setting()
+        identity = tell(_test_identity)  # (the live check's test identity: accounts and notices in practice mode too)
+        notices, accounts, cookies = tell(_may_accept_notices), tell(_may_manage_accounts), tell(_cookie_setting)
         lines: list[dict[str, str]] = []
 
         def line(key: str, name: str, value: str, said: str, where: str) -> None:
             lines.append({"key": key, "name": name, "value": value, "said": said, "where": where})
 
         if dry:
+            # what practice mode still does for the person, by the same functions as the lines below
+            if notices is None or accounts is None or cookies is None:
+                does = " Whether it makes accounts or agrees to anything for you can't be told right now."
+            else:
+                agrees = "agrees to notices for you" if notices else "agrees to nothing for you"
+                if cookies:
+                    agrees += (", and accepts" if notices else " but") + " a cookie banner with no way to decline " \
+                                                                         "(Accept cookies is on)"
+                does = f" It {'makes accounts' if accounts else 'makes no accounts'} and {agrees}."
             line("practice", "Practice mode", "on",
-                 "Nothing is sent: the desk fills each application up to its review page and never submits it."
-                 + (" As the live check's test identity it makes accounts and agrees to notices; Submit stays refused."
-                    if identity else " It makes no accounts and agrees to nothing for you."),
+                 "Nothing is sent: the desk fills each application up to its review page and never submits it." + does
+                 + (" (The live check's test identity: Submit stays refused.)" if identity else ""),
                  "JOB_APPLY_NEVER_SUBMIT=1 in the environment, which comes before profile.yaml" if config.never_submit()
                  else f"{profile} submit_mode (dry_run is practice mode; review applies for real)")
         elif unread:
@@ -1134,7 +1165,9 @@ class Desk:
              "The desk fills LinkedIn and Indeed applications but never presses their Submit, whatever the settings: you "
              "do, in the browser window.", "Not a setting: always so")
         where = f"{profile} accept_notices (on unless set to false)"
-        if notices:
+        if notices is None:
+            line("accept_notices", "Agree to notices", unknown, busy, where)
+        elif notices:
             line("accept_notices", "Agree to notices", "on",
                  "The desk agrees for you to an employer's notice about AI screening, its privacy notice and its terms "
                  "of use, and picks an application's attestation that its information is true (or consent to the "
@@ -1151,7 +1184,9 @@ class Desk:
             line("accept_notices", "Agree to notices", "off",
                  "Notices, terms and attestations are yours: the desk stops for you at each one.", where)
         where = f"{profile} manage_accounts (on unless set to false)"
-        if accounts:
+        if accounts is None:
+            line("manage_accounts", "Make accounts", unknown, busy, where)
+        elif accounts:
             line("manage_accounts", "Make accounts", "on" if s.manage_accounts_chosen else
                  "on (your profile doesn't say, so it's on by default)",
                  "Where an employer's site needs an account, the desk creates yours there: with the job system's "
@@ -1171,7 +1206,9 @@ class Desk:
             line("manage_accounts", "Make accounts", "off",
                  "The desk never creates an account or resets a password: it fills in Create Account and leaves the "
                  "rest to you.", where)
-        line("accept_cookies", "Accept cookies", "on" if cookies else fix if unread else "off",
+        line("accept_cookies", "Accept cookies",
+             unknown if cookies is None else "on" if cookies else fix if unread else "off",
+             busy if cookies is None else
              "Cookie banners are declined; one with no way to decline is accepted for you." if cookies else
              "Cookie banners are declined, or left to you when there's no way to decline: never accepted.",
              f"{profile} accept_cookies (off unless set to true)")
@@ -1190,6 +1227,8 @@ class Desk:
         before = a.mail_problem
         try:  # (the desk's own way into its inbox; what it would say of one it can't use isn't put on the page from here)
             usable, why = a.mail_login() is not None, a.mail_problem
+        except Exception:  # (a file it reads, locked just now)
+            usable, why = False, "The desk couldn't look just now (a file it reads may be open in another program)."
         finally:
             a.mail_problem = before
         where = "The Site passwords card (Your email)"
@@ -1222,8 +1261,9 @@ class Desk:
                                                           else f", or {profile} jobs_at_once"))
         if a.hold_submits:
             said = ("Nothing is submitted, by your Submit or for you. Find jobs searches every list's employers and shows "
-                    "only the openings where the desk doesn't go all the way yet; the desk still fills each step"
-                    + (" and makes accounts" if accounts else "") + ", which the sites keep.")
+                    "only the openings where the desk doesn't go all the way yet; "
+                    + ("nothing is filled until profile.yaml is fixed." if unread else "the desk still fills each step"
+                       + (" and makes accounts" if accounts else "") + ", which the sites keep."))
         else:
             said = ("Practice mode sends nothing either way." if dry else
                     "Nothing is sent while your profile can't be read." if unread else "The desk applies for real.")
