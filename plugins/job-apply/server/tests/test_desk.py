@@ -589,6 +589,28 @@ def test_saving_a_password_leaves_the_rest_of_the_file_alone(job_apply_home):
             config.save_site_password(name, value)
 
 
+def test_a_password_save_that_fails_midway_leaves_the_saved_ones_and_a_long_one_is_refused(job_apply_home, monkeypatch):
+    """The review of Oct 18: secrets.yaml was truncated before it was written, so a failure in between (a full disk,
+    an exit, an antivirus hold) emptied every saved password. And any length went in (5 MB did)."""
+    path = config.secrets_path()
+    path.write_text("successfactors_password: keep-me\nworkday_password: old-one\n", encoding="utf-8")
+
+    def boom(fd, *args, **kwargs):
+        os.close(fd)
+        raise OSError("No space left on device")
+
+    with monkeypatch.context() as m, pytest.raises(OSError):
+        m.setattr(os, "fdopen", boom)
+        config.save_site_password("workday_password", "new one")
+    assert config.get_secret("workday_password") == "old-one" and config.get_secret("successfactors_password") == "keep-me"
+    assert [p.name for p in path.parent.iterdir() if p.name.endswith(".tmp")] == []
+    with pytest.raises(ValueError):
+        config.save_site_password("workday_password", "x" * (config.PASSWORD_MAX + 1))
+    assert config.get_secret("workday_password") == "old-one"
+    config.save_site_password("workday_password", "y" * config.PASSWORD_MAX)
+    assert config.get_secret("workday_password") == "y" * config.PASSWORD_MAX
+
+
 def test_a_hand_typed_secrets_file_doesnt_break_the_page(srv, job_apply_home):
     """A password typed by hand is read as typed, even where YAML would choke on it."""
     config.secrets_path().write_text("workday_password: [unclosed\nnot a line of names\n", encoding="utf-8")
@@ -1460,6 +1482,38 @@ def test_a_broken_profile_or_saved_search_doesnt_take_the_page_down(srv, job_app
     state = Desk(srv).state()
     assert "typo" in state["profile_problem"] and state["listings"] == []
 
+
+
+def test_a_tracker_that_isnt_a_database_any_more_and_a_settings_typo_are_said_on_the_page(srv, job_apply_home):
+    """The review of Oct 18: a tracker.db that can't be read made every poll of the page fail, so the page stayed
+    blank with no word why; and a settings typo (accept_notice) was said by setup and the doctor but never on the desk,
+    so the person believed notices were left to them while the desk agreed to them."""
+    profile = yaml.safe_load((job_apply_home / "profile.yaml").read_text(encoding="utf-8"))
+    profile["settings"] = {**(profile.get("settings") or {}), "accept_notice": False}
+    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(profile), encoding="utf-8")
+    config.db_path().write_bytes(b"this is not a database, just junk bytes " * 200)
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    state = desk.state()
+    assert state["tracker_problem"] and "not a database" in state["tracker_problem"]
+    assert state["listings"] == [] and state["applications"] == [] and state["counts"] == {}
+    assert any("accept_notice" in w for w in state["settings_warnings"]), state["settings_warnings"]
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("#notices .notice")
+                said = await page.inner_text("#notices")
+                assert "list of jobs can't be read" in said and "tracker.db" in said, said
+                assert "settings does nothing" in said and "accept_notice" in said, said
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
 
 def test_the_desks_own_files_arent_queued_either(srv, job_apply_home):
     config.secrets_path().write_text("workday_password: hunter2\n", encoding="utf-8")

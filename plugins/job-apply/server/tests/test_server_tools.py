@@ -265,6 +265,41 @@ def test_tool_errors_reach_claude_in_their_own_words(srv):
     assert "Unknown status 'aplied'" in run(call("update_job", {"job_id": job["id"], "status": "aplied"}))
 
 
+
+def test_the_databases_and_the_browsers_failures_reach_claude_in_their_own_words(srv, monkeypatch):
+    """The review of Oct 18: a tracker another session holds, or one that isn't a database any more, a tab the person
+    closed, reached Claude as a bare "Error executing tool get_job". Their first line now does, without Playwright's
+    call log."""
+    import sqlite3
+
+    from mcp.server.mcpserver.exceptions import ToolError
+    from playwright.async_api import Error as PlaywrightError
+
+    async def call(name, args):
+        with pytest.raises(ToolError) as e:
+            await srv.mcp.call_tool(name, args)
+        return str(e.value)
+
+    for failure, said in ((sqlite3.DatabaseError("file is not a database"), "file is not a database"),
+                          (sqlite3.OperationalError("database is locked"), "database is locked"),
+                          (PlaywrightError("Target page, context or browser has been closed\nCall log:\n  - waiting"),
+                           "Target page, context or browser has been closed")):
+        def broken(failure=failure):
+            raise failure
+
+        monkeypatch.setattr(srv, "tracker", broken)
+        text = run(call("list_jobs", {}))
+        assert said in text and "Call log" not in text, text
+
+
+def test_the_mcp_server_reports_the_plugins_version(srv):
+    """The review of Oct 18: the server said 0.3.0 (pyproject's) to the app while the plugin was 0.3.209."""
+    import json
+
+    # (read from plugin.json here: test_doctor patches config.plugin_version, and the server reads it once on import)
+    manifest = json.loads((config.PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    assert srv.mcp.version == manifest["version"] and srv.mcp.version.count(".") == 2
+
 def test_a_profile_with_a_typo_says_where(job_apply_home):
     config.profile_path().write_text('documents:\n  resume: "C:\\Users\\Sam\\resume.pdf"\n', encoding="utf-8")
     with pytest.raises(ValueError, match=r"typo near line 2.*backslashes"):

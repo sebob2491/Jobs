@@ -34,6 +34,8 @@ def fine(monkeypatch):
         raise AssertionError("the browser is only started with --launch")
 
     monkeypatch.setattr(doctor, "launches", never)
+    import job_apply.server  # noqa: F401  (imported first: it reads the plugin's version once, as it's imported)
+
     monkeypatch.setattr(config, "plugin_version", lambda: "0.3.92")
 
 
@@ -377,3 +379,37 @@ def test_claude_can_run_it_as_a_tool(fine, srv, monkeypatch):
 def test_the_console_script_is_declared():
     text = (config.PACKAGE_DIR.parents[1] / "pyproject.toml").read_text(encoding="utf-8")
     assert 'job-apply-doctor = "job_apply.doctor:main"' in text
+
+
+def test_a_list_of_jobs_that_cant_be_read_is_a_problem_said_with_what_to_do(fine, loop, job_apply_home):
+    """The review of Oct 18: a tracker.db that isn't a database any more left the desk without its jobs, and the
+    doctor never looked. It reads it (read only) and says what to do; before the desk has made one it says nothing."""
+    assert not any(c.name == "tracker" for c in report().checks)
+    from job_apply.tracker import Tracker
+
+    Tracker().close()
+    assert check(report(), "tracker").status == doctor.OK
+    config.db_path().write_bytes(b"this is not a database, just junk bytes " * 200)
+    before = config.db_path().read_bytes()
+    c = check(report(), "tracker")
+    assert c.status == doctor.PROBLEM and "can't be read" in c.say and "tracker.db" in c.fix
+    assert config.db_path().read_bytes() == before  # (read only)
+
+
+
+def test_a_list_of_jobs_in_use_is_advice_not_a_problem_to_move(fine, loop, job_apply_home):
+    """The review of 0.3.210: a tracker.db another program is writing (or one with a journal a crash left, which the
+    desk's own open rolls back) was told to be moved aside, which could lose it. That's advice to look again."""
+    import sqlite3
+
+    from job_apply.tracker import Tracker
+
+    Tracker().close()
+    writer = sqlite3.connect(config.db_path())
+    writer.execute("BEGIN EXCLUSIVE")
+    try:
+        c = check(report(), "tracker")
+    finally:
+        writer.rollback()
+        writer.close()
+    assert c.status == doctor.ADVICE and "move" not in c.fix.lower(), (c.status, c.say, c.fix)

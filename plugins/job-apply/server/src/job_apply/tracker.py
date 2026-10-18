@@ -14,7 +14,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any, NamedTuple
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -456,6 +456,22 @@ def _locked(method):
 # seconds a write waits for another process's to finish before it gives up
 DB_TIMEOUT = 15
 
+# The schema's version, kept in the file's user_version (Tracker._migrate). A release that only adds a column to _SCHEMA
+# needs nothing more: _migrate compares the columns on every open and adds what the file lacks. One that must change
+# rows too adds a step here and raises SCHEMA_VERSION to it. Version 1 is the schema of 0.3.210, when versions began.
+# (An index in _SCHEMA on a column a release adds would be made before _migrate adds it, and fail on an older file:
+# make such an index in a MIGRATIONS step. A step uses conn.execute, never executescript, which would commit the
+# transaction _migrate holds the step in.)
+SCHEMA_VERSION = 1
+MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = []
+
+
+
+def damaged(said: str) -> bool:
+    """Whether SQLite's words say the file itself is damaged (not a database, malformed), which moving it aside
+    mends, rather than busy (another program's write, a journal left by a crash that the next ordinary open rolls
+    back) or a fault of the code's: only then is the person told to move it (the review of 0.3.210)."""
+    return bool(re.search(r"not a database|malformed|file is encrypted", said, re.I))
 
 class Tracker:
     def __init__(self, path: Path | None = None):
@@ -470,9 +486,57 @@ class Tracker:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.executescript(_SCHEMA)
+        self._migrate()
         self._renormalize()
         self._merge_copies()
         self._gather_folders()
+
+    def _migrate(self) -> None:
+        """Bring a tracker.db from an older release up to this one's schema. CREATE TABLE IF NOT EXISTS makes a table
+        that's missing but never adds a column to one that's there, so a column _SCHEMA has and the file lacks is
+        added here on every open that finds one (with its default; a NOT NULL one without a default gets ''), then
+        each step of MIGRATIONS past the file's user_version runs, once. Looking only reads, so a file with nothing
+        missing is only read (the review of Oct 18: a jobs table without applied_at opened and read, then failed its
+        first write). The work is one transaction under the write lock, looked at again once the lock is held: two
+        sessions opening one old file at once add each column once, and a step that fails leaves the file as it was."""
+        want = sqlite3.connect(":memory:")
+        try:
+            want.executescript(_SCHEMA)
+            if not self._missing(want) and self.conn.execute("PRAGMA user_version").fetchone()[0] >= SCHEMA_VERSION:
+                return
+            with self._lock:
+                self.conn.execute("BEGIN IMMEDIATE")
+                try:
+                    for alter in self._missing(want):
+                        self.conn.execute(alter)
+                    version = self.conn.execute("PRAGMA user_version").fetchone()[0]
+                    for step, migrate in MIGRATIONS:
+                        if step > version:
+                            migrate(self.conn)
+                    if version < SCHEMA_VERSION:
+                        self.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                    self.conn.commit()
+                except BaseException:
+                    self.conn.rollback()
+                    raise
+        finally:
+            want.close()
+
+    def _missing(self, want: sqlite3.Connection) -> list[str]:
+        """The ALTER TABLE statements that give this file the columns `want` (_SCHEMA, made in memory) has and it
+        lacks. (PRAGMA table_info says nothing of REFERENCES, UNIQUE or CHECK: a column added to a table that's there
+        has none of them.)"""
+        alters = []
+        for (table,) in want.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"):
+            have = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+            for _, name, kind, notnull, default, _ in want.execute(f"PRAGMA table_info({table})"):
+                if name in have:
+                    continue
+                if default is None and notnull:
+                    default = "''"
+                extra = f" DEFAULT {default}" if default is not None else ""
+                alters.append(f"ALTER TABLE {table} ADD COLUMN {name} {kind}{extra}")
+        return alters
 
     def _renormalize(self) -> None:
         """Bring addresses saved before normalize_url knew a variant up to date. Two rows

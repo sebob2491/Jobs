@@ -1219,6 +1219,13 @@ function renderHeader() {
   if (state.profile_problem) notes.push({cls: "notice", html: `Your profile can't be read: ${esc(state.profile_problem)} Fix it and the desk picks it up again by itself.`});
   if (state.mail_problem) notes.push({cls: "notice", html: esc(state.mail_problem)});
   if (state.answers_problem) notes.push({cls: "notice", html: `Your saved answers aren't being used: ${esc(state.answers_problem)}.`});
+  if (state.tracker_problem && state.tracker_damaged) notes.push({cls: "notice", html: `Your list of jobs can't be read `
+    + `(${esc(state.tracker_problem)}). Close the desk, move <code>${esc(state.tracker_path)}</code> (and a `
+    + `<code>tracker.db-journal</code> beside it, if there is one) somewhere else for safekeeping, and open the desk `
+    + `again: it starts a new list. Your job folders, profile and passwords stay as they are.`});
+  else if (state.tracker_problem) notes.push({cls: "notice", html: `Your list of jobs can't be opened right now `
+    + `(${esc(state.tracker_problem)}): it may be in use. The desk tries again by itself.`});
+  for (const w of state.settings_warnings || []) notes.push({cls: "notice", html: `A line in your profile's settings does nothing: ${esc(w)}`});
   if (!token) notes.push({cls: "notice", html: "This page needs the address the desk printed (it carries a key). Open it from Claude with “open the job desk”."});
   const closed = dismissed();
   patch($("notices"), notes.filter((n) => !closed.has(n.tip)).map((n) => ({key: n.cls + ":" + n.html, html: n.tip
