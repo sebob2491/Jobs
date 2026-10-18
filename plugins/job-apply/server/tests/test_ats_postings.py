@@ -6,8 +6,8 @@ from conftest import FIXTURES
 
 from job_apply.ats import (csod_parts, detect_ats, greenhouse_form_url, greenhouse_parts, lever_parts, linkedin_job_id,
                            workday_parts)
-from job_apply.postings import (Posting, fetch_posting, finalize, html_to_text, parse_html, place_in_text,
-                                public_apply_url)
+from job_apply.postings import (FetchError, Posting, csod_context, fetch_posting, finalize, html_to_text, parse_html,
+                                place_in_text, public_apply_url)
 
 
 def test_detect_ats():
@@ -496,6 +496,95 @@ def test_a_cornerstone_posting_is_read_with_its_pages_token():
     posting = replay_posting(fixture)
     check_posting(posting, fixture)
     assert posting.warnings == ["Cornerstone says this posting takes no applications now."], posting.warnings
+
+
+def page_posting(title: str) -> str:
+    ld = {"@type": "JobPosting", "title": title, "description": "<p>Made-up text.</p>",
+          "jobLocation": {"address": {"addressLocality": "Tempe", "addressRegion": "AZ"}}}
+    return f'<html><head><script type="application/ld+json">{json.dumps(ld)}</script></head><body></body></html>'
+
+
+def test_a_reader_that_cant_read_the_posting_leaves_it_to_the_page():
+    """Each reader gives way to the page (its JSON-LD here) when the address isn't a posting's, its API has no posting,
+    or its page lacks what the API needs; an API that fails says so in the posting's warnings. LinkedIn's sign-in
+    wall is an error, not a posting."""
+    wd = "https://examplefab.wd1.myworkdayjobs.com/en-US/External/job/Phoenix-AZ/Technician_R1"
+    wd_api = "https://examplefab.wd1.myworkdayjobs.com/wday/cxs/examplefab/External/job/Phoenix-AZ/Technician_R"
+    oracle = "https://examplefab.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/7"
+    csod = "https://examplefab.csod.com/ux/ats/careersite/1/home/requisition/{}?c=examplefab"
+    csod_api = "https://examplefab.csod.com/services/x/job-requisition/v2/requisitions/{}/jobDetails?cultureId=1"
+    token = '<script>csod.context={"token": "anon-token-1", "cultureID": 1};</script>'
+    cases = {  # the posting's address: its answers besides the page, and what the posting read says
+        "https://examplefab.wd1.myworkdayjobs.com/en-US/External": ({}, ""),  # the site, not a posting
+        wd: ({wd_api + "1": {"jobPostingInfo": {}}}, ""),  # no posting in the answer
+        wd.replace("_R1", "_R2"): ({wd_api + "2": 500}, "ATS API lookup failed (FetchError: HTTP 500 from"),
+        "https://job-boards.greenhouse.io/examplefab": ({}, ""),
+        "https://jobs.lever.co/examplefab": ({}, ""),
+        "https://jobs.smartrecruiters.com/ExampleFab": ({}, ""),
+        "https://examplefab.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/jobs": ({}, ""),
+        oracle: ({"https://examplefab.fa.us2.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails"
+                  "?expand=all&onlyData=true&finder=ById;Id=%227%22,siteNumber=CX_1": {"items": []}}, ""),
+        "https://careers.example.com/en/sites/CX_1/job/8": ({}, ""),  # its own address, its page naming no Oracle host
+        "https://examplefab.csod.com/ux/ats/careersite/1/home?c=examplefab": ({}, ""),  # the site, not a requisition
+        csod.format(2): ({}, ""),  # a page without its token
+        csod.format(3): ({csod_api.format(3): {"data": {}}}, ""),  # no posting in the answer
+    }
+    pages = {csod.format(3): token}
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url == "https://www.linkedin.com/jobs/view/4000000001/":
+            return httpx.Response(302, headers={"Location": "https://www.linkedin.com/authwall?trk=x"})
+        if url.startswith("https://www.linkedin.com/authwall"):
+            return httpx.Response(200, html="<html><body>Sign in</body></html>")
+        for posting_url, (answers, _) in cases.items():
+            if url == posting_url:
+                return httpx.Response(200, html=pages.get(url, "") + page_posting("From the page"))
+            if url in answers:
+                body = answers[url]
+                return httpx.Response(body) if isinstance(body, int) else httpx.Response(200, json=body)
+        raise AssertionError(url)
+
+    async def go() -> list:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer), follow_redirects=True) as client:
+            read = [await fetch_posting(url, client=client) for url in cases]
+            try:
+                await fetch_posting("https://www.linkedin.com/jobs/view/4000000001/", client=client)
+            except FetchError as e:
+                read.append(str(e))
+            return read
+
+    *read, linkedin = asyncio.run(go())
+    for (url, (_, warned)), posting in zip(cases.items(), read):
+        assert (posting.parse_method, posting.title, posting.location) == ("json-ld", "From the page", "Tempe, AZ"), url
+        api_warnings = [w for w in posting.warnings if w.startswith("ATS API")]
+        assert (api_warnings[0].startswith(warned) if warned else not api_warnings), (url, posting.warnings)
+    assert linkedin == "LinkedIn requires sign-in for this posting"
+
+
+def test_a_cornerstone_pages_context_is_the_one_with_its_token():
+    page = ('csod.context={"token": ' 'csod.context={}; csod.context={"cultureID": 1}; '
+            'csod.context={"token": "anon-token-1", "cultureID": 2};')
+    assert csod_context(page) == {"token": "anon-token-1", "cultureID": 2}
+    assert csod_context('csod.context={"cultureID": 1};') == {"cultureID": 1}  # (a placeholder, without one)
+    assert csod_context("<html></html>") == {}
+
+
+def test_json_ld_in_the_shapes_sites_write_it():
+    """A script left empty, trailing commas, one that's no JSON at all, places written as words, a salary as one
+    value, a remote posting, and markup the text leaves out."""
+    def page(*scripts: str) -> str:
+        return ("<html><head>" + "".join(f'<script type="application/ld+json">{s}</script>' for s in scripts)
+                + "</head><body></body></html>")
+
+    ld = ('{"@type": "JobPosting", "title": "Remote Technician", "jobLocation": ["Tempe, AZ", {"address": "Mesa, AZ"},],'
+          ' "baseSalary": {"currency": "USD", "value": 30}, "jobLocationType": "TELECOMMUTE",'
+          ' "description": "<p>One<br>Two</p><script>track()<\\/script>",}')  # (its "/" escaped, as in a page)
+    p = parse_html(page("", "{not json", ld), "https://careers.example.com/job/1")
+    assert (p.title, p.location, p.salary, p.parse_method) == ("Remote Technician", "Tempe, AZ; Mesa, AZ; Remote",
+                                                               "USD 30", "json-ld"), p
+    assert p.description == "One\nTwo", p.description
+    assert html_to_text("") == ""
 
 
 SAVE_RUN = """
