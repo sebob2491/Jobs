@@ -3936,6 +3936,56 @@ def test_a_us_citizen_question_is_read_as_the_form_gives_it_and_by_the_citizen_r
     assert _answer("Do you hold U.S. citizenship (not lawful permanent residence or a green card)?", pr, **yes_no) != "Yes"
 
 
+def test_the_us_person_question_is_held_to_the_same_short_list():
+    """The eighth review of Oct 18: the U.S. person's rule answered its whole label, whatever was around the question,
+    on main too: a citizen-only question that names permanent residents to rule them out took a permanent resident's
+    Yes, and the question with a clearance, a move or on-site work beside it a Yes for them all. Now the U.S. person's
+    question is answered only as "Are you a U.S. person" or the citizen question with the others named after it, with
+    nothing beside it but what the citizen question allows; the rest are left."""
+    pr = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=False, us_person=True,
+               citizenship="Mexico")
+    visa = _work(authorized_to_work=True, requires_sponsorship=True, us_citizen=False, us_person=False,
+                 citizenship="India")
+    citizen = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=True, us_person=True,
+                    citizenship="United States")
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    for label in ("Are you a U.S. citizen (permanent residents do not qualify)?",
+                  "Are you a US citizen (green card holders are not eligible)?",
+                  "Are you a US citizen (permanent residents should answer No)?",
+                  "Are you a US citizen (permanent residents: answer No)?",
+                  "Are you a US citizen (as opposed to a permanent resident)?",
+                  "Are you a US citizen (rather than a green card holder)?",
+                  "Are you a US citizen, since permanent residents cannot obtain this clearance?",
+                  "Are you a US citizen, permanent residents excluded?",
+                  "Are you a US citizen (refugees and asylees do not qualify)?",
+                  "Are you a U.S. citizen or permanent resident and able to obtain a security clearance?",
+                  "Are you a US citizen or permanent resident, and do you hold an active clearance?",
+                  "Are you a US citizen or permanent resident? Do you hold an active clearance?",
+                  "Are you a US citizen or permanent resident? Select Yes only if you also hold a TS/SCI.",
+                  "Are you a US citizen or permanent resident? (Note: answer Yes only if you also hold a clearance)",
+                  "Are you a US citizen or green card holder willing to relocate to Phoenix?",
+                  "Are you a US citizen or permanent resident who can work on-site in Chandler?",
+                  "Do you hold an active clearance? Are you a US citizen or permanent resident?",
+                  "Are you legally authorized to work in the US (are you a US citizen or permanent resident)?",
+                  "Are you a U.S. person? Do you hold an active clearance?"):
+        for p in (citizen, pr, visa):
+            assert _answer(label, p, **yes_no) is None, (label, p.get("work_authorization.citizenship"))
+    for label in ("Are you a U.S. citizen or permanent resident?", "Are you a U.S. citizen or green card holder?",
+                  "Are you a US citizen, national, lawful permanent resident, refugee or asylee?",
+                  "Are you a U.S. citizen or lawful permanent resident (green card holder)?",
+                  "Are you a U.S. citizen, U.S. national, or lawful permanent resident? (Yes/No)",
+                  "Export Control: Are you a U.S. citizen or permanent resident?",
+                  "Are you a U.S. person?", "Are you a U.S. person as defined by the International Traffic in Arms "
+                  "Regulations (ITAR)?",
+                  "Are you a U.S. Person (U.S. citizen, U.S. permanent resident, refugee, asylee, or protected "
+                  "individual as defined by 8 U.S.C. 1324b(a)(3))?",
+                  "Are you a US citizen, permanent resident, or protected individual as defined by 8 U.S.C. "
+                  "1324b(a)(3)? Note: this position is not eligible for visa sponsorship."):
+        a = resolve_field(f(label, **yes_no), pr, {"company": "Acme"})
+        assert a is not None and (a.value, a.rule) == ("Yes", "us_person"), (label, a)
+        assert [_answer(label, p, **yes_no) for p in (citizen, visa)] == ["Yes", "No"], label
+
+
 def test_a_sponsorship_question_about_a_partner_company_is_still_the_persons():
     """"...for a partner company" names a company, not the person's partner: the person's own need, the profile's
     answer. Their partner's need stays left."""

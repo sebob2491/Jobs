@@ -551,6 +551,7 @@ _YES_NO_TAIL = re.compile(r"\s*[:,\-\u2013]?\s*\(?\s*yes\s*(?:/|or)\s*no\b\)?", 
 # employed by Acme.", "Must hold an active Secret.", "Willing to relocate (Y/N)"): left, never guessed at
 _NUMBERING = r"(?:\(?\s*(?:q\s*)?\d+[a-z]?\s*[.):\]]|[a-z][.)]|#\s*\d+[.):]?)"
 _OWN_HEADING = re.compile(rf"^\s*{_NUMBERING}?\s*(?:(?:(?:u\.?\s?s\.?\s*|united states\s+)?citizenship(?:\s+status)?|"
+                          r"(?:u\.?\s?s\.?\s*|united states\s+)person(?:\s+status)?|export\s+controls?|"
                           r"required|eligibility|work eligibility|work authori[sz]ation(?:\s+status)?)\s*"
                           r"(?::|\s[-\u2013\u2014]))?\s*$", re.I)
 _US_SAID = r"(?:u\.?\s?s\.?(?:\s?a\.?)?\s+|united states\s+)?"
@@ -579,22 +580,34 @@ _SAYS_NO_MORE = re.compile(
 _CITIZEN_GOES_ON = r"(?! (?:by\b|or\b(?! (?:not|(?:an? )?(?:u ?s )?national)\b)))"
 
 
-def _asks_more_than_citizenship(raw_label: str) -> bool:
+def _asks_more_than_citizenship(raw_label: str, persons: bool = False) -> bool:
     """Whether the label holds anything beside "Are you a U.S. citizen" that isn't on the short list of what says no
     more (_OWN_HEADING before it; after it its end, the answers it takes, "or not", "(or a US national)", and
     _SAYS_NO_MORE's sentences). Anything else, a question, a condition, a request or another requirement ("Select Yes
     if currently employed by Acme.", "This role requires an active TS/SCI.", "Do you hold a valid work visa? Are you a
     US citizen?"), may change what its Yes or No would say: left for the person, never guessed at (the reviews of
-    Oct 18). A citizen question the check can't place is left where the label asks anything else."""
+    Oct 18). A citizen question the check can't place is left where the label asks anything else. With `persons`, the
+    U.S. person's question, held to the same list: "Are you a U.S. person", or the citizen question with the others
+    named after it (_PERSONS_AFTER), and nothing more ("...or permanent resident and able to obtain a clearance?",
+    "Are you a U.S. citizen (permanent residents do not qualify)?": the eighth review of Oct 18)."""
     text = re.sub(r"\s+", " ", re.sub(r"\(required\)|\*", " ", raw_label or "", flags=re.I)).strip()
-    m = _CITIZEN_ASKED.search(text)
+    m = citizen = _CITIZEN_ASKED.search(text)
+    if persons and m is None:
+        m = _US_PERSON_ASKED.search(text)
     if m is None:
         return text.count("?") > 1 or bool(re.search(r"\b(are|do|can|will|have)\s+you\b", text, re.I))
     if not _OWN_HEADING.match(text[:m.start()]):
         return True
     rest = m.group("rest")
-    same = _SAME_QUESTION.match(rest)
-    rest = rest[same.end():] if same else rest
+    if persons:
+        rest = _undotted(rest)
+        named = (_PERSONS_AFTER if citizen else _PERSON_DEFINED).match(rest)
+        if citizen and named is None:
+            return True  # (the citizen's question alone: never the U.S. person's to answer)
+        rest = rest[named.end():] if named else rest
+    else:
+        same = _SAME_QUESTION.match(rest)
+        rest = rest[same.end():] if same else rest
     told = _YES_NO_TAIL.match(rest)
     rest = rest[told.end():] if told else rest
     rest = re.sub(r"^\s*[?!.;]", "", rest)
@@ -618,16 +631,37 @@ _NOT_THEM = re.compile(r"\b(?:not|n[\u2019']t|excluding|exclud\w*|except|other\s
                        r"(?:lawful\s+)?(?:permanent|green\s+card|refugee|asyl)", re.I)
 
 
-def _only_the_citizen_question(raw_label: str) -> bool:
-    """Whether the label asks "Are you a U.S. citizen" and not the U.S. person's question: then only the citizen rules
-    read it, as _asks_more_than_citizenship allows, never another work rule's reading of what's around it ("Are you a
-    US citizen? Will you require visa sponsorship?" is no sponsorship question for a citizen's No, nor "Work
-    Authorization: Are you a US citizen?" an authorized person's Yes: the seventh review of Oct 18)."""
-    m = _CITIZEN_ASKED.search(re.sub(r"\s+", " ", raw_label or ""))
+# ...as it names them, once "U.S." has lost its dots: "..., national, lawful permanent resident, refugee or asylee", "...or
+# green card holder (as defined by 8 U.S.C. 1324b(a)(3))"; and "Are you a U.S. person", with the same said of it
+_PERSON_NAMED = (r"(?:an?\s+)?(?:other\s+)?(?:us\s+|usa\s+|united\s+states\s+)?(?:citizen|national|(?:lawful\s+|"
+                 r"legal\s+)?permanent\s+residen(?:t|ce)|green\s+card\s+holder|refugee|asylee|(?:person\s+)?granted\s+"
+                 r"asylum|protected\s+individual|person)s?")
+_DEFINITION = (r"as\s+defined\s+(?:by|in|under)\s+(?:the\s+)?(?:8\s+usc\s*(?:\u00a7\s*)?1324b(?:\s*\(\w+\))*|itar|ear|"
+               r"(?:us\s+)?(?:export\s+control|export\s+administration|international\s+traffic\s+in\s+arms)\s+"
+               r"(?:laws?\s+and\s+)?regulations?(?:\s*\((?:ear|itar)\))?|22\s+cfr\s*(?:\u00a7\s*)?120(?:\.\d+)*)")
+_PERSON_ITEM = rf"{_PERSON_NAMED}(?:\s*,?\s*{_DEFINITION})?"
+_JOINED = r"(?:\s*,\s*(?:or\s+|and/or\s+)?|\s*/\s*|\s+(?:or|and/or)\s+)"
+_PERSONS_IN_BRACKETS = rf"\s*\(\s*(?:{_PERSON_ITEM}(?:{_JOINED}{_PERSON_ITEM})*|{_DEFINITION})\s*\)"
+_PERSONS_AFTER = re.compile(rf"(?:{_JOINED}{_PERSON_ITEM}(?:{_PERSONS_IN_BRACKETS})?)+(?:\s*,?\s*{_DEFINITION})?", re.I)
+_PERSON_DEFINED = re.compile(rf"(?:{_PERSONS_IN_BRACKETS}|\s*,?\s*{_DEFINITION})?", re.I)
+_US_PERSON_ASKED = re.compile(rf"\bare\s+you\s+a\s+{_US_WRITTEN}[\s-]*person\b(?P<rest>.*)$", re.I | re.S)
+# Which rules read each question (_citizen_question)
+_ASKED_BY = {"us_citizen": {"us_citizen", "citizenship"}, "us_person": {"us_person"}}
+
+
+def _citizen_question(raw_label: str) -> str:
+    """Which U.S. question the label asks: "us_citizen" for "Are you a U.S. citizen", "us_person" for the U.S. person's
+    ("Are you a U.S. person", or the citizen question going on to the others in its first sentence, unnegated), "" for
+    neither. Only that question's own rules read the label (_ASKED_BY), held to the short list of what says no more
+    (_asks_more_than_citizenship), never another work rule's reading of what's around it ("Are you a US citizen? Will
+    you require visa sponsorship?" is no sponsorship question for a citizen's No, nor "Work Authorization: Are you a US
+    citizen?" an authorized person's Yes: the seventh and eighth reviews of Oct 18)."""
+    text = re.sub(r"\s+", " ", raw_label or "")
+    m = _CITIZEN_ASKED.search(text)
     if m is None:
-        return False
+        return "us_person" if _US_PERSON_ASKED.search(text) else ""
     first = re.split(r"[?.!;]", _undotted(m.group("rest")), maxsplit=1)[0]
-    return not (_OTHER_US_PERSONS.search(first) and not _NOT_THEM.search(first))
+    return "us_person" if _OTHER_US_PERSONS.search(first) and not _NOT_THEM.search(first) else "us_citizen"
 
 
 def _us_citizen(prof: Profile, job: dict) -> Any:
@@ -2373,7 +2407,7 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
     if ans is None:
         # a self-identification question is its own topic's, whatever else its notice's words match
         own = _self_identification(label, field)
-        citizen_only = not own and _only_the_citizen_question(asked)
+        asked_as = "" if own else _citizen_question(asked)
         for name, pattern, getter, max_len, kinds in ([own] if own else RULES):
             if someone_else and (name in _CONTACT_RULES or name == "employee_id"):
                 continue  # a reference's or an emergency contact's name, phone or email; a referrer's ID
@@ -2386,8 +2420,10 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
             if own or re.search(pattern, label):
                 if name in _WORK_RULES and (_OTHER_COUNTRIES.search(label) or _OTHER_THAN.search(label)):
                     return None  # another country's question: the profile's facts are the United States'
-                if citizen_only and name not in {"us_citizen", "citizenship"}:
-                    continue  # the U.S. citizen question: only its own rules read it, whatever's around it
+                if asked_as and name not in _ASKED_BY[asked_as]:
+                    continue  # the U.S. citizen's or person's question: only its own rules read it, whatever's around it
+                if name == "us_person" and asked_as == "us_person" and _asks_more_than_citizenship(asked, persons=True):
+                    continue  # more than the U.S. person's question asked: the person's
                 if name in {"sponsorship", "no_sponsorship"} and (
                         _THEIR_FAMILY_SPONSORSHIP.search(label)
                         or _EMPLOYER_SPONSORSHIP.search(label) and not _YOUR_NEED.search(label)):
