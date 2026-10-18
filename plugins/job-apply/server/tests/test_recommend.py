@@ -732,10 +732,10 @@ def test_travel_is_said_as_the_jobs_share_of_its_time(text, travel):
     ("Shift: 1st Shift (United States of America)", ("day", True)),
     ("Shift: 3rd Shift (United States of America)", ("other", True)),
     ("Shift: Nights", ("other", True)), ("Schedule: Days/Nights", ("mixed", True)),
-    ("Hours: 6pm - 6am, nights", ("other", True)), ("Schedule: Full Time", ("", False)),
+    ("Hours: 6pm - 6am, nights", ("", False)), ("Schedule: Full Time", ("", False)),  # (not "Hours:": the review)
     ("Work Schedule: Monday - Friday", ("", False)),
     # its sentences: shown, never sure (it may be a "no")
-    ("This is a day shift role.", ("day", False)), ("We have no night shifts.", ("other", False)),
+    ("This is a day shift role.", ("day", False)), ("We have no night shifts.", ("", False)),
     ("Equipment Technician. Grow your insights.", ("", False)),
 ])
 def test_a_shift_is_sure_only_from_the_postings_own_shift_line(text, said):
@@ -752,8 +752,8 @@ def test_a_read_postings_requirements_are_its_facts_and_an_unread_one_says_none(
             "Preferred Qualifications:\n- Master's degree preferred.")
     facts = score_listing({"title": "Senior Equipment Technician"}, tech(), text, TODAY).to_dict()["facts"]
     assert facts == {"level": "senior", "read": True, "degree": "bachelor", "degree_or_equivalent": False,
-                     "clearance": True, "clearance_later": False, "travel": 50, "travel_sure": True,
-                     "shift": "other", "shift_sure": True}
+                     "degree_sure": True, "clearance": True, "clearance_later": False, "clearance_sure": True,
+                     "travel": 50, "travel_sure": True, "shift": "other", "shift_sure": True}
     later = ("Requirements:\n- Associate's degree or equivalent experience.\n- Ability to obtain a Secret clearance.\n"
              "Travel to customer sites; travel reimbursement and a 401(k) with 100% match.")
     facts = score_listing({"title": "Equipment Technician"}, tech(), later, TODAY).to_dict()["facts"]

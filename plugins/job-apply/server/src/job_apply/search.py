@@ -1128,7 +1128,7 @@ def parse_icims(html: str, base: str, state: str | None = None) -> list[Listing]
         out.append(Listing(company="", title=title, url=url, location=location.strip(), posted=posted,
                            external_id=m.group(1), ats="icims",
                            # ("Location Type: Onsite", "Remote Location Eligible: Yes" among its details)
-                           **said_workplace(icims_workplace(row) if row is not None else "")))
+                           **(wplace.fields(*icims_workplace(row)) if row is not None else {})))
     return out
 
 
@@ -1391,8 +1391,9 @@ def _cp_place(place: str, state: str) -> str:
     person would: "Phoenix, AZ", "Remote (Arizona)", "Statewide (Arizona)"."""
     upper = place.upper()
     region = US_STATES.get(state, state)
-    if "REMOTE" in upper:
-        return f"Remote ({region})" if region else "Remote"
+    if "REMOTE" in upper:  # ("REMOTE OPTIONS": an option, never sure: workplace.location_said)
+        said = "Remote options" if "OPTION" in upper else "Remote"
+        return f"{said} ({region})" if region else said
     if re.search(r"VARIOUS|STATEWIDE", upper):
         return f"Statewide ({region})" if region else "Statewide"
     name = " ".join("Mc" + w[2:].capitalize() if w.startswith("mc") and len(w) > 3 else w.capitalize()
@@ -1979,6 +1980,8 @@ def parse_paycom(data: Any, cfg: Any) -> list[Listing]:
             **said_workplace(p.get("remoteType")),  # ("Hybrid", "Remote", "On-site"; "" for none)
             employment_type=str(p.get("positionType") or ""),  # ("Full Time")
         )
+        if p.get("remoteType") and not listing.workplace:  # (a value it can't read: kept as Paycom said it)
+            listing.notes.append(f"Paycom lists it as {p['remoteType']}")
         out.append(listing)
     return out
 
@@ -2737,8 +2740,9 @@ def keep_listings(company: str, listings: list[Listing], terms: list[str], limit
                 and days > posted_within_days:
             continue
         listing.company = company
-        if not listing.workplace and (said := wplace.in_location(listing.location)):
-            listing.workplace, listing.workplace_source = said, "location"  # ("Remote - US", "Remote (Arizona)")
+        if not listing.workplace:  # ("Remote - US"; "Phoenix, AZ; Remote", "Remote options (Arizona)": an option)
+            for k, v in wplace.fields(*wplace.location_said(listing.location), source="location").items():
+                setattr(listing, k, v)
         where = location_matches(listing.location, terms)
         if where is False and listing.in_area:
             where = True  # (the site's own area filter found it: in the area, however the site names its place)

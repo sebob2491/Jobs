@@ -1272,25 +1272,31 @@ def test_the_requirement_chips_hide_only_a_job_that_says_it_fails_them(srv, job_
     """The design of Oct 18, F5: chips in the filter row hide an opening only for a requirement its posting (once read)
     or its title says and that fails it: a clearance asked, a degree above the person's (theirs is a Bachelor's) with no
     equivalent taken, a night shift on its own Shift line, travel over 25% said as the job's, a senior or (for Entry
-    level) a level II title. An opening whose posting isn't read, or that only mentions a shift or travel in passing,
-    stays under every chip; nothing hidden is picked, and the chips are kept in desk.json."""
+    level) a level II title. An opening whose posting isn't read, or that only mentions a shift, travel, a clearance or
+    a degree in passing (not surely: the second review), stays under every chip, the clearance shown as one it may
+    need; nothing hidden is picked, and the chips are kept in desk.json."""
     desk = Desk(srv)
     desk.listings = [
-        _facts_opening("Cleared Technician", 95, level="", read=True, clearance=True),
+        _facts_opening("Cleared Technician", 95, level="", read=True, clearance=True, clearance_sure=True),
         _facts_opening("Senior Technician", 90, level="senior"),  # (its posting unread)
-        _facts_opening("Technician II", 85, level="mid", read=True, degree="master", degree_or_equivalent=False),
+        _facts_opening("Technician II", 85, level="mid", read=True, degree="master", degree_or_equivalent=False,
+                       degree_sure=True),
         _facts_opening("Mentioned Technician", 80, level="", read=True, degree="master", degree_or_equivalent=True,
-                       travel=60, travel_sure=False, shift="other", shift_sure=False, clearance=False,
+                       degree_sure=True, travel=60, travel_sure=False, shift="other", shift_sure=False, clearance=False,
                        clearance_later=False),
+        # (a clearance and a degree read from its words, not surely: shown, never hidden for them)
+        _facts_opening("Maybe Technician", 78, level="", read=True, clearance=True, clearance_sure=False,
+                       degree="doctorate", degree_or_equivalent=False, degree_sure=False),
         _facts_opening("Older Technician", 75),  # (a fit saved before fits had facts: says nothing)
         _facts_opening("Night Technician", 70, level="entry", read=True, travel=40, travel_sure=True, shift="other",
-                       shift_sure=True, degree="bachelor", degree_or_equivalent=False),
-        _facts_opening("Later Technician", 65, level="", read=True, clearance=False, clearance_later=True),
+                       shift_sure=True, degree="bachelor", degree_or_equivalent=False, degree_sure=True),
+        _facts_opening("Later Technician", 65, level="", read=True, clearance=False, clearance_later=True,
+                       clearance_sure=True),
     ]
     desk.applier.start = lambda: None  # the queue isn't worked in this test
     desk.search.update(status="done", at=time.time())
-    every = ["Cleared Technician", "Senior Technician", "Technician II", "Mentioned Technician", "Older Technician",
-             "Night Technician", "Later Technician"]
+    every = ["Cleared Technician", "Senior Technician", "Technician II", "Mentioned Technician", "Maybe Technician",
+             "Older Technician", "Night Technician", "Later Technician"]
 
     def but(*hidden):
         return [t for t in every if t not in hidden]
@@ -1305,6 +1311,9 @@ def test_the_requirement_chips_hide_only_a_job_that_says_it_fails_them(srv, job_
                 assert await _shown_titles(page) == every
                 assert await page.inner_text("#degree-chip") == "My degree is enough"  # (the profile's Bachelor's)
                 assert "a Bachelor's" in await page.get_attribute("#degree-chip", "title")
+                maybe = page.locator("li.row", has_text="Maybe Technician").locator(".chips")
+                assert "may need a security clearance" in await maybe.inner_text()
+                assert "may need" not in await page.locator("li.row", has_text="Cleared Technician").inner_text()
                 for value, hidden in (("no_clearance", ("Cleared Technician", "Later Technician")),
                                       ("degree", ("Technician II",)),
                                       ("day_shift", ("Night Technician",)),
@@ -1320,8 +1329,8 @@ def test_the_requirement_chips_hide_only_a_job_that_says_it_fails_them(srv, job_
                 await page.click("text=Select recommended")
                 picked = await page.evaluate("() => [...selected].filter(selectable)")
                 assert picked == [f"https://careers.example.com/job/{t.lower().replace(' ', '-')}"
-                                  for t in ("Technician II", "Mentioned Technician", "Older Technician",
-                                            "Night Technician")], picked
+                                  for t in ("Technician II", "Mentioned Technician", "Maybe Technician",
+                                            "Older Technician", "Night Technician")], picked
                 for _ in range(50):
                     if desk.chips["requirements"] == ["no_clearance", "not_senior"]:
                         break
@@ -1421,7 +1430,9 @@ def test_the_type_chips_hide_only_a_job_whose_system_says_its_of_other_types(srv
     """The design of Oct 18, F6: each row says its employment type as its job system's field gives it (its list's, its
     posting's once read, or its job's in the tracker), and the Type chips show only the types pressed: an opening that
     says only others is hidden; one that doesn't say, or whose field names no type ("Regular"), stays. Nothing hidden
-    is picked."""
+    is picked. A chip judges only what the field says: its schedule (full or part time), its arrangement (contract,
+    temporary, internship, per diem), or both (the second review): an internship whose field says "Intern" stays
+    for Part-time, and a full-time job stays for Internship."""
     desk = Desk(srv)
 
     def opening(title, score, **said):
@@ -1431,10 +1442,12 @@ def test_the_type_chips_hide_only_a_job_whose_system_says_its_of_other_types(srv
                      opening("Part Technician", 90, posting={"employment_type": "PART_TIME"}),
                      opening("Regular Technician", 85, employment_type="Regular"),
                      opening("Plain Technician", 80),
-                     opening("Both Technician", 75, employment_type="Full-time, Temporary")]
+                     opening("Both Technician", 75, employment_type="Full-time, Temporary"),
+                     opening("Intern Technician", 70, employment_type="Intern")]
     desk.applier.start = lambda: None
     desk.search.update(status="done", at=time.time())
-    every = ["Full Technician", "Part Technician", "Regular Technician", "Plain Technician", "Both Technician"]
+    every = ["Full Technician", "Part Technician", "Regular Technician", "Plain Technician", "Both Technician",
+             "Intern Technician"]
     rows = {r["title"]: r for r in desk.state()["listings"]}
     assert rows["Part Technician"]["job_types"]["types"] == ["part_time"]
     assert rows["Regular Technician"]["job_types"] is None and rows["Plain Technician"]["job_types"] is None
@@ -1455,22 +1468,24 @@ def test_the_type_chips_hide_only_a_job_whose_system_says_its_of_other_types(srv
                 assert await meta("Part Technician").locator(".job-types").get_attribute("title") == \
                     "The job system says “PART_TIME”"
                 assert await meta("Regular Technician").locator(".job-types").count() == 0
-                await _chip(page, "job_types", "full_time", ["Full Technician", "Regular Technician",
-                                                             "Plain Technician", "Both Technician"])
-                await _chip(page, "job_types", "part_time", every)
-                await _chip(page, "job_types", "full_time", ["Part Technician", "Regular Technician",
-                                                             "Plain Technician"])
-                await _chip(page, "job_types", "temporary", ["Part Technician", "Regular Technician",
-                                                             "Plain Technician", "Both Technician"])
+                await _chip(page, "job_types", "internship", ["Full Technician", "Part Technician",
+                                                              "Regular Technician", "Plain Technician",
+                                                              "Intern Technician"])
+                await _chip(page, "job_types", "part_time", ["Part Technician", "Regular Technician",
+                                                             "Plain Technician", "Intern Technician"])
                 await page.click("text=Select recommended")
                 picked = await page.evaluate("() => [...selected].filter(selectable)")
                 assert picked == [f"https://careers.example.com/job/{t.lower().replace(' ', '-')}"
                                   for t in ("Part Technician", "Regular Technician", "Plain Technician",
-                                            "Both Technician")], picked
-                await _chip(page, "job_types", "part_time", ["Regular Technician", "Plain Technician",
+                                            "Intern Technician")], picked
+                await _chip(page, "job_types", "internship", ["Part Technician", "Regular Technician",
+                                                              "Plain Technician", "Intern Technician"])
+                await _chip(page, "job_types", "part_time", every)
+                await _chip(page, "job_types", "temporary", ["Full Technician", "Part Technician",
+                                                             "Regular Technician", "Plain Technician",
                                                              "Both Technician"])
                 picked = await page.evaluate("() => [...selected].filter(selectable)")
-                assert "https://careers.example.com/job/part-technician" not in picked  # (hidden: never applied to)
+                assert "https://careers.example.com/job/intern-technician" not in picked  # (hidden: never applied to)
                 for _ in range(50):
                     if desk.chips["job_types"] == ["temporary"]:
                         break

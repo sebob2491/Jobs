@@ -13,7 +13,7 @@ import json
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Any, TypedDict
+from typing import Any
 from urllib.parse import urljoin
 
 import httpx
@@ -24,9 +24,12 @@ from .ats import (csod_parts, detect_ats, greenhouse_parts, lever_parts, linkedi
 from .autofill import US_STATES
 from .pay import fields as pay_fields
 from .pay import pay_from_ld, pay_from_posting
+from .workplace import field_said as workplace_field_said
+from .workplace import Fields as WorkplaceFields
+from .workplace import fields as workplace_fields
 from .workplace import from_field as workplace_field
-from .workplace import in_location as workplace_in_location
 from .workplace import in_text as workplace_in_text
+from .workplace import location_said as workplace_location_said
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -295,7 +298,8 @@ def posting_from_jsonld(ld: dict[str, Any], url: str) -> Posting:
         # (its figures, not only the words _salary_from_ld prints; dollars when it names no currency only in the US)
         **pay_fields(pay_from_ld(ld.get("baseSalary"), in_us=_in_us(ld.get("jobLocation")))),
     )
-    if ld.get("jobLocationType") == "TELECOMMUTE":  # (schema.org's one word for it: a remote job)
+    kinds = ld.get("jobLocationType")
+    if "TELECOMMUTE" in (kinds if isinstance(kinds, list) else [kinds]):  # (schema.org's one word for a remote job)
         p.workplace, p.workplace_source = "remote", "structured"
         if "remote" not in p.location.lower():
             p.location = (p.location + "; Remote").strip("; ")
@@ -306,16 +310,11 @@ _CITY_STATE = re.compile(r"^([A-Za-z][A-Za-z .'-]*?),?\s+([A-Z]{2})$")  # "Phoen
 _SF_WORKPLACE = re.compile(r"(?i)^(?:on-?\s?site|hybrid|remote|fully remote|in[ -]office)$")
 
 
-class WorkplaceFields(TypedDict, total=False):
-    workplace: str
-    workplace_source: str
-
-
 def said_workplace(value: Any) -> WorkplaceFields:
-    """A job system's own field for where the job is done, as a Posting's or a Listing's workplace fields: {} when it
-    has none or says none (workplace.from_field)."""
-    said = workplace_field(value)
-    return {"workplace": said, "workplace_source": "structured"} if said else {}
+    """A job system's own field for where the job is done, as a Posting's or a Listing's workplace fields (source
+    "structured", or "option" for one said as an option: "Remote Eligible"): {} when it has none or says none
+    (workplace.field_said)."""
+    return workplace_fields(*workplace_field_said(value))
 
 
 def smartrecruiters_workplace(location: Any) -> str:
@@ -339,10 +338,11 @@ _ICIMS_WORKPLACE = re.compile(r"(?i)^(?:location\s+type|workplace(?:\s+type)?|wo
 _ICIMS_REMOTE_OK = re.compile(r"(?i)^remote(?:\s+location)?\s+eligible$")
 
 
-def icims_workplace(node: Any) -> str:
-    """Where an iCIMS job is done, from its header details (a results row's, or its posting page's): "Location Type:
-    Onsite", else "Remote Location Eligible: Yes" (remote); "" when they don't say ("Remote Location Eligible: No"
-    alone doesn't: it may be hybrid)."""
+def icims_workplace(node: Any) -> tuple[str, bool]:
+    """Where an iCIMS job is done, and whether surely, from its header details (a results row's, or its posting
+    page's): "Location Type: Onsite" (workplace.field_said), else "Remote Location Eligible: Yes", remote as an option
+    (never sure: eligible isn't done so); ("", False) when they don't say ("Remote Location Eligible: No" alone
+    doesn't: it may be hybrid)."""
     eligible = ""
     for tag in node.select(".iCIMS_JobHeaderTag"):
         name, value = tag.select_one("dt"), tag.select_one("dd")
@@ -351,10 +351,10 @@ def icims_workplace(node: Any) -> str:
         words = [w.strip() for w in name.get_text(" ", strip=True).split(":") if w.strip()]
         said = value.get_text(" ", strip=True)
         if words and all(_ICIMS_WORKPLACE.match(w) for w in words) and workplace_field(said):
-            return workplace_field(said)
+            return workplace_field_said(said)
         if words and all(_ICIMS_REMOTE_OK.match(w) for w in words):
             eligible = said.strip().lower()
-    return "remote" if eligible in ("yes", "y", "true") else ""
+    return ("remote", False) if re.match(r"(?:yes|y|true)\b", eligible) else ("", False)
 
 
 def successfactors_place(soup: BeautifulSoup) -> str:
@@ -481,9 +481,9 @@ def parse_html(raw_html: str, url: str) -> Posting:
     if not p.location and "career_job_req_id=" in url:  # SuccessFactors' older sites: only the text says
         p.location = place_in_text(p.description)
     if not p.workplace:  # (SuccessFactors' "On-Site" line under the title, iCIMS's "Location Type" detail)
-        said = successfactors_workplace(soup) or icims_workplace(soup)
-        if said:
-            p.workplace, p.workplace_source = said, "structured"
+        line = successfactors_workplace(soup)
+        for k, v in workplace_fields(*((line, True) if line else icims_workplace(soup))).items():
+            setattr(p, k, v)
     return p
 
 
@@ -782,8 +782,9 @@ def finalize(posting: Posting) -> Posting:
         for k, v in pay_fields(pay).items():
             setattr(posting, k, v)
     if not posting.workplace:  # no field said where it's done: its location's words, else its sentences (unsure)
-        if said := workplace_in_location(posting.location):
-            posting.workplace, posting.workplace_source = said, "location"
+        if (place := workplace_location_said(posting.location))[0]:  # (beside a place, or an option: "option")
+            for k, v in workplace_fields(*place, source="location").items():
+                setattr(posting, k, v)
         elif said := workplace_in_text(posting.full_text or posting.description):
             posting.workplace, posting.workplace_source = said, "text"
     posting.full_text = ""  # (read: let go)

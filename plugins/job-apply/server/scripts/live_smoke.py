@@ -98,7 +98,7 @@ from live_profile import FAKE_EMAIL, FAKE_PROFILE  # noqa: E402,F401
 
 (_HOME / "profile.yaml").write_text(yaml.safe_dump(FAKE_PROFILE), encoding="utf-8")
 
-from job_apply import pay, server  # noqa: E402
+from job_apply import pay, server, workplace  # noqa: E402
 from job_apply import fixtures as fixture_files  # noqa: E402
 from job_apply.config import Profile  # noqa: E402
 from job_apply.fixtures import convert, personal_strings, redact, scrub_others  # noqa: E402
@@ -561,7 +561,8 @@ async def check_company(company: dict[str, Any], out: Path, fixtures: bool, rec:
             "posted": str(first.get("posted") or posting.posted_at or ""),
             # where it's done (remote, hybrid, onsite; "" when nothing says), the list's or the posting's, and from
             # where (live_audit.posting_facts counts it per system)
-            **{k: first.get(k) or getattr(posting, k) for k in ("workplace", "workplace_source")},
+            **{k: (vars(posting) if workplace.better(vars(posting), first) else first).get(k) or ""
+               for k in workplace.FIELDS},
         }
     except Exception as e:  # report everything
         rec["posting"] = {"error": f"{type(e).__name__}: {str(e)[:300]}"}

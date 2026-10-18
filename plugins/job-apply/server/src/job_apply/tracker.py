@@ -212,11 +212,20 @@ def _pay(row: Any, new: Any, again: bool = False, copies: bool = False) -> dict[
     return {}
 
 
-def _workplace(row: Any, new: Any) -> dict[str, Any]:
+def _workplace(row: Any, new: Any, again: bool = False, copies: bool = False) -> dict[str, Any]:
     """Where a job (`row`) is done, from another posting of it (`new`): both fields, where the job doesn't say or the
-    other says it from a better source (structured > location > text: workplace.better); else none."""
+    other says it from a better source (structured > location > option > text: workplace.better); else none. Its own
+    posting read again (`again`, as for its pay) also replaces a reading of the same rank (a site's changed field), and
+    clears one read from its words that the new read no longer finds; never for a job holding a job board's copy
+    (`copies`)."""
     new = dict(new)
-    return {k: new[k] for k in workplace.FIELDS} if workplace.better(new, row) else {}
+    if workplace.better(new, row) or (again and not copies and workplace.rank(new)
+                                      and workplace.rank(new) == workplace.rank(row)):
+        return {k: new[k] for k in workplace.FIELDS}
+    if again and not copies and new.get("description") and not workplace.rank(new) \
+            and row["workplace_source"] == "text":
+        return {"workplace": "", "workplace_source": ""}
+    return {}
 
 
 # where a job is applied for: the employer's own, once a job board's copy of its posting is one job with it, never
@@ -840,8 +849,8 @@ class Tracker:
         board = _board(url, values["source"])
         if existing:
             updates = {k: v for k, v in values.items() if k not in _TOGETHER and v and not existing[k]}
-            updates.update(_workplace(existing, values))
             copies = self.conn.execute("SELECT 1 FROM aliases WHERE job_id = ?", (existing["id"],)).fetchone()
+            updates.update(_workplace(existing, values, again=existing["url"] == url, copies=copies is not None))
             updates.update(_pay(existing, values, again=existing["url"] == url, copies=copies is not None))
             if board and _board(existing["url"], existing["source"] or "") is None:
                 # a job board's copy of a job kept at the employer's site: never where it's applied for

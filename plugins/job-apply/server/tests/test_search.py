@@ -2943,7 +2943,8 @@ def test_a_career_pages_site_is_read_page_by_page(monkeypatch):
     assert len(found) == 32 and [(p["query"], p["page"]) for p in asked] == [("analyst", "1"), ("analyst", "2")]
     assert (found[0].title, found[0].location, found[0].url, found[0].external_id) == \
         ("ANALYST 0", "Phoenix, AZ", "https://jobs.example.gov/jobs/analyst-0", "500000")
-    assert [x.location for x in found[-2:]] == ["Remote (Arizona)", "Statewide (Arizona); McDowell, AZ"]
+    # ("REMOTE OPTIONS": an option, never sure where the job is done: the second review of F3)
+    assert [x.location for x in found[-2:]] == ["Remote options (Arizona)", "Statewide (Arizona); McDowell, AZ"]
     # several wordings ("a | b"): each searched on its own, one page each, never as one string
     asked.clear()
     search("analyst | auditor")
@@ -3360,8 +3361,11 @@ def test_employment_type_leaves_out_only_openings_that_say_theyre_of_other_types
                       employment_type="Contract", source="indeed")["job"]
     assert srv.tracker().get(job["id"])["employment_type"] == "Contract"
     out = asyncio.run(server.search_company_jobs("field service", employment_type="full_time"))
-    assert [r["title"] for r in out["results"]] == ["Full FSE", "Both FSE", "Regular FSE", "Unsaid FSE"]
-    assert out["other_employment_type"] == 2 and out["results"][0]["employment_types"] == ["full_time"]
+    # (the second review) a contract job's field says nothing of its schedule: it stays for Full-time
+    assert [r["title"] for r in out["results"]] == ["Full FSE", "Both FSE", "Regular FSE", "Unsaid FSE", "Tracked FSE"]
+    assert out["other_employment_type"] == 1 and out["results"][0]["employment_types"] == ["full_time"]
+    out = asyncio.run(server.search_company_jobs("field service", employment_type="internship"))
+    assert [r["title"] for r in out["results"]] == ["Full FSE", "Part FSE", "Both FSE", "Regular FSE", "Unsaid FSE"]
     out = asyncio.run(server.search_company_jobs("field service", employment_type="part-time, contract"))
     assert [r["title"] for r in out["results"]] == ["Part FSE", "Both FSE", "Regular FSE", "Unsaid FSE", "Tracked FSE"]
     assert out["results"][4]["employment_types"] == ["contract"]  # (its job in the tracker says it)

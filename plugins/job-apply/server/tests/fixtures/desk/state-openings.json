@@ -201,7 +201,14 @@
       "why": "title matches",
       "points": 22
      }
-    ]
+    ],
+    "facts": {
+     "level": "",
+     "read": true,
+     "clearance": false,
+     "clearance_later": true,
+     "clearance_sure": false
+    }
    },
    "notes": [],
    "job_id": null,

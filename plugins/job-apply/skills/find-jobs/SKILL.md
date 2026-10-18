@@ -52,13 +52,17 @@ The goal is a short, deduplicated list of real openings saved to the tracker
      field (Paycom, iCIMS, SuccessFactors, JSON-LD and others where they give it) or the
      location's words ("Remote - US"). Most don't say: they stay, with no `workplace`. A
      posting that only says it in its sentences ("this hybrid role") is shown as "likely
-     hybrid" on the Job Desk and never left out for it. Ask for it only when the user names it.
+     hybrid" on the Job Desk, and one that says it as an option or beside a place ("Remote
+     eligible", "REMOTE OPTIONS", "Phoenix, AZ; Remote": `workplace_source` "option") as
+     "remote option"; neither is ever left out for it. Ask for it only when the user names it.
    - `employment_type="full_time"` (or part_time, contract, temporary, internship, per_diem,
      or several: "full_time, contract") leaves out an opening its site says is only of other
      types (`other_employment_type` counts them). Only the systems' own fields say it (Paycom,
      Phoenix Children's, SmartRecruiters, and the posting once read: Workday, Lever, Oracle,
-     JSON-LD); most lists don't, and those openings stay. Results that say carry
-     `employment_type` (the site's words) and `employment_types`.
+     JSON-LD); most lists don't, and those openings stay. A field says the hours (full or part
+     time), the kind (contract, temporary, internship, per diem), or both, and only what it says
+     is judged: a "Full time" internship stays for `employment_type="internship"`. Results that
+     say carry `employment_type` (the site's words) and `employment_types`.
    - Results already in the tracker carry `tracked`. Skip those.
    - Eightfold sites (Lam Research, Micron, Infineon) refuse direct API calls, and
      ASML's, Daifuku's (iCIMS), Ebara's (Paycom), Nikon Precision's (UKG Pro), Edwards' and
@@ -111,9 +115,12 @@ The goal is a short, deduplicated list of real openings saved to the tracker
    Contract, Temporary, Internship, Per diem) the types pressed and every opening whose job
    system doesn't say. Its Requirements chips (No clearance needed, No degree required
    or My degree is enough, Day shift, Travel ≤ 25%, Entry level, Not senior) hide an opening
-   only when its title, or its posting once read, says it doesn't fit: a posting not read yet,
-   or a shift or travel only mentioned in passing, never hides one. The `apply` skill takes
-   it from there.
+   only when its title, or its posting once read, surely says it doesn't fit: a labelled line
+   ("Clearance Type: Secret", "Education: Bachelor's (Required)", "Shift: Nights", "Travel:
+   50%") or a requirement the posting states as one. A posting not read yet, or a clearance,
+   degree, shift or travel only mentioned in passing (its benefits, its company's blurb, its
+   duties), never hides one: a clearance read so shows as "may need a security clearance".
+   The `apply` skill takes it from there.
 
 7. **Each morning.** Offer once: "each morning: search, then whats_new". After a search
    (this skill's, or the Job Desk's Find jobs), `whats_new()` lists the openings first

@@ -14,9 +14,9 @@ from job_apply.postings import fetch_posting, finalize, parse_html
     ("TELECOMMUTE", "remote"), ("Remote", "remote"), ("Fully Remote", "remote"), ("remoteLocal", "remote"),
     ("Global Remote", "remote"), ("ORA_REMOTE", "remote"), ("Hybrid", "hybrid"), ("ORA_HYBRID", "hybrid"),
     ("On-Site", "onsite"), ("Onsite", "onsite"), ("on-site", "onsite"), ("In Office", "onsite"),
-    ("ORA_ON_SITE", "onsite"), ("Not Remote", "onsite"),
-    # none, or several: not said
-    ("", ""), (None, ""), ("Flexible", ""), ("unspecified", ""), ("Remote or On-site", ""),
+    ("ORA_ON_SITE", "onsite"), ("Not Remote", ""),
+    # none, or several (an option, never sure: workplace.field_said), or "not remote": not said
+    ("", ""), (None, ""), ("Flexible", ""), ("unspecified", ""), ("Remote or On-site", "remote"),
 ])
 def test_a_systems_own_field_says_where_the_job_is_done(value, said):
     assert workplace.from_field(value) == said
@@ -170,3 +170,38 @@ def test_an_older_tracker_gains_the_workplace_columns_and_a_better_source_replac
     assert said(workplace="", workplace_source="") == ("remote", "location")
     assert said(workplace="hybrid", workplace_source="structured") == ("hybrid", "structured")
     t.close()
+
+
+def test_the_same_posting_read_again_replaces_its_field_and_clears_a_text_reading(job_apply_home):
+    """The second review of F3 (as for pay): the job's own posting read again replaces a reading of the same rank (the
+    site changed its field), and clears one read from its words that the new read no longer finds; another posting of
+    the job (a job board's copy) never does."""
+    from job_apply.tracker import Tracker
+
+    t = Tracker()
+    url = "https://careers.example.com/job/3"
+
+    def said(**fields):
+        job, _ = t.upsert({"url": url, "title": "Technician", "company": "Example Fab", **fields})
+        return job["workplace"], job["workplace_source"]
+
+    assert said(workplace="onsite", workplace_source="structured") == ("onsite", "structured")
+    assert said(workplace="hybrid", workplace_source="structured") == ("hybrid", "structured")
+    other = "https://careers.example.com/job/4"
+    t.upsert({"url": other, "title": "Technician", "company": "Example Fab", "description": "This hybrid role ...",
+              "workplace": "hybrid", "workplace_source": "text"})
+    job, _ = t.upsert({"url": other, "description": "Service our tools.", "workplace": "", "workplace_source": ""})
+    assert (job["workplace"], job["workplace_source"]) == ("", "")
+    t.close()
+
+
+def test_a_json_ld_list_of_location_types_and_a_paycom_value_it_cant_read():
+    """The second review of F3: JSON-LD's jobLocationType may be a list; a Paycom remoteType that names none is kept
+    as Paycom says it, a note."""
+    from job_apply.search import parse_paycom
+
+    page = finalize(parse_html(_jsonld(jobLocationType=["TELECOMMUTE"]), "https://careers.example.com/job/5"))
+    assert (page.workplace, page.workplace_source) == ("remote", "structured")
+    listing = parse_paycom({"jobPostingPreviews": [{"jobId": 1, "jobTitle": "Tech (1)", "locations": "Phoenix, AZ",
+                                                    "remoteType": "Flexible"}]}, "X")[0]
+    assert listing.workplace == "" and listing.notes == ["Paycom lists it as Flexible"]
