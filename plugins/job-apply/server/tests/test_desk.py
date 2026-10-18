@@ -844,7 +844,7 @@ def test_the_tailoring_switch_is_kept_and_its_waiting_jobs_listed(srv, job_apply
             async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{desk.port}", timeout=20, trust_env=False) as c:
                 r = await c.post("/api/settings", headers=h, json={"tailor_resumes": True})
                 assert r.json() == {"auto_submit": False, "tailor_resumes": True, "handled_only": False, "troubleshoot": False,
-                                    "min_pay": None, "posted_within": None, "requirements": [],
+                                    "min_pay": None, "posted_within": None, "requirements": [], "workplace": [],
                                     "auto_search": False, "jobs_at_once": 1}  # (the tests' profile: one at a time)
                 await desk.applier.stop()  # hold the queue still while the waiting job is set up
                 desk.applier.runs[job["id"]] = Run(job["id"], "FSE", "Example Fab", status="needs_you", need="tailor")
@@ -1346,6 +1346,76 @@ def test_the_requirement_chips_hide_only_a_job_that_says_it_fails_them(srv, job_
     assert Desk(srv).chips["requirements"] == ["no_clearance", "degree", "not_senior"]  # (kept for next time)
 
 
+def test_the_workplace_chips_hide_only_a_job_that_surely_says_its_done_another_way(srv, job_apply_home):
+    """The design of Oct 18, F3: each row says where its job is done (Remote, Hybrid, On-site; "likely hybrid" when
+    only its posting's sentences say it), and the Workplace chips show only the ways pressed: an opening whose list,
+    location or job in the tracker says another way is hidden; one that doesn't say, or says it only in its
+    sentences, stays. Nothing hidden is picked."""
+    desk = Desk(srv)
+
+    def opening(title, score, **said):
+        return {**_facts_opening(title, score), **said}
+
+    desk.listings = [opening("Remote Technician", 95, workplace="remote", workplace_source="location"),
+                     opening("Onsite Technician", 90, workplace="onsite", workplace_source="structured"),
+                     opening("Maybe Technician", 85, workplace="hybrid", workplace_source="text"),
+                     opening("Plain Technician", 80),
+                     # (its list says nothing; its posting, read, says hybrid on its own field)
+                     opening("Read Technician", 75, posting={"workplace": "hybrid", "workplace_source": "structured"},
+                             workplace="hybrid", workplace_source="structured")]
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    every = ["Remote Technician", "Onsite Technician", "Maybe Technician", "Plain Technician", "Read Technician"]
+    rows = {r["title"]: r for r in desk.state()["listings"]}
+    assert rows["Plain Technician"]["workplace"] is None
+    assert rows["Maybe Technician"]["workplace"]["sure"] is False
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("text=Read Technician")
+
+                def meta(title):
+                    return page.locator("li.row", has_text=title).locator(".meta").first
+
+                assert "Remote" in await meta("Remote Technician").inner_text()
+                assert "On-site" in await meta("Onsite Technician").inner_text()
+                assert "likely hybrid" in await meta("Maybe Technician").inner_text()
+                assert "never hides" in await meta("Maybe Technician").locator(".workplace").get_attribute("title")
+                assert await meta("Plain Technician").locator(".workplace").count() == 0
+                await _chip(page, "workplace", "remote", ["Remote Technician", "Maybe Technician", "Plain Technician"])
+                await _chip(page, "workplace", "hybrid", ["Remote Technician", "Maybe Technician", "Plain Technician",
+                                                          "Read Technician"])
+                await _chip(page, "workplace", "remote", ["Maybe Technician", "Plain Technician", "Read Technician"])
+                await _chip(page, "workplace", "hybrid", every)
+                await _chip(page, "workplace", "onsite", ["Onsite Technician", "Maybe Technician", "Plain Technician"])
+                await page.click("text=Select recommended")
+                picked = await page.evaluate("() => [...selected].filter(selectable)")
+                assert picked == [f"https://careers.example.com/job/{t.lower().replace(' ', '-')}"
+                                  for t in ("Onsite Technician", "Maybe Technician", "Plain Technician")], picked
+                for _ in range(50):
+                    if desk.chips["workplace"] == ["onsite"]:
+                        break
+                    await asyncio.sleep(0.1)
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert json.loads((job_apply_home / "desk.json").read_text(encoding="utf-8"))["workplace"] == ["onsite"]
+    # Apply saves each job with where it's done: the posting's reading where it's better than the list's
+    desk.listings[4].update(workplace="", workplace_source="")
+    ids, _ = desk.apply([o["url"] for o in desk.listings], [], submit=False)
+    saved = {srv.tracker().get(i)["title"]: srv.tracker().get(i) for i in ids}
+    assert {title: (job["workplace"], job["workplace_source"]) for title, job in saved.items()} == {
+        "Remote Technician": ("remote", "location"), "Onsite Technician": ("onsite", "structured"),
+        "Maybe Technician": ("hybrid", "text"), "Plain Technician": ("", ""),
+        "Read Technician": ("hybrid", "structured")}
+
+
 def test_the_chip_settings_refuse_what_isnt_one(srv, job_apply_home):
     desk = Desk(srv)
 
@@ -1362,6 +1432,10 @@ def test_the_chip_settings_refuse_what_isnt_one(srv, job_apply_home):
                 assert r.json()["requirements"] == ["no_clearance", "not_senior"]  # (each once, in the row's order)
                 r = await c.post("/api/settings", headers=h, json={"requirements": None})
                 assert r.json()["requirements"] == []
+                r = await c.post("/api/settings", headers=h, json={"workplace": ["anywhere"]})
+                assert r.status_code == 400 and "workplace should be a list of some of remote, hybrid, onsite" in r.text
+                r = await c.post("/api/settings", headers=h, json={"workplace": ["onsite", "remote"]})
+                assert r.json()["workplace"] == ["remote", "onsite"]
         finally:
             await desk.stop()
 

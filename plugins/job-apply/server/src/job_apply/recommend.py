@@ -17,7 +17,7 @@ from datetime import date
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
-from . import pay
+from . import pay, workplace
 from .autofill import _PARTIAL_STUDY, degree_key, entry_dates, norm, school_under_way
 from .config import Profile, listed
 from .postings import QUESTIONS_HEADING, Posting, fetch_posting
@@ -729,9 +729,11 @@ async def recommend(prof: Profile, search: Search, limit_per_company: int = 10, 
             return
         item["posting"] = {k: getattr(posting, k) for k in
                            ("title", "location", "description", "apply_url", "salary", "employment_type",
-                            "posted_at", "external_id", "ats", *pay.FIELDS)}
+                            "posted_at", "external_id", "ats", *pay.FIELDS, *workplace.FIELDS)}
         if posting.pay_period and not item.get("pay_period"):  # (the opening's pay: shown on the desk, and scored)
             item.update({k: getattr(posting, k) for k in pay.FIELDS})
+        if workplace.better(vars(posting), item):  # (where it's done, as the posting says it better than the list)
+            item.update({k: getattr(posting, k) for k in workplace.FIELDS})
         if not str(item.get("posted") or "").strip() and posting.posted_at:
             item["posted"] = posting.posted_at  # the list didn't say when (EY's, iCIMS portals'); the posting does
         item["fit"] = score_listing(item, prof, posting.description, today)

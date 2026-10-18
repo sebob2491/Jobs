@@ -18,7 +18,7 @@ from collections.abc import Callable, Iterable
 from typing import Any, NamedTuple
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from . import config, pay
+from . import config, pay, workplace
 from .ats import ATS_NAMES, JOB_BOARDS, detect_ats, job_board
 
 STATUSES = [
@@ -53,6 +53,10 @@ CREATE TABLE IF NOT EXISTS jobs (
     pay_period TEXT DEFAULT '',
     pay_source TEXT DEFAULT '',
     pay_sure INTEGER DEFAULT 0,
+    -- where it's done (workplace.py: remote, hybrid, onsite; '' unknown) and from where (structured, location, text: a
+    -- better source replaces a worse, Tracker._workplace)
+    workplace TEXT DEFAULT '',
+    workplace_source TEXT DEFAULT '',
     posted_at TEXT DEFAULT '',
     description TEXT DEFAULT '',
     status TEXT NOT NULL DEFAULT 'saved',
@@ -169,10 +173,12 @@ def _progress(status: str) -> int:
 _JOB_FIELDS = [
     "url", "apply_url", "title", "company", "location", "ats", "source", "external_id",
     "salary", "employment_type", "posted_at", "description", "pay_min", "pay_max", "pay_period", "pay_source",
-    "pay_sure",
+    "pay_sure", "workplace", "workplace_source",
 ]
 # a job's pay, kept together: filled in where the job has none, and replaced by a better source's (_pay), never mixed
 _PAY_FIELDS = ("pay_min", "pay_max", "pay_period", "pay_source", "pay_sure")
+# so is where it's done (_workplace); neither is filled in field by field
+_TOGETHER = (*_PAY_FIELDS, *workplace.FIELDS)
 
 
 def _values(posting: dict[str, Any]) -> dict[str, Any]:
@@ -204,6 +210,13 @@ def _pay(row: Any, new: Any, again: bool = False, copies: bool = False) -> dict[
     if again and not copies and new.get("description") and not found and row["pay_source"] == "text":
         return {"pay_min": None, "pay_max": None, "pay_period": "", "pay_source": "", "pay_sure": 0}
     return {}
+
+
+def _workplace(row: Any, new: Any) -> dict[str, Any]:
+    """Where a job (`row`) is done, from another posting of it (`new`): both fields, where the job doesn't say or the
+    other says it from a better source (structured > location > text: workplace.better); else none."""
+    new = dict(new)
+    return {k: new[k] for k in workplace.FIELDS} if workplace.better(new, row) else {}
 
 
 # where a job is applied for: the employer's own, once a job board's copy of its posting is one job with it, never
@@ -597,8 +610,9 @@ class Tracker:
             this = self.conn.execute("SELECT * FROM jobs WHERE id = ?", (row["id"],)).fetchone()
             keep, drop = sorted((this, other), key=_rank, reverse=True)
             self._fold(keep["id"], drop["id"])
-            fill = {k: drop[k] for k in _JOB_FIELDS if k not in ("url", *_PAY_FIELDS) and drop[k] and not keep[k]}
+            fill = {k: drop[k] for k in _JOB_FIELDS if k not in ("url", *_TOGETHER) and drop[k] and not keep[k]}
             fill.update(_pay(keep, drop))
+            fill.update(_workplace(keep, drop))
             self.conn.execute("DELETE FROM jobs WHERE id = ?", (drop["id"],))
             sets = ", ".join(f"{k} = ?" for k in ["url", *fill])
             self.conn.execute(f"UPDATE jobs SET {sets} WHERE id = ?", (url, *fill.values(), keep["id"]))
@@ -729,8 +743,9 @@ class Tracker:
         keep, drop = sorted((theirs, own), key=_rank, reverse=True)
         sets: dict[str, Any] = {k: own[k] for k in _PLACE_FIELDS}
         sets.update({k: drop[k] for k in (*_JOB_FIELDS, "applied_at", "notes")
-                     if k not in _PLACE_FIELDS and k not in _PAY_FIELDS and drop[k] and not keep[k]})
+                     if k not in _PLACE_FIELDS and k not in _TOGETHER and drop[k] and not keep[k]})
         sets.update(_pay(keep, drop))
+        sets.update(_workplace(keep, drop))
         if keep["notes"] and drop["notes"] and drop["notes"] != keep["notes"]:  # (the person's own notes: both kept)
             sets["notes"] = f"{keep['notes']}\n{drop['notes']}"
         sets["created_at"] = min(keep["created_at"], drop["created_at"])
@@ -824,7 +839,8 @@ class Tracker:
         values["url"] = url
         board = _board(url, values["source"])
         if existing:
-            updates = {k: v for k, v in values.items() if k not in _PAY_FIELDS and v and not existing[k]}
+            updates = {k: v for k, v in values.items() if k not in _TOGETHER and v and not existing[k]}
+            updates.update(_workplace(existing, values))
             copies = self.conn.execute("SELECT 1 FROM aliases WHERE job_id = ?", (existing["id"],)).fetchone()
             updates.update(_pay(existing, values, again=existing["url"] == url, copies=copies is not None))
             if board and _board(existing["url"], existing["source"] or "") is None:
@@ -891,8 +907,9 @@ class Tracker:
         becomes an alias of the employer's job. Either way the posting fills in what the job didn't say."""
         row = self.conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         sets: dict[str, Any] = {k: v for k, v in values.items()
-                                if k not in _PLACE_FIELDS and k not in _PAY_FIELDS and v and not row[k]}
+                                if k not in _PLACE_FIELDS and k not in _TOGETHER and v and not row[k]}
         sets.update(_pay(row, values))
+        sets.update(_workplace(row, values))
         if board:
             alias = values["url"]
             note = (f"the same posting on {JOB_BOARDS[board]}: its link kept as an alias (applied for on the "
@@ -1276,7 +1293,7 @@ class Tracker:
     def export_csv(self, path: Path) -> int:
         rows = self.list(limit=100000)
         cols = ["id", "status", "company", "title", "location", "ats", "source", "url", "apply_url",
-                "salary", *_PAY_FIELDS, "applied_at", "updated_at", "notes"]
+                "salary", *_PAY_FIELDS, *workplace.FIELDS, "applied_at", "updated_at", "notes"]
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")

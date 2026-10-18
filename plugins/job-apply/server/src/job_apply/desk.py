@@ -34,7 +34,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
-from . import autofill, config, history, pay, report
+from . import autofill, config, history, pay, report, workplace
 from .browser import _cookie_setting
 from .pipeline import (DESK_PASSWORDS, QUEUE_NO_LOCK, Applier, _may_accept_notices, _may_manage_accounts,
                        _test_identity, placed_key, question_key)
@@ -891,6 +891,7 @@ class Desk:
                 "salary": posting.get("salary"), "employment_type": posting.get("employment_type"),
                 "posted_at": posting.get("posted_at") or item.get("posted"), "description": posting.get("description"),
                 **{k: (item if item.get("pay_period") else posting).get(k) for k in PAY_KEYS},
+                **{k: (posting if workplace.better(posting, item) else item).get(k) for k in workplace.FIELDS},
             })
             ids.append(job["id"])
         # and by the job each is (by its number, or any of its addresses: one made one with a job marked on another
@@ -1061,6 +1062,7 @@ class Desk:
                 "location": item.get("location"), "posted": item.get("posted"),
                 "posted_days": days_since(str(item.get("posted") or "")),
                 "pay": pay_of(item, job), "ats": item.get("ats") or (job or {}).get("ats") or "",
+                "workplace": workplace_of(item, job),
                 "fit": item.get("fit") if said else fit_for(item.get("fit"), item.get("company"), employers),
                 "notes": item.get("notes") or [], "job_id": jid, "status": job["status"] if job else None,
                 "run": run,
@@ -1091,7 +1093,7 @@ class Desk:
                 "url": job["url"], "title": job.get("title"), "company": job.get("company"),
                 "location": job.get("location"), "posted": job.get("posted_at"),
                 "posted_days": days_since(str(job.get("posted_at") or "")),
-                "pay": pay_of(None, job), "ats": job.get("ats") or "",
+                "pay": pay_of(None, job), "ats": job.get("ats") or "", "workplace": workplace_of(None, job),
                 "fit": fit if said else fit_for(fit, job.get("company"), employers), "notes": [],
                 "job_id": job["id"], "status": job["status"], "run": runs.get(job["id"]), "added": True,
                 "handled": str(job.get("company") or "").strip().casefold() in handled,
@@ -1488,6 +1490,8 @@ MIN_PAY_MOST = pay.MIN_PAY_MOST  # a "Pay at least" over this is a typo
 # of 25% or less, an entry-level or not a senior title)
 CHIP_FILTERS: dict[str, tuple[str, ...]] = {
     "requirements": ("no_clearance", "degree", "day_shift", "travel_25", "entry_level", "not_senior"),
+    # where the job is done (workplace.py): an opening that says another, surely, is hidden
+    "workplace": workplace.WORKPLACES,
 }
 
 
@@ -1506,6 +1510,16 @@ def _min_pay(value: Any) -> int | None:
     if type(value) is float and value.is_integer():
         value = int(value)
     return value if type(value) is int and 0 < value <= MIN_PAY_MOST else None
+
+
+def workplace_of(item: dict[str, Any] | None, job: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Where an opening is done as its row says it (workplace.view), or None when it doesn't say: the better said of
+    the opening's own (its list's, or its posting's once read) and the tracker's job's."""
+    best: dict[str, Any] = {}
+    for said in (item, job):
+        if said and workplace.better(said, best):
+            best = {k: said.get(k) for k in workplace.FIELDS}
+    return workplace.view(best.get("workplace"), best.get("workplace_source")) if best else None
 
 
 def pay_of(item: dict[str, Any] | None, job: dict[str, Any] | None) -> dict[str, Any] | None:

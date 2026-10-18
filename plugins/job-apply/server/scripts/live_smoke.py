@@ -386,7 +386,7 @@ def search_brief(found: dict[str, Any], name: str) -> dict[str, Any]:
     return {
         "count": len(found["results"]),
         "error": found["errors"].get(name),
-        "sample": [{k: r.get(k) for k in ("title", "location", "url", "posted", "notes", "pay")}
+        "sample": [{k: r.get(k) for k in ("title", "location", "url", "posted", "notes", "pay", "workplace")}
                    for r in found["results"][:4]],
     }
 
@@ -559,6 +559,9 @@ async def check_company(company: dict[str, Any], out: Path, fixtures: bool, rec:
             "pay": pay.shown(pay.from_fields(vars(posting))), "pay_source": posting.pay_source,
             "pay_sure": posting.pay_sure,
             "posted": str(first.get("posted") or posting.posted_at or ""),
+            # where it's done (remote, hybrid, onsite; "" when nothing says), the list's or the posting's, and from
+            # where (live_audit.posting_facts counts it per system)
+            **{k: first.get(k) or getattr(posting, k) for k in ("workplace", "workplace_source")},
         }
     except Exception as e:  # report everything
         rec["posting"] = {"error": f"{type(e).__name__}: {str(e)[:300]}"}

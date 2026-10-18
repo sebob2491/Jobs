@@ -26,6 +26,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from playwright.async_api import Error as PlaywrightError
 
 from . import config, pay
+from . import workplace as wplace
 from .ats import ATS_NAMES, detect_ats, greenhouse_form_url, shared_system, workday_parts
 from .autofill import common_questions as bank_questions
 from .autofill import (is_eeo_rule, is_empty_value, is_how_heard, is_name_rule, is_school_rule, place_words,
@@ -473,6 +474,15 @@ def _check_min_pay(min_pay: float | None) -> None:
                         "isn't. Leave it out for any pay.")
 
 
+def _check_workplace(value: str | None) -> list[str]:
+    """A workplace a tool was given: the workplaces it names (remote, hybrid, onsite), [] for none."""
+    places = wplace.parse_choice(value)
+    if places is None:
+        raise ToolError(f"workplace is remote, hybrid or onsite, or several of them (\"remote, hybrid\"); {value!r} "
+                        "isn't. Leave it out for any.")
+    return places
+
+
 @tool()
 async def search_company_jobs(
     query: str,
@@ -482,6 +492,7 @@ async def search_company_jobs(
     every_list: bool = False,
     min_pay: float | None = None,
     posted_within_days: int | None = None,
+    workplace: str | None = None,
 ) -> dict[str, Any]:
     """Search employers' own careers sites for openings through their applicant tracking
     system's public search: Workday, Greenhouse, Lever, Eightfold, SmartRecruiters, Oracle,
@@ -503,8 +514,13 @@ async def search_company_jobs(
     stay, with no `pay` (read the posting, or ingest_job, for it). Results with pay carry `pay`.
     posted_within_days: leaves out openings posted longer ago (7, 14, 30...); one whose site gives no date stays
     (ApplicantStack, Talemetry, Jobvite, Avature and a few others never do). `below_min_pay` counts what min_pay left
+    out.
+    workplace: "remote", "hybrid" or "onsite", or several ("remote, hybrid"): leaves out an opening its site says
+    (its own field, or its location's words: "Remote - US") is done another way. Most don't say: those stay. Results
+    that say carry `workplace` and `workplace_source` (structured, location); `other_workplace` counts what it left
     out."""
     _check_min_pay(min_pay)
+    places = _check_workplace(workplace)
     if posted_within_days is not None and posted_within_days < 1:
         raise ToolError(f"posted_within_days is a number of days, 1 or more (7, 14, 30); {posted_within_days} isn't. "
                         "Leave it out for any day.")
@@ -559,7 +575,7 @@ async def search_company_jobs(
         out["results"].extend(keep_listings(name, found, location_terms(location), limit_per_company, query,
                                             posted_within_days))
     t = tracker()
-    kept, below = [], 0
+    kept, below, elsewhere = [], 0, 0
     for r in out["results"]:
         job = t.find_by_url(r["url"])
         if job:
@@ -570,10 +586,17 @@ async def search_company_jobs(
         if pay.meets(said, min_pay) is False:  # (listed and below: one not listed always stays)
             below += 1
             continue
+        if job and wplace.better(dict(job), r):  # (where it's done, as its job in the tracker says it better)
+            r.update({k: job[k] for k in wplace.FIELDS})
+        if not wplace.keeps((r.get("workplace") or "", r.get("workplace_source") or ""), places):
+            elsewhere += 1  # (said surely, and not one asked for: one that doesn't say always stays)
+            continue
         kept.append(r)
     out["results"] = kept
     if min_pay:
         out["below_min_pay"] = below
+    if places:
+        out["other_workplace"] = elsewhere
     out["count"] = len(out["results"])
     return out
 

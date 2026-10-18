@@ -957,7 +957,9 @@ def test_paycom_board_is_read_in_the_browser(srv, monkeypatch):
         ("Field Service Associate II (Semiconductor)", "Chandler, AZ 85226", f"{base}/jobs/401000", "33300", "paycom"),
         ("Field Service Technician I-III", "Phoenix, AZ", f"{base}/jobs/401001", "33301", "paycom"),
     ]  # the Texas opening and the desktop job are left out
-    assert out["results"][1]["notes"] == ["Paycom lists it as Hybrid"]
+    # (the design of Oct 18, F3) Paycom's remoteType is where it's done, no longer a note (a note is a concern)
+    assert (out["results"][1]["workplace"], out["results"][1]["workplace_source"]) == ("hybrid", "structured")
+    assert out["results"][1]["notes"] == [] and "workplace" not in out["results"][0]
     assert calls == [(f"{base}/career-page", "/job-posting-previews/search", 0, 100)]  # whole board, one tab
     assert not out["errors"] and out["results"][0]["company"] == "Ebara Technologies"
 
@@ -3214,3 +3216,87 @@ def test_posted_within_days_leaves_out_older_openings_and_keeps_those_with_no_da
                 for n, posted in enumerate(["Posted Today", "Posted 30+ Days Ago", "", "09/29/2000"])]
     assert [r["url"] for r in keep_listings("X Co", listings, ["az"], 10, posted_within_days=14)] == \
         ["https://x/0", "https://x/2"]
+
+
+# ------------------------------------------------------------------ where the job is done (the design of Oct 18, F3)
+
+
+def test_the_lists_say_where_their_jobs_are_done_from_their_fields_or_the_location():
+    """Paycom's remoteType, iCIMS's "Location Type" detail, an Oracle requisition's WorkplaceTypeCode, SmartRecruiters'
+    remote flag and a Workday posting's remoteType (where given), else the location's words ("Remote - US", the
+    State of Arizona's "REMOTE OPTIONS"): a result carries workplace and where it came from; one that doesn't say has
+    neither."""
+    from job_apply.search import Listing, _oracle_listings, keep_listings, parse_icims, parse_paycom
+
+    paycom = parse_paycom(paycom_answer([paycom_job(1, "Tech (1)", "Phoenix, AZ", remote="Remote"),
+                                         paycom_job(2, "Tech (2)", "Phoenix, AZ", remote="On-site"),
+                                         paycom_job(3, "Tech (3)", "Phoenix, AZ")]), "X")
+    assert [(x.workplace, x.workplace_source, x.notes) for x in paycom] == [
+        ("remote", "structured", []), ("onsite", "structured", []), ("", "", [])]
+    page = _icims_results([("Recruiter", "US-AZ-Phoenix")], 0, 0).replace(
+        '<div class="iCIMS_JobHeaderTag"><dt class="iCIMS_JobHeaderField">Category</dt>',
+        '<div class="iCIMS_JobHeaderTag"><dt class="iCIMS_JobHeaderField">Location Type</dt>'
+        '<dd class="iCIMS_JobHeaderData"><span>Onsite</span></dd></div>'
+        '<div class="iCIMS_JobHeaderTag"><dt class="iCIMS_JobHeaderField">Category</dt>')
+    assert [(r.location, r.workplace) for r in parse_icims(page, "https://careers-x.icims.com")] == [
+        ("US-AZ-Phoenix", "onsite")]
+    oracle = _oracle_listings({"items": [{"requisitionList": [
+        {"Id": "1", "Title": "Tech", "PrimaryLocation": "Phoenix, AZ, US", "WorkplaceTypeCode": "ORA_HYBRID"},
+        {"Id": "2", "Title": "Tech", "PrimaryLocation": "Phoenix, AZ, US"}]}]}, "x.oraclecloud.com", "CX_1")
+    assert [x.workplace for x in oracle] == ["hybrid", ""]
+    listings = [Listing(company="", title="Technician", url=f"https://x/{n}", location=place)
+                for n, place in enumerate(["Remote - US", "Remote (Arizona)", "Phoenix, AZ", "Phoenix, AZ (Hybrid)"])]
+    listings.append(Listing(company="", title="Technician", url="https://x/4", location="Remote - US",
+                            workplace="hybrid", workplace_source="structured"))  # (its field says better)
+    rows = keep_listings("X Co", listings, [], 10)
+    assert [(r.get("workplace"), r.get("workplace_source")) for r in rows] == [
+        ("remote", "location"), ("remote", "location"), (None, None), ("hybrid", "location"), ("hybrid", "structured")]
+
+
+def test_a_successfactors_postings_on_site_line_says_where_its_done():
+    from job_apply.search import Listing, rmk_search
+
+    async def read(url):
+        return edwards_posting("Field Service Engineer", "Service", "", "Phoenix AZ", "United States", "On-Site")
+
+    async def capture(url, url_part, timeout=25000, want=None, rewrite=None):
+        rewrite(json.loads(json.dumps(RMK_PAGE_BODY)))
+        return {"totalJobs": 1, "jobSearchResult": [rmk_job("171942", "Field Service Engineer", "Field-Service-Engineer")]}
+
+    found: list[Listing] = []
+    asyncio.run(rmk_search(capture, {"url": "https://jobs.example.com/search/?q="}, "field service", found, read=read))
+    assert [(x.location, x.workplace, x.workplace_source) for x in found] == [("Phoenix, AZ", "onsite", "structured")]
+
+
+def test_workplace_leaves_out_only_openings_that_surely_say_another(srv, monkeypatch):
+    """search_company_jobs(workplace=): an opening its list (its field or its location's words), or its job in the
+    tracker, says is done another way is left out (`other_workplace` counts them); one that doesn't say, or whose
+    posting only says it in its sentences, stays. A workplace that isn't one is refused in plain words."""
+    import job_apply.server as server
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    async def fake(query, names, location, limit, **kw):
+        return {"results": [
+            {"company": "Lever Co", "title": "Remote FSE", "url": "https://jobs.lever.co/leverco/remote",
+             "workplace": "remote", "workplace_source": "location"},
+            {"company": "Lever Co", "title": "Onsite FSE", "url": "https://jobs.lever.co/leverco/onsite",
+             "workplace": "onsite", "workplace_source": "structured"},
+            {"company": "Lever Co", "title": "Maybe FSE", "url": "https://jobs.lever.co/leverco/maybe",
+             "workplace": "onsite", "workplace_source": "text"},
+            {"company": "Lever Co", "title": "Unsaid FSE", "url": "https://jobs.lever.co/leverco/unsaid"},
+            {"company": "Lever Co", "title": "Tracked FSE", "url": "https://jobs.lever.co/leverco/tracked"}],
+            "errors": {}, "browser_only": []}
+
+    monkeypatch.setattr(server, "search_companies", fake)
+    srv.tracker().upsert({"url": "https://jobs.lever.co/leverco/tracked", "title": "Tracked FSE", "company": "Lever Co",
+                          "workplace": "onsite", "workplace_source": "structured"})
+    out = asyncio.run(server.search_company_jobs("field service", workplace="remote, hybrid"))
+    assert [r["title"] for r in out["results"]] == ["Remote FSE", "Maybe FSE", "Unsaid FSE"]
+    assert out["other_workplace"] == 2
+    out = asyncio.run(server.search_company_jobs("field service", workplace="on-site"))
+    assert [r["title"] for r in out["results"]] == ["Onsite FSE", "Maybe FSE", "Unsaid FSE", "Tracked FSE"]
+    assert out["results"][3]["workplace"] == "onsite"  # (said by its job in the tracker)
+    full = asyncio.run(server.search_company_jobs("field service"))
+    assert len(full["results"]) == 5 and "other_workplace" not in full
+    with pytest.raises(ToolError, match="workplace is remote, hybrid or onsite"):
+        asyncio.run(server.search_company_jobs("field service", workplace="anywhere"))

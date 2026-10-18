@@ -47,6 +47,12 @@ The goal is a short, deduplicated list of real openings saved to the tracker
      states on its pay line (or in its own data) can leave a job out; pay only read from its
      other words is shown with "≈" and never does. Never drop a job for pay it doesn't list.
      `list_jobs(min_pay=...)` does the same over the tracker.
+   - `workplace="remote"` (or "hybrid", "onsite", or several: "remote, hybrid") leaves out an
+     opening its site says is done another way (`other_workplace` counts them): the system's own
+     field (Paycom, iCIMS, SuccessFactors, JSON-LD and others where they give it) or the
+     location's words ("Remote - US"). Most don't say: they stay, with no `workplace`. A
+     posting that only says it in its sentences ("this hybrid role") is shown as "likely
+     hybrid" on the Job Desk and never left out for it. Ask for it only when the user names it.
    - Results already in the tracker carry `tracked`. Skip those.
    - Eightfold sites (Lam Research, Micron, Infineon) refuse direct API calls, and
      ASML's, Daifuku's (iCIMS), Ebara's (Paycom), Nikon Precision's (UKG Pro), Edwards' and
@@ -94,7 +100,8 @@ The goal is a short, deduplicated list of real openings saved to the tracker
    the posting doesn't say), job system and a one-line fit note, then ask which ones to
    apply to. The Job Desk shows the same pay on each opening, sorts by fit, pay or newest,
    and has "Pay at least $__/yr" and "Posted: 7 / 14 / 30 days" filters that never hide an
-   opening that doesn't say. Its Requirements chips (No clearance needed, No degree required
+   opening that doesn't say. Its Workplace chips (Remote, Hybrid, On-site) show only the ways
+   pressed and every opening that doesn't say surely. Its Requirements chips (No clearance needed, No degree required
    or My degree is enough, Day shift, Travel ≤ 25%, Entry level, Not senior) hide an opening
    only when its title, or its posting once read, says it doesn't fit: a posting not read yet,
    or a shift or travel only mentioned in passing, never hides one. The `apply` skill takes

@@ -684,9 +684,9 @@ def test_a_column_a_later_release_adds_is_added_without_raising_the_schema_versi
 
     Tracker().close()  # (at SCHEMA_VERSION)
     monkeypatch.setattr(tracker, "_SCHEMA", tracker._SCHEMA.replace(
-        "    applied_at TEXT DEFAULT ''\n);", "    applied_at TEXT DEFAULT '',\n    workplace TEXT DEFAULT ''\n);", 1))
+        "    applied_at TEXT DEFAULT ''\n);", "    applied_at TEXT DEFAULT '',\n    distance TEXT DEFAULT ''\n);", 1))
     t = Tracker()
-    assert "workplace" in {r[1] for r in t.conn.execute("PRAGMA table_info(jobs)")}
+    assert "distance" in {r[1] for r in t.conn.execute("PRAGMA table_info(jobs)")}
     t.close()
 
 

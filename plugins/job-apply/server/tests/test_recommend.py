@@ -673,6 +673,29 @@ def test_recommend_takes_a_read_postings_pay_onto_the_opening():
     assert "pay meets your desired $50,000" in item["fit"]["reasons"]
 
 
+def test_recommend_takes_where_a_read_posting_says_its_done_when_it_says_it_better():
+    """The design of Oct 18, F3: the opening keeps where the list said it's done, unless the posting read says it from
+    a better source (its own field over the location's words over its sentences)."""
+    async def search(query, location, limit):
+        return {"results": [
+            {"company": "Example Fab", "title": "Equipment Technician", "url": "https://x/field",
+             "location": "Remote - US", "workplace": "remote", "workplace_source": "location"},
+            {"company": "Example Fab", "title": "Equipment Technician", "url": "https://x/text",
+             "location": "Remote - US", "workplace": "remote", "workplace_source": "location"}]}
+
+    async def fetch(url):
+        said = ("hybrid", "structured") if url.endswith("field") else ("onsite", "text")
+        return Posting(url=url, description=LAM_FSE2, location="Phoenix, AZ", workplace=said[0],
+                       workplace_source=said[1])
+
+    items = {i["url"]: i for i in asyncio.run(recommend(tech(), search, read_postings=2, fetch=fetch,
+                                                        today=TODAY))["results"]}
+    assert (items["https://x/field"]["workplace"], items["https://x/field"]["workplace_source"]) == \
+        ("hybrid", "structured")
+    assert (items["https://x/text"]["workplace"], items["https://x/text"]["workplace_source"]) == ("remote", "location")
+    assert items["https://x/text"]["posting"]["workplace"] == "onsite"  # (the posting's own, kept with it)
+
+
 # ------------------------------------------------------------------ the filter row's facts (the design of Oct 18, F5)
 
 
