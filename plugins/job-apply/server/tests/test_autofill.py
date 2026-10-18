@@ -3774,18 +3774,47 @@ def test_a_us_citizen_question_beside_another_question_anywhere_in_the_label_is_
         for p in (pr, visa, citizen):
             assert _answer(label, p, **yes_no) is None, (label, p)
             assert _answer(label, p) not in ("Yes", "No"), (label, p)
-    for label in ("Are you a U.S. citizen? Please note that this position requires U.S. citizenship.",
-                  "Are you a US citizen? Please note: ITAR applies to this role.",
-                  "Are you a US citizen? Please select Yes or No.", "Are you a US citizen? Choose Yes or No.",
-                  "Are you a US citizen? Select one.", "Are you a US citizen? Indicate below.",
-                  "Are you a US citizen? State law requires us to verify eligibility.",
+    # (only what's on the short list beside it: still the citizen question)
+    for label in ("Are you a US citizen? Please select Yes or No.", "Are you a US citizen? Choose Yes or No.",
+                  "Are you a US citizen? Select one.", "Citizenship: Are you a US citizen?",
+                  "U.S. Citizenship - Are you a U.S. citizen?", "Are you a US citizen? Proof of citizenship will be required.",
+                  "Are you a U.S. citizen? U.S. citizenship is required for this position.",
+                  "Are you a US citizen? This position requires US citizenship."):
+        assert (_answer(label, citizen, **yes_no), _answer(label, pr, **yes_no)) == ("Yes", "No"), label
+
+
+def test_a_us_citizen_question_beside_anything_off_the_short_list_is_left_for_the_person():
+    """Beside the citizen question only a numbering or a heading of its own, the answers it takes and a few sentences
+    that say no more than it keep it answered. Anything else, however harmless it looks ("Please note that ...",
+    "Indicate below.", "If hired, proof of citizenship will be required."), is left for the person: a list of what may
+    change a Yes's meaning never ends ("Select Yes if currently employed by Acme.", "Must hold an active Secret.",
+    "Willing to relocate (Y/N)": the sixth review of Oct 18)."""
+    pr = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=False, us_person=True,
+               citizenship="Mexico")
+    citizen = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=True, us_person=True,
+                    citizenship="United States")
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    for label in ("Are you a US citizen? Select Yes if currently employed by Acme.",
+                  "Are you a US citizen? Answer Yes if eligible for a Secret.",
+                  "Are you a US citizen? Answer Yes when holding an active TS/SCI.",
+                  "Are you a US citizen? Select Yes only for current Secret holders.",
+                  "Are you a US citizen? Willing to relocate (Y/N)", "Willing to relocate: Are you a US citizen?",
+                  "Are you a US citizen? This role requires an active TS/SCI with polygraph.",
+                  "Are you a US citizen? Must hold an active Secret.",
+                  "Are you a US citizen? Applicants must be US citizens with an active Secret.",
+                  "Are you a US citizen? Relocation to Phoenix is required.",
+                  "Are you a US citizen? A bachelor's degree is required for this role.",
+                  "TS/SCI required: Are you a US citizen?",
+                  "Are you a U.S. citizen? Please note that this position requires U.S. citizenship.",
+                  "Are you a US citizen? Indicate below.", "Are you a US citizen? State law requires us to verify eligibility.",
                   "Are you a US citizen? If hired, proof of citizenship will be required.",
-                  "Are you a US citizen (as required by ITAR)?",
-                  "Are you a US citizen? Will be verified upon hire.",
-                  "Are you a US citizen? Do not upload documents here.",
-                  "Citizenship: Are you a US citizen?", "Work eligibility - Are you a US citizen?",
-                  "Are you a US citizen? Proof of citizenship will be required.",
-                  "Are you a U.S. citizen? U.S. citizenship is required for this position."):
+                  "Are you a US citizen? Will be verified upon hire.", "Are you a US citizen (as required by ITAR)?",
+                  "Are you a US citizen? (e.g. born or naturalized)"):
+        for p in (pr, citizen):
+            assert _answer(label, p, **yes_no) is None, (label, p)
+    for label in ("3) Are you a US citizen?", "Q3: Are you a US citizen?", "Required: Are you a US citizen?",
+                  "Are you a US citizen? Y/N", "Are you a US citizen? [Yes/No]", "Are you a US citizen (yes/no)?",
+                  "Are you a U.S. citizen or not?", "Are you a US citizen (or a US national)?"):
         assert (_answer(label, citizen, **yes_no), _answer(label, pr, **yes_no)) == ("Yes", "No"), label
 
 
@@ -3822,9 +3851,8 @@ def test_a_us_citizen_question_with_anything_around_it_that_speaks_to_the_person
         for p in (pr, citizen):
             assert _answer(label, p, **yes_no) is None, (label, p)
             assert _answer(label, p) not in ("Yes", "No"), (label, p)
-    for label in ("3) Are you a US citizen?", "Q3: Are you a US citizen?", "Required: Are you a US citizen?",
-                  "Are you a US citizen? (e.g. born or naturalized)", "Are you a US citizen? Y/N",
-                  "Are you a US citizen? [Yes/No]", "Are you a US citizen? Note: we are required by ITAR to ask."):
+    for label in ("3) Are you a US citizen?", "Q3: Are you a US citizen?", "Are you a US citizen? Y/N",
+                  "Are you a US citizen? [Yes/No]"):
         assert (_answer(label, citizen, **yes_no), _answer(label, pr, **yes_no)) == ("Yes", "No"), label
 
 

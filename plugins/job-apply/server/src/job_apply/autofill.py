@@ -544,44 +544,46 @@ _CITIZEN_ASKED = re.compile(rf"\bare\s+you\s+a\s+(?:{_US_WRITTEN}[\s-]*)?citizen
 _SAME_QUESTION = re.compile(rf"\s*,?\s*\(?\s*or\s+(?:not|(?:an?\s+)?(?:{_US_WRITTEN}\s+)?national)\b\s*\)?", re.I)
 # ...and the answers it takes, written after it: "Are you a US citizen: Yes/No", "..., yes or no?"
 _YES_NO_TAIL = re.compile(r"\s*[:,\-\u2013]?\s*\(?\s*yes\s*(?:/|or)\s*no\b\)?", re.I)
-# ...and around it, only what speaks to no one: before it a numbering or a heading ("3)", "Q3:", "Citizenship:",
-# "Work eligibility -"); after it its end, a note in brackets, the answers it takes, and sentences that say something
-# without a "you", a condition or another requirement in them ("This position requires US citizenship.", "Proof of
-# citizenship will be required."). Anything else (another "?", "you" or "your", "only if", "unless", "whether", "also",
-# a clearance) may change what its Yes or No would say: left (the reviews of Oct 18)
-_HEADING_BEFORE = re.compile(r"^\s*(?:\(?\s*(?:q\s*)?\d+[a-z]?\s*[.):\]]|[a-z][.)]|#\s*\d+[.):]?)?\s*"
-                             r"(?:[^?:.!;]{1,40}(?::|\s[-\u2013\u2014]))?\s*$", re.I)
-_SPEAKS_TO_THEM = re.compile(r"\?|\byou(?:r|rs|rself|['’]re|['’]ll|['’]ve)?\b|\bonly if\b|\bunless\b|\bwhether\b|\balso\b|"
-                             r"\bin addition\b|\badditionally\b|\bas well\b|\bclearance\b", re.I)
+# ...and around it, only what's on this list (the reviews of Oct 18): before it a numbering or a heading of its own
+# ("3)", "Q3:", "Citizenship:", "U.S. Citizenship -"); after it its end, the answers it takes, and a few sentences that
+# say no more than it ("This position requires US citizenship.", "Proof of citizenship will be required.", "Please
+# select Yes or No."). Anything else beside it may change what its Yes or No would say ("Select Yes if currently
+# employed by Acme.", "Must hold an active Secret.", "Willing to relocate (Y/N)"): left, never guessed at
+_NUMBERING = r"(?:\(?\s*(?:q\s*)?\d+[a-z]?\s*[.):\]]|[a-z][.)]|#\s*\d+[.):]?)"
+_OWN_HEADING = re.compile(rf"^\s*{_NUMBERING}?\s*(?:(?:(?:u\.?\s?s\.?\s*|united states\s+)?citizenship(?:\s+status)?|"
+                          r"required|eligibility|work eligibility)\s*(?::|\s[-\u2013\u2014]))?\s*$", re.I)
+_US_SAID = r"(?:u\.?\s?s\.?(?:\s?a\.?)?\s+|united states\s+)?"
+_SAYS_NO_MORE = re.compile(
+    rf"^(?:(?:this|the)\s+(?:position|role|job)\s+requires\s+{_US_SAID}citizenship|"
+    rf"{_US_SAID}citizenship\s+is\s+required(?:\s+for\s+this\s+(?:position|role|job))?|"
+    rf"proof\s+of\s+{_US_SAID}citizenship\s+(?:will\s+be|is|may\s+be)\s+required(?:\s+(?:at|upon)\s+hire)?|"
+    r"(?:please\s+)?(?:select|choose|answer|check|mark)\s+(?:one|yes\s+or\s+no|yes\s*/\s*no)|"
+    r"\(?\s*(?:yes\s*/\s*no|y\s*/\s*n)\s*\)?|\[\s*yes\s*/\s*no\s*\])\W*$", re.I)
 # (as the normalized rules read it: "or ..." or "by ..." after "citizen", but "or not" and "or (a U.S.) national")
 _CITIZEN_GOES_ON = r"(?! (?:by\b|or\b(?! (?:not|(?:an? )?(?:u ?s )?national)\b)))"
 
 
 def _asks_more_than_citizenship(raw_label: str) -> bool:
-    """Whether the label asks more than "Are you a U.S. citizen", or says something that changes what its Yes or No
-    would mean, anywhere in it. Around the question only a numbering or a heading before it, and after it its end, a
-    note in brackets, the answers it takes ("Yes/No"), "or not", "or (a U.S.) national" and sentences that speak to no
-    one (_SPEAKS_TO_THEM: no other "?", no "you", no condition, no other requirement) leave it the citizen question.
-    "Do you hold a valid work visa? Are you a US citizen?", "...? If not, do you have authorization to work in the
-    US?", "...? Select Yes only if you also hold a clearance." and "...? This role also requires an active Secret
-    clearance." are left: a Yes or No there would answer more than citizenship (the reviews of Oct 18)."""
+    """Whether the label holds anything beside "Are you a U.S. citizen" that isn't on the short list of what says no
+    more (_OWN_HEADING before it; after it its end, the answers it takes, "or not", "(or a US national)", and
+    _SAYS_NO_MORE's sentences). Anything else, a question, a condition, a request or another requirement ("Select Yes
+    if currently employed by Acme.", "This role requires an active TS/SCI.", "Do you hold a valid work visa? Are you a
+    US citizen?"), may change what its Yes or No would say: left for the person, never guessed at (the reviews of
+    Oct 18). A citizen question the check can't place is left where the label asks anything else."""
     text = re.sub(r"\s+", " ", re.sub(r"\(required\)|\*", " ", raw_label or "", flags=re.I)).strip()
     m = _CITIZEN_ASKED.search(text)
-    if m is None:  # (a citizen question the check can't place: left where it asks anything else)
+    if m is None:
         return text.count("?") > 1 or bool(re.search(r"\b(are|do|can|will|have)\s+you\b", text, re.I))
-    before = text[:m.start()]
-    if not _HEADING_BEFORE.match(before) or _SPEAKS_TO_THEM.search(before):
-        return True  # (more than a numbering or a heading before it: "Do you hold an active clearance - Are you...")
+    if not _OWN_HEADING.match(text[:m.start()]):
+        return True
     rest = m.group("rest")
     same = _SAME_QUESTION.match(rest)
     rest = rest[same.end():] if same else rest
     told = _YES_NO_TAIL.match(rest)
     rest = rest[told.end():] if told else rest
-    if not re.match(r"\s*(?:[?!.;(\[]|$)", rest):
-        return True
-    ends = re.match(r"((?:\s*[(\[][^()\[\]]*[)\]])*)\s*[?!.;]?", rest)  # (its notes, then its own end)
-    notes, after = (ends.group(1), rest[ends.end():]) if ends else ("", rest)
-    return bool(_SPEAKS_TO_THEM.search(notes) or _SPEAKS_TO_THEM.search(after))
+    rest = re.sub(r"^\s*[?!.;]", "", rest)
+    rest = re.sub(r"\b(?:[A-Za-z]\.){2,}", lambda a: a.group(0).replace(".", ""), rest)  # ("U.S." ends no sentence)
+    return any(not _SAYS_NO_MORE.match(said.strip()) for said in re.findall(r"[^.?!;]+[.?!;]*", rest) if said.strip())
 
 
 def _us_citizen(prof: Profile, job: dict) -> Any:
