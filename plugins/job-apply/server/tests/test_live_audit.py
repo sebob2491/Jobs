@@ -329,3 +329,30 @@ def test_a_box_holding_the_applicants_own_detail_where_the_rules_put_none_is_sai
     assert "::warning::hr/Fixture Co: the page it stopped on was saved, but its fixture failed (OSError: disk full)" in out
     assert "Right Co" not in out and "Asked Co" not in out and "::error::" not in out
     assert "; pages: 1 of 3 stops saved" in out
+
+
+def test_the_summary_says_on_how_many_postings_each_system_lists_pay_and_gives_no_date(tmp_path, capsys, monkeypatch):
+    """The design of Oct 18, F1 and F2: how far the desk's pay listing and its Posted filter reach, per job system, on
+    the audit's summary line. A record from before the live check kept dates isn't counted either way."""
+    whole = {"title": "Technician", "location": "Chandler, AZ", "description_chars": 4000}
+    records = [search_rec("Paid Co", {**whole, "ats": "paycom", "pay": "$26–$28/hr (≈$54k–$58k/yr)",
+                                      "posted": "2026-10-01"}, "paycom"),
+               search_rec("Onto Co", {**whole, "ats": "workday", "pay": "$71k–$107k/yr", "posted": "Posted Today"}),
+               search_rec("Lam Co", {**whole, "ats": "workday", "pay": "", "posted": "2026-10-02"}),
+               search_rec("Old Co", {**whole, "ats": "workday"}),
+               search_rec("Dateless Co", {**whole, "ats": "applicantstack", "pay": "", "posted": ""}, "applicantstack"),
+               search_rec("Refused Co", {"error": "FetchError: HTTP 405"}, "icims")]
+    facts = la.posting_facts("".join("LIVE_RESULT " + json.dumps(r) + "\n" for r in records))
+    assert facts == {"paycom": {"read": 1, "pay": 1, "dated": 1, "no_date": 0},
+                     "workday": {"read": 3, "pay": 1, "dated": 2, "no_date": 0},
+                     "applicantstack": {"read": 1, "pay": 0, "dated": 1, "no_date": 1}}
+    assert la.facts_said(facts) == ("pay listed on 2 of 5 (applicantstack 0 of 1, paycom 1 of 1, workday 1 of 3); "
+                                    "no date on 1 of 4 (applicantstack 1 of 1)")
+    for name in la.SECRETS:
+        monkeypatch.delenv(name, raising=False)
+    folder = tmp_path / "live-search"
+    folder.mkdir()
+    (folder / "run.log").write_text("".join("LIVE_RESULT " + json.dumps(r) + "\n" for r in records), encoding="utf-8")
+    la.main(["--log", f"search={folder / 'run.log'}", "--folder", str(folder)])
+    assert "; pay listed on 2 of 5 (applicantstack 0 of 1, paycom 1 of 1, workday 1 of 3); no date on 1 of 4" \
+        in capsys.readouterr().out

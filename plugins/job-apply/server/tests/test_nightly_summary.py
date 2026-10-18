@@ -90,6 +90,12 @@ def test_a_runs_saved_results_say_each_employers_rounds_and_where_it_stopped(tmp
     assert said[at - 1] == "         above it: Highest degree", said
     rec["rounds"][0]["above"] = []  # (a run from before it recorded them)
     assert "above it" not in ns.steps(rec)
+    # the posting's pay as the desk lists it, where the run kept it (the design of Oct 18, F1)
+    assert "  pay:" not in ns.steps(rec)
+    rec["posting"]["pay"] = "$71k–$107k/yr"
+    assert ns.steps(rec).splitlines()[1] == "  pay: $71k–$107k/yr"
+    rec["posting"]["pay"] = ""
+    assert ns.steps(rec).splitlines()[1] == "  pay: not listed"
 
 
 COMMENT = """6 changes since the last nightly live check ([run](https://example.com/run/2)):

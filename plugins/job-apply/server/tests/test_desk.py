@@ -844,6 +844,7 @@ def test_the_tailoring_switch_is_kept_and_its_waiting_jobs_listed(srv, job_apply
             async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{desk.port}", timeout=20, trust_env=False) as c:
                 r = await c.post("/api/settings", headers=h, json={"tailor_resumes": True})
                 assert r.json() == {"auto_submit": False, "tailor_resumes": True, "handled_only": False, "troubleshoot": False,
+                                    "min_pay": None, "posted_within": None,
                                     "auto_search": False, "jobs_at_once": 1}  # (the tests' profile: one at a time)
                 await desk.applier.stop()  # hold the queue still while the waiting job is set up
                 desk.applier.runs[job["id"]] = Run(job["id"], "FSE", "Example Fab", status="needs_you", need="tailor")
@@ -1090,6 +1091,150 @@ def test_only_where_the_desk_goes_all_the_way_shows_those_employers_alone_and_is
     run(go())
     assert json.loads((job_apply_home / "desk.json").read_text(encoding="utf-8"))["handled_only"] is True
     assert Desk(srv).handled_only is True  # still on next time the desk opens
+
+
+_PAY_KEYS = ("pay_min", "pay_max", "pay_period", "pay_source")
+
+
+def _fixture_openings():
+    """Three openings read from the live check's pages, as recommend leaves them (each read posting's pay on it):
+    Lam's lists no pay and was posted 2 days ago, Onto's pays $71,360 to $107,040 a year and was posted 20 days ago,
+    Ebara's pays $26 to $28 an hour (≈$54,080 to $58,240 a year) and its site gives no date. Best fit first."""
+    from datetime import date, timedelta
+
+    from job_apply.postings import finalize, parse_html
+
+    fixtures = Path(__file__).parent / "fixtures" / "live"
+    out = []
+    for name, company, score, days in (("live-lam-research", "Lam Research", 90, 2),
+                                       ("live-onto-innovation", "Onto Innovation", 85, 20),
+                                       ("live-ebara-technologies", "Ebara Technologies", 80, None)):
+        url = f"https://example.com/{name}"
+        posting = finalize(parse_html((fixtures / f"{name}.html").read_text(encoding="utf-8"), url))
+        out.append({"company": company, "title": f"{company} Technician", "url": url, "location": "Phoenix, AZ",
+                    "posted": (date.today() - timedelta(days=days)).isoformat() if days is not None else "",
+                    "ats": "workday", "fit": {"score": score, "reasons": [], "concerns": [], "blocked": False,
+                                              "recommended": True},
+                    "posting": {"salary": posting.salary, "pay_period": posting.pay_period},
+                    **{k: getattr(posting, k) for k in _PAY_KEYS}})
+    return out
+
+
+def test_each_opening_says_its_pay_or_that_it_isnt_listed(srv, job_apply_home):
+    """The design of Oct 18, F1 and F2: each row carries its pay (the words, where they came from, a year's figures to
+    sort and filter by), its system and how many days ago it was posted; whats_new says the pay too."""
+    desk = Desk(srv)
+    desk.listings = _fixture_openings()
+    rows = {r["company"]: r for r in desk.state()["listings"]}
+    assert rows["Lam Research"]["pay"] is None and rows["Lam Research"]["posted_days"] == 2
+    onto, ebara = rows["Onto Innovation"]["pay"], rows["Ebara Technologies"]["pay"]
+    assert (onto["shown"], onto["top"], onto["from"]) == ("$71k–$107k/yr", 107040, "From the posting's text")
+    assert (ebara["shown"], ebara["top"], ebara["yearly_min"]) == ("$26–$28/hr (≈$54k–$58k/yr)", 58240, 54080)
+    assert rows["Ebara Technologies"]["posted_days"] is None and rows["Onto Innovation"]["ats"] == "workday"
+    job = srv.add_job(url="https://www.indeed.com/viewjob?jk=0a1b2c3d4e5f6a7b", title="Equipment Technician",
+                      company="Example Fab", salary="$25 an hour", source="indeed")["job"]
+    added = next(r for r in desk.state()["listings"] if r["job_id"] == job["id"])
+    assert added["pay"]["shown"] == "$25/hr (≈$52k/yr)" and added["pay"]["source"] == "indeed"
+    assert "“$25 an hour”" in added["pay"]["from"] and added["ats"] == "indeed"
+    from job_apply.desk import whats_new
+
+    new = {o["title"]: o for o in whats_new(srv.tracker(), 0)}
+    assert (new["Equipment Technician"]["pay"], new["Equipment Technician"]["pay_yearly"]) == ("$25/hr (≈$52k/yr)",
+                                                                                               52000)
+    assert new["Equipment Technician"]["ats"] == "indeed"
+
+
+def test_the_openings_sort_by_pay_or_date_and_the_filters_hide_only_what_says_its_below(srv, job_apply_home):
+    """The design of Oct 18, F1 and F2, its acceptance: Onto's and Ebara's rows show their pay, Lam's "pay not
+    listed", which sorts last by pay and is never hidden by "Pay at least"; Ebara's says "date unknown", sorts last by
+    newest and is never hidden by "Posted". Both filters are kept in desk.json, and nothing hidden is picked."""
+    desk = Desk(srv)
+    desk.listings = _fixture_openings()
+    desk.applier.start = lambda: None  # the queue isn't worked in this test
+    desk.search.update(status="done", at=time.time())  # recent, so opening the page doesn't search the real sites
+
+    async def order(page):
+        return [t.split()[0] for t in await page.locator("li.row a.title").all_inner_texts()]
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("text=Ebara Technologies Technician")
+                ebara = page.locator("li.row", has_text="Ebara Technologies Technician").locator(".meta").first
+                assert "$26–$28/hr (≈$54k–$58k/yr)" in await ebara.inner_text()
+                assert "date unknown" in await ebara.inner_text()
+                assert await ebara.locator(".pay").get_attribute("title") == "From the posting's text"
+                onto = page.locator("li.row", has_text="Onto Innovation Technician").locator(".meta").first
+                assert "$71k–$107k/yr" in await onto.inner_text()
+                lam = page.locator("li.row", has_text="Lam Research Technician").locator(".meta").first
+                assert "pay not listed" in await lam.inner_text()
+                assert await order(page) == ["Lam", "Onto", "Ebara"]  # (fit)
+                await page.click("[data-sort='pay']")
+                assert await order(page) == ["Onto", "Ebara", "Lam"]
+                await page.click("[data-sort='newest']")
+                assert await order(page) == ["Lam", "Onto", "Ebara"]
+                await page.click("[data-sort='pay']")
+                # Pay at least $60k: Ebara's tops out at $58,240 and goes; Lam's isn't listed and stays
+                await page.fill("#min-pay", "60k")
+                await page.press("#min-pay", "Enter")
+                await page.wait_for_selector("text=Ebara Technologies Technician", state="detached")
+                assert await order(page) == ["Onto", "Lam"]
+                assert await page.input_value("#min-pay") == "60,000"
+                await page.fill("#min-pay", "")
+                await page.press("#min-pay", "Enter")
+                await page.wait_for_selector("text=Ebara Technologies Technician")
+                # Posted within 14 days: Onto's 20 days go, Ebara's unknown date stays
+                await page.click("[data-posted='14']")
+                await page.wait_for_selector("text=Onto Innovation Technician", state="detached")
+                assert await order(page) == ["Ebara", "Lam"]
+                await page.fill("#min-pay", "60000")
+                await page.press("#min-pay", "Enter")
+                await page.wait_for_selector("text=Ebara Technologies Technician", state="detached")
+                await page.click("text=Select recommended")
+                picked = await page.evaluate("() => [...selected].filter(selectable)")
+                assert picked == ["https://example.com/live-lam-research"], picked
+                for _ in range(50):
+                    if desk.min_pay == 60000 and desk.posted_within == 14:
+                        break
+                    await asyncio.sleep(0.1)
+                await page.reload()
+                await page.wait_for_selector("text=Lam Research Technician")
+                assert await page.input_value("#min-pay") == "60,000"
+                assert await page.get_attribute("[data-posted='14']", "aria-pressed") == "true"
+                assert await page.get_attribute("[data-sort='pay']", "aria-pressed") == "true"  # (this browser's)
+                assert await page.locator("text=Onto Innovation Technician").count() == 0
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    saved = json.loads((job_apply_home / "desk.json").read_text(encoding="utf-8"))
+    assert (saved["min_pay"], saved["posted_within"]) == (60000, 14)
+    again = Desk(srv)
+    assert (again.min_pay, again.posted_within) == (60000, 14)  # still set next time the desk opens
+
+
+def test_the_filters_settings_refuse_what_isnt_one(srv, job_apply_home):
+    desk = Desk(srv)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            h = {"x-desk-token": desk.token}
+            async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{desk.port}", timeout=20, trust_env=False) as c:
+                for bad in ({"min_pay": -5}, {"min_pay": "lots"}, {"posted_within": 3}, {"posted_within": "7"}):
+                    assert (await c.post("/api/settings", headers=h, json=bad)).status_code == 400, bad
+                r = await c.post("/api/settings", headers=h, json={"min_pay": 55000, "posted_within": 7})
+                assert (r.json()["min_pay"], r.json()["posted_within"]) == (55000, 7)
+                r = await c.post("/api/settings", headers=h, json={"min_pay": None, "posted_within": None})
+                assert (r.json()["min_pay"], r.json()["posted_within"]) == (None, None)
+        finally:
+            await desk.stop()
+
+    run(go())
 
 
 def test_troubleshooting_searches_every_list_shows_where_the_desk_stops_and_sends_nothing(srv, job_apply_home, monkeypatch):

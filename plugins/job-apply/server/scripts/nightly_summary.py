@@ -590,7 +590,10 @@ def _listed(data: Any) -> list[dict[str, Any]]:
 
 def steps(rec: dict[str, Any], log_lines: int = 6) -> str:
     """One employer's run: each round, and what the page showed when it ended."""
-    out = [f"== {rec.get('company')}: {(rec.get('posting') or {}).get('title', '')}"]
+    posting = rec.get("posting") or {}
+    out = [f"== {rec.get('company')}: {posting.get('title', '')}"]
+    if "pay" in posting:  # (the posting's pay as the desk lists it: a record from before it was kept has none)
+        out.append(f"  pay: {posting['pay'] or 'not listed'}")
     if rec.get("crash"):
         out.append(f"  crash: {rec['crash']}")
     for i, r in enumerate(rec.get("rounds") or []):

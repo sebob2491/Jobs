@@ -69,6 +69,12 @@ section.card { background: var(--surface); border: 1px solid var(--line); border
 .stops button { padding: 3px 10px; font-size: 13px; border-radius: 999px; }
 .stops button[aria-pressed="true"] { background: var(--chip); border-color: var(--muted); font-weight: 600; }
 .stop-hint { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 0 14px 10px; font-size: 13px; color: var(--muted); }
+/* the openings' sort and filters (pay, posted), under the tabs */
+.filters { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; padding: 10px 14px; font-size: 13px; }
+.filters .group { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.filters button { padding: 3px 10px; font-size: 13px; border-radius: 999px; }
+.filters button[aria-pressed="true"] { background: var(--chip); border-color: var(--muted); font-weight: 600; }
+.filters input { width: 7em; font: inherit; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
 /* My applications' groups: the openings bar's look, in a bar of its own (padding: under the card's head) */
 #app-groups { padding-top: 10px; }
 .row.app .state button { padding: 3px 10px; font-size: 13px; }
@@ -229,6 +235,13 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
       <span class="spacer"></span>
       <span class="openings-only links"><button class="link" data-act="select-recommended">Select recommended</button>
       <button class="link" data-act="select-none">Clear</button></span>
+    </div>
+    <div class="filters openings-only" id="filters">
+      <span class="group" role="group" aria-label="Sort the openings">Sort
+        <button data-sort="fit" aria-pressed="true" title="Best fit for your profile first">Fit</button><button data-sort="pay" aria-pressed="false" title="Best paid first (over a year), openings whose pay isn't listed last">Pay</button><button data-sort="newest" aria-pressed="false" title="Most recently posted first, openings without a date last">Newest</button></span>
+      <label class="group" title="Hides an opening whose posting lists its pay and the most it pays is below this (hourly pay counted as 2,080 hours a year). One that doesn't list its pay always stays.">Pay at least $<input type="text" id="min-pay" inputmode="numeric" placeholder="any" aria-label="Pay at least, dollars a year" autocomplete="off">/yr</label>
+      <span class="group" role="group" aria-label="Posted within" title="Hides an opening posted longer ago. One whose site gives no date always stays.">Posted
+        <button data-posted="" aria-pressed="true">Any</button><button data-posted="7" aria-pressed="false">7 days</button><button data-posted="14" aria-pressed="false">14 days</button><button data-posted="30" aria-pressed="false">30 days</button></span>
     </div>
     <div class="stops openings-only" id="stops" role="group" aria-label="Show the jobs by where they stand" hidden></div>
     <div class="stop-hint openings-only" id="stop-hint" hidden></div>
@@ -425,6 +438,10 @@ try { stopFilter = localStorage.getItem(STOP_KEY) || "any"; } catch (e) {}
 const APP_GROUP_KEY = "desk-app-group";
 let appGroup = "all";
 try { appGroup = localStorage.getItem(APP_GROUP_KEY) || "all"; } catch (e) {}
+// The openings' order (kept in this browser only): fit, pay or newest
+const SORT_KEY = "desk-sort";
+let sortBy = "fit";
+try { sortBy = localStorage.getItem(SORT_KEY) || "fit"; } catch (e) {}
 let state = null;
 let busy = false;
 let reporting = false;  // a problem report being written
@@ -833,6 +850,22 @@ async function prepMe(jobId) {
   else prompt("Couldn't copy it. Copy this, and paste it to Claude:", text);
 }
 
+// An opening's pay on its meta line ("$26–$28/hr (≈$54k–$58k/yr)", where it came from in the tooltip), or that it isn't
+// listed; and when it was posted, or that its site doesn't say
+const payText = (r) => r.pay && r.pay.shown
+  ? `<span class="nowrap pay" title="${esc(r.pay.from)}">${esc(r.pay.shown)}</span>`
+  : `<span class="nowrap pay none" title="The posting doesn't list its pay, or it hasn't been read yet">pay not listed</span>`;
+const postedText = (r) => !r.posted
+  ? `<span class="nowrap" title="This employer's site gives no posting date">date unknown</span>`
+  : `<span class="nowrap"${r.ats === "greenhouse" ? ` title="Greenhouse gives the day the posting was last updated, not the day it was posted"` : ""}>${esc(shownDate(r.posted))}</span>`;
+// The openings in the order picked above them: best fit (the desk's own order), best paid, or newest; those whose pay
+// isn't listed, or whose date isn't given, last (in the desk's order)
+function sorted(rows) {
+  const by = sortBy === "pay" ? (r) => -(r.pay && r.pay.sort != null ? r.pay.sort : -1)
+    : sortBy === "newest" ? (r) => (r.posted_days == null ? 1e9 : r.posted_days) : null;
+  return by ? rows.map((r, i) => [by(r), i, r]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((x) => x[2]) : rows;
+}
+
 function renderRows() {
   if (!state) return;
   const mine = filter === "mine";
@@ -847,7 +880,7 @@ function renderRows() {
   const listed = (state.listings || []).filter((r) => filter === "all" || troubleshooting || r.added || (r.fit && r.fit.recommended) || r.run
     || r.not_interested);
   renderStops(listed.filter(shown));
-  const rows = listed.filter(shown).filter(inStop);
+  const rows = sorted(listed.filter(shown).filter(inStop));
   const entries = rows.map((r) => {
     const fit = r.fit || {score: 0, reasons: [], concerns: []};
     const done = DONE.has(r.status) || (r.run && UNDER_WAY.has(r.run.status)) || !!r.not_interested;
@@ -885,7 +918,7 @@ function renderRows() {
       ${score}
       <div>${link(r.url, esc(r.title), "title")}
         <div class="meta">${[esc(r.company), r.location ? `<span title="${esc(r.location)}">${esc(places(r.location))}</span>` : "",
-          r.posted ? `<span class="nowrap">${esc(shownDate(r.posted))}</span>` : ""].filter(Boolean).join(" · ")}</div>
+          postedText(r), payText(r)].filter(Boolean).join(" · ")}</div>
         ${also ? `<div class="meta also-on" title="The same posting, saved from a job board too. It's applied for on the employer's site.">${also}</div>` : ""}
         <div class="chips">${chips}</div>${sum}</div>
       <div class="state">${statusPill(r)}${undo}${ni}</div></li>`};
@@ -894,6 +927,8 @@ function renderRows() {
     const msg = stopFilter !== "any" && listed.some(shown) ? "None here right now. Press Any to see them all."
       : state.search.status === "running" ? "Searching employers' career sites…"
       : onlyHandled && listed.length ? "Nothing here from the employers where the desk goes all the way. Turn off that switch to see the rest."
+      : (state.settings.min_pay || state.settings.posted_within) && listed.length
+        ? "Nothing here at that pay or posting date. Empty Pay at least, or press Posted: Any, to see the rest."
       : troubleshooting ? "Nothing here yet from the employers where the desk doesn't go all the way. Press Find jobs: troubleshooting searches every list's employers."
       : (state.listings || []).length ? "Nothing recommended. Switch to All to see every opening."
       : "Press Find jobs to search every employer's career site for openings that fit your profile.";
@@ -1188,6 +1223,10 @@ function renderHeader() {
   if (document.activeElement !== tailor) tailor.checked = !!s.tailor_resumes;
   const handledOnly = $("handled-only");
   if (document.activeElement !== handledOnly) handledOnly.checked = !!s.handled_only;
+  const minPay = $("min-pay");
+  if (document.activeElement !== minPay) minPay.value = s.min_pay ? Number(s.min_pay).toLocaleString("en-US") : "";
+  document.querySelectorAll("[data-posted]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.posted === String(s.posted_within || ""))));
+  document.querySelectorAll("[data-sort]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.sort === sortBy)));
   const troubleshootOn = $("troubleshoot");
   if (document.activeElement !== troubleshootOn) troubleshootOn.checked = !!s.troubleshoot;
   $("plugin-version").textContent = state.version ? `job-apply ${state.version}` : "";
@@ -1521,10 +1560,15 @@ function selectable(url) {
 // What "Only where the desk goes all the way" leaves showing: those employers' openings, and what the person has
 // already had to do with (a link they added, a job under way or tracked); "Troubleshooting", the other employers'
 // openings, and the same. Nothing hidden is ever applied to
+// The filter row's "Pay at least" and "Posted" hide only an opening that says it's below or older: one whose pay isn't
+// listed, or whose site gives no date, always stays (as does what the person already had to do with)
 function shown(r) {
   const s = state.settings || {};
-  return s.handled_only ? kept(r) : s.troubleshoot ? keptElse(r) : true;
+  return (s.handled_only ? kept(r) : s.troubleshoot ? keptElse(r) : true)
+    && (theirs(r) || (paysEnough(r, s.min_pay) && postedWithin(r, s.posted_within)));
 }
+const paysEnough = (r, floor) => !floor || !r.pay || r.pay.top == null || r.pay.top >= floor;
+const postedWithin = (r, days) => !days || r.posted_days == null || r.posted_days <= days;
 const theirs = (r) => !!(r.added || r.run || (r.job_id != null && r.status && r.status !== "skipped"));
 const kept = (r) => !!r.handled || theirs(r);
 const keptElse = (r) => !r.handled || theirs(r);
@@ -1606,6 +1650,22 @@ document.addEventListener("click", (e) => {
     const url = t.dataset.niUndo;
     if (t.closest("#toast")) $("toast").textContent = "";
     act(() => api("/api/not_interested/undo", {url}));
+    return;
+  }
+  if (t.dataset.sort) {
+    sortBy = t.dataset.sort;
+    try { localStorage.setItem(SORT_KEY, sortBy); } catch (err) {}
+    document.querySelectorAll("[data-sort]").forEach((b) => b.setAttribute("aria-pressed", String(b === t)));
+    renderRows();
+    return;
+  }
+  if (t.dataset.posted !== undefined) {
+    if (!state) return;
+    const days = t.dataset.posted ? Number(t.dataset.posted) : null;
+    document.querySelectorAll("[data-posted]").forEach((b) => b.setAttribute("aria-pressed", String(b === t)));
+    state.settings.posted_within = days;  // (shown at once; kept in desk.json)
+    renderRows();
+    act(() => api("/api/settings", {posted_within: days}));
     return;
   }
   if (t.dataset.appGroup) {
@@ -1823,6 +1883,17 @@ document.addEventListener("change", (e) => {
   }
   if (t.id === "tailor") act(() => api("/api/settings", {tailor_resumes: t.checked}));
   if (t.id === "auto-search") act(() => api("/api/settings", {auto_search: t.checked}));
+  if (t.id === "min-pay" && state) {
+    // "60000", "$60,000", "60k": dollars a year; empty (or 0) for any pay
+    const said = t.value.trim().replace(/[$,\s]/g, "").replace(/\/?(yr|year)$/i, "");
+    const m = /^(\d+(?:\.\d+)?)(k?)$/i.exec(said);
+    if (said && !m) { toast("Pay at least: a yearly figure in dollars, like 60000 or 60k"); return; }
+    const pay = m ? Math.round(Number(m[1]) * (m[2] ? 1000 : 1)) || null : null;
+    state.settings.min_pay = pay;  // (shown at once; kept in desk.json)
+    t.value = pay ? pay.toLocaleString("en-US") : "";
+    renderRows();
+    act(() => api("/api/settings", {min_pay: pay}));
+  }
   if (t.id === "handled-only") {
     // what the switch hides isn't applied to unseen
     if (t.checked) (state.listings || []).forEach((r) => { if (!kept(r)) selected.delete(r.url); });
