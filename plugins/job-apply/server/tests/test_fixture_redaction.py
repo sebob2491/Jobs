@@ -312,3 +312,21 @@ def test_the_shapes_the_review_of_oct_18_found_surviving_are_taken_out(tmp_path)
         assert kept in page and kept in written, kept
     kept = clean_html("<p>Requisition 6025550188. Licensed in 2019. Cardinal 12345. Born to lead.</p>", [])
     assert "Requisition 6025550188. Licensed in 2019. Cardinal 12345. Born to lead." in kept
+
+
+def test_the_shapes_the_second_look_of_oct_18_found_are_taken_out_and_a_pages_own_words_kept():
+    """The review of the scrubber's new shapes (Oct 18) found more that stayed: a phone after its word with a country
+    code apart or one separator, or a parenthetical between them; an IBAN with a group of letters; a driver's license
+    after its state's code. And words that weren't anyone's that went: a card's class names ("card-header-v2"), and a
+    "Tel: " label's space. (Every value made up.)"""
+    planted = {"Mobile: +1 6025550181": "6025550181", "Phone: +1-6025550182": "6025550182",
+               "Phone: 602-5550183": "5550183", "Phone (optional) 6025550184": "6025550184",
+               "IBAN: GB82 WEST 1234 5698 7654 32": "WEST 1234", "Driver License: AZ D12345678": "D12345678"}
+    out = clean_html("<html><body>" + "".join(f"<p>{text}</p>" for text in planted) + "</body></html>", [])
+    for text, value in planted.items():
+        assert value not in out, (text, out)
+    assert "Phone (optional) " in out and "Driver License: " in out and "IBAN: " in out
+    kept = clean_html('<div class="card-header-v2 ui-card-1dp css-1fra0yr" data-x="card-header-v2">'
+                      "<p>Tel: 602.555.0188</p><p>Card 2 of 3: report card-1dp</p></div>", [])
+    assert 'class="card-header-v2 ui-card-1dp css-1fra0yr"' in kept and 'data-x="card-header-v2"' in kept
+    assert "card-1dp" in kept and "<p>Tel: 5555550100</p>" in kept

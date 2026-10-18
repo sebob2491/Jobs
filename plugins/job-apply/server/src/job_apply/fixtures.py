@@ -158,10 +158,12 @@ def redact(text: str, secrets: list[str]) -> str:
 _EMAIL = re.compile(r"\b[\w.%+-]+@(?!example\.(?:com|org|net)\b)[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}\b", re.I)
 # (and one with no separator after its area code, "(602)5550188": the review of Oct 18)
 _PHONE = re.compile(r"(?<![\w-])(?:\+?1[-. ]?)?(?:\(?\d{3}\)?[-. ]\d{3}[-. ]|\(\d{3}\)\d{3}[-. ]?)\d{4}(?![\w-])")
-# Ten digits with no separators at all, after a word that says they're a phone's ("Phone: 6025550188", "call us at
-# +16025550188"): elsewhere they may be a requisition's or an order's number
+# Ten digits with no separator, or one only after the area code, after a word that says they're a phone's ("Phone:
+# 6025550188", "Mobile: +1 6025550188", "Phone (optional) 602-5550188", "call us at +16025550188"): elsewhere they may
+# be a requisition's or an order's number
 _PHONE_SAID = re.compile(r"\b((?:phone|mobile|cell|telephone|tel|fax|call|text|sms|whatsapp)\b"
-                         r"(?:\W{1,3}(?:number|no|us|me|at|on|is)\b)*\W{1,4}?)(?:\+?1)?\d{10}(?!\d)", re.I)
+                         r"(?:\W{1,3}(?:number|no|us|me|at|on|is)\b)*(?:\s*\([^()]{0,30}\))?\W{1,4}?)"
+                         r"(?:\+?1[\s.-]?)?\d{3}[\s.-]?\d{7}(?!\d)", re.I)
 _SSN = re.compile(r"(?<![\w-])\d{3}-\d{2}-\d{4}(?![\w-])")
 _MONTH = (r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|"
           r"oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?")
@@ -172,15 +174,19 @@ _BIRTH_DATE = re.compile(r"\b((?:date of birth|birth ?date|birthday|born(?: on)?
                          r"|" + _MONTH + r"\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4})(?!\d)", re.I)
 _CANDIDATE_ID = re.compile(r"\b((?:candidate|applicant|application|user|profile|person) ?(?:id|number|no\.?|#)\W{0,3})"
                            r"(?=[\w-]*\d)[\w-]{4,}", re.I)  # (one with a digit in it: never the next label's words)
-# A license's, a passport's, an EIN's, an IBAN's or a card's number after its label ("Driver's License #: D1234567",
-# "IBAN: DE89 3704 0044 0532 0130 00": the review of Oct 18), as _CANDIDATE_ID: its words with a digit in them, groups
-# and all
-_LABELLED_ID = re.compile(r"\b((?:driver[’']?s?\s+)?(?:licen[cs]e|passport|(?-i:EIN|IBAN)|employer identification|"
-                          r"(?:credit\s+|debit\s+)?card)\b(?:\s*(?:(?:id|number|no)\b\.?|#))?\W{0,3})"
-                          r"(?=[\w-]*\d)[\w-]{4,}(?:[ ](?=[\w-]*\d)[\w-]+)*", re.I)
+# A license's, a passport's, an EIN's or a card's number after its label ("Driver's License #: D1234567", "Driver
+# License: AZ D12345678", "Card number: 4111 1111 1111 1111": the review of Oct 18), as _CANDIDATE_ID: its words with a
+# digit in them, groups and all (and a state's code before a license's). A card only as a credit or debit card or
+# with its number's word: never "card-header-v2"
+_LABELLED_ID = re.compile(r"\b((?:(?:driver[’']?s?\s+)?licen[cs]e|passport|(?-i:EIN)|employer identification|"
+                          r"(?:credit|debit)\s+card)\b(?:\s*(?:(?:id|number|no)\b\.?|#))?\W{0,3}"
+                          r"|\bcard\s*(?:(?:number|no)\b\.?|#)\W{0,3})"
+                          r"(?:(?-i:[A-Z]{2})\s+)?(?=[\w-]*\d)[\w-]{4,}(?:[ ](?=[\w-]*\d)[\w-]+)*", re.I)
+# An IBAN after its label, its groups with letters too ("IBAN: GB82 WEST 1234 5698 7654 32")
+_IBAN = re.compile(r"\b(IBAN(?:\s*(?:number|no\.?|#))?\W{0,3})[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{1,4}){2,8}\b")
 _JWT = re.compile(r"\beyJ[\w-]{4,}\.[\w-]{4,}(?:\.[\w-]*)?")
 # a click-to-call link's number, written with no separators ("tel:+16025550147": the review of 0.3.189)
-_TEL = re.compile(r"\b(tel:)\s*\+?\d[\d().\s-]{6,}\d", re.I)
+_TEL = re.compile(r"\b(tel:\s*)\+?\d[\d().\s-]{6,}\d", re.I)  # (a "Tel: " label keeps its space)
 _LONG_HEX = re.compile(r"\b[0-9a-f]{32,}\b", re.I)
 
 
@@ -196,6 +202,7 @@ def scrub_others(text: str) -> str:
     text = _BIRTH_DATE.sub(lambda m: m.group(1) + "01/01/2000", text)
     text = _CANDIDATE_ID.sub(lambda m: m.group(1) + REDACTED, text)
     text = _LABELLED_ID.sub(lambda m: m.group(1) + REDACTED, text)
+    text = _IBAN.sub(lambda m: m.group(1) + REDACTED, text)
     return _LONG_HEX.sub(REDACTED, text)
 
 

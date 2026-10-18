@@ -520,7 +520,7 @@ def test_a_note_says_which_job_system_the_job_stopped_on(job_apply_home):
 
 def _quoting_run(job_id: int) -> Run:
     """A run whose page echoed an answer the person gave on a card ("Nights") in its errors, and whose log has the
-    code the inbox gave for it (482913): the desk's history keeps both out (Applier._history_hidden)."""
+    code the inbox gave for it (482913): the desk's history keeps both out, and a report (Applier._report_hidden)."""
     return Run(job_id, "Field Service Engineer", "Example Fab", status="needs_you", need="stuck",
                reason="review page shows errors: Shift: Nights isn't open for this job",
                log=["typed the code 482913 the inbox gave", "the review page shows errors"],
@@ -544,7 +544,7 @@ def test_a_report_and_a_note_hide_what_the_desk_history_hides(srv, job_apply_hom
     job = srv.add_job(url="https://example.com/jobs/fse", title="Field Service Engineer", company="Example Fab")["job"]
     monkeypatch.setitem(pipeline._MAIL_TAKEN, ("noreply@example.com", "482913", time.time()), job["id"])
     r = _quoting_run(job["id"])
-    hide = Applier._history_hidden(r)
+    hide = Applier._report_hidden(r)
     assert {"Nights", "482913"} <= hide
 
     def hidden(text: str) -> None:
@@ -578,3 +578,75 @@ def test_a_report_and_a_note_hide_what_the_desk_history_hides(srv, job_apply_hom
         hidden(taken.read_text(encoding="utf-8"))
     finally:
         desk_module._desk = None
+
+
+def _reported(srv, job_apply_home, job, r) -> tuple[str, str]:
+    """Claude's report_problem on the desk's run `r`, and the note the desk takes on its stop: their texts."""
+    from job_apply import desk as desk_module
+
+    d = desk_module.get_desk(srv)
+    d.applier.runs[job["id"]] = r
+    try:
+        out = run(srv.report_problem(job["id"]))
+        d.applier._take_note(r)
+    finally:
+        desk_module._desk = None
+    [taken] = (job_apply_home / "notes").glob("*.md")
+    return out["preview"] + "\n" + parse_qs(urlsplit(out["issue_url"]).query)["body"][0], taken.read_text(encoding="utf-8")
+
+
+def test_a_report_keeps_the_profiles_everyday_words_the_page_says_too(srv, job_apply_home):
+    """The review of Oct 18: given every word of the profile to keep out (as the history keeps out of its reason), a
+    report took out what the profile shares with the page, the template's own: "REDACTED at Example Fab" for a job
+    titled as the profile's wanted titles, "https://www.REDACTED.com/…", "REDACTED Phone", "the REDACTED sign-in page".
+    The profile's details are report_strings' to take out; the run's own are what's this run's alone, never a list's
+    own choice that went in, nor anything in an address or in the job's own lines."""
+    import yaml
+
+    from job_apply.pipeline import WentIn
+
+    path = job_apply_home / "profile.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data["personal"]["phone_type"] = "Mobile"
+    data["preferences"].update(how_did_you_hear="LinkedIn", titles=["Field Service Engineer"])
+    data["work_history"][0]["description"] = "Kept Workday and SAP records."
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    job = srv.add_job(url="https://www.linkedin.com/jobs/view/4012345678", title="Field Service Engineer",
+                      company="Example Fab")["job"]
+    went = WentIn(answers={"a": {"page": "Apply", "label": "Phone Type", "value": "Mobile Phone", "kind": "choice"},
+                           "b": {"page": "Apply", "label": "Source", "value": "LinkedIn", "kind": "choice"}})
+    r = Run(job["id"], "Field Service Engineer", "Example Fab", status="needs_you", need="stuck",
+            reason="review page shows errors: Mobile Phone is required", went_in=went,
+            log=["opened https://www.linkedin.com/jobs/view/4012345678", "on the Workday sign-in page"],
+            page_info={"url": "https://example.wd1.myworkdayjobs.com/x", "title": "Apply",
+                       "fields": [{"label": "Mobile Phone", "kind": "text", "required": True, "empty": False}]})
+    text, taken = _reported(srv, job_apply_home, job, r)
+    for kept in ("**Job:** Field Service Engineer at Example Fab", "https://www.linkedin.com/jobs/view/4012345678",
+                 "Mobile Phone is required", "- Mobile Phone (text, required, filled)", "the Workday sign-in page"):
+        assert kept in text, kept
+    assert "## stuck: Field Service Engineer, at" in taken and "Mobile Phone is required" in taken
+    assert "the Workday sign-in page" in taken and "REDACTED" not in taken
+
+
+def test_a_report_hides_the_runs_own_answers_however_a_page_echoes_them(srv, job_apply_home, monkeypatch):
+    """The review of Oct 18: a phone typed on a card ("602-555-0177") came back in a page's error written another way,
+    a long answer cut short by the page's error, and an account form's 3-letter answer and a 3-letter code (the history
+    hides 4 or more): all reached a report and a note. None does now, and the desk's own words stay."""
+    import time
+
+    from job_apply import pipeline
+
+    long = "I maintained 300mm etch tools across two fabs and cut unplanned downtime by a third over four years."
+    job = srv.add_job(url="https://example.com/jobs/fse", title="Technician", company="Example Fab")["job"]
+    monkeypatch.setitem(pipeline._MAIL_TAKEN, ("noreply@example.com", "Q7Z", time.time()), job["id"])
+    r = Run(job["id"], "Technician", "Example Fab", status="needs_you", need="stuck",
+            reason="review page shows errors: Phone (602) 555-0177 isn't a mobile number",
+            once={"Phone": "602-555-0177", "Why this job?": long}, account_answers={"First pet": "Rex"},
+            log=["the page said 6025550177 isn't valid", "typed the code Q7Z the inbox gave",
+                 "the security answer Rex was refused"],
+            page_info={"url": "https://example.com/apply", "title": "Apply",
+                       "errors": [f"{long[:50]}… exceeds 100 characters", "602.555.0177 isn't valid"]})
+    for text in _reported(srv, job_apply_home, job, r):
+        for value in ("555-0177", "5550177", "555.0177", "300mm etch", "across two fabs", "Q7Z", "Rex"):
+            assert value not in text, (value, text)
+        assert "review page shows errors" in text and "exceeds 100 characters" in text, text

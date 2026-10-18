@@ -35,6 +35,7 @@ from . import config
 from .ats import ATS_NAMES, detect_ats, shared_system
 from .autofill import US_STATES, is_empty_value
 from .fixtures import REDACTED, _pattern, _spellings, _without_query, convert, personal_strings, redact
+from .history import HIDE_PREFIX
 from .mailbox import site_domain
 
 PAGES = 3  # the latest saved pages put in a report
@@ -228,24 +229,60 @@ def _fields(meta: dict[str, Any]) -> list[str]:
 
 
 def _hiding(scrub: Callable[[Any], str], hide: Iterable[Any]) -> Callable[[Any], str]:
-    """`scrub`, after taking out what a line of the desk's history keeps out too (`hide`: pipeline's
-    Applier._history_hidden: the answers the person gave for this application and an account form's, the codes the
-    inbox gave, the desk's secrets, the profile's words), each of 4 characters or more, as a page may write it: a
-    page's error the desk quotes ("review page shows errors: …") can echo what was typed."""
-    hidden = sorted({s for h in hide if len(str(h or "").strip()) >= 4 for s in _spellings(str(h).strip())
-                     if len(s) >= 4}, key=len, reverse=True)
+    """`scrub`, after taking out what's this run's alone (`hide`: pipeline's Applier._report_hidden: the answers the
+    person gave for this application and what was typed into the form, an account form's answers, the codes the inbox
+    gave, the desk's secrets), each as a whole word, of 3 characters or more, however a page may write it: a page's error
+    the desk quotes ("review page shows errors: …") can echo what was typed. A number of 7 digits or more goes with any
+    separators ("602-555-0177" as "(602) 555-0177" or "6025550177"), and a long answer by its start too, as far as the
+    text goes on with it (a page's error that cut it short: "I maintained 300mm etch tools across… exceeds 100
+    characters"). Never inside an address but an address that's one of them (a reset link the inbox gave)."""
+    values = {v for v in (" ".join(str(h or "").split()) for h in hide) if len(v) >= 3}
+    hidden = {s for v in values for s in _spellings(v) if len(s) >= 3}
+    hidden |= {digits for v in values if len(digits := re.sub(r"\D", "", v)) >= 7}
     if not hidden:
         return scrub
+    ordered = sorted(hidden, key=len, reverse=True)
+    links = {_without_query(v) for v in values if _URL.fullmatch(v)}
+    long = sorted((v for v in values if len(v) > HIDE_PREFIX), key=len, reverse=True)
+
+    def words(said: str) -> str:
+        said = _cut_echoes(said, long)
+        # (only the values a text may hold, looked for as plain words first: a pattern for each of many values, every
+        # line, took half a minute a report)
+        low, digits = said.casefold(), _PHONE_APART.sub("", said)
+        near = [s for s in ordered if (s[-10:] in digits if s.isdigit() and len(s) >= 7
+                                       else all(w.rstrip(".,").casefold() in low for w in s.split()))]
+        return redact(said, near) if near else said
 
     def first(text: Any) -> str:
-        # (only the values a text may hold, looked for as plain words first: a pattern for each of a big profile's
-        # values, every line, took half a minute a report)
-        said = str(text or "")
-        low, digits = said.casefold(), _PHONE_APART.sub("", said)
-        near = [s for s in hidden if (s[-10:] in digits if s.isdigit() and len(s) >= 7
-                                      else all(w.rstrip(".,").casefold() in low for w in s.split()))]
-        return redact(said, near) if near else said
+        said, out, at = str(text or ""), [], 0
+        for m in _URL.finditer(said):
+            out += [words(said[at:m.start()]), REDACTED if _without_query(m.group(0)) in links else m.group(0)]
+            at = m.end()
+        return "".join([*out, words(said[at:])])
     return lambda text: scrub(first(text))
+
+
+def _cut_echoes(text: str, values: list[str]) -> str:
+    """`text` without each of `values` (a long answer) said from its start (its first HIDE_PREFIX characters, a whole
+    word's start) as far as the text goes on with it, cut mid-word or not."""
+    for value in values:
+        start = re.compile(r"(?<!\w)" + r"\s+".join(map(re.escape, value[:HIDE_PREFIX].split(" "))), re.I)
+        at = 0
+        while m := start.search(text, at):
+            i, k = m.end(), HIDE_PREFIX
+            while i < len(text) and k < len(value):
+                if value[k] == " " and text[i].isspace():
+                    while i < len(text) and text[i].isspace():
+                        i += 1
+                elif text[i].lower() == value[k].lower():
+                    i += 1
+                else:
+                    break
+                k += 1
+            text = text[:m.start()] + REDACTED + text[i:]
+            at = m.start() + len(REDACTED)
+    return text
 
 
 def _scrubber(secrets: list[str]) -> Callable[[Any], str]:
@@ -461,7 +498,7 @@ def build(job: dict[str, Any], run: Any = None, profile: config.Profile | None =
     is filed (`preview`), and the address of a new GitHub issue with that text (`issue_url`).
     `anonymous`: the job said by its job system alone ("a Workday employer"), as a note says it,
     with no employer, job title, address or requisition number in the issue or the saved pages.
-    `hide`: what else its text takes out, as the desk's history does (_hiding)."""
+    `hide`: what else its text takes out, the run's own (_hiding): never from the job's title, employer or address."""
     prof = profile or config.Profile.load()
     secrets = report_strings(prof)
     scrub = _scrubber(secrets)
@@ -477,7 +514,7 @@ def build(job: dict[str, Any], run: Any = None, profile: config.Profile | None =
         for _, meta in saved:
             urls += [meta.get("url"), *(f.get("url") for f in meta.get("frames") or [] if isinstance(f, dict))]
         scrub, secrets = _anonymous(job, run, urls, secrets, [meta for _, meta in saved])
-    scrub = _hiding(scrub, hide)  # (the text's: the saved pages stay on this computer)
+    said = _hiding(scrub, hide)  # (the text's but the job's own lines: the saved pages stay on this computer)
     out_dir = _folder(int(job["id"]))
     pages_dir = out_dir / "pages"
     pages_dir.mkdir()
@@ -491,19 +528,19 @@ def build(job: dict[str, Any], run: Any = None, profile: config.Profile | None =
     ]
     if run is not None:
         lines += [f"**Desk status:** {getattr(run, 'status', '')} {getattr(run, 'need', '')}".rstrip(),
-                  f"**What the desk said:** {scrub(getattr(run, 'reason', ''))}"]
-        steps = [scrub(s) for s in (getattr(run, "log", None) or [])][-40:]
+                  f"**What the desk said:** {said(getattr(run, 'reason', ''))}"]
+        steps = [said(s) for s in (getattr(run, "log", None) or [])][-40:]
         if steps:
             lines += ["", "### What the desk did", *[f"{i}. {s}" for i, s in enumerate(steps, 1)]]
-        lines += map(scrub, _paused_page(getattr(run, "page_info", None) or {}, getattr(run, "questions", None) or []))
+        lines += map(said, _paused_page(getattr(run, "page_info", None) or {}, getattr(run, "questions", None) or []))
     for snap, meta in saved:
         try:
             convert(snap, snap.name, pages_dir, secrets=secrets)
         except (OSError, ValueError, KeyError, TypeError):
             pass  # its fields are still listed
-        lines += ["", f"### Page saved {snap.name}: {scrub(meta.get('title'))}",
-                  scrub(meta.get("url") or "") + (f" ({scrub(meta.get('note'))})" if meta.get("note") else ""),
-                  *map(scrub, _fields(meta))]
+        lines += ["", f"### Page saved {snap.name}: {said(meta.get('title'))}",
+                  said(meta.get("url") or "") + (f" ({said(meta.get('note'))})" if meta.get("note") else ""),
+                  *map(said, _fields(meta))]
     left_out = ("The employer, the job's title, its addresses and its requisition number are left out, and so are the "
                 "job's place and any other name a page gives the employer. ")
     text = "\n".join(lines) + f"\n\n_Personal details found in the profile are shown as {REDACTED}. " \
@@ -571,12 +608,13 @@ def note(job: dict[str, Any], run: Any, profile: config.Profile | None = None, h
     its questions, with why any answer didn't go in. Notes are filed together in one public
     issue, so on top of what `build` takes out, a note holds none of the person's answers, and
     says the employer and every address by its job system only: the issue could otherwise list
-    every employer they applied to. `hide`: what else it takes out, as `build`."""
-    say = _note_scrubber(job, run, profile or config.Profile.load(), hide)
+    every employer they applied to. `hide`: what else it takes out, as `build` (never from the job's title)."""
+    prof = profile or config.Profile.load()
+    say = _note_scrubber(job, run, prof, hide)
     ats, employer = _job_system(job, run)
     stop, title = getattr(run, "need", "") or getattr(run, "status", ""), job.get("title") or getattr(run, "title", "")
     lines = [
-        f"## {stop}: {say(title)}, at {employer}",
+        f"## {stop}: {_note_scrubber(job, run, prof)(title)}, at {employer}",
         f"**Plugin version:** {config.plugin_version() or 'unknown'} \u00b7 **Job system:** {ats} \u00b7 "
         f"**Noted:** {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         f"**What the desk said:** {say(getattr(run, 'reason', ''))}",

@@ -779,7 +779,7 @@ async def report_problem(job_id: int, anonymous: bool = False) -> dict[str, Any]
     job = _job(job_id)
     run = desk._desk.applier.runs.get(job["id"]) if desk._desk is not None else None
     # (and what the desk's history keeps out of a line on it, the report too)
-    hide = await asyncio.to_thread(Applier._history_hidden, run) if run is not None else set()
+    hide = await asyncio.to_thread(Applier._report_hidden, run) if run is not None else set()
     return await asyncio.to_thread(report.build, job, run, anonymous=anonymous, hide=hide)
 
 
