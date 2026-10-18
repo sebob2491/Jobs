@@ -2894,3 +2894,545 @@ def test_a_date_box_for_another_day_or_an_unclear_start_gets_no_day():
     assert answer("2 weeks after offer", kind="text", date="dd/mm/yyyy") == day.strftime("%d/%m/%Y")
     assert answer("2 weeks after offer", kind="text", date="yyyy-mm-dd") == day.isoformat()
     assert answer("2 weeks after offer", kind="text", date="dd.mm.yy") == day.strftime("%d.%m.%y")
+
+
+# A mutation pass over _resolve_field (Oct 18): each test below pins a decision no test held, one a changed rule would
+# have turned into a different answer on a real form
+
+
+def test_a_signed_date_box_by_its_other_names_gets_todays_date():
+    """"Date Signed" and "Date of Signature" are the day a form is signed, as "Signature Date" is: today, and never
+    the person's name, which "Signature" alone takes."""
+    from datetime import date
+
+    today = date.today().strftime("%m/%d/%Y")
+    for label in ("Date Signed", "Date of Signature"):
+        a = resolve_field(f(label), prof())
+        assert a is not None and (a.value, a.rule) == (today, "signed_date"), (label, a)
+
+
+def test_a_bare_date_in_a_block_about_something_else_is_not_the_day_the_form_is_signed():
+    """A bare "Date" is the signing date only on a signed form: in a block about a conviction, an accident, military
+    service, a license or a past job it asks when that happened, which the profile doesn't say."""
+    p = Profile({"personal": {"first_name": "Sam", "last_name": "Rivera"}})
+    assert resolve_field(f("Date", section="Voluntary Self-Identification of Disability"), p).rule == "signed_date"
+    for section in ("Conviction Details", "Criminal Record", "Offense Information", "Incident Report",
+                    "Traffic Violation", "Accident Report", "Military Branch", "Selective Service",
+                    "Discharge Information", "Availability", "Available to Start", "Employment", "Education",
+                    "Prior Experience", "Residence History", "Place of Birth", "Driver's License", "Certifications"):
+        assert resolve_field(f("Date", section=section), p) is None, section
+
+
+def test_a_pages_one_file_box_for_another_document_never_gets_the_resume():
+    """A page's only file box takes the resume whatever it's called ("Attachment"), but not one that asks for another
+    document: a degree, a transcript, a license, a passport, a portfolio, references, a photo, a DD-214."""
+    p = prof()
+    assert resolve_field(f("Attachment", "file"), p).rule == "documents.resume"
+    for label in ("Copy of Degree", "Diploma", "Transcripts", "Certificate", "Driver's License", "Passport",
+                  "Portfolio", "Writing Sample", "Work Sample", "Letter of Recommendation", "References",
+                  "Identification", "Photo", "DD-214"):
+        assert resolve_field(f(label, "file"), p) is None, label
+
+
+def test_a_file_lists_resume_box_is_ticked_however_it_says_the_file_is_the_resume(tmp_path):
+    """Kforce's Taleo lists the files on the person's record, each row with a "Select the file" box and a "Document
+    is a resume" box: both ticked on the profile's resume's row, whether the box says a resume, the resume or your
+    CV."""
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-1.4 test")
+    p = Profile({"documents": {"resume": str(resume)}})
+    for label in ("Select the file: resume.pdf", "Document is a resume", "This document is the resume",
+                  "Document is your CV"):
+        a = resolve_field(f(label, "checkbox", row_file="resume.pdf", same_file_rows=1), p)
+        assert a is not None and a.value is True, label
+
+
+def test_a_box_for_an_agencys_an_interviewers_or_a_businesss_details_never_takes_the_persons():
+    """A box naming another party in its own words is that party's: the person's phone or ZIP never goes in it."""
+    p = prof()
+    assert _answer("Phone", p) == "480-555-0123"
+    for label in ("Agency Phone", "Agent Phone", "Interviewer Phone", "Business Zip Code"):
+        assert _answer(label, p) is None, label
+
+
+def test_a_block_for_a_recruiters_an_agents_or_an_interviewers_details_never_takes_the_persons():
+    """A block named for a recruiter's, an agent's or an interviewer's information, details or contact is that
+    person's: its Name, Email and Phone are never the applicant's."""
+    p = prof()
+    for section in ("Recruiter Information", "Agent Details", "Interviewer Details", "Agency Contact"):
+        for label in ("Name", "Email", "Phone"):
+            assert _answer(label, p, section=section) is None, (section, label)
+
+
+def test_an_emergency_contacts_block_never_takes_the_persons_own_name_or_address():
+    """An emergency contact's names, phone type, dial code and address are theirs, not the person's (as their first
+    name, phone and email already were)."""
+    p = Profile({"personal": {"first_name": "Sam", "middle_name": "Lee", "last_name": "Rivera",
+                              "preferred_name": "Sammy", "phone": "480-555-0100", "phone_country_code": "+1",
+                              "phone_type": "Mobile",
+                              "address": {"line1": "100 W Main St", "line2": "Apt 2", "city": "Mesa", "state": "AZ",
+                                          "county": "Maricopa", "country": "United States"}}})
+    assert _answer("Last Name", p) == "Rivera" and _answer("Address Line 1", p) == "100 W Main St"
+    for label in ("Last Name", "Middle Name", "Preferred Name", "Preferred Last Name", "Preferred Full Name",
+                  "Phone Type", "Country Code", "Address Line 1", "Address Line 2", "County", "State", "Country"):
+        assert _answer(label, p, section="Emergency Contact") is None, label
+
+
+def test_a_citizenship_or_clearance_list_whose_choices_are_unseen_is_left_for_the_person():
+    """A citizenship or security clearance attestation is answered only from the choices it shows: a list read
+    without them is the person's (as a U.S. person's was)."""
+    p = Profile({"work_authorization": {"us_citizen": True, "citizenship": "United States",
+                                        "security_clearance": "Secret"}})
+    for label in ("Are you a U.S. citizen?", "Citizenship", "Do you hold an active security clearance?"):
+        assert resolve_field(f(label, "combobox"), p) is None, label
+    assert resolve_field(f("Are you a U.S. citizen?", "combobox", options=["Yes", "No"]), p).value == "Yes"
+
+
+def test_a_question_about_sanctioned_countries_dual_citizenship_or_export_licenses_is_never_answered():
+    """The profile can't honestly answer ties to sanctioned countries, a dual citizenship, a denied party list or an
+    export license: a text box or a list asking any of them is the person's (or their own answers bank's), never the
+    profile's citizenship, U.S. person or government answer."""
+    p = Profile({"work_authorization": {"authorized_to_work": True, "us_person": True, "us_citizen": True,
+                                        "citizenship": "United States"},
+                 "background": {"government_employee": False}})
+    for label in ("Are you a citizen of Cuba?", "Are you a citizen of Iran?", "Are you a citizen or resident of Syria?",
+                  "Are you a citizen of the Crimea region of Ukraine?",
+                  "Are you a citizen of a country on the OFAC list?", "Do you hold dual citizenship?",
+                  "Do you hold dual nationality or citizenship?", "Do you hold citizenship of a sanctioned country?",
+                  "Are you a citizen of an embargoed country?", "Would your citizenship require an export license?",
+                  "Are you a U.S. person on any denied party list?"):
+        assert _answer(label, p) is None, label
+    assert _answer("Have you ever been employed by the government of North Korea?", p, kind="radio_group",
+                   options=["Yes", "No"]) is None
+
+
+def test_a_work_question_about_another_country_is_left_for_the_person_whatever_it_asks():
+    """The profile's work facts are the United States': a question about working without sponsorship, citizenship,
+    permanent residence or a visa in another country, or work authorization in "another", "any other" or a "foreign"
+    country, is the person's."""
+    p = Profile({"work_authorization": {"authorized_to_work": True, "requires_sponsorship": False, "us_person": True,
+                                        "us_citizen": True, "citizenship": "United States"}})
+    for label in ("Can you work in Canada without sponsorship?", "Are you a citizen or permanent resident of Canada?",
+                  "Are you a citizen of Mexico?", "Do you hold a non-immigrant visa for the United Kingdom?",
+                  "Are you authorized to work in another country?", "Are you authorized to work in any other country?",
+                  "Are you legally authorized to work in a foreign country?"):
+        assert _answer(label, p) is None, label
+
+
+def test_a_list_of_cities_under_a_nearest_city_heading_takes_the_profiles_city():
+    """Taleo's "Closest Metropolitan City" Region is a list of cities (Kforce's): so is one under a "Nearest Major
+    City", "Closest City" or "Metro Area" heading, or in a box called Area, Metro, Metro Area or Metro City. The
+    profile's city goes there, never its state."""
+    p = Profile({"personal": {"address": {"country": "United States", "state": "AZ", "city": "Chandler"}}})
+    cities = ["Not Specified", "Anthem", "Bisbee", "Chandler"]
+    for section in ("Nearest Major City", "Closest City", "Metro Area"):
+        a = resolve_field(f("Region", "select", section=section, options=cities), p)
+        assert a is not None and a.value == "Chandler", section
+    for label in ("Area", "Metro", "Metro Area", "Metro City"):
+        a = resolve_field(f(label, "select", section="Closest Metropolitan City", options=cities), p)
+        assert a is not None and a.value == "Chandler", label
+
+
+def test_a_decline_box_is_ticked_however_the_site_words_its_decline():
+    """A self-identification question's own decline box (Nikon's "I decline to say Gender") is ticked for a profile
+    that declines, however the site words it: prefer not to answer, do not wish to disclose, don't wish to say, or
+    decline to state, to self-identify or to identify."""
+    p = Profile({"eeo": {"gender": "Decline to self-identify", "race": "I don't wish to answer",
+                         "veteran": "I don't wish to answer"}})
+    for label in ("I prefer not to answer: Veteran Status", "I do not wish to disclose my race",
+                  "I don't wish to say Gender", "I decline to state Gender",
+                  "I decline to self-identify: Race/Ethnicity", "I decline to identify my gender"):
+        a = resolve_field(f(label, "checkbox"), p)
+        assert a is not None and a.value is True, label
+
+
+def test_a_password_box_never_takes_anything_from_the_profile():
+    """A password box is never filled from the profile, whatever it's called: not "Email Password" with the email."""
+    p = prof()
+    for label in ("Email Password", "Email", "City"):
+        assert resolve_field(f(label, "password"), p) is None, label
+
+
+def test_a_lone_checkbox_is_ticked_only_from_the_persons_own_answers():
+    """A single box is usually an attestation ("I am at least 18 years of age", "I am legally authorized to work in the
+    United States"): it's ticked only where the person's own answers say so, never from the profile's facts."""
+    p = prof()
+    for label in ("I am at least 18 years of age", "I am legally authorized to work in the United States", "Email"):
+        assert resolve_field(f(label, "checkbox"), p) is None, label
+    p.data["answers"] = [{"match": "at least 18", "answer": "Yes"}]
+    assert resolve_field(f("I am at least 18 years of age", "checkbox"), p).value is True
+
+
+def test_a_file_lists_box_on_another_files_row_is_never_ticked(tmp_path):
+    """A file list's boxes are ticked only on the row of the profile's own resume, and only where no other row has its
+    name (one tailored for another job may share it); with no resume in the profile, on none."""
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-1.4 test")
+    p = Profile({"documents": {"resume": str(resume)}})
+    for label in ("Select the file: cover-letter.pdf", "Document is a resume"):
+        assert resolve_field(f(label, "checkbox", row_file="cover-letter.pdf", same_file_rows=1), p) is None, label
+    for label in ("Select the file: resume.pdf", "Document is a resume"):
+        assert resolve_field(f(label, "checkbox", row_file="resume.pdf", same_file_rows=2), p) is None, label
+        box = f(label, "checkbox", row_file="resume.pdf", same_file_rows=1)
+        assert resolve_field(box, Profile({"personal": {"first_name": "Sam"}})) is None, label
+
+
+def test_a_second_file_box_for_other_documents_never_gets_the_resume():
+    """Beside the resume's box, another file box ("Additional Documents") is for something else: only the resume's
+    box gets the resume."""
+    fields = [{"id": "1", "kind": "file", "label": "Upload Resume"},
+              {"id": "2", "kind": "file", "label": "Additional Documents"}]
+    assert [t["id"] for t in plan_autofill(fields, prof())["to_fill"]] == ["1"]
+
+
+def test_a_phone_box_that_says_only_no_takes_the_phone():
+    """iCIMS's "Number" beside its Phone Country Code is a phone's by its autocomplete: so is one that says only
+    "No."."""
+    a = resolve_field(f("No.", autocomplete="tel-national"), _person())
+    assert a is not None and (a.value, a.rule) == ("480-555-0100", "phone")
+
+
+def test_a_box_marked_as_a_phones_that_names_another_number_is_not_the_persons_phone():
+    """A box whose autocomplete says it's a phone's takes the profile's phone only where its label says no more than
+    "Number": a Fax, a Pager or an "Other number" marked so is the person's to fill."""
+    for label in ("Fax", "Pager", "Other number"):
+        assert resolve_field(f(label, autocomplete="tel"), _person()) is None, label
+
+
+def test_a_yes_or_no_the_profile_writes_as_true_or_false_goes_in_a_text_box_as_yes_or_no():
+    """A profile that writes "security_clearance: no" (YAML's false) answers "Do you hold an active security
+    clearance?" in a text box with No, never "False"."""
+    for held, said in ((False, "No"), (True, "Yes")):
+        p = Profile({"work_authorization": {"security_clearance": held}})
+        assert _answer("Do you hold an active security clearance?", p) == said, held
+
+
+def test_a_jobs_currently_employed_question_in_a_box_is_yes_or_no():
+    """"Currently employed here?" in a job's block, drawn as a text box or a list whose choices aren't read yet: Yes
+    for the job with no end, No for the one that ended, never True or False."""
+    p = _person()
+    assert _answer("Currently employed here?", p, section="Work Experience 1") == "Yes"
+    assert _answer("Currently employed here?", p, kind="combobox", section="Work Experience 2") == "No"
+
+
+def test_a_citizens_visa_status_is_us_citizen_in_a_box_or_the_choice_naming_the_united_states():
+    """"What is your visa status?" for a citizen: "U.S. Citizen" in a text box, and among choices the one that says
+    U.S. citizen however it's written ("American Citizen", "Citizen - USA"), never another country's."""
+    p = Profile({"work_authorization": {"us_citizen": True}})
+    assert _answer("What is your visa status?", p) == "U.S. Citizen"
+    assert _answer("What is your visa status?", p, kind="select",
+                   options=["American Citizen", "Green Card Holder", "H-1B"]) == "American Citizen"
+    assert _answer("Visa Status", p, kind="select", options=["Citizen - USA", "Citizen - Other Country"]) == \
+        "Citizen - USA"
+    assert _answer("Visa Status", p, kind="select", options=["H-1B", "F-1", "Green Card"]) is None  # (none is theirs)
+    for citizen in ("US Citizen", "United States Citizen", "Citizen of the U.S.", "Citizen - US"):
+        assert _answer("Visa Status", p, kind="select", options=[citizen, "Green Card", "H-1B"]) == citizen, citizen
+    assert _answer("Visa Status", p, kind="select", options=["Not a U.S. citizen", "U.S. citizen"]) == "U.S. citizen"
+
+
+def test_a_long_question_that_mentions_a_date_signed_gets_no_date():
+    """"If you have previously signed an agreement with us, enter the date signed" asks for a day gone by: only a short
+    label ("Date Signed") is the day the form is signed."""
+    assert resolve_field(f("If you have previously signed an agreement with us, enter the date signed"), prof()) is None
+
+
+def test_the_persons_own_answer_for_a_closest_city_list_stands_over_the_profiles_city():
+    """Kforce's "Closest Metropolitan City" Region takes the profile's city, unless the person answered it themselves
+    (Phoenix, their nearest big city): their answer stands."""
+    p = Profile({"personal": {"address": {"city": "Chandler", "state": "AZ"}},
+                 "answers": [{"match": "region", "answer": "Phoenix", "question": "Region"}]})
+    region = f("Region", "select", section="Closest Metropolitan City",
+               options=["Not Specified", "Chandler", "Phoenix"])
+    assert resolve_field(region, p).value == "Phoenix"
+
+
+def test_a_preferred_metro_area_is_the_persons_choice_not_their_city():
+    """A list of cities under a heading that asks where the person would like to work ("Preferred Metropolitan Area")
+    is their choice, not where they live."""
+    p = Profile({"personal": {"address": {"city": "Chandler", "state": "AZ"}}})
+    for section in ("Preferred Metropolitan Area", "Desired Metro Area", "Metro area you would like to work in",
+                    "Metro area you are willing to work in", "Metro area you would relocate to"):
+        field = f("Region", "select", section=section, options=["Not Specified", "Chandler", "Phoenix"])
+        assert resolve_field(field, p) is None, section
+
+
+def test_a_question_of_its_own_is_never_read_from_its_choices():
+    """Workday's "Please check one of the boxes below:" is read from its disability choices. A label that asks its own
+    question ("Do you require an accommodation? Check the box below", "...that applies to your spouse") is never
+    answered from them, though they mention a disability."""
+    options = ["Yes, I have a disability, or have had one in the past",
+               "No, I do not have a disability and have not had one in the past", "I do not want to answer"]
+    p = Profile({"eeo": {"disability": "No"}})
+    assert resolve_field(f("Please check one of the boxes below:", "checkbox_group", options=options), p).value == \
+        options[1]
+    for label in ("Do you require an accommodation? Check the box below",
+                  "Check the box below that applies to your spouse"):
+        assert resolve_field(f(label, "checkbox_group", options=options), p) is None, label
+
+
+def test_a_box_that_only_says_to_choose_is_never_read_from_its_choices():
+    """A list with no question of its own ("Select one", "Please select"), whose question the page may show
+    elsewhere, isn't answered from its choices, though they are the disability ones."""
+    options = ["Yes, I have a disability, or have had one in the past",
+               "No, I do not have a disability and have not had one in the past", "I do not want to answer"]
+    p = Profile({"eeo": {"disability": "No"}})
+    for label in ("Select one", "Please select"):
+        assert resolve_field(f(label, "radio_group", options=options), p) is None, label
+
+
+def test_a_text_area_about_work_authorization_that_isnt_a_yes_or_no_question_is_the_persons():
+    """Nikon's "Are you legally authorized to work in the US...?" text area takes the profile's Yes or No; a text area
+    that asks for an explanation ("Please explain your work authorization", "Visa sponsorship needed (explain)") is
+    the person's to write."""
+    p = Profile({"work_authorization": {"authorized_to_work": True, "requires_sponsorship": False}})
+    assert polarity(_answer("Are you legally authorized to work in the US?", p, kind="textarea")) is True
+    for label in ("Please explain your work authorization", "Visa sponsorship needed (explain)"):
+        assert _answer(label, p, kind="textarea") is None, label
+
+
+def _job_with_letters(tmp_path):
+    folder = tmp_path / "job"
+    folder.mkdir()
+    (folder / "cover_letter.pdf").write_bytes(b"%PDF")
+    (folder / "resume.pdf").write_bytes(b"%PDF")
+    return {"folder": str(folder)}, folder
+
+
+def test_a_box_or_section_for_the_cover_letter_alone_gets_the_cover_letter(tmp_path):
+    """A page's one upload in a section for both ("Resume and Cover Letter") gets the resume; a box there named for the
+    cover letter, or a page's one box in a cover letter's own section, gets the cover letter."""
+    job, folder = _job_with_letters(tmp_path)
+    p = prof()
+    assert resolve_field(f("Upload", "file", section="Resume and Cover Letter"), p, job, 1).value == \
+        str(folder / "resume.pdf")
+    assert resolve_field(f("Cover Letter", "file", section="Resume and Cover Letter"), p, job, 1).value == \
+        str(folder / "cover_letter.pdf")
+    assert resolve_field(f("Upload", "file", section="Cover Letter"), p, job, 1).value == \
+        str(folder / "cover_letter.pdf")
+
+
+def test_a_section_for_both_that_says_the_resume_is_there_gets_the_cover_letter(tmp_path):
+    """A section for both that says the box is only for when the resume isn't there, or that the resume already is,
+    keeps the page's one upload for the cover letter."""
+    job, folder = _job_with_letters(tmp_path)
+    for section in ("Resume or Cover Letter (only if not attached above)",
+                    "Your resume was already imported - Resume and Cover Letter"):
+        a = resolve_field(f("Upload", "file", section=section), prof(), job, 1)
+        assert a is not None and a.value == str(folder / "cover_letter.pdf"), section
+
+
+def test_a_current_jobs_end_date_drawn_as_a_list_is_left_empty_not_asked():
+    """The end of a job the person still has is left empty, as a text box's is, when the form draws it as a list: it's
+    neither filled nor asked."""
+    fields = [{"id": "1", "kind": "select", "label": "End Year", "section": "Work Experience 1", "value": "",
+               "options": ["2024", "2025", "2026"]}]
+    plan = plan_autofill(fields, prof())
+    assert plan["to_fill"] == [] and plan["needs_input"] == [], plan
+
+
+def test_a_degree_question_where_equivalent_experience_counts_is_the_persons():
+    """"Do you have a bachelor's degree?" under "Bachelor's degree or equivalent experience": a profile without one
+    would answer No where the employer counts experience instead, so it's left for the person."""
+    p = _person()
+    assert _answer("Do you have a bachelor's degree?", p, kind="radio_group", options=["Yes", "No"]) == "No"
+    for section in ("Minimum Qualifications: Bachelor's degree or equivalent experience", "Degree or equivalent"):
+        assert _answer("Do you have a bachelor's degree?", p, kind="radio_group", options=["Yes", "No"],
+                       section=section) is None, section
+
+
+def test_how_you_heard_found_among_the_choices_is_picked_as_it_is():
+    """The profile's "LinkedIn" among a list's sources is picked as it is; only "Company Website" is looked for as the
+    employer's own site."""
+    p = prof()  # (how_did_you_hear: LinkedIn)
+    for options in (["Company Website", "Acme Careers Site", "LinkedIn", "Indeed"],
+                    ["LinkedIn", "Indeed", "Acme Website"]):
+        a = resolve_field(f("How did you hear about us?", "select", options=options), p, {"company": "Acme"})
+        assert a is not None and a.value == "LinkedIn", options
+
+
+def test_a_search_prompt_in_a_schools_block_that_shows_the_profiles_choice_picks_it():
+    """Workday's Degree and Field of Study in an Education block are search prompts: one that already shows the
+    profile's choice ("Bachelor's Degree" for its BS, "Engineering, Electrical") picks it, rather than searching for
+    the profile's own words, which the prompt may not find."""
+    p = Profile({"education_history": [{"school": "Arizona State University", "degree": "BS Electrical Engineering",
+                                        "major": "Electrical Engineering", "start": 2016, "end": 2020}]})
+    degree = f("Degree", "combobox", section="Education 1", search=True,
+               options=["Associate's Degree", "Bachelor's Degree", "Master's Degree"])
+    assert resolve_field(degree, p).value == "Bachelor's Degree"
+    major = f("Field of Study", "combobox", section="Education 1", search=True,
+              options=["Engineering, Electrical", "Engineering, Mechanical"])
+    assert resolve_field(major, p).value == "Engineering, Electrical"
+
+
+def test_a_list_in_a_schools_block_picks_its_own_choice_whatever_its_kind():
+    """A school's Degree drawn as a list, radio buttons or check boxes takes the list's own choice for the profile's
+    degree ("Bachelor's Degree" for its BS), never the profile's words, which none of them has."""
+    p = Profile({"education_history": [{"school": "Arizona State University", "degree": "BS Electrical Engineering",
+                                        "start": 2016, "end": 2020}]})
+    for kind in ("select", "radio_group", "checkbox_group"):
+        degree = f("Degree", kind, section="Education 1", options=["Associate's Degree", "Bachelor's Degree"])
+        assert resolve_field(degree, p).value == "Bachelor's Degree", kind
+
+
+def test_a_cv_box_beside_another_file_box_gets_the_resume():
+    """Among a page's file boxes, the one named for a CV or a Curriculum Vitae is the resume's."""
+    for label in ("Upload CV", "Curriculum Vitae"):
+        fields = [{"id": "1", "kind": "file", "label": label},
+                  {"id": "2", "kind": "file", "label": "Other Attachments"}]
+        assert [t["id"] for t in plan_autofill(fields, prof())["to_fill"]] == ["1"], label
+
+
+def test_a_resume_box_for_a_profile_without_a_resume_is_asked():
+    """With no resume in the profile, the resume's box is asked about, never filled with nothing."""
+    plan = plan_autofill([{"id": "1", "kind": "file", "label": "Upload Resume", "required": True}],
+                         Profile({"personal": {"first_name": "Sam"}}))
+    assert plan["to_fill"] == [] and [q["id"] for q in plan["needs_input"]] == ["1"], plan
+
+
+def test_a_resume_import_box_beside_the_upload_is_left_however_it_says_so():
+    """TI's "Import your profile from resume" beside "Upload Resume" (two file boxes): the import is left however it
+    says it reads the resume (autofill, auto fill, parse, populate); only the upload gets it."""
+    for label in ("Import your profile from resume", "Autofill with resume", "Auto fill from resume",
+                  "Parse your resume", "Populate from resume"):
+        fields = [{"id": "1", "kind": "file", "label": label}, {"id": "2", "kind": "file", "label": "Upload Resume"}]
+        assert [t["id"] for t in plan_autofill(fields, prof())["to_fill"]] == ["2"], label
+
+
+def test_a_pages_one_upload_in_a_section_for_both_gets_the_resume_however_it_is_worded(tmp_path):
+    """A page's one upload in a section for both the resume and the cover letter gets the resume, however the section
+    puts it: "Upload your Resume and Cover Letter", "Attach your CV or Cover Letter", "Resume and Cover Letter (5MB
+    max)", "CV or Cover Letter - 5MB max"."""
+    job, folder = _job_with_letters(tmp_path)
+    for section in ("Upload your Resume and Cover Letter", "Attach your CV or Cover Letter",
+                    "Resume and Cover Letter (5MB max)", "CV or Cover Letter - 5MB max"):
+        a = resolve_field(f("Upload", "file", section=section), prof(), job, 1)
+        assert a is not None and a.value == str(folder / "resume.pdf"), section
+
+
+def test_a_signed_forms_date_in_a_certification_block_is_today():
+    """A bare "Date" in a license's or a certification's block asks when that was; a "Date Signed" there (an
+    "Applicant Certification" signed at the end of a form) is still today."""
+    from datetime import date
+
+    a = resolve_field(f("Date Signed", section="Applicant Certification"), prof())
+    assert a is not None and (a.value, a.rule) == (date.today().strftime("%m/%d/%Y"), "signed_date")
+
+
+def test_a_spouse_at_the_employer_is_answered_as_a_relatives_question():
+    """"Is your spouse or partner employed by Acme?" is the relatives question, answered from the profile's no (only a
+    self-identification question about a family member is left: it isn't the person's own)."""
+    p = Profile({"background": {"relatives_at_employer": False}})
+    assert _answer("Is your spouse or partner employed by Acme?", p, kind="radio_group", options=["Yes", "No"]) == "No"
+
+
+def test_a_without_sponsorship_question_drawn_as_a_text_area_takes_the_profiles_yes():
+    """As Nikon's authorization and sponsorship text areas do, one asking whether the person can work without
+    sponsorship takes the profile's plain Yes."""
+    p = Profile({"work_authorization": {"authorized_to_work": True, "requires_sponsorship": False}})
+    assert _answer("Can you work in the U.S. without sponsorship?", p, kind="textarea") == "Yes"
+
+
+def test_a_work_question_drawn_as_a_text_area_takes_the_yes_or_no_however_it_starts():
+    """A yes/no work question in a text area takes the profile's Yes or No whether it asks "Are you", "Do you", "Will
+    you", "Would you" or "Have you"."""
+    p = Profile({"work_authorization": {"authorized_to_work": True, "requires_sponsorship": False}})
+    assert _answer("Will you require visa sponsorship?", p, kind="textarea") == "No"
+    assert _answer("Would you require visa sponsorship?", p, kind="textarea") == "No"
+    assert polarity(_answer("Have you been authorized to work in the U.S.?", p, kind="textarea")) is True
+
+
+def test_where_the_person_lives_asked_in_a_text_area_is_never_an_essay():
+    """GCU's "In what city do you live?" text area takes the profile's city, as "Which city do you live in?" does;
+    one that goes on to ask for more (and..., why, explain, describe, tell us) is an essay, the person's."""
+    p = Profile({"personal": {"address": {"city": "Chandler", "state": "Arizona"}}})
+    assert _answer("Which city do you live in?", p, kind="textarea") == "Chandler"
+    for label in ("In what state do you live, and how far is it from our site?",
+                  "What state do you live in? Why did you move there?",
+                  "Which state do you live in? Explain any plans to move",
+                  "What state do you live in? Describe your commute",
+                  "What state do you live in? Tell us about your commute"):
+        assert _answer(label, p, kind="textarea") is None, label
+
+
+def test_where_you_are_located_among_countries_is_never_the_united_states_for_someone_elsewhere():
+    """Axon's "Where are you currently located?" among countries is the United States for a profile there, and never
+    for a profile whose address is in another country."""
+    countries = ["Canada", "Mexico", "United States"]
+    here = Profile({"personal": {"address": {"city": "Chandler", "state": "AZ", "country": "United States"}}})
+    assert _answer("Where are you currently located?", here, kind="select", options=countries) == "United States"
+    there = Profile({"personal": {"address": {"city": "Toronto", "state": "ON", "country": "Canada"}}})
+    assert _answer("Where are you currently located?", there, kind="select", options=countries) != "United States"
+
+
+def test_a_degree_question_whose_choices_arent_read_is_left_for_the_person():
+    """"Do you have a bachelor's degree?" drawn as a list whose choices weren't read is the person's: its plain Yes or
+    No is picked only among choices shown."""
+    assert _answer("Do you have a bachelor's degree?", _person(), kind="combobox") is None
+
+
+def test_a_label_that_only_says_how_to_answer_is_read_from_its_choices_however_its_worded():
+    """Workday's "Please check one of the boxes below:" is read from its disability choices: so is any label that only
+    says how to answer and points at the choices, whatever its verb (select, choose, tick, mark, pick) and words."""
+    options = ["Yes, I have a disability, or have had one in the past",
+               "No, I do not have a disability and have not had one in the past", "I do not want to answer"]
+    p = Profile({"eeo": {"disability": "No"}})
+    for label in ("Select one of the following", "Choose one below", "Tick the box", "Mark the appropriate box",
+                  "Pick one below", "Check any that apply below", "Check all that apply below",
+                  "Select only one of the boxes", "Tick a box below", "Select an option below",
+                  "Select one of the options below", "Select an answer below", "Choose one of the answers below",
+                  "Choose a response below", "Select which applies below"):
+        a = resolve_field(f(label, "radio_group", options=options), p)
+        assert a is not None and a.value == options[1], label
+
+
+def test_a_list_with_no_question_of_its_own_isnt_a_self_identification_by_its_choices():
+    """A veteran list with no label of its own (the page shows its question elsewhere) isn't answered, though its
+    choices are the veteran ones and offer a decline."""
+    options = ["I am not a protected veteran", "I identify as one or more of the classifications of protected veteran",
+               "I don't wish to answer"]
+    p = Profile({"eeo": {"veteran": "I am not a protected veteran"}})
+    assert resolve_field(f("Are you a protected veteran?", "radio_group", options=options), p).value == options[0]
+    assert resolve_field(f("", "radio_group", options=options), p) is None
+
+
+def test_an_accommodation_question_is_never_answered_from_the_disability_status():
+    """"Do you need an accommodation for a disability?" mentions a disability but isn't the self-identification: its
+    Yes/No/decline, or choices that say whether the person has a disability, are the person's to answer."""
+    p = Profile({"eeo": {"disability": "No"}})
+    q = "Do you need an accommodation for a disability?"
+    assert _answer(q, p, kind="radio_group", options=["Yes", "No", "I don't wish to answer"]) is None
+    disability_said = ["Yes, I have a disability", "No, I don't have a disability"]
+    assert _answer(q, p, kind="radio_group", options=disability_said) is None
+
+
+def test_a_text_area_for_linkedin_salary_or_start_takes_the_profiles():
+    """A text area is a long answer the person writes, except for the LinkedIn profile, the desired salary and the
+    start date, which the profile's own words answer."""
+    p = Profile({"personal": {"linkedin_url": "https://www.linkedin.com/in/example"},
+                 "preferences": {"desired_salary": "$60,000", "earliest_start": "2 weeks after offer"}})
+    assert _answer("LinkedIn Profile", p, kind="textarea") == "https://www.linkedin.com/in/example"
+    assert _answer("Desired salary", p, kind="textarea") == "$60,000"
+    assert _answer("When can you start?", p, kind="textarea") == "2 weeks after offer"
+
+
+def test_a_state_box_that_asks_for_the_abbreviation_gets_it():
+    """"State (abbreviation)" takes the state's two letters, as "In what state do you live? (Please use the state
+    abbreviation format)" does."""
+    p = Profile({"personal": {"address": {"state": "Arizona"}}})
+    assert _answer("State (abbreviation)", p) == "AZ"
+
+
+def test_a_long_list_that_is_all_there_is_isnt_searched_for_an_answer_it_lacks():
+    """A list of 150 countries that is neither a search prompt nor a paged list shows all it has: without the
+    profile's, it's the person's, never a search for it."""
+    countries = [f"Country {i}" for i in range(150)]
+    assert _answer("Country", prof(), kind="select", options=countries) is None
+    assert _answer("Country", prof(), kind="select", options=countries, paged=True) == "United States"
+
+
+def test_a_persons_no_for_a_lone_box_leaves_it_unticked():
+    """A single box the person's own answers name is ticked for their Yes and left unticked for their No."""
+    for said, ticked in (("Yes", True), ("No", False)):
+        p = Profile({"answers": [{"match": "reliable transportation", "answer": said}]})
+        a = resolve_field(f("I have reliable transportation", "checkbox"), p)
+        assert a is not None and a.value is ticked, said
