@@ -542,6 +542,8 @@ _CITIZEN_ASKED = re.compile(rf"\bare\s+you\s+a\s+(?:{_US_WRITTEN}[\s-]*)?citizen
                             r"(?P<rest>.*)$", re.I | re.S)
 # ...the same question in other words: "or not", "or (a U.S.) national"
 _SAME_QUESTION = re.compile(rf"\s*,?\s*or\s+(?:not|(?:an?\s+)?(?:{_US_WRITTEN}\s+)?national)\b", re.I)
+# ...and the answers it takes, written after it: "Are you a US citizen: Yes/No", "..., yes or no?"
+_YES_NO_TAIL = re.compile(r"\s*[:,\-\u2013]?\s*\(?\s*yes\s*(?:/|or)\s*no\b\)?", re.I)
 # ...and a following "If not" or "If no" that asks something: "If not, do you have authorization to work in the US?",
 # "If no, which country?", "If not, please list your citizenship"
 _IF_NOT_ASKS = re.compile(r"\bif\s+(?:not|no)\b[\s,]*(?:(?:do|are|can|will|would|have|did|were)\s+you\b|"
@@ -562,6 +564,8 @@ def _asks_more_than_citizenship(raw_label: str) -> bool:
     rest = m.group("rest")
     same = _SAME_QUESTION.match(rest)
     rest = rest[same.end():] if same else rest
+    told = _YES_NO_TAIL.match(rest)
+    rest = rest[told.end():] if told else rest
     return not re.match(r"\s*(?:[?*!.;(]|$)", rest) or bool(_IF_NOT_ASKS.search(rest))
 
 
@@ -2131,8 +2135,9 @@ _DATE_TO_ENTER = re.compile(r"\b(enter|type|write|provide|fill in|put)\s+(in\s+)
 # member?"), or about the employer's policy with no need of the person's in it ("Is sponsorship available for
 # candidates who need it?", "Does Acme offer sponsorship?"): not the person's own. "Will you require the company to
 # provide sponsorship?" is theirs
-_THEIR_FAMILY_SPONSORSHIP = re.compile(r"\bfor (your |his |her |their |a |any )?(spouse|partner|husband|wife|"
-                                       r"dependents?|child(ren)?|family( members?)?|relatives?)\b")
+_THEIR_FAMILY_SPONSORSHIP = re.compile(r"\bfor (your |his |her |their |a |any )?(spouse|partner(?! (compan|organi|firm|"
+                                       r"site|location|agenc|employer|facilit))|husband|wife|dependents?|child(ren)?|"
+                                       r"family( members?)?|relatives?)\b")
 _EMPLOYER_SPONSORSHIP = re.compile(r"\bsponsor\w* (is |be )?(available|offered|provided)\b|"
                                    r"\b(offer|provide)s? (any )?(visa |employment |immigration )?sponsor")
 _YOUR_NEED = re.compile(r"\byou\b.{0,40}\b(require|need)")

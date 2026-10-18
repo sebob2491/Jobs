@@ -3707,6 +3707,29 @@ def test_a_us_citizen_question_followed_by_an_if_not_question_is_left():
     assert _answer("Country of citizenship (are you a citizen of more than one country?)", pr) == "Mexico"
 
 
+def test_a_us_citizen_question_with_its_yes_or_no_written_after_it_is_still_answered():
+    """"Are you a US citizen: Yes/No" and "..., yes or no?" name the answers the question takes, nothing more: the
+    citizen question, in every spelling, as "U.S." was before the reviews of Oct 18. One that goes on past them still
+    asks more."""
+    pr = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=False, citizenship="Mexico")
+    citizen = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=True, citizenship="United States")
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    for label in ("Are you a US citizen: Yes/No", "Are you a U.S. citizen: Yes/No", "Are you a US citizen, yes or no?",
+                  "Are you a U.S. citizen - Yes / No", "Are you a USA citizen (yes/no)?"):
+        assert (_answer(label, citizen, **yes_no), _answer(label, pr, **yes_no)) == ("Yes", "No"), label
+    assert _answer("Are you a US citizen, yes or no, and able to obtain a security clearance?", citizen, **yes_no) is None
+
+
+def test_a_sponsorship_question_about_a_partner_company_is_still_the_persons():
+    """"...for a partner company" names a company, not the person's partner: the person's own need, the profile's
+    answer. Their partner's need stays left."""
+    p = _work(authorized_to_work=True, requires_sponsorship=False)
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    assert _answer("Will you require visa sponsorship to work for a partner company?", p, **yes_no) == "No"
+    assert _answer("Will you require visa sponsorship to work for a partner organization of Acme?", p, **yes_no) == "No"
+    assert _answer("Will you require visa sponsorship for your partner?", p, **yes_no) is None
+
+
 def test_a_signature_box_is_refused_only_for_a_signing_date_or_a_date_to_enter():
     """A box named for the signing date ("Employment Application Signature Date", "Applicant Signature Date (please use
     MM/DD/YYYY format)") gets today, never the name; one that asks for a date to be entered ("Enter the date beside your
