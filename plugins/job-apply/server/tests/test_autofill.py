@@ -3744,6 +3744,45 @@ def test_a_us_citizen_question_with_another_question_after_it_is_left_however_th
         assert (_answer(label, citizen, **yes_no), _answer(label, pr, **yes_no)) == ("Yes", "No"), label
 
 
+def test_a_us_citizen_question_beside_another_question_anywhere_in_the_label_is_left():
+    """The whole label is read: a second question after a statement ("This role requires it. If not, do you hold a
+    valid work visa?"), one before the citizen question ("Do you hold a valid work visa? Are you a US citizen?") or in
+    its own sentence ("Can you work on-site in Chandler, and are you a US citizen?") would be answered by its Yes or
+    No too: left. Notes and words on how to answer around it ask nothing: still the citizen question (the fourth
+    review of Oct 18)."""
+    pr = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=False, us_person=True,
+               citizenship="Mexico")
+    visa = _work(authorized_to_work=True, requires_sponsorship=True, us_citizen=False, citizenship="India")
+    citizen = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=True, us_person=True,
+                    citizenship="United States")
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    for label in ("Are you a US citizen? Yes or No. If not, do you have authorization to work in the US?",
+                  "Are you a US citizen? This role requires it. If not, do you hold a valid work visa?",
+                  "Are you a US citizen? Note: ITAR applies. Do you hold an active security clearance?",
+                  "Are you a US citizen? This position requires citizenship. Can you obtain a clearance?",
+                  "Do you hold an active security clearance? Are you a US citizen?",
+                  "Do you hold a valid work visa? Are you a US citizen?",
+                  "Are you willing to relocate? Are you a US citizen?",
+                  "Can you work on-site in Chandler, and are you a US citizen?",
+                  "Have you ever held a clearance, and are you a U.S. citizen?",
+                  "Are you a US citizen? Answer Yes or No. If no, which visa do you hold?"):
+        for p in (pr, visa, citizen):
+            assert _answer(label, p, **yes_no) is None, (label, p)
+            assert _answer(label, p) not in ("Yes", "No"), (label, p)
+    for label in ("Are you a U.S. citizen? Please note that this position requires U.S. citizenship.",
+                  "Are you a US citizen? Please note: ITAR applies to this role.",
+                  "Are you a US citizen? Please select Yes or No.", "Are you a US citizen? Choose Yes or No.",
+                  "Are you a US citizen? Select one.", "Are you a US citizen? Indicate below.",
+                  "Are you a US citizen? State law requires us to verify eligibility.",
+                  "Are you a US citizen? If hired, you will need to provide proof of citizenship.",
+                  "Are you a US citizen? Will be verified upon hire.",
+                  "Are you a US citizen? Do not upload documents here.",
+                  "Citizenship: Are you a US citizen?", "Work eligibility - Are you a US citizen?",
+                  "Are you a US citizen? Proof of citizenship will be required.",
+                  "Are you a U.S. citizen? U.S. citizenship is required for this position."):
+        assert (_answer(label, citizen, **yes_no), _answer(label, pr, **yes_no)) == ("Yes", "No"), label
+
+
 def test_the_smaller_sponsorship_and_signature_wordings_of_the_third_review():
     """"E-Signature (enter the current date)" asks for the date: never the name. "...for any of your dependents" and
     "...for your domestic partner" are another person's sponsorship; "Will Acme be required to provide sponsorship for
