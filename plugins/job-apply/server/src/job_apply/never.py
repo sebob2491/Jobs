@@ -87,7 +87,11 @@ NEVER: dict[str, re.Pattern[str]] = {kind: re.compile(words, re.I | re.S) for ki
                      r"recruit\w* agenc|\be-?mail (?:me|you)\b|\bopt(?:ing)?[- ]in\b|stay (?:connected|in touch)|"
                      r"\breceiv\w*\b.{0,40}\b(?:news\w*|offers|updates?|alerts?|promotions?|(?:job|career) "
                      r"opportunities|marketing)\b|talent database|careers? (?:community|network)|"
-                     r"future (?:\w+ )?vacanc|keep\w* (?:my|your) (?:personal )?data",
+                     r"future (?:\w+ )?vacanc|keep\w* (?:my|your) (?:personal )?data|"
+                     # a sign-up's mail in plain words ("You will receive emails about new jobs", "... a monthly email
+                     # digest of new openings": the last check of 0.3.208), never the account's or the application's
+                     r"\b(?:e-?mails?|digest|messages?)\b[^.]{0,40}\b(?:new (?:jobs|openings|positions|roles)|"
+                     r"openings|opportunities|events)\b",
     BOX_WORDS: r"receiv\w*|e-?mails?|updates?|notifications?|messages?|partners?|third[- ]part|future|talent pool|"
                r"retain|retention",
 }.items()}
@@ -103,8 +107,10 @@ ANYWHERE = frozenset({"arbitration", "waiver", "signs up"})
 
 def _about_the_application(tail: str) -> bool:
     """Do the words after "receive emails" say they're about the application itself, and nothing more ("... about my
-    application status", not "... about my application and other opportunities": the review of 0.3.126's)?"""
-    own = re.match(r"\W*(?:about|regarding|on|concerning) (?:the status of )?(?:my|this|the|your) application"
+    application status", not "... about my application and other opportunities": the review of 0.3.126's)? Mail of
+    another kind may come first ("... emails and updates about my application": the last check of 0.3.208)"""
+    own = re.match(r"(?:\W*(?:and|or|&) (?:e-?mails?|updates?|messages?|communications?|notifications?)\b)*"
+                   r"\W*(?:about|regarding|on|concerning) (?:the status of )?(?:my|this|the|your) application"
                    r"(?: status| process)?(?P<rest>.*)", tail, re.I | re.S)
     if own is None:
         return False

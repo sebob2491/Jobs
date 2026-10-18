@@ -269,6 +269,12 @@ for _mail in ("You will receive emails about your account.", "You will receive a
               "You will receive a verification code at the email address you entered.",
               "You will receive emails related to your application.", "You will receive an email with your username."):
     STILL_AGREED[f"terms above: {_mail}"] = lambda m=_mail: pipeline._terms_above(f"{TERMS_PARAGRAPH} {m}")
+# (the last check of 0.3.208) mail of two kinds about the application alone, in either order
+for _both in ("emails and updates", "updates and emails"):
+    STILL_AGREED[f"a certification to receive {_both} about the application"] = lambda b=_both: _attests(
+        "checkbox", f"{CERTIFY}, and I agree to receive {b} about my application")
+    STILL_AGREED[f"a lone choice to receive {_both} about the application"] = lambda b=_both: _attests(
+        "radio_group", f"{CERTIFY}, and I agree to receive {b} about my application", ["I agree"])
 
 
 # A waiver's words inside other words ("injury", "perjury") are no waiver: every path that reads a waiver agrees to
@@ -319,6 +325,15 @@ STILL_REFUSED = {
         "I accept the Terms of Service and the Subscription Agreement"))),
     "an agreement button for cookies": lambda: pipeline._agreement_button(
         {"actions": [{"id": "a", "text": "I accept the Cookie Policy"}]}) is not None,
+    "a certification to receive emails and updates about the application and other roles": lambda: _attests(
+        "checkbox", f"{CERTIFY}, and I agree to receive emails and updates about my application and other roles"),
+    # a sign-up's mail in plain words above a bare "I agree" (agreed before 0.3.208: the last check of it)
+    "terms above emails about new jobs": lambda: pipeline._terms_above(
+        f"{TERMS_PARAGRAPH} You will receive emails about new jobs."),
+    "terms above a digest of new openings": lambda: pipeline._terms_above(
+        f"{TERMS_PARAGRAPH} You will receive a monthly email digest of new openings."),
+    "terms above emails about events and opportunities": lambda: pipeline._terms_above(
+        f"{TERMS_PARAGRAPH} You will receive emails from Acme about events and opportunities."),
 }
 
 
