@@ -3300,3 +3300,72 @@ def test_workplace_leaves_out_only_openings_that_surely_say_another(srv, monkeyp
     assert len(full["results"]) == 5 and "other_workplace" not in full
     with pytest.raises(ToolError, match="workplace is remote, hybrid or onsite"):
         asyncio.run(server.search_company_jobs("field service", workplace="anywhere"))
+
+
+# ------------------------------------------------------------------ employment type (the design of Oct 18, F6)
+
+
+def test_the_lists_keep_the_employment_type_their_fields_give():
+    """Paycom's positionType, Phoenix Children's schedule ("department | schedule | place"), SmartRecruiters'
+    typeOfEmployment and ASML's job_type, as each words it (employment.types_of reads them); none when none is given."""
+    from job_apply import employment
+    from job_apply.search import parse_paycom, parse_phoenixchildrens, parse_sitecore
+
+    paycom = parse_paycom(paycom_answer([paycom_job(1, "Tech (1)", "Phoenix, AZ")]), "X")
+    assert paycom[0].employment_type == "Full Time" and paycom[0].to_dict()["employment_type"] == "Full Time"
+    pch = {x.title: x for x in parse_phoenixchildrens(PCH_PAGE, "https://careers.pchco.org")}
+    assert pch["Recruiter"].employment_type == "Full-Time"
+    assert employment.types_of(pch["Recruiter"].employment_type) == ["full_time"]
+    asml = parse_sitecore(ASML_ANSWER)
+    assert asml[0].employment_type == "Fix" and employment.types_of("Fix") == []  # (names none: never filtered by)
+    bare = parse_paycom(paycom_answer([{**paycom_job(2, "Tech (2)", "Phoenix, AZ"), "positionType": ""}]), "X")
+    assert "employment_type" not in bare[0].to_dict()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"totalFound": 2, "content": [
+            {"id": "1", "name": "Technician", "location": {"city": "Chandler", "region": "AZ", "country": "us"},
+             "typeOfEmployment": {"label": "Part-time"}},
+            {"id": "2", "name": "Technician II", "location": {"city": "Chandler", "region": "AZ", "country": "us"}}]})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await search_module._smartrecruiters(client, "EXAMPLE1", "technician", 10, [])
+
+    assert [x.employment_type for x in asyncio.run(go())] == ["Part-time", ""]
+
+
+def test_employment_type_leaves_out_only_openings_that_say_theyre_of_other_types(srv, monkeypatch):
+    """search_company_jobs(employment_type=): an opening its list (or its job in the tracker) says is only of other
+    types is left out (`other_employment_type` counts them); one that doesn't say, or whose words name no type, stays.
+    A type that isn't one is refused in plain words. add_job keeps Indeed's job_type."""
+    import job_apply.server as server
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    async def fake(query, names, location, limit, **kw):
+        return {"results": [
+            {"company": "Lever Co", "title": "Full FSE", "url": "https://jobs.lever.co/leverco/full",
+             "employment_type": "Full Time"},
+            {"company": "Lever Co", "title": "Part FSE", "url": "https://jobs.lever.co/leverco/part",
+             "employment_type": "Part Time"},
+            {"company": "Lever Co", "title": "Both FSE", "url": "https://jobs.lever.co/leverco/both",
+             "employment_type": "Full or Part Time"},
+            {"company": "Lever Co", "title": "Regular FSE", "url": "https://jobs.lever.co/leverco/regular",
+             "employment_type": "Regular"},
+            {"company": "Lever Co", "title": "Unsaid FSE", "url": "https://jobs.lever.co/leverco/unsaid"},
+            {"company": "Lever Co", "title": "Tracked FSE", "url": "https://jobs.lever.co/leverco/tracked"}],
+            "errors": {}, "browser_only": []}
+
+    monkeypatch.setattr(server, "search_companies", fake)
+    job = srv.add_job(url="https://jobs.lever.co/leverco/tracked", title="Tracked FSE", company="Lever Co",
+                      employment_type="Contract", source="indeed")["job"]
+    assert srv.tracker().get(job["id"])["employment_type"] == "Contract"
+    out = asyncio.run(server.search_company_jobs("field service", employment_type="full_time"))
+    assert [r["title"] for r in out["results"]] == ["Full FSE", "Both FSE", "Regular FSE", "Unsaid FSE"]
+    assert out["other_employment_type"] == 2 and out["results"][0]["employment_types"] == ["full_time"]
+    out = asyncio.run(server.search_company_jobs("field service", employment_type="part-time, contract"))
+    assert [r["title"] for r in out["results"]] == ["Part FSE", "Both FSE", "Regular FSE", "Unsaid FSE", "Tracked FSE"]
+    assert out["results"][4]["employment_types"] == ["contract"]  # (its job in the tracker says it)
+    full = asyncio.run(server.search_company_jobs("field service"))
+    assert len(full["results"]) == 6 and "other_employment_type" not in full
+    with pytest.raises(ToolError, match="employment_type is full_time, part_time, contract"):
+        asyncio.run(server.search_company_jobs("field service", employment_type="forever"))

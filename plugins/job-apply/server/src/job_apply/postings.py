@@ -641,7 +641,8 @@ async def _fetch_oracle(client: httpx.AsyncClient, url: str) -> Posting | None:
         full_text=body,
         apply_url=url,
         external_id=str(d.get("Id") or parts["job_id"]),
-        employment_type=d.get("WorkerType") or d.get("JobSchedule") or "",
+        # (both: "Contingent Worker" says contract, "Part time" the schedule; "Employee" alone says neither)
+        employment_type=", ".join(str(d[k]) for k in ("WorkerType", "JobSchedule") if d.get(k)),
         posted_at=d.get("ExternalPostedStartDate") or "",
         parse_method="oracle-api",
         **said_workplace(d.get("WorkplaceTypeCode") or d.get("WorkplaceType")),  # (ORA_HYBRID, "On-site", where given)

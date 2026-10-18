@@ -26,6 +26,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from playwright.async_api import Error as PlaywrightError
 
 from . import config, pay
+from . import employment
 from . import workplace as wplace
 from .ats import ATS_NAMES, detect_ats, greenhouse_form_url, shared_system, workday_parts
 from .autofill import common_questions as bank_questions
@@ -493,6 +494,7 @@ async def search_company_jobs(
     min_pay: float | None = None,
     posted_within_days: int | None = None,
     workplace: str | None = None,
+    employment_type: str | None = None,
 ) -> dict[str, Any]:
     """Search employers' own careers sites for openings through their applicant tracking
     system's public search: Workday, Greenhouse, Lever, Eightfold, SmartRecruiters, Oracle,
@@ -518,9 +520,17 @@ async def search_company_jobs(
     workplace: "remote", "hybrid" or "onsite", or several ("remote, hybrid"): leaves out an opening its site says
     (its own field, or its location's words: "Remote - US") is done another way. Most don't say: those stay. Results
     that say carry `workplace` and `workplace_source` (structured, location); `other_workplace` counts what it left
-    out."""
+    out.
+    employment_type: "full_time", "part_time", "contract", "temporary", "internship" or "per_diem", or several
+    ("full_time, contract"): leaves out an opening its site (or its job in the tracker) says is only of other types.
+    Most lists don't say: those stay. Results that say carry `employment_type` (the site's words) and
+    `employment_types` (these names); `other_employment_type` counts what it left out."""
     _check_min_pay(min_pay)
     places = _check_workplace(workplace)
+    kinds = employment.parse_choice(employment_type)
+    if kinds is None:
+        raise ToolError(f"employment_type is full_time, part_time, contract, temporary, internship or per_diem, or "
+                        f"several of them (\"full_time, contract\"); {employment_type!r} isn't. Leave it out for any.")
     if posted_within_days is not None and posted_within_days < 1:
         raise ToolError(f"posted_within_days is a number of days, 1 or more (7, 14, 30); {posted_within_days} isn't. "
                         "Leave it out for any day.")
@@ -575,7 +585,7 @@ async def search_company_jobs(
         out["results"].extend(keep_listings(name, found, location_terms(location), limit_per_company, query,
                                             posted_within_days))
     t = tracker()
-    kept, below, elsewhere = [], 0, 0
+    kept, below, elsewhere, other_types = [], 0, 0, 0
     for r in out["results"]:
         job = t.find_by_url(r["url"])
         if job:
@@ -591,12 +601,20 @@ async def search_company_jobs(
         if not wplace.keeps((r.get("workplace") or "", r.get("workplace_source") or ""), places):
             elsewhere += 1  # (said surely, and not one asked for: one that doesn't say always stays)
             continue
+        said_type = r.get("employment_type") or (job["employment_type"] if job else "") or ""
+        if employment.types_of(said_type):
+            r["employment_type"], r["employment_types"] = said_type, employment.types_of(said_type)
+        if not employment.keeps(employment.types_of(said_type), kinds):
+            other_types += 1  # (said, and none of the types asked for: one that doesn't say always stays)
+            continue
         kept.append(r)
     out["results"] = kept
     if min_pay:
         out["below_min_pay"] = below
     if places:
         out["other_workplace"] = elsewhere
+    if kinds:
+        out["other_employment_type"] = other_types
     out["count"] = len(out["results"])
     return out
 
@@ -611,11 +629,14 @@ def add_job(
     apply_url: str = "",
     salary: str = "",
     source: str = "",
+    employment_type: str = "",
 ) -> dict[str, Any]:
     """Save a job from details you already have (e.g. from the Indeed connector or text the
-    user pasted) when ingest_job can't read the page."""
+    user pasted) when ingest_job can't read the page. employment_type: the type as given
+    (Indeed's job_type: "Full-time", "Contract"), for the desk's Type filter."""
     p = finalize(Posting(url=url, title=title, company=company, description=description, location=location,
-                         apply_url=apply_url, salary=salary, source=source, parse_method="manual"))
+                         apply_url=apply_url, salary=salary, source=source, parse_method="manual",
+                         employment_type=employment_type))
     job, created = tracker().upsert(p.to_dict())
     return {"created": created, "job": _brief(job)}
 

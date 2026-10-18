@@ -34,7 +34,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
-from . import autofill, config, history, pay, report, workplace
+from . import autofill, config, employment, history, pay, report, workplace
 from .browser import _cookie_setting
 from .pipeline import (DESK_PASSWORDS, QUEUE_NO_LOCK, Applier, _may_accept_notices, _may_manage_accounts,
                        _test_identity, placed_key, question_key)
@@ -888,7 +888,8 @@ class Desk:
                 "company": item.get("company"), "location": item.get("location") or posting.get("location"),
                 "ats": item.get("ats") or posting.get("ats"), "source": "job desk",
                 "external_id": item.get("external_id") or posting.get("external_id"),
-                "salary": posting.get("salary"), "employment_type": posting.get("employment_type"),
+                "salary": posting.get("salary"),
+                "employment_type": posting.get("employment_type") or item.get("employment_type"),
                 "posted_at": posting.get("posted_at") or item.get("posted"), "description": posting.get("description"),
                 **{k: (item if item.get("pay_period") else posting).get(k) for k in PAY_KEYS},
                 **{k: (posting if workplace.better(posting, item) else item).get(k) for k in workplace.FIELDS},
@@ -1062,7 +1063,7 @@ class Desk:
                 "location": item.get("location"), "posted": item.get("posted"),
                 "posted_days": days_since(str(item.get("posted") or "")),
                 "pay": pay_of(item, job), "ats": item.get("ats") or (job or {}).get("ats") or "",
-                "workplace": workplace_of(item, job),
+                "workplace": workplace_of(item, job), "job_types": job_types_of(item, job),
                 "fit": item.get("fit") if said else fit_for(item.get("fit"), item.get("company"), employers),
                 "notes": item.get("notes") or [], "job_id": jid, "status": job["status"] if job else None,
                 "run": run,
@@ -1094,6 +1095,7 @@ class Desk:
                 "location": job.get("location"), "posted": job.get("posted_at"),
                 "posted_days": days_since(str(job.get("posted_at") or "")),
                 "pay": pay_of(None, job), "ats": job.get("ats") or "", "workplace": workplace_of(None, job),
+                "job_types": job_types_of(None, job),
                 "fit": fit if said else fit_for(fit, job.get("company"), employers), "notes": [],
                 "job_id": job["id"], "status": job["status"], "run": runs.get(job["id"]), "added": True,
                 "handled": str(job.get("company") or "").strip().casefold() in handled,
@@ -1492,6 +1494,8 @@ CHIP_FILTERS: dict[str, tuple[str, ...]] = {
     "requirements": ("no_clearance", "degree", "day_shift", "travel_25", "entry_level", "not_senior"),
     # where the job is done (workplace.py): an opening that says another, surely, is hidden
     "workplace": workplace.WORKPLACES,
+    # its employment type (employment.py): an opening that says only others is hidden
+    "job_types": employment.TYPES,
 }
 
 
@@ -1510,6 +1514,17 @@ def _min_pay(value: Any) -> int | None:
     if type(value) is float and value.is_integer():
         value = int(value)
     return value if type(value) is int and 0 < value <= MIN_PAY_MOST else None
+
+
+def job_types_of(item: dict[str, Any] | None, job: dict[str, Any] | None) -> dict[str, Any] | None:
+    """An opening's employment types as its row says them, or None when nothing says: its list's words, else its
+    posting's (once read), else the tracker's job's; each a field the job system gives for it."""
+    for said in ((item or {}).get("employment_type"), ((item or {}).get("posting") or {}).get("employment_type"),
+                 (job or {}).get("employment_type")):
+        types = employment.types_of(said)
+        if types:
+            return {"types": types, "shown": employment.shown(types), "from": f"The job system says “{said}”"}
+    return None
 
 
 def workplace_of(item: dict[str, Any] | None, job: dict[str, Any] | None) -> dict[str, Any] | None:

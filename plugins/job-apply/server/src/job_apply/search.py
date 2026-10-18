@@ -127,6 +127,8 @@ class Listing:
     # system's own field; location: its location's words); keep_listings reads the location for one the list didn't say
     workplace: str = ""
     workplace_source: str = ""
+    # its employment type as the list words it ("Full Time", "Full-Time"; employment.types_of reads it), when it does
+    employment_type: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         out = asdict(self)
@@ -140,6 +142,8 @@ class Listing:
         if not out["workplace"]:  # (not said)
             for k in wplace.FIELDS:
                 del out[k]
+        if not out["employment_type"]:
+            del out["employment_type"]
         return out
 
 
@@ -929,7 +933,7 @@ def parse_sitecore(data: Any) -> list[Listing]:
             out.append(Listing(
                 company="", title=c.get("name") or "", url=c["url"], location=place,
                 posted=str(c.get("job_date_posted") or "")[:10], external_id=str(c.get("job_id") or c.get("id") or ""),
-                ats="company_site",
+                ats="company_site", employment_type=str(c.get("job_type") or ""),  # (ASML's "Fix" names none)
             ))
     return out
 
@@ -1268,7 +1272,8 @@ def parse_phoenixchildrens(html: str, base: str) -> list[Listing]:
         place = parts[-1] if len(parts) >= 3 else ""
         out.append(Listing(company="", title=link.get_text(" ", strip=True), url=url, ats="custom",
                            location=f"{place}, AZ" if place and not _REMOTEISH.search(place) else place,
-                           external_id=url.rstrip("/").rsplit("/", 1)[-1]))
+                           external_id=url.rstrip("/").rsplit("/", 1)[-1],
+                           employment_type=parts[1] if len(parts) >= 3 else ""))  # ("Full-Time", "PRN")
     return out
 
 
@@ -1972,6 +1977,7 @@ def parse_paycom(data: Any, cfg: Any) -> list[Listing]:
             location=_paycom_place(re.sub(r"\s+", " ", str(p.get("locations") or "")).strip()),
             posted=_paycom_date(p.get("postedOn")), external_id=req.group(1) if req else str(p["jobId"]), ats="paycom",
             **said_workplace(p.get("remoteType")),  # ("Hybrid", "Remote", "On-site"; "" for none)
+            employment_type=str(p.get("positionType") or ""),  # ("Full Time")
         )
         out.append(listing)
     return out
@@ -2492,6 +2498,7 @@ async def _smartrecruiters(client: httpx.AsyncClient, cfg: Any, query: str, limi
             location=where, posted=(p.get("releasedDate") or "")[:10],
             external_id=p.get("refNumber") or p.get("id") or "", ats="smartrecruiters",
             **said_workplace(smartrecruiters_workplace(loc)),
+            employment_type=str((p.get("typeOfEmployment") or {}).get("label") or ""),  # ("Full-time")
         ))
     return out[:limit]
 

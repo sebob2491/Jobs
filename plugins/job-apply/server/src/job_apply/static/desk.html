@@ -244,6 +244,8 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
         <button data-posted="" aria-pressed="true">Any</button><button data-posted="7" aria-pressed="false">7 days</button><button data-posted="14" aria-pressed="false">14 days</button><button data-posted="30" aria-pressed="false">30 days</button></span>
       <span class="group" role="group" aria-label="Workplace" title="Shows only the jobs done the ways pressed, and every job that doesn't say. One whose posting only mentions it in its text (likely remote) always stays.">Workplace
         <button data-chip="workplace" data-value="remote" aria-pressed="false" title="Remote jobs, and every job that doesn't say where it's done">Remote</button><button data-chip="workplace" data-value="hybrid" aria-pressed="false" title="Hybrid jobs, and every job that doesn't say where it's done">Hybrid</button><button data-chip="workplace" data-value="onsite" aria-pressed="false" title="On-site jobs, and every job that doesn't say where it's done">On-site</button></span>
+      <span class="group" role="group" aria-label="Employment type" title="Shows only the jobs of the types pressed, and every job whose job system doesn't say its type.">Type
+        <button data-chip="job_types" data-value="full_time" aria-pressed="false" title="Full-time jobs, and every job that doesn't say its type">Full-time</button><button data-chip="job_types" data-value="part_time" aria-pressed="false" title="Part-time jobs, and every job that doesn't say its type">Part-time</button><button data-chip="job_types" data-value="contract" aria-pressed="false" title="Contract jobs, and every job that doesn't say its type">Contract</button><button data-chip="job_types" data-value="temporary" aria-pressed="false" title="Temporary and seasonal jobs, and every job that doesn't say its type">Temporary</button><button data-chip="job_types" data-value="internship" aria-pressed="false" title="Internships and co-ops, and every job that doesn't say its type">Internship</button><button data-chip="job_types" data-value="per_diem" aria-pressed="false" title="Per diem (PRN) jobs, and every job that doesn't say its type">Per diem</button></span>
       <span class="group" role="group" aria-label="Requirements" title="Each pressed one hides a job whose posting or title says it doesn't fit. A job that doesn't say, or whose posting isn't read yet, always stays.">Requirements
         <button data-chip="requirements" data-value="no_clearance" aria-pressed="false" title="Hides a job whose posting asks for a security clearance, held now or to be obtained. One whose posting isn't read yet always stays.">No clearance needed</button><button data-chip="requirements" data-value="degree" aria-pressed="false" id="degree-chip" title="Hides a job whose posting requires a degree, with no equivalent experience taken instead. One whose posting isn't read yet always stays.">No degree required</button><button data-chip="requirements" data-value="day_shift" aria-pressed="false" title="Hides a job whose posting's Shift or Schedule line says nights, evenings, swing, rotating, or a 2nd or 3rd shift. One that only mentions a shift in its text, or doesn't say, always stays.">Day shift</button><button data-chip="requirements" data-value="travel_25" aria-pressed="false" title="Hides a job whose posting says it travels more than 25% of the time. One that doesn't say, or isn't read yet, always stays.">Travel ≤ 25%</button><button data-chip="requirements" data-value="entry_level" aria-pressed="false" title="Hides a job whose title says senior, lead, staff, principal, manager, supervisor or director, or level II and up. One whose title doesn't say always stays.">Entry level</button><button data-chip="requirements" data-value="not_senior" aria-pressed="false" title="Hides a job whose title says senior, lead, staff, principal, manager, supervisor or director, or level III and up. One whose title doesn't say always stays.">Not senior</button></span>
     </div>
@@ -867,6 +869,10 @@ const postedText = (r) => !r.posted
 // tooltip; nothing when it doesn't say
 const workplaceText = (r) => r.workplace && r.workplace.shown
   ? `<span class="nowrap workplace" title="${esc(r.workplace.from)}">${esc(r.workplace.shown)}</span>` : "";
+// Its employment type ("Full-time", "Part-time / Per diem"), the job system's words in the tooltip; nothing when it
+// doesn't say
+const jobTypesText = (r) => r.job_types && r.job_types.shown
+  ? `<span class="nowrap job-types" title="${esc(r.job_types.from)}">${esc(r.job_types.shown)}</span>` : "";
 // The openings in the order picked above them: best fit (the desk's own order), best paid, or newest; those whose pay
 // isn't listed, or whose date isn't given, last (in the desk's order)
 function sorted(rows) {
@@ -927,7 +933,7 @@ function renderRows() {
       ${score}
       <div>${link(r.url, esc(r.title), "title")}
         <div class="meta">${[esc(r.company), r.location ? `<span title="${esc(r.location)}">${esc(places(r.location))}</span>` : "",
-          postedText(r), payText(r), workplaceText(r)].filter(Boolean).join(" · ")}</div>
+          postedText(r), payText(r), workplaceText(r), jobTypesText(r)].filter(Boolean).join(" · ")}</div>
         ${also ? `<div class="meta also-on" title="The same posting, saved from a job board too. It's applied for on the employer's site.">${also}</div>` : ""}
         <div class="chips">${chips}</div>${sum}</div>
       <div class="state">${statusPill(r)}${undo}${ni}</div></li>`};
@@ -1595,6 +1601,9 @@ const DEGREE_LEVEL = {high_school: 1, associate: 2, bachelor: 3, master: 4, doct
 const DEGREE_NAME = {associate: "an Associate's", bachelor: "a Bachelor's", master: "a Master's", doctorate: "a doctorate"};
 const CHIP_TESTS = {
   workplace: (r, chosen) => !r.workplace || !r.workplace.sure || chosen.includes(r.workplace.value),
+  // (its job system's own field for it, employment.py: one that names none says nothing)
+  job_types: (r, chosen) => !r.job_types || !(r.job_types.types || []).length
+    || r.job_types.types.some((t) => chosen.includes(t)),
   requirements: {
     no_clearance: (f) => !f.clearance && !f.clearance_later,
     degree: (f) => !f.degree || f.degree === "high_school" || !!f.degree_or_equivalent

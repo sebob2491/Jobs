@@ -845,6 +845,7 @@ def test_the_tailoring_switch_is_kept_and_its_waiting_jobs_listed(srv, job_apply
                 r = await c.post("/api/settings", headers=h, json={"tailor_resumes": True})
                 assert r.json() == {"auto_submit": False, "tailor_resumes": True, "handled_only": False, "troubleshoot": False,
                                     "min_pay": None, "posted_within": None, "requirements": [], "workplace": [],
+                                    "job_types": [],
                                     "auto_search": False, "jobs_at_once": 1}  # (the tests' profile: one at a time)
                 await desk.applier.stop()  # hold the queue still while the waiting job is set up
                 desk.applier.runs[job["id"]] = Run(job["id"], "FSE", "Example Fab", status="needs_you", need="tailor")
@@ -1416,6 +1417,75 @@ def test_the_workplace_chips_hide_only_a_job_that_surely_says_its_done_another_w
         "Read Technician": ("hybrid", "structured")}
 
 
+def test_the_type_chips_hide_only_a_job_whose_system_says_its_of_other_types(srv, job_apply_home):
+    """The design of Oct 18, F6: each row says its employment type as its job system's field gives it (its list's, its
+    posting's once read, or its job's in the tracker), and the Type chips show only the types pressed: an opening that
+    says only others is hidden; one that doesn't say, or whose field names no type ("Regular"), stays. Nothing hidden
+    is picked."""
+    desk = Desk(srv)
+
+    def opening(title, score, **said):
+        return {**_facts_opening(title, score), **said}
+
+    desk.listings = [opening("Full Technician", 95, employment_type="Full Time"),
+                     opening("Part Technician", 90, posting={"employment_type": "PART_TIME"}),
+                     opening("Regular Technician", 85, employment_type="Regular"),
+                     opening("Plain Technician", 80),
+                     opening("Both Technician", 75, employment_type="Full-time, Temporary")]
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    every = ["Full Technician", "Part Technician", "Regular Technician", "Plain Technician", "Both Technician"]
+    rows = {r["title"]: r for r in desk.state()["listings"]}
+    assert rows["Part Technician"]["job_types"]["types"] == ["part_time"]
+    assert rows["Regular Technician"]["job_types"] is None and rows["Plain Technician"]["job_types"] is None
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("text=Both Technician")
+
+                def meta(title):
+                    return page.locator("li.row", has_text=title).locator(".meta").first
+
+                assert "Full-time" in await meta("Full Technician").inner_text()
+                assert "Full-time / Temporary" in await meta("Both Technician").inner_text()
+                assert await meta("Part Technician").locator(".job-types").get_attribute("title") == \
+                    "The job system says “PART_TIME”"
+                assert await meta("Regular Technician").locator(".job-types").count() == 0
+                await _chip(page, "job_types", "full_time", ["Full Technician", "Regular Technician",
+                                                             "Plain Technician", "Both Technician"])
+                await _chip(page, "job_types", "part_time", every)
+                await _chip(page, "job_types", "full_time", ["Part Technician", "Regular Technician",
+                                                             "Plain Technician"])
+                await _chip(page, "job_types", "temporary", ["Part Technician", "Regular Technician",
+                                                             "Plain Technician", "Both Technician"])
+                await page.click("text=Select recommended")
+                picked = await page.evaluate("() => [...selected].filter(selectable)")
+                assert picked == [f"https://careers.example.com/job/{t.lower().replace(' ', '-')}"
+                                  for t in ("Part Technician", "Regular Technician", "Plain Technician",
+                                            "Both Technician")], picked
+                await _chip(page, "job_types", "part_time", ["Regular Technician", "Plain Technician",
+                                                             "Both Technician"])
+                picked = await page.evaluate("() => [...selected].filter(selectable)")
+                assert "https://careers.example.com/job/part-technician" not in picked  # (hidden: never applied to)
+                for _ in range(50):
+                    if desk.chips["job_types"] == ["temporary"]:
+                        break
+                    await asyncio.sleep(0.1)
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert json.loads((job_apply_home / "desk.json").read_text(encoding="utf-8"))["job_types"] == ["temporary"]
+    # Apply saves the list's words where the posting gave none
+    ids, _ = desk.apply([desk.listings[0]["url"]], [], submit=False)
+    assert srv.tracker().get(ids[0])["employment_type"] == "Full Time"
+
+
 def test_the_chip_settings_refuse_what_isnt_one(srv, job_apply_home):
     desk = Desk(srv)
 
@@ -1436,6 +1506,10 @@ def test_the_chip_settings_refuse_what_isnt_one(srv, job_apply_home):
                 assert r.status_code == 400 and "workplace should be a list of some of remote, hybrid, onsite" in r.text
                 r = await c.post("/api/settings", headers=h, json={"workplace": ["onsite", "remote"]})
                 assert r.json()["workplace"] == ["remote", "onsite"]
+                r = await c.post("/api/settings", headers=h, json={"job_types": ["forever"]})
+                assert r.status_code == 400 and "job_types should be a list of some of full_time, part_time" in r.text
+                r = await c.post("/api/settings", headers=h, json={"job_types": ["per_diem", "full_time"]})
+                assert r.json()["job_types"] == ["full_time", "per_diem"]
         finally:
             await desk.stop()
 

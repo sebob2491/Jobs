@@ -6,7 +6,8 @@
    "background: relatives_at_employer, government_employee, military, defense_department, restrictive_agreement, intellectual_property, outside_work, board_member"
   ],
   "titles": [],
-  "path": "~/.job-apply/profile.yaml"
+  "path": "~/.job-apply/profile.yaml",
+  "degree": "associate"
  },
  "settings": {
   "submit_mode": "review",
@@ -21,7 +22,13 @@
   "posted_within": null,
   "auto_search": false,
   "jobs_at_once": 1,
-  "follow_up_days": 10
+  "follow_up_days": 10,
+  "requirements": [],
+  "workplace": [
+   "remote",
+   "hybrid"
+  ],
+  "job_types": []
  },
  "tailoring": 0,
  "passwords": {
@@ -123,7 +130,19 @@
       "why": "title matches",
       "points": 22
      }
-    ]
+    ],
+    "facts": {
+     "level": "",
+     "read": true,
+     "degree": "associate",
+     "degree_or_equivalent": true,
+     "clearance": false,
+     "clearance_later": false,
+     "travel": 25,
+     "travel_sure": true,
+     "shift": "day",
+     "shift_sure": true
+    }
    },
    "notes": [],
    "job_id": null,
@@ -133,7 +152,20 @@
    "also_on": [],
    "saved_at": null,
    "new": true,
-   "not_interested": null
+   "not_interested": null,
+   "workplace": {
+    "value": "remote",
+    "sure": true,
+    "shown": "Remote",
+    "from": "Its location says so"
+   },
+   "job_types": {
+    "types": [
+     "full_time"
+    ],
+    "shown": "Full-time",
+    "from": "The job system says “Full time”"
+   }
   },
   {
    "url": "https://careers.example.com/litho/2",
@@ -179,7 +211,14 @@
    "also_on": [],
    "saved_at": null,
    "new": false,
-   "not_interested": null
+   "not_interested": null,
+   "workplace": {
+    "value": "hybrid",
+    "sure": false,
+    "shown": "likely hybrid",
+    "from": "Read from the posting's text: the Workplace filter never hides this job for it"
+   },
+   "job_types": null
   },
   {
    "url": "https://careers.example.com/vac/3",
@@ -199,7 +238,13 @@
      "2nd shift"
     ],
     "blocked": false,
-    "recommended": true
+    "recommended": true,
+    "facts": {
+     "level": "",
+     "read": true,
+     "shift": "other",
+     "shift_sure": true
+    }
    },
    "notes": [],
    "job_id": null,
@@ -214,7 +259,59 @@
    ],
    "saved_at": null,
    "new": false,
-   "not_interested": null
+   "not_interested": null,
+   "job_types": {
+    "types": [
+     "full_time",
+     "temporary"
+    ],
+    "shown": "Full-time / Temporary",
+    "from": "The job system says “Full-Time, Temporary”"
+   },
+   "workplace": null
+  },
+  {
+   "url": "https://careers.example.com/vac/9",
+   "title": "Onsite Technician",
+   "company": "Example Vacuum",
+   "location": "Mesa, AZ",
+   "posted": "Posted 3 Days Ago",
+   "posted_days": 3,
+   "pay": null,
+   "ats": "greenhouse",
+   "fit": {
+    "score": 61,
+    "reasons": [
+     "title matches"
+    ],
+    "concerns": [
+     "2nd shift"
+    ],
+    "blocked": false,
+    "recommended": true,
+    "facts": {
+     "level": "",
+     "read": true,
+     "shift": "other",
+     "shift_sure": true
+    }
+   },
+   "notes": [],
+   "job_id": null,
+   "status": null,
+   "run": null,
+   "handled": false,
+   "also_on": [],
+   "saved_at": null,
+   "new": false,
+   "not_interested": null,
+   "job_types": null,
+   "workplace": {
+    "value": "onsite",
+    "sure": true,
+    "shown": "On-site",
+    "from": "The job system's own field says so"
+   }
   },
   {
    "url": "https://careers.example.com/bank/4",
@@ -242,7 +339,9 @@
    "also_on": [],
    "saved_at": null,
    "new": false,
-   "not_interested": null
+   "not_interested": null,
+   "workplace": null,
+   "job_types": null
   },
   {
    "url": "https://careers.example.com/bank/5",
@@ -273,7 +372,9 @@
    "not_interested": {
     "reason": "pay",
     "at": 1792350000.0
-   }
+   },
+   "workplace": null,
+   "job_types": null
   }
  ],
  "others": [],

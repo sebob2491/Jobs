@@ -17,7 +17,7 @@ The goal is a short, deduplicated list of real openings saved to the tracker
 2. **Indeed.** If the Indeed connector's tools are available (`search_jobs`,
    `get_job_details`), search each title × location. For each promising result,
    get its details and save it with `add_job(url, title, company, description,
-   location, salary, source="indeed")`.
+   location, salary, source="indeed", employment_type=<its job_type>)`.
 
 3. **Company career sites.** Run `search_company_jobs` with `location="AZ"` (or the
    user's area) and a query that covers how each employer names the role. For
@@ -53,6 +53,12 @@ The goal is a short, deduplicated list of real openings saved to the tracker
      location's words ("Remote - US"). Most don't say: they stay, with no `workplace`. A
      posting that only says it in its sentences ("this hybrid role") is shown as "likely
      hybrid" on the Job Desk and never left out for it. Ask for it only when the user names it.
+   - `employment_type="full_time"` (or part_time, contract, temporary, internship, per_diem,
+     or several: "full_time, contract") leaves out an opening its site says is only of other
+     types (`other_employment_type` counts them). Only the systems' own fields say it (Paycom,
+     Phoenix Children's, SmartRecruiters, and the posting once read: Workday, Lever, Oracle,
+     JSON-LD); most lists don't, and those openings stay. Results that say carry
+     `employment_type` (the site's words) and `employment_types`.
    - Results already in the tracker carry `tracked`. Skip those.
    - Eightfold sites (Lam Research, Micron, Infineon) refuse direct API calls, and
      ASML's, Daifuku's (iCIMS), Ebara's (Paycom), Nikon Precision's (UKG Pro), Edwards' and
@@ -101,7 +107,9 @@ The goal is a short, deduplicated list of real openings saved to the tracker
    apply to. The Job Desk shows the same pay on each opening, sorts by fit, pay or newest,
    and has "Pay at least $__/yr" and "Posted: 7 / 14 / 30 days" filters that never hide an
    opening that doesn't say. Its Workplace chips (Remote, Hybrid, On-site) show only the ways
-   pressed and every opening that doesn't say surely. Its Requirements chips (No clearance needed, No degree required
+   pressed and every opening that doesn't say surely; its Type chips (Full-time, Part-time,
+   Contract, Temporary, Internship, Per diem) the types pressed and every opening whose job
+   system doesn't say. Its Requirements chips (No clearance needed, No degree required
    or My degree is enough, Day shift, Travel ≤ 25%, Entry level, Not senior) hide an opening
    only when its title, or its posting once read, says it doesn't fit: a posting not read yet,
    or a shift or travel only mentioned in passing, never hides one. The `apply` skill takes

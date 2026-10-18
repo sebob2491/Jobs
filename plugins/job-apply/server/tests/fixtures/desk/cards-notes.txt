@@ -19,6 +19,24 @@ Any
 7 days
 14 days
 30 days
+Workplace
+Remote
+Hybrid
+On-site
+Type
+Full-time
+Part-time
+Contract
+Temporary
+Internship
+Per diem
+Requirements
+No clearance needed
+No degree required
+Day shift
+Travel ≤ 25%
+Entry level
+Not senior
 Any 3
 Working 1
 Stuck 2
