@@ -338,6 +338,13 @@ def reset_result(tenant: Mapping[str, str], first_rec: Mapping[str, Any] | None,
 # --- the tailored resume --------------------------------------------------------------------------------------------
 
 TAILORED_NAME = "Jobdesk_Test_Tailored_Probe_Resume.pdf"  # (its stem ends in "resume": autofill.tailored_document's)
+
+
+def tailored_name(day: datetime.date | None = None) -> str:
+    """The tailored test resume's name for a run: a new one each day ("Jobdesk_Test_Tailored_Probe_20261018_Resume.pdf"),
+    so a Workday account that kept last week's (NXP's) is told from this week's, and the review page showing the name
+    means the desk put this one in, not that it left last week's (the kept-resume review of Oct 18)."""
+    return f"{Path(TAILORED_NAME).stem[:-len('_Resume')]}_{(day or datetime.date.today()):%Y%m%d}_Resume.pdf"
 TAILORED_NOTE = ("TAILORED TEST RESUME, made by the Job Desk's weekly probe (scripts/live_probes.py) to see that the "
                  "application takes it. Not a real applicant; nothing in it is true.")
 _FILE_NAME = re.compile(r"[\w().-]*\w\.(?:pdf|docx?|rtf|txt)\b", re.I)
@@ -662,7 +669,7 @@ def report_markdown(results: Mapping[str, Any]) -> str:
                 lines.append(f"  - **{_cell(r['warning'])}**")
         lines.append("")
     if results.get("tailored"):
-        lines += ["### Tailored resume", "", f"The job's folder held a tailored test resume ({TAILORED_NAME}); the "
+        lines += ["### Tailored resume", "", f"The job's folder held a tailored test resume (Jobdesk_Test_Tailored_Probe_<day>_Resume.pdf, a new name each day); the "
                   f"profile's is {live_identity.RESUME_NAME}.", "",
                   "| Employer | Files the review page shows | Result | Detail |", "|---|---|---|---|"]
         for r in results["tailored"]:

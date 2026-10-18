@@ -490,8 +490,21 @@ def test_live_smoke_drops_the_tailored_resume_into_the_jobs_folder(tmp_path):
                          text=True, timeout=120)
     assert out.returncode == 0, out.stderr
     said = json.loads(out.stdout.strip().splitlines()[-1])
-    assert said["out"] == {"file": lp.TAILORED_NAME, "pages": 1, "picked": lp.TAILORED_NAME}, said
-    assert (Path(said["folder"]) / lp.TAILORED_NAME).read_bytes().startswith(b"%PDF") and said["note"] and said["for"]
+    today = lp.tailored_name()  # (the run's own name, new each day)
+    assert said["out"] == {"file": today, "pages": 1, "picked": today}, said
+    assert (Path(said["folder"]) / today).read_bytes().startswith(b"%PDF") and said["note"] and said["for"]
+
+
+def test_the_tailored_resume_has_a_new_name_each_day_that_the_desk_still_takes_for_a_resume(tmp_path):
+    """A Workday account keeps the resume of its last application (NXP's): with one name every week, last week's kept
+    file would show this week's name whether or not the desk replaced it. A new name each day tells them apart, and
+    it still ends in "Resume", which the desk's chooser takes (autofill.tailored_document)."""
+    import datetime as dt
+    from job_apply.autofill import tailored_document
+    one, two = lp.tailored_name(dt.date(2026, 10, 18)), lp.tailored_name(dt.date(2026, 10, 25))
+    assert one == "Jobdesk_Test_Tailored_Probe_20261018_Resume.pdf" and one != two
+    (tmp_path / one).write_bytes(b"%PDF-1.4 tailored")
+    assert tailored_document({"folder": str(tmp_path)}, "resume") == str(tmp_path / one)
 
 
 # --- live_smoke.py's switches, short of a browser --------------------------------------------------------------------

@@ -2236,13 +2236,13 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
 async def drop_tailored_resume(job: dict[str, Any]) -> dict[str, Any]:
     """--tailored-resume (the weekly probe, scripts/live_probes.py): a clearly marked tailored test resume in the job's
     folder, made as render_document makes one (its Markdown printed to a PDF by render.to_html and render_pdf) from
-    this run's own fake profile, under a name of its own (live_probes.TAILORED_NAME, never the profile resume's
+    this run's own fake profile, under a name of its own (live_probes.tailored_name(), new each day, never the profile resume's
     live_identity.RESUME_NAME), so the review page tells the two apart. The desk prefers it to the profile's
     (autofill.tailored_document): "picked" says which file that finds. What was done, or the "error"."""
     from job_apply import render
     from job_apply.autofill import tailored_document
 
-    name = live_probes.TAILORED_NAME
+    name = live_probes.tailored_name()
     try:
         tracked = server.tracker().get(job["id"]) or {}
         folder = Path(tracked["folder"])
