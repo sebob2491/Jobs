@@ -51,7 +51,7 @@ FAKE_PROFILE: dict[str, Any] = {
 # same profile written as a person might write it by hand (awkward below). Sundays' awkward check (live-nightly.yml)
 # runs it beside the plain pipeline check, and nightly_summary.py --compare-shapes says where it got less far.
 PROFILE_SHAPES = ("plain", "awkward")
-AWKWARD_SCHOOL = "Chandler-Gilbert Community College"  # (a public college near the address: on schools' lists)
+AWKWARD_SCHOOL = "Arizona State University"  # (the plain profile's own school: no new real name in the repo)
 AWKWARD_PHONE = "602-555-0143"  # (555-01xx: no one's number)
 
 

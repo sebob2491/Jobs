@@ -73,7 +73,7 @@ def test_the_awkward_profile_with_a_roles_background_keeps_the_roles_job_and_fie
     assert shaped["work_history"] == [{"title": "HR Coordinator", "company": "Example Staffing", "start": "2021-03",
                                        "current": True}]
     assert {e["major"] for e in shaped["education_history"]} == {"Business Administration"}
-    assert "Arizona State University" not in json.dumps(shaped["education_history"])
+    assert [e["degree"] for e in shaped["education_history"]] == ["", ""]  # (the role's degree is gone)
 
 
 def test_the_awkward_profile_is_one_the_desk_reads_and_never_claims_a_degree_from(tmp_path):
