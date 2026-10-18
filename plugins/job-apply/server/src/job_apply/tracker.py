@@ -302,8 +302,9 @@ def city_key(location: str) -> str | None:
     return " ".join(re.sub(r"[\W\d_]+", " ", city.casefold()).split()) or None
 
 
-def _key(company: str | None, title: str | None, location: str | None) -> tuple[str, str, str | None]:
-    return company_key(company or ""), title_key(title or ""), city_key(location or "")
+def _key(company: Any, title: Any, location: Any) -> tuple[str, str, str | None]:
+    """(a listing's words may be anything a hand-edited file holds: read as text, as same_posting does)"""
+    return company_key(str(company or "")), title_key(str(title or "")), city_key(str(location or ""))
 
 
 def _alike(a: tuple[str, str, str | None], b: tuple[str, str, str | None]) -> bool:

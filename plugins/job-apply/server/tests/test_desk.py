@@ -4245,6 +4245,15 @@ def test_a_mark_made_before_its_job_takes_its_only_copy_where_neither_names_a_nu
     assert srv.tracker().marked_not_interested(job_id=copy["id"], listed=desk.listings) is None
 
 
+def test_a_listed_opening_with_words_that_arent_text_never_breaks_the_not_interested_check(srv, job_apply_home):
+    """The last check of 0.3.207 (LOW): a hand-edited saved search with a company or title that isn't text
+    ("company": 123) raised AttributeError in the check the queue and Claude's list_jobs make. Read as text."""
+    desk = _intel_openings(srv, job_apply_home, numbered=False, both=False)
+    copy = _indeed_copy(srv)
+    desk.listings.append({"url": JR2, "title": 2024, "company": 123, "location": None, "ats": "workday", "fit": _fit(80)})
+    assert srv.tracker().marked_not_interested(job_id=copy["id"], listed=desk.listings)["reason"] == "pay"
+
+
 @pytest.mark.parametrize("cookies", [False, True])
 def test_practice_modes_line_says_what_it_still_agrees_to(srv, job_apply_home, cookies):
     """The re-review of 0.3.207 (LOW): in practice mode the line said "agrees to nothing for you", but with Accept
