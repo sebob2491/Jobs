@@ -3364,3 +3364,23 @@ def test_employment_type_leaves_out_only_openings_that_say_theyre_of_other_types
     assert len(full["results"]) == 6 and "other_employment_type" not in full
     with pytest.raises(ToolError, match="employment_type is full_time, part_time, contract"):
         asyncio.run(server.search_company_jobs("field service", employment_type="forever"))
+
+
+def test_exclude_leaves_out_a_title_that_has_one_of_its_words_whole(srv, monkeypatch):
+    """The design of Oct 18, F4: search_company_jobs(exclude=) leaves out an opening whose title has one of the words
+    or titles as whole words, any case (`excluded_titles` counts them): "Senior" never leaves out a Seniority Clerk.
+    Without it, nothing is left out, the profile's own avoid_titles neither (the desk shows those under All)."""
+    import job_apply.server as server
+
+    async def fake(query, names, location, limit, **kw):
+        return {"results": [
+            {"company": "Lever Co", "title": title, "url": f"https://jobs.lever.co/leverco/{i}"}
+            for i, title in enumerate(["Senior FSE", "FSE", "Seniority Clerk", "Call Center Agent", "FSE (LEAD)",
+                                       "Team Leader"])], "errors": {}, "browser_only": []}
+
+    monkeypatch.setattr(server, "search_companies", fake)
+    out = asyncio.run(server.search_company_jobs("field service", exclude=["senior", "Call  Center", "Lead", " "]))
+    assert [r["title"] for r in out["results"]] == ["FSE", "Seniority Clerk", "Team Leader"]
+    assert out["excluded_titles"] == 3 and out["count"] == 3
+    full = asyncio.run(server.search_company_jobs("field service", exclude=[]))
+    assert len(full["results"]) == 6 and "excluded_titles" not in full

@@ -148,6 +148,37 @@ def test_a_title_ending_in_a_backslash_or_written_as_one_value_is_read_as_writte
     assert target_titles(prof) == ["Help Desk Technician"] and target_location(prof) == "AZ"
 
 
+def test_titles_to_leave_out_are_saved_in_the_profile_and_count_toward_fit(job_apply_home):
+    """The design of Oct 18, F4: preferences.avoid_titles, changed in place (each once, as written), read back for
+    the What and where window and the score; nothing else in the profile changes, and a list that can't be one is
+    refused with nothing written."""
+    from job_apply.recommend import score_listing
+
+    config.profile_path().write_text(PROFILE, encoding="utf-8")
+    assert search.search_area()["avoid_titles"] == []
+    search.set_search_area(avoid_titles=["Senior", " call  center ", "senior", ""])
+    assert search.search_area()["avoid_titles"] == ["Senior", "call center"]
+    text = config.profile_path().read_text(encoding="utf-8")
+    assert yaml.safe_load(text)["preferences"]["avoid_titles"] == ["Senior", "call center"]
+    assert "first_name: Pat   # what they go by" in text and yaml.safe_load(text)["preferences"]["titles"] == \
+        ["Field Service Engineer"]
+    fit = score_listing({"title": "Senior Field Service Engineer"}, config.Profile.load())
+    assert fit.blocked and "title has “Senior”, which you leave out" in fit.concerns
+    for bad in ([f"Word {n}" for n in range(21)], ["x" * 61], ["!!"]):
+        with pytest.raises(ValueError):
+            search.set_search_area(avoid_titles=bad)
+    assert search.search_area()["avoid_titles"] == ["Senior", "call center"]
+    search.set_search_area(avoid_titles=[])
+    assert search.search_area()["avoid_titles"] == []
+
+
+def test_claude_changes_the_titles_to_leave_out_too(srv):
+    from conftest import run
+
+    out = run(srv.search_area(avoid_titles=["Senior"]))
+    assert out["avoid_titles"] == ["Senior"] and run(srv.search_area())["avoid_titles"] == ["Senior"]
+
+
 def test_claude_changes_the_job_titles_too(srv):
     from conftest import run
 
@@ -233,6 +264,78 @@ def test_the_desks_what_and_where_window_saves_and_finds_jobs_again(srv):
     assert area["places"] == ["Phoenix, AZ", "Las Vegas, NV"]
     assert set(area["lists"]) == {search.BUILTIN_LIST, "phoenix-metro"}
     assert desk.listings == []
+
+
+def test_the_what_and_where_window_saves_the_titles_to_leave_out(srv):
+    """The design of Oct 18, F4: the What and where window's "Titles to leave out" pills: one typed and added with Add,
+    one with Enter, one typed and left in the box when saved, one taken out with its ×. Saved to the profile with the
+    window's other values (Save and find jobs), and the window opens on them next time."""
+    import asyncio
+    import time
+
+    from conftest import browser_available, launch_options, run
+    if not browser_available():
+        pytest.skip("needs Chromium")
+    from playwright.async_api import async_playwright
+
+    from job_apply.desk import Desk
+
+    search.set_search_area(places=["Phoenix, AZ"], titles=["Field Service Engineer"], avoid_titles=["Intern"])
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    searched: list[float] = []
+
+    async def find_jobs(auto=False):
+        searched.append(time.time())
+
+    desk.find_jobs = find_jobs
+
+    async def pills(page):
+        return [t.replace("×", "").strip() for t in await page.locator("#area-avoid .chip").all_text_contents()]
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_options())
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_function("document.getElementById('area-btn').title.includes('a title with Intern')")
+                await page.click("#area-btn")
+                await page.wait_for_selector("#area[open]")
+                assert await pills(page) == ["Intern"]
+                assert "never recommended" in await page.inner_text("#area-avoid-note")
+                await page.fill("#area-avoid-new", "Senior")
+                await page.click("[data-act=area-avoid-add]")
+                await page.fill("#area-avoid-new", "Call Center")
+                await page.press("#area-avoid-new", "Enter")
+                await page.fill("#area-avoid-new", "senior")  # (one there already: not twice)
+                await page.press("#area-avoid-new", "Enter")
+                assert await pills(page) == ["Intern", "Senior", "Call Center"]
+                await page.click("[data-area-drop='avoid_titles'][data-i='0']")  # Intern out
+                await page.fill("#area-avoid-new", "Night Shift")  # (typed, not added: saved too)
+                await asyncio.sleep(2)  # (the page refreshes every 1.5 s: what's being changed stays put)
+                assert await pills(page) == ["Senior", "Call Center"]
+                await page.click("#area-form button[type=submit]")
+                for _ in range(50):
+                    if searched:
+                        break
+                    await asyncio.sleep(0.1)
+                assert not await page.is_visible("#area")
+                await page.wait_for_function("document.getElementById('area-btn').title.includes('Night Shift')")
+                await page.click("#area-btn")
+                await page.wait_for_selector("#area[open]")
+                assert await pills(page) == ["Senior", "Call Center", "Night Shift"]
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert searched, "Find jobs wasn't started again"
+    area = search.search_area()
+    assert area["avoid_titles"] == ["Senior", "Call Center", "Night Shift"]
+    assert area["titles"] == ["Field Service Engineer"] and area["places"] == ["Phoenix, AZ"]
 
 
 # ---------------------------------------------------------------- the review of 0.3.195's findings

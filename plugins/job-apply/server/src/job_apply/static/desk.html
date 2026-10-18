@@ -258,6 +258,8 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
         <button data-chip="job_types" data-value="full_time" aria-pressed="false" title="Full-time jobs, and every job that doesn't say its type">Full-time</button><button data-chip="job_types" data-value="part_time" aria-pressed="false" title="Part-time jobs, and every job that doesn't say its type">Part-time</button><button data-chip="job_types" data-value="contract" aria-pressed="false" title="Contract jobs, and every job that doesn't say its type">Contract</button><button data-chip="job_types" data-value="temporary" aria-pressed="false" title="Temporary and seasonal jobs, and every job that doesn't say its type">Temporary</button><button data-chip="job_types" data-value="internship" aria-pressed="false" title="Internships and co-ops, and every job that doesn't say its type">Internship</button><button data-chip="job_types" data-value="per_diem" aria-pressed="false" title="Per diem (PRN) jobs, and every job that doesn't say its type">Per diem</button></span>
       <span class="group" role="group" aria-label="Requirements" title="Each pressed one hides a job whose posting or title says it doesn't fit. A job that doesn't say, or whose posting isn't read yet, always stays.">Requirements
         <button data-chip="requirements" data-value="no_clearance" aria-pressed="false" title="Hides a job whose posting has a line labelled with the clearance it asks and its level (Clearance Type: Secret), held now or to be obtained. One that only says it in its text (may need a security clearance), or isn't read yet, always stays.">No clearance needed</button><button data-chip="requirements" data-value="degree" aria-pressed="false" id="degree-chip" title="Hides a job whose posting has a line labelled with the education it requires (Minimum Education: Bachelor's Degree), with no way around it. One that only says it in its text, or isn't read yet, always stays.">No degree required</button><button data-chip="requirements" data-value="day_shift" aria-pressed="false" title="Hides a job whose posting's Shift or Schedule line says nights, evenings, swing, rotating, or a 2nd or 3rd shift. One that only mentions a shift in its text, or doesn't say, always stays.">Day shift</button><button data-chip="requirements" data-value="travel_25" aria-pressed="false" title="Hides a job whose posting says it travels more than 25% of the time. One that doesn't say, or isn't read yet, always stays.">Travel ≤ 25%</button><button data-chip="requirements" data-value="entry_level" aria-pressed="false" title="Hides a job whose title says senior, lead, staff, principal, manager, supervisor or director, or level II and up. One whose title doesn't say always stays.">Entry level</button><button data-chip="requirements" data-value="not_senior" aria-pressed="false" title="Hides a job whose title says senior, lead, staff, principal, manager, supervisor or director, or level III and up. One whose title doesn't say always stays.">Not senior</button></span>
+      <!-- the job systems of the openings listed (desk.system_of), drawn by renderSystems -->
+      <span class="group" role="group" aria-label="Job system" id="system-chips" title="Shows only the jobs applied for on the job systems pressed: the site you apply on, such as Workday or an employer's own site." hidden></span>
     </div>
     <div class="stops openings-only" id="stops" role="group" aria-label="Show the jobs by where they stand" hidden></div>
     <div class="stop-hint openings-only" id="stop-hint" hidden></div>
@@ -361,6 +363,11 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
     <div class="pw-row"><input type="text" id="area-place-new" placeholder="Add a place: a city and state, such as Reno, NV"
       aria-label="A place to add, a city and state"><button type="button" data-act="area-place-add">Add</button></div>
     <div class="ideas" id="area-place-ideas"></div>
+    <h3>Titles to leave out</h3>
+    <div class="pills" id="area-avoid"></div>
+    <p class="small" id="area-avoid-note"></p>
+    <div class="pw-row"><input type="text" id="area-avoid-new" placeholder="Add a word or title, such as Senior or Call Center"
+      aria-label="A word or title to leave out"><button type="button" data-act="area-avoid-add">Add</button></div>
     <h3>Employers</h3>
     <div id="area-lists"></div>
     <p class="small" id="area-own" hidden></p>
@@ -996,6 +1003,7 @@ function renderRows() {
   $("mine-count").textContent = (state.applications || []).length ? `(${state.applications.length})` : "";
   if (mine) { renderApps(); return; }
   $("app-groups").hidden = true;
+  renderSystems();
   // links the person added (here, or through Claude) always show: they picked those themselves
   const onlyHandled = !!(state.settings && state.settings.handled_only);
   const troubleshooting = !!(state.settings && state.settings.troubleshoot);
@@ -1019,6 +1027,7 @@ function renderRows() {
       ...(maybeClearance(fit) ? [`<span class="chip" title="Read from the posting's text: No clearance needed never hides this job for it">may need a security clearance</span>`] : []),
       // and a degree read so: "asks a Bachelor's, read from the text" (the degree chip never hides it for that)
       ...(maybeDegree(fit) ? [`<span class="chip" title="Read from the posting's text, not a labelled Education line: the degree chip never hides this job for it">${esc(maybeDegree(fit))}</span>`] : []),
+      ...(noSponsorship(fit) ? [`<span class="chip" title="The posting says so in plain words. It counts against a job only when your profile says you need sponsorship (work_authorization.requires_sponsorship).">won't sponsor a work visa</span>`] : []),
     ].join("");
     const checked = selected.has(r.url) && !done ? "checked" : "";
     // skipped (here or before the desk restarted): Undo puts it back
@@ -1604,16 +1613,20 @@ function renderArea() {
   const short = (xs, none) => !xs.length ? none : xs.length === 1 ? xs[0] : `${xs[0]} +${xs.length - 1}`;
   const btn = $("area-btn");
   btn.textContent = `What and where: ${short(titles, "jobs")} · ${short(places, (area.states || []).join(", ") || "your state")}`;
+  const avoid = area.avoid_titles || [];
   btn.title = `Find jobs looks for ${titles.join(", ") || "the plugin's equipment roles"}`
-    + ` in ${places.join("; ") || "your home state"}. Press to change what and where it searches.`;
+    + ` in ${places.join("; ") || "your home state"}`
+    + (avoid.length ? `, and never recommends a title with ${avoid.join(", ")}` : "")
+    + ". Press to change what and where it searches.";
   // (the window's draft is drawn when it opens and on the person's own changes, never by the page's refresh, which
   // would take the focus off what they're on)
 }
 function openArea() {
   const area = state.area || {};
-  areaDraft = {titles: [...(area.titles || [])], places: [...(area.places || [])], lists: [...(area.lists || [])]};
+  areaDraft = {titles: [...(area.titles || [])], places: [...(area.places || [])], lists: [...(area.lists || [])],
+               avoid_titles: [...(area.avoid_titles || [])]};
   $("area-error").hidden = true;
-  $("area-title-new").value = $("area-place-new").value = "";
+  $("area-title-new").value = $("area-place-new").value = $("area-avoid-new").value = "";
   renderAreaDraft();
   $("area").showModal();
 }
@@ -1638,6 +1651,10 @@ function renderAreaDraft() {
   const placeIdeas = (area.place_ideas || []).filter((x) => !has(d.places, x));
   $("area-place-ideas").innerHTML = placeIdeas.length ? `<span>Add:</span>${placeIdeas.map((x) =>
     `<button type="button" class="idea" data-area-add="places" data-value="${esc(x)}">+ ${esc(x)}</button>`).join("")}` : "";
+  $("area-avoid").innerHTML = pick("avoid_titles", d.avoid_titles, Infinity);
+  $("area-avoid-note").textContent = d.avoid_titles.length
+    ? "A job whose title has one of these, as whole words, shows under All but is never recommended."
+    : "None: no job is left out for its title.";
   $("area-lists").innerHTML = (area.choices || []).map((c) => `<label><input type="checkbox" data-area-list="${esc(c.name)}"
     ${d.lists.includes(c.name) ? "checked" : ""}> <span>${esc(c.label)} <span class="small">(${c.count}
     employers)</span></span></label>`).join("");
@@ -1746,6 +1763,8 @@ const CHIP_TESTS = {
     const asked = chosen.filter((t) => axis.includes(t));
     return !mine.length || !asked.length || mine.some((t) => asked.includes(t));
   }),
+  // the job system it's applied for on (desk.system_of: every opening's is known): one of those pressed
+  systems: (r, chosen) => !r.system || chosen.includes(r.system.key),
   requirements: {
     // (only a sure reading: a labelled line, or a requirement the posting states; never its benefits or blurb)
     no_clearance: (f) => !f.clearance_sure || (!f.clearance && !f.clearance_later),
@@ -1761,6 +1780,9 @@ const chipFacts = {requirements: (r) => (r.fit && r.fit.facts) || {}};
 const maybeDegree = (fit) => { const f = fit.facts || {};
   if (!f.degree || f.degree === "high_school" || f.degree_sure || (fit.concerns || []).some((c) => /degree|bachelor|master|associate|doctorate/i.test(c))) return "";
   return `asks ${DEGREE_NAME[f.degree] || "a degree"}${f.degree_or_equivalent ? " or equivalent experience" : ""}, read from the text`; };
+// a posting that says plainly it won't sponsor a work visa (recommend.no_sponsorship_said): a concern for a person who
+// needs one (the score's own), else shown as what it says
+const noSponsorship = (fit) => !!(fit.facts && fit.facts.no_sponsorship) && !(fit.concerns || []).some((c) => /sponsor/i.test(c));
 const maybeClearance = (fit) => { const f = fit.facts || {};
   return (f.clearance || f.clearance_later) && !f.clearance_sure && !(fit.concerns || []).some((c) => /clearance/i.test(c)); };
 const fitsChips = (r, s) => Object.keys(CHIP_TESTS).every((name) => {
@@ -1768,6 +1790,31 @@ const fitsChips = (r, s) => Object.keys(CHIP_TESTS).every((name) => {
   if (!chosen.length) return true;
   return typeof test === "function" ? test(r, chosen) : chosen.every((v) => !test[v] || test[v](chipFacts[name](r)));
 });
+// The System chips: the job systems of the openings listed (most first), and any pressed that none is on now (to let
+// go of). Drawn again only when they change; shown when there are two or more to choose from, or one is pressed
+let systemsDrawn = "";
+function renderSystems() {
+  const counts = new Map(), names = {};
+  for (const r of state.listings || []) {
+    if (!r.system) continue;
+    counts.set(r.system.key, (counts.get(r.system.key) || 0) + 1);
+    names[r.system.key] = r.system.name;
+  }
+  const pressed = (state.settings || {}).systems || [];
+  const keys = [...counts.keys()].sort((a, b) => counts.get(b) - counts.get(a) || names[a].localeCompare(names[b]));
+  keys.push(...pressed.filter((k) => !counts.has(k)));
+  const box = $("system-chips");
+  const drawn = JSON.stringify(keys.map((k) => [k, names[k] || k, counts.get(k) || 0]));
+  if (drawn !== systemsDrawn) {
+    systemsDrawn = drawn;
+    box.innerHTML = "System" + keys.map((k) => {
+      const n = counts.get(k) || 0;
+      return `<button data-chip="systems" data-value="${esc(k)}" aria-pressed="false" title="${n} opening${n === 1 ? "" : "s"} listed on ${esc(names[k] || k)}">${esc(names[k] || k)}</button>`;
+    }).join("");
+  }
+  box.hidden = keys.length < 2 && !pressed.length;
+  box.querySelectorAll("[data-chip]").forEach((b) => b.setAttribute("aria-pressed", String(pressed.includes(b.dataset.value))));
+}
 const chipsOn = () => Object.keys(CHIP_TESTS).some((name) => ((state.settings || {})[name] || []).length > 0);
 // (only a pay said on its pay line, or in the posting's own data, is "sure": one read from the text never hides a job)
 const paysEnough = (r, floor) => !floor || !r.pay || !r.pay.sure || r.pay.top == null || r.pay.top >= floor;
@@ -1814,7 +1861,7 @@ function makeReport(job, again = false) {
 document.addEventListener("click", (e) => {
   const t = e.target.closest("button");
   if (!t) return;
-  if (t.dataset.areaDrop && areaDraft) {  // × on a title or place in the What and where window
+  if (t.dataset.areaDrop && areaDraft) {  // × on a title, a title to leave out or a place in the What and where window
     areaDraft[t.dataset.areaDrop].splice(Number(t.dataset.i), 1);
     renderAreaDraft();
     return;
@@ -1909,6 +1956,7 @@ document.addEventListener("click", (e) => {
   if (a === "area-close") { areaDraft = null; $("area").close(); }
   if (a === "area-title-add") { areaAdd("titles", $("area-title-new").value); $("area-title-new").value = ""; }
   if (a === "area-place-add") { areaAdd("places", $("area-place-new").value); $("area-place-new").value = ""; }
+  if (a === "area-avoid-add") { areaAdd("avoid_titles", $("area-avoid-new").value); $("area-avoid-new").value = ""; }
   if (a === "pause" || a === "resume") act(() => api(`/api/queue/${a}`, {}));
   // (a review round given way to: its hold is replaced by the bot round's, never ended after it)
   if (a === "bot-round") { reviewRound = false; reviewShown = null; reviewPassed.clear(); botRound = true; botShown = null; botPassed.clear(); botStep(); renderHeader(); }
@@ -2039,7 +2087,7 @@ $("area-form").addEventListener("change", (e) => {
   areaDraft.lists = [...document.querySelectorAll("[data-area-list]")].filter((b) => b.checked).map((b) => b.dataset.areaList);
 });
 // Enter in a box adds what's in it (it doesn't save the window)
-for (const [box, kind] of [["area-title-new", "titles"], ["area-place-new", "places"]]) {
+for (const [box, kind] of [["area-title-new", "titles"], ["area-place-new", "places"], ["area-avoid-new", "avoid_titles"]]) {
   $(box).addEventListener("keydown", (e) => {
     if (e.key !== "Enter") return;
     e.preventDefault();
@@ -2053,12 +2101,13 @@ $("area-form").addEventListener("submit", (e) => {
   // what's typed and not added yet goes too
   areaAdd("titles", $("area-title-new").value);
   areaAdd("places", $("area-place-new").value);
-  $("area-title-new").value = $("area-place-new").value = "";
-  const {titles, places, lists} = areaDraft;
+  areaAdd("avoid_titles", $("area-avoid-new").value);
+  $("area-title-new").value = $("area-place-new").value = $("area-avoid-new").value = "";
+  const {titles, places, lists, avoid_titles} = areaDraft;
   const said = $("area-error");
   act(async () => {
     try {
-      await api("/api/area", {titles, places, lists});  // (the openings found for others are cleared)
+      await api("/api/area", {titles, places, lists, avoid_titles});  // (the openings found for others are cleared)
     } catch (err) {  // said in the window, which stays open with what the person picked (closed meanwhile: said)
       if (!$("area").open) { alert(err.message); return; }
       said.textContent = err.message;

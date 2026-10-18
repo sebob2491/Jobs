@@ -105,6 +105,8 @@ preferences:
   locations: []               # e.g. ["Phoenix, AZ", "Las Vegas, NV"]: Find jobs searches their states
   titles: []                  # e.g. ["Field Service Engineer", "Equipment Engineer"], ["HR Generalist",
                               # "Recruiter"] or ["Staff Accountant", "Financial Analyst"]
+  avoid_titles: []            # words or titles to leave out, e.g. ["Senior", "Call Center"]: a job whose title
+                              # has one (whole words, any case) shows on the desk's All tab, never recommended
 
 # Voluntary self-identification. These are optional by law; use your own answer
 # or a decline option such as "Decline to self-identify" / "I don't wish to answer".

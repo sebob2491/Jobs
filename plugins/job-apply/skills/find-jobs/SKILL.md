@@ -63,6 +63,11 @@ The goal is a short, deduplicated list of real openings saved to the tracker
      time), the kind (contract, temporary, internship, per diem), or both, and only what it says
      is judged: a "Full time" internship stays for `employment_type="internship"`. Results that
      say carry `employment_type` (the site's words) and `employment_types`.
+   - `exclude=["Senior", "Call Center"]` leaves out an opening whose title has one of them as
+     whole words, any case ("Senior" never leaves out a "Seniority Clerk"; `excluded_titles`
+     counts them). The profile's `preferences.avoid_titles` (the desk's What and where window,
+     or `search_area(avoid_titles=[...])`) are the person's own: pass them when they ask to
+     leave those out here. The Job Desk shows such jobs under All, never recommended.
    - Results already in the tracker carry `tracked`. Skip those.
    - Eightfold sites (Lam Research, Micron, Infineon) refuse direct API calls, and
      ASML's, Daifuku's (iCIMS), Ebara's (Paycom), Nikon Precision's (UKG Pro), Edwards' and

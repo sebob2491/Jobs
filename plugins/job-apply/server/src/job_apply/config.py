@@ -443,6 +443,17 @@ class Profile:
         return Settings.from_dict(self.data.get("settings"), email=self.get("personal.email"))
 
     @property
+    def avoid_titles(self) -> list[str]:
+        """preferences.avoid_titles: words or titles the person leaves out ("Senior", "Call Center"), each once as
+        written; an opening whose title has one as whole words is never recommended (recommend.avoided_title)."""
+        out: list[str] = []
+        for value in listed(self.get("preferences.avoid_titles")):
+            said = " ".join(str(value).split())
+            if said and said.casefold() not in {o.casefold() for o in out}:
+                out.append(said)
+        return out
+
+    @property
     def full_name(self) -> str:
         parts = [self.get("personal.first_name"), self.get("personal.last_name")]
         return " ".join(str(p) for p in parts if p)
@@ -755,11 +766,12 @@ def listed(value: Any) -> list[Any]:
     return [value] if isinstance(value, (str, int, float)) else list(value or [])
 
 
-def search_profile_text(places: list[str] | None = None, titles: list[str] | None = None) -> tuple[Path, str]:
+def search_profile_text(places: list[str] | None = None, titles: list[str] | None = None,
+                        avoid_titles: list[str] | None = None) -> tuple[Path, str]:
     """profile.yaml with these places as preferences.locations (where the person looks for work: "Phoenix, AZ",
-    "Las Vegas, NV"; Find jobs searches their states, a form asking where they'd like to work gets the first) and
-    these titles as preferences.titles (the jobs Find jobs looks for), worked out but not written: a ValueError when
-    it can't be."""
+    "Las Vegas, NV"; Find jobs searches their states, a form asking where they'd like to work gets the first), these
+    titles as preferences.titles (the jobs Find jobs looks for) and these as preferences.avoid_titles (the titles to
+    leave out), worked out but not written: a ValueError when it can't be."""
     path = profile_path()
     if not path.exists():
         raise ValueError("Set up your profile first (ask Claude to set up job-apply)")
@@ -768,6 +780,8 @@ def search_profile_text(places: list[str] | None = None, titles: list[str] | Non
         text = set_yaml_value(text, ("preferences", "locations"), places)
     if titles is not None:
         text = set_yaml_value(text, ("preferences", "titles"), titles)
+    if avoid_titles is not None:
+        text = set_yaml_value(text, ("preferences", "avoid_titles"), avoid_titles)
     return path, text
 
 

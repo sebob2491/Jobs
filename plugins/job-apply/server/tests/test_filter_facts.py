@@ -7,7 +7,7 @@ import pytest
 from bs4 import BeautifulSoup
 
 from job_apply import employment, workplace
-from job_apply.postings import icims_workplace, smartrecruiters_workplace, successfactors_workplace
+from job_apply.postings import QUESTIONS_HEADING, icims_workplace, smartrecruiters_workplace, successfactors_workplace
 from job_apply.recommend import posting_facts, requirements, shift_said, title_rank, travel_said
 
 _LEVEL = {"high_school": 1, "associate": 2, "bachelor": 3, "master": 4, "doctorate": 5}
@@ -612,3 +612,80 @@ def test_a_type_chip_judges_only_what_the_jobs_field_says():
                                                                               ["temporary"])
     assert not keeps(employment.types_of("Full-Time Temporary"), ["full_time", "contract"])
     assert keeps(employment.types_of("Regular"), ["full_time"]) and keeps([], ["internship"])
+
+
+# ------------------------------------------------------------------ sponsorship offered (the design of Oct 18, F7)
+
+# Made-up sentences as postings write them (no fixture says it yet). True: the posting says plainly it won't sponsor
+# a work visa; False: it doesn't, says it may, says it does, hedges, asks, or means another sponsorship
+SPONSORSHIP = [
+ ("We will not sponsor applicants for work visas.", True),
+ ("Visa Sponsorship: Employer will not sponsor applicants for employment visa status.", True),
+ ("The company is unable to sponsor employment visas for this position.", True),
+ ("We are unable to sponsor H-1B visas at this time.", True),
+ ("No visa sponsorship is available for this position.", True),
+ ("No visa sponsorship.", True),
+ ("No sponsorship is available.", True),
+ ("Visa sponsorship is not available for this role.", True),
+ ("Sponsorship is not available for this position.", True),
+ ("Relocation and sponsorship are not available.", True),
+ ("This position is not eligible for visa sponsorship.", True),
+ ("This position is not eligible for relocation or visa sponsorship.", True),
+ ("Candidates must be authorized to work in the U.S. without sponsorship.", True),
+ ("Applicants must be legally authorized to work in the United States without the need for employer sponsorship, now "
+  "or in the future.", True),
+ ("Must be eligible to work in the US without current or future visa sponsorship.", True),
+ ("Applicants must not now or in the future require visa sponsorship.", True),
+ ("Candidates who now or in the future require sponsorship will not be considered.", True),
+ ("Applicants who require visa sponsorship are not eligible for this role.", True),
+ ("We do not offer visa sponsorship.", True),
+ ("Example Fab does not provide immigration sponsorship for this role.", True),
+ ("We are not currently sponsoring visas.", True),
+ ("Our company will not be sponsoring H-1B candidates for this opening.", True),
+ ("We cannot sponsor candidates for this position.", True),
+ ("Note: This role is not eligible for immigration sponsorship.", True),
+ ("Please note: we can’t sponsor work visas.", True),
+ ("This employer is not in a position to offer sponsorship.", True),
+ ("Visa Sponsorship: No", True),
+ ("Sponsorship Available: None", True),
+ ("We may sponsor qualified candidates.", False),
+ ("Visa sponsorship available.", False),
+ ("Sponsorship available for the right candidate.", False),
+ ("Visa sponsorship is available for this position.", False),
+ ("We sponsor H-1B visas.", False),
+ ("We will sponsor visas for qualified engineers.", False),
+ ("Sponsorship may not be available for all roles.", False),
+ ("We may not be able to sponsor visas.", False),
+ ("Candidates with or without sponsorship are welcome to apply.", False),
+ ("Candidates requiring sponsorship are welcome to apply.", False),
+ ("Are you legally authorized to work in the US without sponsorship?", False),
+ ("Will you now or in the future require sponsorship?", False),
+ ("No, I will not require sponsorship", False),
+ ("Sponsorship is considered on a case-by-case basis.", False),
+ ("We do not sponsor visas, except for PhD candidates.", False),
+ ("Typically we do not sponsor visas.", False),
+ ("We do not sponsor new H-1B petitions; transfers will be considered.", False),
+ ("We are open to sponsoring H-1B transfers.", False),
+ ("Must be authorized to work in the United States.", False),
+ ("No sponsorship required.", False),
+ ("We do not sponsor.", False),
+ ("Visa Sponsorship: Yes", False),
+ ("Sponsorship: N/A", False),
+ ("Security clearance sponsorship is not available.", False),
+ ("We will not sponsor a security clearance for candidates.", False),
+ ("No CDL sponsorship; a valid CDL is required.", False),
+ ("Tuition sponsorship is not available for part-time staff.", False),
+ ("Sponsorship opportunities with local events are not available to interns.", False),
+ ("Our sponsorship of community events is not available to employees.", False),
+ ("The company does not discriminate and will consider candidates who need sponsorship.", False),
+]
+
+
+@pytest.mark.parametrize("text, says", SPONSORSHIP, ids=[str(i) for i in range(len(SPONSORSHIP))])
+def test_a_posting_says_it_wont_sponsor_a_visa_only_in_plain_words(text, says):
+    full = _WRAP.format(text)
+    assert requirements(full)["no_sponsorship"] is says
+    assert posting_facts("Technician", requirements(full), full)["no_sponsorship"] is says
+    # (and its application's own questions, after the posting, never say it for the posting)
+    asked = f"Technician\nWe build tools.\n\n{QUESTIONS_HEADING}\n{text}\n"
+    assert requirements(asked)["no_sponsorship"] is False

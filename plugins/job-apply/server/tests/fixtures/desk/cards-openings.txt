@@ -38,6 +38,11 @@ Day shift
 Travel ≤ 25%
 Entry level
 Not senior
+System
+Employer's own site
+Greenhouse
+iCIMS
+Workday
 Any 3
 New 1
 Not started 3
@@ -66,6 +71,7 @@ Example Litho · Tempe, AZ · date unknown · $26–$28/hr (≈$54k–$58k/yr) �
 Desk goes all the way
 title matches
 may need a security clearance
+won't sponsor a work visa
 Not interested
 61
 Maintenance Technician

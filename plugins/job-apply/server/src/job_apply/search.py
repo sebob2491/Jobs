@@ -264,15 +264,17 @@ TITLE_IDEAS = {
 
 def search_area() -> dict[str, Any]:
     """What and where Find jobs searches: the profile's job titles (preferences.titles; the first MAX_ALTERNATIVES
-    are searched, and every one counts toward an opening's fit) and places (preferences.locations), the plugin's
-    lists the person's own companies.yaml names (the semiconductor list when they have none), each list's label and
-    size, and how many employers of their own they added."""
+    are searched, and every one counts toward an opening's fit), the titles to leave out (preferences.avoid_titles:
+    an opening whose title has one is never recommended) and places (preferences.locations), the plugin's lists the
+    person's own companies.yaml names (the semiconductor list when they have none), each list's label and size, and
+    how many employers of their own they added."""
     try:
         prof = config.Profile.load()
         places = [str(p) for p in config.listed(prof.get("preferences.locations")) if str(p).strip()]
         titles = [str(t).strip() for t in config.listed(prof.get("preferences.titles")) if str(t).strip()]
+        avoid = prof.avoid_titles
     except ValueError:  # (a profile that doesn't read: said elsewhere)
-        places, titles = [], []
+        places, titles, avoid = [], [], []
     own_path = own_companies_path()
     own: list[dict[str, Any]] = []
     names = [BUILTIN_LIST]
@@ -285,7 +287,7 @@ def search_area() -> dict[str, Any]:
     lists = employer_lists()
     states = list(dict.fromkeys(s for p in places for s in _place_states(p)))
     return {"titles": titles, "default_titles": DEFAULT_TITLES, "searched_titles": MAX_ALTERNATIVES,
-            "places": places, "states": states, "lists": [n for n in names if n in lists], "own": len(own),
+            "avoid_titles": avoid, "places": places, "states": states, "lists": [n for n in names if n in lists], "own": len(own),
             "choices": [{"name": name, "label": LIST_LABELS.get(name, name), "count": _list_size(path)}
                         for name, path in lists.items()],
             "place_ideas": PLACE_IDEAS, "title_ideas": TITLE_IDEAS}
@@ -318,14 +320,24 @@ def _place_states(place: str) -> list[str]:
 
 
 def set_search_area(places: list[str] | None = None, lists: list[str] | None = None,
-                    titles: list[str] | None = None) -> dict[str, Any]:
-    """Change what and where Find jobs searches: the profile's job titles and places, and the plugin's lists in the
-    person's own companies.yaml (made for them, with nothing else in it, when they have none), each changed in
-    place. A place without its state, a title holding more than one, a list the plugin hasn't, nothing left to
-    search, or a file this can't change is a ValueError, and then neither file is written."""
+                    titles: list[str] | None = None, avoid_titles: list[str] | None = None) -> dict[str, Any]:
+    """Change what and where Find jobs searches: the profile's job titles, the titles to leave out and places, and the
+    plugin's lists in the person's own companies.yaml (made for them, with nothing else in it, when they have none),
+    each changed in place. A place without its state, a title holding more than one, a list the plugin hasn't,
+    nothing left to search, or a file this can't change is a ValueError, and then neither file is written."""
     writes: list[tuple[Path, str]] = []
     kept: list[str] | None = None
     named: list[str] | None = None
+    avoid: list[str] | None = None
+    if avoid_titles is not None:
+        avoid = []
+        for word in (" ".join(str(t).split()) for t in avoid_titles):
+            if word and word.casefold() not in {a.casefold() for a in avoid}:
+                avoid.append(word)
+        if len(avoid) > 20 or any(len(a) > 60 for a in avoid):
+            raise ValueError("A few words or titles to leave out, each a few words such as Senior or Call Center")
+        if any(not norm(a) for a in avoid):  # (only signs: no word a title could have)
+            raise ValueError("A title to leave out is a word or a few, such as Senior or Call Center")
     if titles is not None:
         named = []
         for title in (" ".join(str(t).split()) for t in titles):
@@ -347,8 +359,8 @@ def set_search_area(places: list[str] | None = None, lists: list[str] | None = N
                 raise ValueError(f"Add {place!r}'s state, such as Las Vegas, NV: Find jobs searches by state")
             if len(states) > 1:
                 raise ValueError(f"{place!r} names {len(states)} states: one place each, separated with semicolons")
-    if kept is not None or named is not None:
-        writes.append(config.search_profile_text(places=kept, titles=named))
+    if kept is not None or named is not None or avoid is not None:
+        writes.append(config.search_profile_text(places=kept, titles=named, avoid_titles=avoid))
     if lists is not None:
         known = employer_lists()
         names = list(dict.fromkeys(str(n) for n in lists))
