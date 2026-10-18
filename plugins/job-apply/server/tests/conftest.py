@@ -114,6 +114,8 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "real_waits: keep the desk's production waits (a test timed against them)")
     config.addinivalue_line("markers", "own_browser: the desk starts a browser of its own for this test, as the app "
                                        "does, instead of a context in the worker's (see one_browser_per_worker)")
+    config.addinivalue_line("markers", "slow: takes 20 s or more on CI (its --durations list): CI starts these first "
+                                       "(JOB_APPLY_SLOW_FIRST), and -m \"not slow\" leaves them out of a quicker run")
 
 
 @pytest.fixture(autouse=True)
@@ -332,13 +334,26 @@ async def check_fixture_extraction(server, html: Path, expect: dict) -> list[str
     return problems
 
 
+def slow_first(items: list) -> list:
+    """The same tests, those marked slow first (each group in the order it had)."""
+    slow = [item for item in items if item.get_closest_marker("slow")]
+    return slow + [item for item in items if not item.get_closest_marker("slow")]
+
+
 def pytest_collection_modifyitems(config, items):
     """JOB_APPLY_TEST_SHARD=1/4 runs only that part of the suite (CI runs the parts on separate
-    machines). A test's part comes from its id, so every machine and xdist worker agrees."""
+    machines). A test's part comes from its id, so every machine and xdist worker agrees.
+
+    JOB_APPLY_SLOW_FIRST=1 then puts the part's slow tests first (after the split, so each test stays in its part),
+    so that none is handed out last to make the part's tail. CI runs it with xdist's --maxschedchunk=1, and needs it:
+    by default xdist starts each worker on a block of the tests in their order (a quarter of its share, about 28 on
+    CI), so the first worker would get every slow test and run them one after another. One at a time, each worker
+    starts with two tests and gets the next one in line whenever it finishes one."""
     shard = os.environ.get("JOB_APPLY_TEST_SHARD")
-    if not shard:
-        return
-    part, parts = (int(x) for x in shard.split("/"))
-    mine = [zlib.crc32(item.nodeid.encode()) % parts == part - 1 for item in items]
-    config.hook.pytest_deselected(items=[item for item, keep in zip(items, mine) if not keep])
-    items[:] = [item for item, keep in zip(items, mine) if keep]
+    if shard:
+        part, parts = (int(x) for x in shard.split("/"))
+        mine = [zlib.crc32(item.nodeid.encode()) % parts == part - 1 for item in items]
+        config.hook.pytest_deselected(items=[item for item, keep in zip(items, mine) if not keep])
+        items[:] = [item for item, keep in zip(items, mine) if keep]
+    if os.environ.get("JOB_APPLY_SLOW_FIRST") == "1":
+        items[:] = slow_first(items)

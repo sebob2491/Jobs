@@ -597,6 +597,7 @@ def test_each_jobs_currently_work_here_box_is_its_own(srv):
         == [True, False]
 
 
+@pytest.mark.slow
 def test_a_covered_add_button_is_left_and_said(srv):
     """Nikon's UKG Pro (live, Oct 2026): after "Add Experience", the press of "Add Education" timed out
     (something drawn over it) and the error ended the whole application ("Something went wrong:

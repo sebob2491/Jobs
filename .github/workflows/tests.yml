@@ -54,10 +54,13 @@ jobs:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('plugins/job-apply/server/uv.lock') }}
       - run: uv run --frozen playwright install --with-deps chromium
-      # (the 25 slowest tests named at the end of each part, so a test that grows slow shows)
-      - run: uv run --frozen pytest -q -n auto --durations=25
+      # (the 25 slowest tests named at the end of each part, so a test that grows slow shows: one of 20 s or more
+      # gets @pytest.mark.slow. The part's slow tests start first and xdist hands out the tests one at a time, so
+      # none is left to run on alone at the end: see pytest_collection_modifyitems in tests/conftest.py)
+      - run: uv run --frozen pytest -q -n auto --maxschedchunk=1 --durations=25
         env:
           JOB_APPLY_TEST_SHARD: ${{ matrix.part }}/4
+          JOB_APPLY_SLOW_FIRST: "1"
 
   windows:
     # The same suite on Windows, where the owner runs the plugin (Claude's desktop app). Not one
@@ -90,9 +93,10 @@ jobs:
       - run: uv run --frozen playwright install chromium
       - name: The tests find the browser (else every browser test would be skipped, not failed)
         run: uv run --frozen python -c "import sys; sys.path.insert(0, 'tests'); from conftest import browser_available; sys.exit(not browser_available())"
-      - run: uv run --frozen pytest -q -n auto --durations=25
+      - run: uv run --frozen pytest -q -n auto --maxschedchunk=1 --durations=25
         env:
           JOB_APPLY_TEST_SHARD: ${{ matrix.part }}/4
+          JOB_APPLY_SLOW_FIRST: "1"
 
   server:
     # The checks main's ruleset requires, by these names: green only when every part passed.

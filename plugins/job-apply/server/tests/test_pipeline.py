@@ -3364,6 +3364,7 @@ def watched_inbox(monkeypatch, reset_link=None):
     monkeypatch.setattr(pipeline.mailbox, "search", inbox)
 
 
+@pytest.mark.slow
 def test_a_reset_the_site_has_no_account_for_makes_one_instead(srv, monkeypatch, job_apply_home):
     """The password reset says there's no account for the email: back on the sign-in page, the
     desk takes its way to a new account ("Don't have an account yet?", SuccessFactors') and
@@ -3390,6 +3391,7 @@ def test_a_reset_the_site_has_no_account_for_makes_one_instead(srv, monkeypatch,
     assert "created your account" in log and r.seen_form, (r.reason, r.log)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("at_once", [1, 2])
 def test_no_reset_email_in_a_few_minutes_makes_an_account_and_the_queue_goes_on(srv, monkeypatch, job_apply_home,
                                                                                at_once):
@@ -3622,6 +3624,7 @@ def test_brassrings_account_after_its_passcode_gets_the_saved_password_and_leave
         and "security questions and their answers: those are yours" in r.reason, (r.reason, r.log)
 
 
+@pytest.mark.slow
 def test_brassrings_security_question_is_answered_on_the_card_for_that_form_alone(srv, monkeypatch, job_apply_home):
     """Edward Jones' BrassRing (runs 67 to 77): its Create Account asks for a security question, chosen from a jQuery UI
     selectmenu (a span standing in for a hidden select, its choices in a menu drawn when it's clicked), and its answer.
@@ -3686,6 +3689,7 @@ def test_brassrings_security_question_is_answered_on_the_card_for_that_form_alon
     assert "In what city were you born?" not in went and secret not in went, went
 
 
+@pytest.mark.slow
 def test_brassrings_application_is_begun_with_lets_get_started_once_the_account_is_made(srv, monkeypatch,
                                                                                          job_apply_home):
     """Edward Jones' BrassRing (probe 81): its security questions answered on the card and the account made, its
@@ -3751,6 +3755,7 @@ def test_a_job_alert_sign_up_on_the_page_is_never_filled_asked_or_sent(srv, monk
     assert not any(line.startswith("filled") for line in r.log), r.log
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("case", ["redrawn", "failed", "unpicked", "captcha"])
 def test_an_account_form_is_never_pressed_with_its_security_questions_unanswered(srv, monkeypatch, job_apply_home,
                                                                                    case):
@@ -4080,6 +4085,7 @@ def test_a_job_search_reached_mid_sign_in_opens_the_job_again_once(srv, monkeypa
     assert r.need == "stuck", (r.need, r.reason)  # (once a job: then said as before)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("gone", ["error", "home", "menu"])
 def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(srv, monkeypatch, job_apply_home,
                                                                                  gone):
@@ -4413,6 +4419,7 @@ def test_taleos_security_questions_are_left_to_the_person(srv, monkeypatch, job_
     assert not any(line.startswith(("pressed “Register", "created your account")) for line in r.log), r.log
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("mode", ["workday", "workday-late"])
 def test_a_workday_reset_that_says_if_an_account_exists_waits_then_makes_one(srv, monkeypatch, job_apply_home, mode):
     """Workday's password reset stays on its form and says "You will receive an email with
@@ -5133,6 +5140,7 @@ def test_an_optional_question_the_step_says_it_wants_at_once_is_asked(srv, monke
     assert r.need == "questions" and [q["label"] for q in r.questions] == ["Gender"], (r.need, r.reason, r.log)
 
 
+@pytest.mark.slow
 def test_an_application_of_many_steps_reaches_its_review_page(srv, monkeypatch, job_apply_home):
     """Avnet's Workday (run 53, Oct 13): its account, then seven steps, some passes over a page waiting on it; the
     desk's 15 passes ran out as the review page came ("This application has more steps than I expected")."""
@@ -5179,6 +5187,7 @@ def test_a_questionnaire_asking_one_question_at_a_time_at_one_address_goes_on(sr
     assert sum(line == "clicked “Next”" for line in r.log) >= 4, r.log
 
 
+@pytest.mark.slow
 def test_a_stuck_step_under_a_ticking_label_is_still_seen_stuck(srv, monkeypatch, job_apply_home):
     """The review of 0.3.189: a box label with a counter ticking in it ("Reference (expires in 600s)") changed on every
     look, so a step whose Next did nothing never looked stuck, and Next was pressed thirty times. A label's numbers
@@ -5549,6 +5558,7 @@ def test_a_workday_create_account_that_doesnt_sign_in_goes_to_a_reset_not_round_
     assert not any("created your account" in line for line in r.log), r.log
 
 
+@pytest.mark.slow
 def test_with_the_inbox_watched_a_workday_create_account_that_doesnt_sign_in_stops(srv, monkeypatch, job_apply_home):
     """With the inbox watched, the reset comes first; no email comes, so the desk makes an account,
     which a Workday site doesn't sign in to either. It stops there, never pressing Create Account or
@@ -5688,6 +5698,7 @@ def served_fixtures():
         site.server_close()
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("query", ["?verify", "?verify=late"])
 def test_with_the_inbox_a_new_account_to_verify_is_signed_in_to_once_its_link_is_opened(srv, monkeypatch, job_apply_home,
                                                                                        query):
@@ -9317,6 +9328,7 @@ def test_a_jobs_missing_dates_are_named_not_asked_box_by_box(srv, monkeypatch, j
     assert not [q for q in r.questions if q.get("section", "").startswith("Work Experience")], r.questions
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("case", ["once", "never", "resumed"])
 def test_a_degree_list_with_no_choices_at_all_is_reloaded_once_then_said_to_have_not_loaded(srv, monkeypatch,
                                                                                             job_apply_home, case):
@@ -9431,6 +9443,7 @@ def test_a_resume_workday_already_lists_isnt_uploaded_again(srv, monkeypatch, jo
     assert (r.status, r.need) == ("needs_you", "stuck") and uploads == 1, (uploads, r.reason, r.log)
 
 
+@pytest.mark.slow
 def test_a_section_left_short_by_a_covered_add_button_stops_the_job_until_the_person_says_go_on(srv, monkeypatch):
     """Workday's My Experience (issue #112, note 32): "added 1 work block(s)", then the Add button "covered", and the
     log only said so: 2 of 5 jobs reached the form and the card spoke of a Degree box alone; on another site the
@@ -9812,6 +9825,7 @@ def test_a_school_block_is_deleted_only_where_it_is_the_last_of_several(srv):
     assert not run(applier._drop_unfit_school(r, page("Education 1", "Education 2"), [degree_box("Education 2")]))  # once
 
 
+@pytest.mark.slow
 def test_a_workday_experience_page_is_filled_block_by_block(srv, monkeypatch, job_apply_home):
     """A Workday site's My Experience page as drawn live (Oct 2026): each date a fieldset of its
     own, and an Education block's boxes drawn a moment after its heading. Every job's and
@@ -9922,6 +9936,7 @@ def test_an_extra_block_is_deleted_only_when_empty_last_and_one_the_desk_added(s
     assert clicked == ["d:Education 3"]
 
 
+@pytest.mark.slow
 def test_an_empty_block_the_desk_added_beside_a_saved_one_drawn_late_is_deleted_again(srv, monkeypatch, job_apply_home):
     """Hitachi High-Tech America's Workday (run 92), and U.S. Bank's and Baker Tilly's (runs 52 and 62): My Experience
     drew the account's saved school (or job) after the desk had looked for it and added a block, and the page then had
@@ -9978,6 +9993,7 @@ def test_a_saved_block_drawn_after_the_desks_own_is_never_taken_for_it(srv, monk
     assert blocks == [["Education 1", ""], ["Education 2", "1"]], (blocks, r.log)
 
 
+@pytest.mark.slow
 def test_an_empty_block_the_desk_added_is_deleted_when_the_saved_one_took_its_place(srv, monkeypatch, job_apply_home):
     """Arizona State University's Workday (run 108): My Experience drew the account's saved job INTO the block the desk's
     Add had just drawn (Workday numbers its blocks by place: the desk's mark stayed on it, now filled by the site), and
@@ -10007,6 +10023,7 @@ def test_an_empty_block_the_desk_added_is_deleted_when_the_saved_one_took_its_pl
     assert blocks == [["Education 1", "1"]], (blocks, r.log)  # (the saved one, in the desk's own block, stays)
 
 
+@pytest.mark.slow
 def test_a_framed_application_gets_its_blocks_and_both_jobs(srv, monkeypatch):
     """The same in the desk's own laps: an application inside a frame on the careers page (iCIMS's) gets its second
     work block and its school block added in the frame and filled from the profile, and the careers page's own "Add"
@@ -10038,6 +10055,7 @@ def test_a_framed_application_gets_its_blocks_and_both_jobs(srv, monkeypatch):
     assert "more blocks than your profile has entries" not in r.reason, (r.status, r.reason, r.log)
 
 
+@pytest.mark.slow
 def test_an_empty_block_the_desk_added_in_a_frame_is_deleted_when_the_saved_one_took_its_place(srv, monkeypatch):
     """The review of 0.3.186: browser.added_blocks read the page around a frame only, so the desk's own block in a
     framed application was never known for its, and never deleted again. As on a page of its own (Arizona State
@@ -10847,6 +10865,7 @@ def test_a_live_runs_stops_are_noted_without_the_persons_answers(srv, monkeypatc
     assert "- Preferred Locale/Language (" in answers and "Klingon" not in answers and "Example Semi" not in answers
 
 
+@pytest.mark.slow
 def test_the_tabs_of_jobs_that_went_in_are_closed_but_the_newest_few(srv, monkeypatch):
     """One tab per job adds up over a long queue: in a long live run (Oct 2026) the desk's
     Chrome crashed with every job's tab still open. A job that went in keeps its tab (its
@@ -11889,6 +11908,7 @@ def test_a_refusal_for_want_of_verification_drawn_after_the_look_is_still_the_wa
     assert not any("password reset" in line for line in log) and r.need not in ("sign_in", "email_code"), (r.reason, log)
 
 
+@pytest.mark.slow
 def test_a_new_accounts_refusal_drawn_after_the_look_is_still_the_wait(srv, monkeypatch, job_apply_home):
     """The same for the account the desk just made: Workday's "An email has been sent to you. Please verify your
     account" is its Sign In's answer too, drawn a moment after the press (the review of 0.3.180). After the one
@@ -13710,6 +13730,7 @@ def test_a_history_line_holds_no_answer_code_or_password(srv, monkeypatch):
     assert line["minutes"] == 1.5 and line["jobs_at_once"] == 2 and line["pages"] == 0, line
 
 
+@pytest.mark.slow
 def test_the_history_of_an_account_and_security_question_flow_holds_no_secret(srv, monkeypatch, job_apply_home):
     """An account made with the saved password and the emailed code, its security question answered on the card: the
     lines its passes wrote hold none of the answers, the code, the passwords or the password's digest."""

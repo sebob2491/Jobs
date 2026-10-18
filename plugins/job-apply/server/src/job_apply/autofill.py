@@ -20,6 +20,7 @@ from typing import Any, Callable
 
 from . import config
 from .config import Profile, expand, question_core
+from .never import _never_for_them
 
 US_STATES = {
     "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas", "CA": "California",
@@ -1664,9 +1665,20 @@ def _bare_question(text: str) -> str:
 # A question that means something only with the text around it, and the notices whose remembered Yes never goes to
 # another employer's by their question alone (issue #112, note 29's review)
 _POINTS_AWAY = re.compile(r"\b(?:above|below|following|these|those|this|that|it|them|such|said)\b", re.I)
-_NOTICE_OF_CONSENT = re.compile(r"talent (?:community|network|pool)|job alerts?|newsletter|subscribe|marketing|mailing "
-                                r"list|text messages?|\bsms\b|promotion|arbitration|terms|privacy|consent|agree|"
-                                r"authori[sz]|acknowledg|certif|attest|signature", re.I)
+# (a notice of consent, terms or an attestation by these words; or one of what's never agreed to for the person, by
+# never.py's kinds of a sign-up or a consent that a notice's other words don't name in passing: what this list held
+# before 0.3.208, a talent community, job alerts, a newsletter, marketing, texts, arbitration, and besides a waiver, the
+# terms of employment, a sign-up in so many words, keeping their data and cookies. Not "on-call", "staffing" or
+# "notified", nor an employer's offers, affiliates or other openings, which its notice names: the review of 0.3.208)
+_NOTICE_OF_CONSENT = re.compile(r"terms|privacy|consent|agree|authori[sz]|acknowledg|certif|attest|signature", re.I)
+_CONSENT_KINDS = frozenset({"talent community", "job alerts", "newsletter", "marketing", "texts or calls", "arbitration",
+                            "waiver", "at-will", "signs up", "their data kept", "cookies"})
+
+
+def _notice_of_consent(said: str) -> bool:
+    """Is a remembered answer's question, with its notice, a notice of consent, terms or sign-ups (_NOTICE_OF_CONSENT,
+    _CONSENT_KINDS), whose Yes never goes to another employer's by its question alone?"""
+    return bool(_NOTICE_OF_CONSENT.search(said) or _never_for_them(said, only=_CONSENT_KINDS))
 
 
 def _answer_bank(prof: Profile, label: str, job: dict | None = None, common: bool = False) -> Answer | None:
@@ -1693,7 +1705,7 @@ def _answer_bank(prof: Profile, label: str, job: dict | None = None, common: boo
                 # never a question that only means something with the notice around it ("Do you agree to the
                 # terms described above?"), nor a Yes to a notice of consent, terms or sign-ups: another
                 # employer's may be an arbitration agreement or a talent community's. A No to one is kept
-                if _POINTS_AWAY.search(asked) or (_NOTICE_OF_CONSENT.search(f"{label} {item['question']}")
+                if _POINTS_AWAY.search(asked) or (_notice_of_consent(f"{label} {item['question']}")
                                                   and not _NO.match(str(item.get("answer")).strip())):
                     continue
             source = norm(str(item.get("from") or ""))

@@ -16,6 +16,7 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   - `pipeline.py`: the Job Desk's application driver;
   - `desk.py` and `static/desk.html`: the Job Desk page;
   - `autofill.py`: answers from the profile;
+  - `never.py`: what the desk never agrees to, ticks or presses for the person (one list, every path);
   - `browser.py` and `formjs.py`: the browser and the form reader;
   - `search.py`: employer job searches;
   - `recommend.py`: ranking;
@@ -39,9 +40,13 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
 ## Running things (from `plugins/job-apply/server`)
 
 - Tests: `JOB_APPLY_CHROMIUM_PATH=/opt/pw-browsers/chromium uv run pytest -q -p no:cacheprovider -n auto tests`.
-  - The full suite took 10 to 15 minutes a part on CI in two parts (Oct 2026; it runs in four now), and 13 to 16
-    on a 4-core session. Locally, run the affected test files, ruff and mypy; the PR's required checks run the full suite.
+  - The full suite takes about 6 minutes a part on CI (Oct 2026), and 13 to 16 on a 4-core session.
+    Locally, run the affected test files, ruff and mypy; the PR's required checks run the full suite.
+    Add `-m "not slow"` for a quicker run: it leaves out the tests marked `@pytest.mark.slow`.
   - CI runs it in four parts on separate machines: `JOB_APPLY_TEST_SHARD=1/4` (to `4/4`) runs one part.
+    Each part starts its slow tests first (`JOB_APPLY_SLOW_FIRST=1` with `--maxschedchunk=1`), so none
+    is left running alone at the end. A test that takes 20 s or more in a part's `--durations` list
+    gets the mark.
   - CI also runs it on Windows (`windows (Python 3.13, part n/4)`), the owner's platform. Those checks
     aren't required (a failure doesn't block the merge), so look at them yourself. Windows reads and
     writes text as cp1252 unless told otherwise: give every text file `encoding="utf-8"`, tests too.
