@@ -3591,6 +3591,27 @@ def test_a_us_citizen_question_that_goes_on_with_or_or_by_is_never_answered_as_c
         assert a is not None and (a.value, a.rule) == ("Yes", "us_person"), a
 
 
+def test_a_us_citizen_question_that_asks_more_than_citizenship_is_left():
+    """The U.S. citizen question is answered only where nothing after it asks more: the label ends there, or goes on
+    with a "?", a note in brackets ("(Yes/No)") or a new sentence ("If not, which country?"). "...and able to obtain a
+    security clearance", "...eligible for a security clearance", "...with an active clearance" or "...who can work
+    on-site" ask what citizenship alone doesn't say (a citizen's Yes claimed them all): left, in any spelling."""
+    citizen = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=True, us_person=True,
+                    citizenship="United States")
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    for us in ("US", "U.S.", "USA"):
+        for rest in ("and able to obtain a security clearance?", "eligible for a security clearance?",
+                     "with an active clearance?", "who can work on-site?"):
+            label = f"Are you a {us} citizen {rest}"
+            assert _answer(label, citizen, **yes_no) is None, label
+            assert _answer(label, citizen) is None, label
+        for label in (f"Are you a {us} citizen?", f"Are you a {us} citizen? (Yes/No)",
+                      f"Are you a {us} citizen? If not, please list your citizenship",
+                      f"Are you a citizen of the {us}? If not, which country?"):
+            assert _answer(label, citizen) == "Yes", label
+            assert _answer(label, citizen, **yes_no) == "Yes", label
+
+
 def test_a_signature_box_that_says_the_date_is_recorded_gets_the_name_and_one_that_asks_for_a_date_doesnt():
     """A signature box that says the date is added for the person ("Signature (type your name; the date is added
     automatically)", "Sign your full name (no dates)") takes the name, as before. One that asks for a date to be

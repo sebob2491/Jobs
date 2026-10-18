@@ -536,6 +536,19 @@ def _yn(path: str, invert: bool = False) -> Getter:
 
 
 _US_CITIZENSHIP = re.compile(r"(the )?(united states( of america)?|u ?s( ?a)?|american?)")
+# The U.S. citizen question as the label writes it, and what follows it
+_US_WRITTEN = r"(?:u\.?\s?s\.?(?:\s?a\.?)?|united\s+states(?:\s+of\s+america)?)"
+_CITIZEN_ASKED = re.compile(rf"\bare\s+you\s+a\s+(?:{_US_WRITTEN}[\s-]*)?citizen(?:\s+of\s+the\s+{_US_WRITTEN})?"
+                            r"(?P<rest>.*)$", re.I | re.S)
+
+
+def _asks_more_than_citizenship(raw_label: str) -> bool:
+    """Whether "Are you a U.S. citizen" goes on to ask more than citizenship: anything after it but the end, a "?" or
+    "*", a note in brackets ("(Yes/No)") or a new sentence ("If not, which country?"). "...and able to obtain a security
+    clearance", "...with an active clearance", "...who can work on-site" ask what citizenship alone doesn't say (the
+    review of Oct 18)."""
+    m = _CITIZEN_ASKED.search(clean_label(raw_label))
+    return m is not None and not re.match(r"\s*(?:[?*!.;(]|$)", m.group("rest"))
 
 
 def _us_citizen(prof: Profile, job: dict) -> Any:
@@ -1556,8 +1569,9 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     # pronoun's "join us". Never a question that goes on with "or ..." or "by ...": "Are you a US citizen or do you have
     # authorization to work in the US?" is a permanent resident's Yes, and "...by birth?" the profile doesn't say:
     # the review of Oct 18)
+    # (nor one that asks more after it, as written: _asks_more_than_citizenship)
     ("us_citizen", r"are you a (u ?s( ?a)?|united states) citizen\b(?! (or|by)\b)|"
-     r"are you a citizen of the (u ?s( ?a)?|united states)( of america)?$", _us_citizen, None, None),
+     r"are you a citizen of the (u ?s( ?a)?|united states)( of america)?\b(?! (or|by)\b)", _us_citizen, None, None),
     # "Are you an alien illegally in the United States?", "...admitted under a nonimmigrant visa?" (Axon)
     ("alien", r"^are you an? (illegal )?alien\b", lambda p, j: "No" if p.get("work_authorization.us_citizen") is True else None,
      200, {"select", "listbox", "combobox", "radio_group"}),
@@ -2282,6 +2296,8 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
                     return None  # another country's question: the profile's facts are the United States'
                 if name in {"sponsorship", "no_sponsorship"} and _NOT_THEIR_SPONSORSHIP.search(label):
                     return None  # the employer's policy, or someone else's need: not the person's
+                if name in {"us_citizen", "citizenship"} and _asks_more_than_citizenship(raw_label):
+                    continue  # more than citizenship asked: the next rule's, or the person's
                 if name == "phone" and _other_kind_of_phone(label, prof):
                     return None  # a Work Phone for a mobile: the profile's number isn't that kind's
                 if name == "signature" and _ASKS_FOR_A_DATE.search(clean_label(raw_label)):
