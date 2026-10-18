@@ -45,6 +45,7 @@ from .autofill import (classes_only, clean_label, degree_kinds_listed, degree_no
                        polarity, tailored_document, works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
                       confirmations, declines_cookies, final_text, may_accept_cookies, questions_shown)
+from .never import ANYWHERE, CALLS_OR_TEXTS, IN_PASSING, _never_for_them
 
 NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before calling it a stall
 ONCE_SETTLE = 1.0  # seconds after filling the person's answers before checking they stayed in
@@ -386,18 +387,14 @@ _TERMS_ONLY = re.compile(r"terms|conditions|(?:privacy|data protection) (?:polic
                          # processing of one's personal data (a GDPR notice), the documents above read
                          r"|\b(?:agree|consent)\w*\b.{0,40}\bcreat\w*\b.{0,60}\baccount\b|^\s*(?:yes,? )?i (?:agree|consent|accept)\W*$"
                          r"|\bgdpr\b|process\w* (?:of )?my personal data|acknowledge having read", re.I)
-# Texts and automated calls to the person (BrassRing's "consenting to Texting or automated calling", Edward Jones' run 83):
-# kept out of what's agreed to or attested for them, as text messages are (the review of 0.3.165)
-_CALLS_OR_TEXTS = (r"\btexting\b|\btext (?:messag\w*|me|you)\b|\bcall(?:s|ing)? (?:or|and|&) text\w*\b|autodial\w*|"
-                   r"\bautomated (?:calls?|calling|dial\w*|messag\w*|texts?)\b|pre-?recorded|\bwhatsapp\b")
 _TERMS_BOX = re.compile(r"terms|conditions|privacy|consent|agree|acknowledge|policy|notice", re.I)
+# What tells a sign-up's page or box from an account's, where the desk only reads what step a page is
+# (_email_first_account, _email_account_view) or names a box still empty (_account_wants). What's ticked or agreed to
+# is _never_for_them's, and each word here is one of its (the tests check). A wider list here would move a step to
+# another way of being taken (an account's agreement read as the application), not keep a tick or a press from it
 _NOT_TERMS = re.compile(r"newsletter|mailing list|marketing|job alerts?|text messages?|\bsms\b|promotion|offers|subscribe|similar jobs|"
                         r"talent (?:community|network)|keep me|stay informed|send me|contact(?:ed)? me|be contacted|"
-                        r"share my|other (?:\w+ )?(?:roles|positions|jobs|openings|opportunities)|affiliat|" + _CALLS_OR_TEXTS, re.I)
-# And on an account's own box, what else its agreement may take in (the review of 0.3.117's wider account terms):
-# a box's words only, never a statement's (whose text names most of these in passing)
-_MORE_THAN_TERMS = re.compile(r"receiv\w*|e-?mails?|updates?|notifications?|messages?|partners?|third[- ]part|future|"
-                              r"talent pool|retain|retention", re.I)
+                        r"share my|other (?:\w+ )?(?:roles|positions|jobs|openings|opportunities)|affiliat|" + CALLS_OR_TEXTS, re.I)
 # How long a box's agreement lasts, which is no more than it (Air Liquide's Workday, live run 41, Oct 12: "You
 # acknowledge having read the documents above. Your agreement is valid for any future visits."): not "future" news
 _LASTS = re.compile(r"\byour (?:agreement|consent|acceptance) (?:is|will be|remains) valid for (?:any|all) future visits\b"
@@ -421,42 +418,30 @@ _SITES_TERMS = re.compile(r"\b(?:privacy|data protection)\b[\w ]{0,25}\b(?:polic
                           r"\bterms (?:of (?:use|service)|and conditions)\b|\bpersonal (?:data|information)\b|\bgdpr\b",
                           re.I)
 _ATTESTS_ABOVE = re.compile(r"of employment|certif|true and complete|background check", re.I)
-# An attestation or privacy agreement that also signs the person up: "... and consent to receive email communications
-# from Acme", "... and would like to receive updates" (the safety audit of Oct 12): never ticked for them
-_SIGNS_UP_TOO = re.compile(r"\breceiv\w*\b.{0,40}\b(?:e-?mails?|communications?|updates?|messages?|news\w*|offers|"
-                           r"information about|texts?)\b|\b(?:e-?mail|marketing|promotional) communications?\b|"
-                           r"\bupdates? (?:about|on|from)\b|\bnewsletter", re.I)
+# An email to verify the account, which a terms paragraph names in passing ("Accept our Terms of Use. You will receive an
+# email to verify your account.", the review's): no sign-up, as the words above a box read it (_terms_above). Only those
+# words: whatever else that paragraph says is read
+_ACCOUNT_MAIL = re.compile(r"\breceiv\w* an? e-?mail to (?:verify|confirm|activate) (?:your|the) (?:new )?"
+                           r"(?:account|e-?mail(?: address)?)\b", re.I)
 
 
-def _signs_up(text: str) -> bool:
-    """Do these words sign the person up for emails or updates (_SIGNS_UP_TOO)? Not those about the application
-    itself ("communications about my application status": the review's)."""
-    def about_the_application(tail: str) -> bool:  # (and nothing more: "... and other opportunities" is a sign-up)
-        own = re.match(r"\W*(?:about|regarding|on|concerning) (?:the status of )?(?:my|this|the|your) application"
-                       r"(?: status| process)?(?P<rest>.*)", tail, re.I | re.S)
-        if own is None:
-            return False
-        rest = own["rest"]
-        return not re.match(r"\s*(?:and|or|&|as well)\b", rest, re.I) \
-            and not re.search(r"other|opportunit|jobs|offers|roles|positions|newsletter|events", rest[:120], re.I)
-    return any(not about_the_application(text[m.end():]) for m in _SIGNS_UP_TOO.finditer(text))
+def _more_than_terms(label: str) -> str | None:
+    """What a Create Account's terms box agrees to, by its own words, that's never agreed to for the person
+    (_never_for_them, every kind: a terms box says no more than its terms), less how long its agreement lasts or a
+    privacy notice received (_LASTS). None when it's no more than the terms."""
+    return _never_for_them(_LASTS.sub(" ", label))
 
 
-# The words above a bare "I agree" that make it a sign-up (a terms paragraph names emails, affiliates and offers in
-# passing: "you'll receive an email to verify your account", the review's)
-_SIGN_UP_ABOVE = re.compile(r"talent (?:community|network|pool)|job alerts?|newsletter|subscribe|marketing|"
-                            # (the review of 0.3.126's: a mailing list, being notified, opting in, emailed about roles)
-                            r"mailing list|\bnotif(?:y|ied|ications?)\b|\bopt(?:ing)?[- ]in\b|"
-                            r"\be-?mail (?:me|you)\b|"
-                            r"text messages?|\bsms\b|keep me|stay informed|similar jobs|promotion\w*|offers|send me|"
-                            r"contact(?:ed)? me|be contacted|share my|"
-                            r"other (?:\w+ )?(?:roles|positions|jobs|openings|opportunities)|"
-                            r"\breceiv\w*\b.{0,40}\b(?:news\w*|offers|updates?|alerts?|promotions?|(?:job|career) "
-                            r"opportunities|marketing)\b|"
-                            # (the review of 0.3.133's: kept for later vacancies, shared with partners or agencies)
-                            r"talent database|future (?:\w+ )?vacanc|keep\w* (?:my|your) (?:personal )?data|"
-                            r"share (?:my|your)|partners|staffing|recruit\w* agenc|"
-                            r"careers? (?:community|network)|\balerts?\b|\btexts?\b|\bcalls?\b", re.I)
+def _terms_above(above: str) -> bool:
+    """Do the words just above a box that says only that it agrees (a bare "I agree", "the documents above", "read and
+    understood") name the site's terms or privacy statement, or its processing of personal data, and nothing more?
+    Never anything never agreed to for the person (_never_for_them: a sign-up, texts or calls, a waiver; the safety
+    audit of Oct 12, the reviews of 0.3.126's and 0.3.133's), nor an attestation (_ATTESTS_ABOVE). A paragraph's words
+    in passing aren't a box's own (IN_PASSING), and an email to verify the account is none (_ACCOUNT_MAIL)."""
+    return bool(above and not _never_for_them(_ACCOUNT_MAIL.sub(" ", above), but=IN_PASSING)
+                and _SITES_TERMS.search(above) and not _ATTESTS_ABOVE.search(above))
+
+
 # A box whose own words say only that the person agrees: what it agrees to is in the words above it
 _BARE_AGREE = re.compile(r"^\W*(?:yes,? )?i (?:agree|consent|accept)\W*$", re.I)
 # A box that says only that the words above it were understood and agreed to (BrassRing's "Employment At Will", Edward
@@ -514,8 +499,10 @@ _FORWARD = re.compile(r"^(save (?:and|&) continue|continue|next|next step|review
                       r"go to next step)$", re.I)
 _STEP_OF = re.compile(r"\bstep (\d+) of (\d+)\b", re.I)  # a progress bar's place: "current step 3 of 6"
 # A sign-up for job alerts, a newsletter or a talent community (the form reader's SIDE_BOX), beside an
-# application or on the page that thanks the person for one: its boxes and button are never the application's
-_SIDE_BOX = re.compile(r"job alerts?|alerts? by e-?mail|e-?mail alerts?|newsletter|\bsubscribe\b|talent (?:community|"
+# application or on the page that thanks the person for one: its boxes and button are never the application's. What
+# tells such a form from the application, as _NOT_TERMS tells an account's step: each word is _never_for_them's too (the
+# tests check), and a wider list would take the application's own boxes for a sign-up's (a page taken for sent)
+_SIDE_BOX =re.compile(r"job alerts?|alerts? by e-?mail|e-?mail alerts?|newsletter|\bsubscribe\b|talent (?:community|"
                        r"network|pool)|notify me|similar (?:jobs|openings|roles)|stay (?:connected|in touch)", re.I)
 # Words that ask the person to go on with the form, after a step of it thanks them for applying
 # ("Thank you for your application. Please complete the below questions.")
@@ -561,12 +548,10 @@ _AGREES = re.compile(r"^(?:yes,? )?(?:i )?(?:agree|accept|consent|acknowledge)(?
                      r"^i understand$", re.I)
 # and an application's attestation: that its information is true and complete ("I certify that the
 # information contained in the application … is correct"), or consent to the background check that
-# comes with applying. Never a newsletter's, job alerts' or marketing's
+# comes with applying. Never a newsletter's, job alerts' or marketing's (_attests_more)
 _ATTESTS = re.compile(r"\b(?:certif(?:y|ies)|attest|affirm|declare|acknowledge|confirm)\b.{0,200}?\b(?:information|answers?|"
                       r"statements?|responses?|facts)\b.{0,200}?\b(?:true|correct|complete|accurate)\b|"
                       r"\b(?:consent|authori[sz]e|agree)\b.{0,120}?\bbackground (?:check|screening|investigation)", re.I | re.S)
-_NOT_ATTESTED = re.compile(r"newsletter|marketing|job alerts?|text messages?|\bsms\b|promotion|subscribe|"
-                           r"talent (?:community|network)|" + _CALLS_OR_TEXTS, re.I)
 _ATTEST_KINDS = {"select", "listbox", "combobox", "checkbox", "checkbox_group", "radio_group"}
 # and, the owner's call (Oct 10), an employer's privacy notice and terms of use: a gate's "I Accept"
 # (Kforce's Taleo privacy agreement), "I Acknowledge the Privacy Notice" (Schwab's iCIMS), a dialog,
@@ -593,19 +578,8 @@ _STATEMENT_LINK = re.compile(r"^(?:please )?(?:read|view|open)\b", re.I)
 # never agreed to: its opening. The statement's long text speaks of its affiliates, marketing and cookies as
 # its practices (APS's, live: "... Company and its affiliated companies ..."), which don't sign anyone up
 NOTICE_OPENING = 300
-# but a legal waiver (an arbitration agreement, a jury trial waived, a non-compete) is never agreed to for the
-# person however deep in its text it sits
-_WAIVES = re.compile(r"arbitrat|\bwaive|\bjury\b|non-?compete|non-?solicit", re.I)
-# nor what signs them up for something ("By clicking Accept you also join our Talent Community")
-_SIGNS_UP = re.compile(r"\b(?:join\w*|subscrib\w*|sign(?:s|ed|ing)? (?:you )?up|receiv\w*|enrol\w*|added to|opt(?:s|ed)? "
-                       r"(?:you )?in)\b.{0,60}?\b(?:talent (?:community|network|pool)|newsletters?|job alerts?|marketing|"
-                       r"promotion\w*)", re.I | re.S)
-# Never agreed to for the person, wherever it's asked: what _NOT_TERMS keeps out of account forms
-# (newsletters, marketing, job alerts, a talent community, being contacted, other roles), a talent pool,
-# keeping their profile for later, cookies (their own rule), and legal waivers (arbitration, a jury trial)
-_NEVER_AGREED = re.compile(_NOT_TERMS.pattern + r"|talent pool|future (?:job |career )?(?:opportunities|openings|roles|"
-                           r"positions)|keep (?:my|your) (?:profile|information|data|resume)|retain (?:my|your)|campaigns?|"
-                           r"cookie|arbitration|waive|jury|non-?compete|non-?solicit", re.I)
+# (but a legal waiver, an arbitration agreement or a jury trial waived, and a sign-up in so many words, are never agreed
+# to for the person however deep in its text they sit: ANYWHERE)
 # A consent to be considered for other open positions as well as the one applied to (Northrop Grumman's
 # Eightfold "Contact Consent", live, Oct 2026: "I understand that I may be considered for other open
 # positions in my country, in addition to the role(s) to which I apply"). The owner's call (Oct 10): given
@@ -650,32 +624,45 @@ _BOT_BADGE = re.compile(r"\bh ?captcha\b|\brecaptcha\b", re.I)
 _NOT_A_NOTICE = re.compile(r"\berror\b|could ?n[o']t|failed|signed? (?:you )?out|overwrite|existing (?:profile|account)|"
                            r"\bdelete|\bremove|withdraw|expired?\b", re.I)
 
-# The terms of employment, never a site's terms of use: an at-will statement, "the terms and conditions of my
-# employment", an employment agreement (the review of 0.3.170: BrassRing's "Employment At Will" step). The person's
-_EMPLOYMENT_TERMS = re.compile(r"\bat[- ]will\b|\b(?:terms|conditions)\b[^.]{0,30}\bof (?:my |your |this |the )?employment\b|"
-                               r"\bemployment (?:agreement|contract)\b", re.I)
-# An attestation's words that certify the application's own information (beside which an at-will sentence may stand)
+# An attestation's words that certify the application's own information (beside which an at-will sentence may stand:
+# the second review of 0.3.170)
 _OWN_INFO_TRUE = re.compile(r"\b(?:information|answers?|responses?)\b[^.]{0,80}\b(?:true|correct|complete|accurate)\b", re.I)
+# What an attestation names in passing that signs no one up: the employer's affiliates and its offers of employment ("...
+# and authorize Acme and its affiliates to conduct a background check": the review's), and the future opportunities false
+# statements may cost ("... may disqualify me from future opportunities"). Those words alone are taken out, and only for
+# the kinds they'd be read as (_PASSING_KINDS): every other kind is read in the whole label
+_ATTESTED_IN_PASSING = re.compile(r"\baffiliat\w*|\boffers? of employment|\bdisqualif\w* (?:me |you )?from (?:any )?future "
+                                  r"(?:job |career |employment )?(?:opportunities|openings|roles|positions|employment)\b",
+                                  re.I)
+_PASSING_KINDS = frozenset({"their data shared", "marketing", "other roles"})
+
+
+def _attests_more(label: str) -> str | None:
+    """What an attestation's or agreement's words take in that's never agreed to for the person (_never_for_them),
+    less what such words name in passing: a statement's other words (IN_PASSING), its affiliates, its offers of
+    employment and the future opportunities false statements cost (_ATTESTED_IN_PASSING), and an at-will sentence
+    beside a certification of the application's own information (_OWN_INFO_TRUE). None when it's no more than that."""
+    but = IN_PASSING | _PASSING_KINDS | ({"at-will"} if _OWN_INFO_TRUE.search(label) else set())
+    return _never_for_them(label, but=but) or _never_for_them(_ATTESTED_IN_PASSING.sub(" ", label), only=_PASSING_KINDS)
 
 
 def _agrees_to_terms(text: str) -> bool:
-    """Words that accept an employer's privacy notice or terms of use, and nothing more: not a
-    newsletter's or the like (_NEVER_AGREED), not the terms of employment, not a fact about the person, not another
-    question."""
-    return bool(_TERMS.search(text) and _ACCEPTS.search(text) and not _NEVER_AGREED.search(text)
-                and not _EMPLOYMENT_TERMS.search(text) and not _CLAIMS.search(text) and not _OTHER_QUESTION.search(text))
+    """Words that accept an employer's privacy notice or terms of use, and nothing more: nothing never agreed to for the
+    person (_never_for_them: a newsletter's or the like, the terms of employment, a waiver; a statement's words in
+    passing aside, IN_PASSING), not a fact about the person, not another question."""
+    return bool(_TERMS.search(text) and _ACCEPTS.search(text) and not _never_for_them(text, but=IN_PASSING)
+                and not _CLAIMS.search(text) and not _OTHER_QUESTION.search(text))
 
 
 def _terms_notice(heading: str, text: str) -> tuple[bool, bool]:
     """Is a dialog the employer's privacy notice or terms to take in, and may its Ok do it? Named so
     in its heading ("Privacy Policy of Example Corp": its Ok too), or asking in its words to accept
-    them; never one about an error, a profile to overwrite or the like, nor what's never agreed to.
+    them; never one about an error, a profile to overwrite or the like, nor what's never agreed to (_never_for_them).
     One named in its heading is the statement itself, and only its opening is read for those (NOTICE_OPENING),
-    but all of it for a legal waiver (_WAIVES) or a sign-up (_SIGNS_UP)."""
+    but all of it for a legal waiver or a sign-up in so many words (ANYWHERE)."""
     named = bool(_TERMS.search(heading))
     said = f"{heading} {text[:NOTICE_OPENING] if named else text}"
-    if _NEVER_AGREED.search(said) or _NOT_A_NOTICE.search(said) or _WAIVES.search(text) or _SIGNS_UP.search(text) \
-            or _EMPLOYMENT_TERMS.search(said):
+    if _never_for_them(said, but=IN_PASSING) or _never_for_them(text, only=ANYWHERE) or _NOT_A_NOTICE.search(said):
         return False, False
     return named or bool(_TERMS.search(text) and _ACCEPTS.search(text)), named
 # A fill the page never let happen (it timed out, its script failed, a dialog stood over the box):
@@ -4267,18 +4254,14 @@ class Applier:
         """A Create Account form's terms boxes, less a bare one ("I agree", "I consent") or one agreeing to "the
         documents above" (Air Liquide's) whose words just above it say what it agrees to and that's more than the
         site's terms: job alerts, a talent network, texts, marketing (the safety audit of Oct 12). Those are the
-        person's."""
+        person's (_terms_above)."""
         kept = []
         for box in boxes:
             label = box.get("label") or ""
             if _BARE_AGREE.match(label) or _READ_ABOVE.search(label) or _READ_UNDERSTOOD.match(label):
-                above = await self.srv.browser.words_before(box["id"])
-                # (gone, or not read: not ticked; the words of a sign-up, not the terms' passing mentions: the review's;
-                # nor anything never agreed to for the person, a waiver among them: the review of 0.3.133's)
-                if not above or _SIGN_UP_ABOVE.search(above) or _NEVER_AGREED.search(above) or _WAIVES.search(above):
-                    continue  # (unread, or nothing to read: the person's)
-                if not _SITES_TERMS.search(above) or _ATTESTS_ABOVE.search(above):
-                    continue  # (agreed to, or read and understood, anything else: the person's)
+                # (gone, or not read: not ticked; agreed to, or read and understood, anything else: the person's)
+                if not _terms_above(await self.srv.browser.words_before(box["id"]) or ""):
+                    continue
             kept.append(box)
         return kept
 
@@ -5068,10 +5051,7 @@ class Applier:
             return await self._account_theirs(run, data, f"I couldn't find the button that goes on with making your account "
                                         f"on {site}")
         if view == "consent":
-            ticked = [f for f in data.get("fields") or [] if f.get("kind") == "checkbox" and not f.get("disabled")
-                      and is_empty_value(f.get("value")) and _TERMS_BOX.search(f.get("label") or "")
-                      and not _NOT_TERMS.search(f.get("label") or "") and _TERMS_ONLY.search(f.get("label") or "")
-                      and not _MORE_THAN_TERMS.search(_LASTS.sub("", f.get("label") or ""))]
+            ticked = _consent_boxes(data)
             if ticked and not (await srv.fill_form([{"id": f["id"], "value": True} for f in ticked])).get("ok"):
                 return await self._account_theirs(run, data, f"{site} asks you to agree to its terms before making your "
                                             "account, and its box didn't take my tick")
@@ -5574,17 +5554,7 @@ class Applier:
         if (started := await self._start_profile(run, data, notice, agreed)) is not None:
             return started
         heading = _notice_name(notice)
-        said = f"{heading} {notice.get('text') or ''}"
-        # about AI screening of applications, or the employer's privacy notice or terms of use (whose
-        # "Ok" takes it in, beside a Cancel, where its heading names it)
-        terms, takes_ok = _terms_notice(heading, notice.get("text") or "")
-        ai = bool(_AI_NOTICE.search(said) and _ABOUT_APPLYING.search(said)) or terms \
-            or _test_identity_agrees(heading, said, _test_identity())
-        # (never one whose words also waive a right or sign the person up, nor one headed as something never agreed
-        # to: the review of Oct 15 found the AI notice's path without the terms notice's guards)
-        if ai and (_WAIVES.search(notice.get("text") or "") or _SIGNS_UP.search(notice.get("text") or "")
-                   or _NEVER_AGREED.search(heading)):
-            ai = False
+        ai, takes_ok = _agreeable_notice(heading, notice.get("text") or "", _test_identity())
         agree = next((b for b in notice.get("buttons") or [] if not b.get("disabled")
                       and (_AGREES.match(final_text(b.get("text") or ""))
                            or takes_ok and _TAKES_IN.match(final_text(b.get("text") or "")))), None)
@@ -6246,6 +6216,23 @@ def _notice_name(notice: dict[str, Any]) -> str:
     return notice.get("heading") or _short(notice.get("text") or "") or "a dialog"
 
 
+def _agreeable_notice(heading: str, text: str, test_identity: bool) -> tuple[bool, bool]:
+    """Is a dialog over the page one the desk may agree to for the person (settings.accept_notices, _answer_notice), and
+    may its Ok take it in? A notice about AI screening of applications, or the employer's privacy notice or terms of use
+    (_terms_notice: its "Ok" beside a Cancel, where its heading names it), or one the live check's test identity agrees
+    to (_test_identity_agrees). Never one whose words waive a right or sign the person up in so many words (ANYWHERE),
+    nor one headed as anything never agreed to (_never_for_them): the review of Oct 15 found the AI notice's path without
+    the terms notice's guards. Only its heading is read for the rest: an AI notice's own words name the other positions
+    it may suggest (Micron's, live), which it signs no one up for."""
+    said = f"{heading} {text}"
+    terms, takes_ok = _terms_notice(heading, text)
+    ai = bool(_AI_NOTICE.search(said) and _ABOUT_APPLYING.search(said)) or terms \
+        or _test_identity_agrees(heading, said, test_identity)
+    if ai and (_never_for_them(text, only=ANYWHERE) or _never_for_them(heading, but=IN_PASSING)):
+        ai = False
+    return ai, takes_ok
+
+
 def _attestation(q: dict[str, Any]) -> Any:
     """What attests to an application's attestation, a required box whose label certifies its
     information true and complete, consents to the background check that comes with applying
@@ -6254,12 +6241,11 @@ def _attestation(q: dict[str, Any]) -> Any:
     where that agrees, or its one Yes. A group of one tick whose own words accept them (EMD's)
     is ticked, and a lone radio's one choice is picked. None for any other box."""
     label = q.get("label") or ""
-    # (never a legal waiver in its words, an arbitration agreement or a jury trial waived: the review of 0.3.165)
-    if not q.get("required") or q.get("error") or q.get("kind") not in _ATTEST_KINDS or _WAIVES.search(label):
-        return None
-    # (nor the terms of employment, an at-will statement acknowledged "accurate", unless its words certify the
-    # application's own information: the second review of 0.3.170)
-    if _EMPLOYMENT_TERMS.search(label) and not _OWN_INFO_TRUE.search(label):
+    # (never anything never agreed to for the person in its words (_attests_more): a legal waiver, an arbitration
+    # agreement or a jury trial waived, the review of 0.3.165; the terms of employment, an at-will statement
+    # acknowledged "accurate", unless its words certify the application's own information, the second review of
+    # 0.3.170; an agreement that also signs the person up, the safety audit's)
+    if not q.get("required") or q.get("error") or q.get("kind") not in _ATTEST_KINDS or _attests_more(label):
         return None
     choices = [str(o) for o in q.get("options") or [] if not is_empty_value(o)]
     if q["kind"] == "radio_group" and (len(choices) != 1 or not (polarity(choices[0]) is True or _AGREES.match(
@@ -6270,13 +6256,9 @@ def _attestation(q: dict[str, Any]) -> Any:
     if q["kind"] == "checkbox_group":
         # its ticks that accept the terms, and only those: EMD's required pair is its Terms of Use &
         # Data Privacy Statement and its "Email Communications" (marketing, left unticked)
-        agreed = [o for o in choices if _agrees_to_terms(o) and not _signs_up(o)]
+        agreed = [o for o in choices if _agrees_to_terms(o)]
         return agreed or None
-    if not (_ATTESTS.search(label) and not _NOT_ATTESTED.search(label) or _agrees_to_terms(label)):
-        return None
-    # (an agreement that also signs the person up: theirs, the safety audit's; an attestation's passing mention of
-    # the employer's affiliates or its offers of employment isn't one)
-    if _signs_up(label) or _NOT_TERMS.search(re.sub(r"\baffiliat\w*|\boffers? of employment", "", label, flags=re.I)):
+    if not (_ATTESTS.search(label) or _agrees_to_terms(label)):
         return None
     if q["kind"] == "checkbox":
         # (a box whose words also say something about the person, "... and that I am legally authorized to work in
@@ -6285,9 +6267,9 @@ def _attestation(q: dict[str, Any]) -> Any:
     if len(choices) == 1:
         # (and only a choice that says no more than that: not "I agree, and send me text messages and job alerts", "I
         # agree to binding arbitration" or "I am authorized to work in the US", the second review of 0.3.165)
+        # (every kind never agreed to: a choice's few words are its own, none in passing)
         one = choices[0]
-        more = _NEVER_AGREED.search(one) or _WAIVES.search(one) or _NOT_ATTESTED.search(one) or _signs_up(one) \
-            or _CLAIMS.search(one)
+        more = _never_for_them(one) or _CLAIMS.search(one)
         return one if polarity(one) is not False and not more else None
     if _about_person(label):
         return None  # a Yes there would answer something else too ("Have you ever been convicted ...?")
@@ -6299,25 +6281,29 @@ def _terms_gate(button: dict[str, Any], data: dict[str, Any], text: str = "") ->
     """A page whose way on accepts the employer's privacy notice or terms ("I Acknowledge the
     Privacy Notice"; "I Accept" under a "Privacy Agreement" heading): its button, headings or title
     say so, not a privacy link in its footer. Never one that also sends the application ("I Accept
-    and Apply"), nor one about what's never agreed to (a talent community, an arbitration agreement),
+    and Apply"), nor one about what's never agreed to (_never_for_them: a talent community, an arbitration agreement),
     nor one on a page whose words (`text`, the page's, read whole by the callers) waive a right (arbitration, a
     jury trial: the review of Oct 15).
     Its headings are those of its own frame: Charles Schwab's careers page around its iCIMS frame
-    has a "Join our talent network" sign-up of its own beside the gate (live, Oct 10)."""
+    has a "Join our talent network" sign-up of its own beside the gate (live, Oct 10). So the page's words are read
+    for a legal waiver alone, never for that sign-up beside it."""
     said = button.get("text") or ""
     framed = data.get("frame_headings")
     frame = re.match(r"f\d+-", str(button.get("id") or ""))
     own = framed.get(frame.group(0) if frame else "") if isinstance(framed, dict) else None
     about = " ".join([*(own if own is not None else data.get("headings") or []), str(data.get("title") or "")])
-    if _SENDS_TOO.search(said) or _NEVER_AGREED.search(f"{said} {about}") or _WAIVES.search(text or ""):
+    if _SENDS_TOO.search(said) or _never_for_them(f"{said} {about}", but=IN_PASSING) \
+            or _never_for_them(text or "", only={"arbitration", "waiver"}):
         return False
     return bool(_TERMS.search(said) or _TERMS.search(about))
 
 
 def _agreement_button(data: dict[str, Any]) -> dict[str, Any] | None:
-    """A page's button that agrees to something ("I Acknowledge the Privacy Notice", "I Accept")."""
+    """A page's button that agrees to something ("I Acknowledge the Privacy Notice", "I Accept"). Never a cookie
+    banner's (their own rule): what else it agrees to is _terms_gate's to read, the page's first such button."""
     return next((a for a in data.get("actions") or [] if _AGREEMENT.search(a["text"].strip())
-                 and not a.get("cookie") and "cookie" not in a["text"].lower() and not a.get("disabled")), None)
+                 and not a.get("cookie") and not _never_for_them(a["text"], only={"cookies"}) and not a.get("disabled")),
+                None)
 
 
 def _pressed_before(job: dict[str, Any]) -> bool:
@@ -6617,17 +6603,24 @@ def _manage_hint() -> str:
 # fix from. A notice of any of these sorts, never an error's or an existing profile's; and only by an agree button
 # (_AGREES): never a Submit, which stays the person's (Insight Enterprises' notice confirms with one)
 _TEST_NOTICE = re.compile(r"\b(?:privacy|terms|consent|agreement|notice|statement|policy)\b", re.I)
+# What of the never-list a person's desk leaves to them that the test identity agrees to (the owner's call, Oct 13): a
+# legal notice (a waiver, arbitration, the terms of employment), the employer's keeping and sharing of what it's given,
+# other roles it may consider. Never a sign-up (CLAUDE.md's rule, test identity or not), nor cookies (their own rule),
+# nor any kind added to the list later
+_TEST_IDENTITY_MAY = frozenset({"arbitration", "waiver", "at-will", "other roles", "their data shared", "their data kept"})
 
 
 def _test_identity_agrees(heading: str, said: str, test_identity: bool) -> bool:
     """Whether the live check's test identity agrees to a notice the person's own desk leaves to them: only the
     test identity (config.live_test_identity: never a person's profile), only a notice (_TEST_NOTICE), never a
     dialog about an error, an overwrite, a deletion, a withdrawal or one that sends or applies (by its opening), and
-    never one that signs up for anything (_SIGNS_UP: newsletters, job alerts, a talent community, marketing)."""
+    never one that signs up for anything: in so many words anywhere in it, and any other kind never agreed to for the
+    person in its opening (_never_for_them), but what it may agree to (_TEST_IDENTITY_MAY)."""
     opening = said[:300]  # (its heading and first words say what it is; a long statement's later words don't)
     return (test_identity and bool(_TEST_NOTICE.search(said)) and not _NOT_A_NOTICE.search(opening)
             and not re.search(r"\bwent wrong\b|\bsubmit\w*|\bapply\b|\bwithdraw", opening, re.I)
-            and not _SIGNS_UP.search(said))  # (never a sign-up, CLAUDE.md's rule, test identity or not)
+            and not _never_for_them(said, only={"signs up"})
+            and not _never_for_them(opening, but=IN_PASSING | _TEST_IDENTITY_MAY))
 
 
 def _test_identity() -> bool:
@@ -6840,8 +6833,8 @@ def _account_details(data: dict[str, Any], text: str) -> dict[str, Any] | None:
 
 def _terms_boxes(data: dict[str, Any]) -> list[dict[str, Any]]:
     """A Create Account form's boxes that agree to the site's terms, still unticked: the required
-    ones, or its terms, or a privacy notice read. Never a newsletter's, job alerts' or text
-    messages' (_NOT_TERMS), nor a legal waiver's (arbitration), the terms of employment, or a box that
+    ones, or its terms, or a privacy notice read. Never one whose words take in more (_more_than_terms: a
+    newsletter's, job alerts', text messages', a legal waiver's, the terms of employment), or a box that
     also says something about the person (the review of Oct 15), except an age the profile answers ("I am 16
     years or older, and I have read the Privacy Notice": Microchip's, ticked where the profile says over 18)."""
     over_18 = _profile_over_18()
@@ -6851,11 +6844,18 @@ def _terms_boxes(data: dict[str, Any]) -> list[dict[str, Any]]:
 
     return [f for f in data.get("fields") or [] if f.get("kind") == "checkbox" and is_empty_value(f.get("value"))
             and (_READ_UNDERSTOOD.match(f.get("label") or "")  # (what it agrees to is above it: _said_terms reads it)
-                 or _TERMS_BOX.search(f.get("label") or "") and not _NOT_TERMS.search(f.get("label") or "")
-                 and not _MORE_THAN_TERMS.search(_LASTS.sub("", f.get("label") or ""))
-                 and not _WAIVES.search(f.get("label") or "") and not _EMPLOYMENT_TERMS.search(f.get("label") or "")
+                 or _TERMS_BOX.search(f.get("label") or "") and not _more_than_terms(f.get("label") or "")
                  and not claims(f.get("label") or "")
                  and (f.get("required") or _TERMS_ONLY.search(f.get("label") or "")))]
+
+
+def _consent_boxes(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """An email-first site's agreement step's boxes that agree to its terms or privacy policy (_email_account_step's
+    "consent"), still unticked: never one whose words take in more (_more_than_terms: a newsletter's, job alerts', a
+    legal waiver's). Those choices are the person's."""
+    return [f for f in data.get("fields") or [] if f.get("kind") == "checkbox" and not f.get("disabled")
+            and is_empty_value(f.get("value")) and _TERMS_BOX.search(f.get("label") or "")
+            and _TERMS_ONLY.search(f.get("label") or "") and not _more_than_terms(f.get("label") or "")]
 
 
 def _profile_over_18() -> bool:
@@ -6892,8 +6892,9 @@ def _new_candidate_boxes(data: dict[str, Any], company: str) -> list[dict[str, A
 def _other_positions_consent(field: dict[str, Any]) -> Any:
     """The value that gives an account form's consent to be considered for other open positions
     (_OTHER_POSITIONS): True for its box, or a group's one choice. None for anything else: a group
-    with a choice between yes and no (a question for the person), or words that also sign them up
-    for something (_NEVER_AGREED: a newsletter, job alerts, a talent pool, keeping their data)."""
+    with a choice between yes and no (a question for the person), or words that also take in anything else never agreed
+    to for them (_never_for_them, every kind: a newsletter, job alerts, a talent pool, keeping their data). Its own
+    words, other roles, are the owner's call (Oct 10): that kind alone is read without them."""
     kind = field.get("kind")
     options = [o for o in field.get("options") or [] if isinstance(o, str)]
     value: Any
@@ -6905,7 +6906,8 @@ def _other_positions_consent(field: dict[str, Any]) -> Any:
         said, value = f"{field.get('label') or ''} {options[0]}", [options[0]]
     else:
         return None
-    if not _OTHER_POSITIONS.search(said) or _NEVER_AGREED.search(_OTHER_POSITIONS.sub(" ", said)):
+    if not _OTHER_POSITIONS.search(said) or _never_for_them(said, but={"other roles"}) \
+            or _never_for_them(_OTHER_POSITIONS.sub(" ", said), only={"other roles"}):
         return None
     return value
 

@@ -20,6 +20,7 @@ from typing import Any, Callable
 
 from . import config
 from .config import Profile, expand, question_core
+from .never import IN_PASSING, _never_for_them
 
 US_STATES = {
     "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas", "CA": "California",
@@ -1664,9 +1665,9 @@ def _bare_question(text: str) -> str:
 # A question that means something only with the text around it, and the notices whose remembered Yes never goes to
 # another employer's by their question alone (issue #112, note 29's review)
 _POINTS_AWAY = re.compile(r"\b(?:above|below|following|these|those|this|that|it|them|such|said)\b", re.I)
-_NOTICE_OF_CONSENT = re.compile(r"talent (?:community|network|pool)|job alerts?|newsletter|subscribe|marketing|mailing "
-                                r"list|text messages?|\bsms\b|promotion|arbitration|terms|privacy|consent|agree|"
-                                r"authori[sz]|acknowledg|certif|attest|signature", re.I)
+# (a notice of consent, terms or an attestation by these words; and one of anything never agreed to for the person,
+# never.py's list, a notice's words in passing aside)
+_NOTICE_OF_CONSENT = re.compile(r"terms|privacy|consent|agree|authori[sz]|acknowledg|certif|attest|signature", re.I)
 
 
 def _answer_bank(prof: Profile, label: str, job: dict | None = None, common: bool = False) -> Answer | None:
@@ -1693,8 +1694,9 @@ def _answer_bank(prof: Profile, label: str, job: dict | None = None, common: boo
                 # never a question that only means something with the notice around it ("Do you agree to the
                 # terms described above?"), nor a Yes to a notice of consent, terms or sign-ups: another
                 # employer's may be an arbitration agreement or a talent community's. A No to one is kept
-                if _POINTS_AWAY.search(asked) or (_NOTICE_OF_CONSENT.search(f"{label} {item['question']}")
-                                                  and not _NO.match(str(item.get("answer")).strip())):
+                said = f"{label} {item['question']}"
+                consents = _NOTICE_OF_CONSENT.search(said) or _never_for_them(said, but=IN_PASSING)
+                if _POINTS_AWAY.search(asked) or (consents and not _NO.match(str(item.get("answer")).strip())):
                     continue
             source = norm(str(item.get("from") or ""))
             if source and source != company and (_EMPLOYER_SPECIFIC.search(asked) or source in norm(label)
