@@ -15,8 +15,7 @@ name: live-nightly
 #     codes, and never submits. It runs only once the repository has the test identity's three
 #     secrets (scripts/TEST_IDENTITY.md); until then it says "not set up" and stays green.
 # The issue titled "Nightly live check" (label live-check) holds the last results in its body.
-# It gets a comment only when an employer's result changes, its review page's form changes or it takes twice
-# its usual time (scripts/live_compare.py's "changes" output counts them all); on a quiet night only its body's
+# It gets a comment only when an employer's result changes; on a quiet night only its body's
 # "Last checked" line and tables are rewritten, which notifies no one. A run whose check
 # didn't finish fails (employers it didn't reach keep their last result). And a second comment, "Needs a person",
 # only when something does (scripts/nightly_summary.py --digest: an employer went backwards, a check didn't finish,

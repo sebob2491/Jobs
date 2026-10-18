@@ -697,6 +697,51 @@ def test_the_trend_body_fits_githubs_size_with_sixty_runs_of_four_checks():
         lc.render_trend(trend, limit=20_000)  # (the letters alone are more)
 
 
+@pytest.mark.parametrize("sizes", [
+    {"pipeline": 39, "hr": 68, "finance": 68, "accounts": 144, "search": 144},  # (both lists and Las Vegas, finance back)
+    {c: 150 for c in ("pipeline", "hr", "finance", "accounts", "search")}])
+def test_the_trend_body_with_five_checks_and_more_employers_sheds_runs_to_fit(sizes):
+    """The review of c4edd30: finance may run again, and the Las Vegas list would bring 144 employers to the accounts
+    and search checks. Every employer flipping, with long names and its seconds: the body stays within GitHub's
+    65,536 characters, letting its oldest runs go where it must, and what it keeps reads back whole."""
+    apply = ["ready", "needs_you sign_in", "needs_you stuck", "needs_you bot_check", "needs_you your_submit",
+             "needs_you questions", "no postings", "crash"]
+    trend = None
+    for run in range(lc.TREND_RUNS):
+        current = {c: {f"Employer With A Long Name {i:03d} Inc": Result(
+            ["works", "no search", "error", "empty"][(run + i) % 4] if c == "search" else apply[(run + i + k) % 8])
+            for i in range(n)} for k, (c, n) in enumerate(sizes.items())}
+        seconds = {c: {name: 100.0 + 7 * i + run for i, name in enumerate(found)} for c, found in current.items()}
+        trend = lc.add_run(trend, current, at=f"2026-{8 + run // 28:02d}-{run % 28 + 1:02d} 10:17 UTC", seconds=seconds,
+                           run_url=f"https://github.com/sebob2491/Jobs/actions/runs/{39068637558 + run}")
+    body = lc.render_trend(trend)
+    kept = lc.read_trend(body)
+    assert len(body) <= lc.BODY_LIMIT and len(kept.runs) >= 1, (len(body), len(kept.runs))
+    assert kept.runs == trend.runs[-len(kept.runs):] and kept.letters == trend.letters and kept.seconds == trend.seconds
+
+
+def test_the_issue_body_with_every_employers_review_page_form_fits_githubs_size():
+    """The state's version 3 saves each review page's form ("<boxes>:<sha>:<post>"): with both lists and Las Vegas,
+    finance back, every apply check's employers at their review page with long names and long details, the body
+    still fits (its details shortened or left out) and reads back whole."""
+    sizes = {"pipeline": 39, "hr": 68, "finance": 68, "accounts": 144, "search": 144}
+    state = {c: {f"Employer With A Long Name {i:03d} Inc": "works" if c == "search" else "ready" for i in range(n)}
+             for c, n in sizes.items()}
+    current = {c: {name: Result(o, "A Long Posting Title For A Field Service Engineer · " + "said " * 20)
+                   for name, o in found.items()} for c, found in state.items()}
+    forms = {c: {name: {"n": 120, "sha": "01234567", "post": "89abcd"} for name in found}
+             for c, found in state.items() if c != "search"}
+    reached = {c: {name: "2026-10-18" for name in found} for c, found in forms.items()}
+    body = lc.render_body(state, current, checked_at="2026-10-18 10:47 UTC", run_url="https://example.com/run/120",
+                          forms=forms, reached=reached)
+    assert len(body) <= lc.BODY_LIMIT and lc.read_state(body) == state and lc.read_forms(body) == forms
+    assert lc.read_reached(body) == reached
+    # past that, the forms are left out (a night's form alarm lost), never the outcomes the next run compares with
+    smaller = lc.render_body(state, current, checked_at="2026-10-18 10:47 UTC", forms=forms, reached=reached,
+                             limit=len(body) - 100)
+    assert lc.read_state(smaller) == state and lc.read_forms(smaller) == {}
+
+
 def test_the_issue_comes_out_the_same_with_the_trend_issue(tmp_path, clock):
     """The trend issue is written beside the issue, never into it: its body and comment are the same, byte for byte."""
     night1 = [pipeline_rec("ASM"), pipeline_rec("KLA", "needs_you", "sign_in")]
@@ -746,51 +791,87 @@ def test_the_workflow_keeps_the_trend_issue_apart_from_the_issue():
 REVIEW = [{"id": "a", "kind": "text", "label": "Legal Name", "value": "Testy McTestface"},
           {"id": "b", "kind": "text", "label": "Phone Number", "value": "480-555-0199"},
           {"id": "c", "kind": "select", "label": "Degree", "value": "Bachelor's"}]
+POSTING = {"title": "Field Service Engineer", "location": "Chandler, AZ", "url": "https://example.com/1"}
 
 
 def test_a_review_page_whose_form_changed_is_said_and_never_counted_as_went_backwards(tmp_path, clock):
     """An employer still at its review page whose form there asks something new (form_shape: its boxes' labels and
-    kinds, never their values) is a "Form changed" line in the comment, and the workflow comments for it alone; it
-    isn't a step back. The forms are saved in the state's version 3; a version 2 body still reads (no forms yet)."""
+    kinds, never their values), on the same posting, is a "Form changed" line in the issue's body; in a comment only
+    beside a change of result (a quiet night writes none), and never as a step back. Another posting's form is
+    another form. The forms are saved in the state's version 3; a version 2 body still reads (no forms yet)."""
     asm = lc.form_shape(REVIEW)
     assert asm == lc.form_shape([{**f, "value": "other"} for f in reversed(REVIEW)])  # (its values and order: the same)
     more = lc.form_shape(REVIEW + [{"id": "d", "kind": "radio_group", "label": "Are you 18 or older?"},
                                    {"id": "e", "kind": "text", "label": "Desired Pay"}])
     night1 = [pipeline_rec("ASM", form=asm), pipeline_rec("KLA", "needs_you", "stuck", form=asm)]
     body, comment, _ = _run(tmp_path, [], night1, [search_rec("USAA")])
-    assert comment is None and lc.read_forms(body) == {"pipeline": {"ASM": asm}}  # (at the review page alone)
+    post = lc.run_forms("pipeline", log("LIVE_PIPELINE ", night1))["ASM"]["post"]
+    assert comment is None and lc.read_forms(body) == {"pipeline": {"ASM": {**asm, "post": post}}}  # (ready alone)
     assert lc._saved(body)["version"] == 3
     issue = {"number": 7, "title": "Nightly live check", "state": "OPEN", "body": body}
     night2 = [pipeline_rec("ASM", form=more), pipeline_rec("KLA", "needs_you", "stuck", form=more)]
     body, comment, outputs = _run(tmp_path, [issue], night2, [search_rec("USAA")])
-    assert outputs["changes"] == "1" and outputs["went_back"] == "0"
-    assert "- Form changed at ASM (pipeline, still `ready`): 3 → 5 boxes, +2" in comment
-    assert comment.startswith("No result changed since the last nightly live check") and "Went backwards" not in comment
-    assert lc.read_forms(body) == {"pipeline": {"ASM": more}}
+    assert comment is None and outputs["changes"] == "0" and outputs["went_back"] == "0"  # (a quiet night's)
+    assert "**Form changed (still at the review page, the same posting: never a step back):** ASM (pipeline, still " \
+           "`ready`): 3 → 5 boxes, +2." in body
+    assert lc.read_forms(body) == {"pipeline": {"ASM": {**more, "post": post}}}
+    # beside a change of result, in the comment too
+    night2b = [pipeline_rec("ASM", form=more), pipeline_rec("KLA", form=more)]
+    _, comment, outputs = _run(tmp_path, [issue], night2b, [search_rec("USAA")])
+    assert outputs["changes"] == "1" and "- Form changed at ASM (pipeline, still `ready`): 3 → 5 boxes, +2" in comment
     issue["body"] = body
-    _, comment, outputs = _run(tmp_path, [issue], night2, [search_rec("USAA")])  # (the same form: nothing to say)
-    assert comment is None and outputs["changes"] == "0"
+    body, _, _ = _run(tmp_path, [issue], night2, [search_rec("USAA")])  # (the same form: nothing to say)
+    assert "Form changed" not in body
+    issue["body"] = body
+    other = [pipeline_rec("ASM", form=asm, posting={**POSTING, "url": "https://example.com/2"}),
+             pipeline_rec("KLA", "needs_you", "stuck")]
+    body, _, _ = _run(tmp_path, [issue], other, [search_rec("USAA")])  # (another posting's form: another form)
+    assert "Form changed" not in body
     v2 = json.dumps({"version": 2, "outcomes": {"pipeline": {"ready": ["ASM"]}}})
     assert lc.read_forms(f"{lc.STATE_MARK}\n```json\n{v2}\n```\n") == {}
 
 
-def test_an_employer_twice_as_slow_as_usual_is_said(tmp_path, clock):
-    """The trend keeps each apply check's employers' last ten runs' seconds; one that took twice its usual (their
-    median) and 60 s or more is a "Slower" line in the comment. A fast employer twice as slow (under 60 s) isn't."""
+def test_an_employer_twice_as_slow_as_usual_this_run_and_the_last_is_said(tmp_path, clock):
+    """The trend keeps each apply check's employers' last ten runs' seconds; one that took twice its usual (the median
+    of its runs before) and 60 s or more, this run and the last, is a "Slower" line in the body (in a comment only
+    beside a change of result). Not one slow night alone, nor a fast employer twice as slow (under 60 s), nor one
+    whose result changed or that waited on an emailed code."""
     trend = None
-    for day in range(3):
-        trend = lc.add_run(trend, {"pipeline": {"ASM": Result("ready"), "KLA": Result("ready")}}, at=f"run {day}",
-                           seconds={"pipeline": {"ASM": 40.0 + day, "KLA": 20.0}})
-    assert trend.seconds == {"pipeline": {"ASM": [40, 41, 42], "KLA": [20, 20, 20]}}
+    for day in range(4):
+        trend = lc.add_run(trend, {"pipeline": {n: Result("ready") for n in ("ASM", "KLA", "Mail Co", "Once Co")}},
+                           at=f"run {day}", seconds={"pipeline": {"ASM": 95.0 if day == 3 else 40.0 + day, "KLA": 20.0,
+                                                                  "Mail Co": 95.0 if day == 3 else 40.0,
+                                                                  "Once Co": 40.0}})
+    assert trend.seconds["pipeline"]["ASM"] == [40, 41, 42, 95] and trend.seconds["pipeline"]["KLA"] == [20] * 4
     assert lc.read_trend(lc.render_trend(trend)).seconds == trend.seconds  # (saved and read back)
     trend_issue = {"number": 70, "title": TREND, "state": "OPEN", "body": lc.render_trend(trend)}
-    body, _, _ = _run(tmp_path, [], [pipeline_rec("ASM"), pipeline_rec("KLA")])
+    first = [pipeline_rec(n) for n in ("ASM", "KLA", "Mail Co", "Once Co", "Other Co")]
+    body, _, _ = _run(tmp_path, [], first)
     issue = {"number": 7, "title": "Nightly live check", "state": "OPEN", "body": body}
-    night = [pipeline_rec("ASM", seconds=95.0), pipeline_rec("KLA", seconds=50.0)]
-    new_trend, _, comment, outputs = _trend_run(tmp_path, [trend_issue], night, [search_rec("USAA")], issues=[issue])
-    assert outputs["changes"] == "1"
-    assert "- Slower at ASM (pipeline): 95 s, its usual 41 s" in comment and "KLA" not in comment
-    assert lc.read_trend(new_trend).seconds["pipeline"] == {"ASM": [40, 41, 42, 95], "KLA": [20, 20, 20, 50]}
+    mail = pipeline_rec("Mail Co", seconds=95.0)
+    mail["rounds"].insert(0, {"status": "needs_you", "need": "email_code", "reason": "", "log": [], "questions": []})
+    night = [pipeline_rec("ASM", seconds=95.0), pipeline_rec("KLA", seconds=50.0), mail,
+             pipeline_rec("Once Co", seconds=95.0), pipeline_rec("Other Co", "needs_you", "stuck", seconds=500.0)]
+    new_trend, body, comment, outputs = _trend_run(tmp_path, [trend_issue], night, issues=[issue])
+    assert outputs["changes"] == "1"  # (Other Co's)
+    assert "- Slower at ASM (pipeline): 95 s, its usual 41 s" in comment
+    assert "**Slower (2× an employer's usual time or more, and 60 s or more, this run and the last):** ASM (pipeline): " \
+           "95 s, its usual 41 s." in body
+    assert not any(n in comment.split("**Slower")[1] for n in ("KLA", "Mail Co", "Once Co", "Other Co")), comment
+    assert lc.read_trend(new_trend).seconds["pipeline"]["ASM"] == [40, 41, 42, 95, 95]
+
+
+def test_the_seconds_saved_read_back_to_their_own_employers_whatever_the_names_order():
+    """The review of c4edd30: the seconds were saved in the letters' order (by name without case) and read back in
+    the saved block's (as Python sorts: capitals first), so after one round trip most employers had another's."""
+    names = ["ASML", "Amkor", "eBay", "ASM (ASM America)", "Applied Materials", "intel", "KLA", "onsemi"]
+    trend = None
+    for run in range(3):
+        trend = lc.add_run(trend, {"accounts": {n: Result("ready") for n in names}}, at=f"run {run}",
+                           seconds={"accounts": {n: float(10 + i) for i, n in enumerate(names)}})
+    assert lc.read_trend(lc.render_trend(trend)).seconds == trend.seconds == {
+        "accounts": {n: [10 + i] * 3 for i, n in enumerate(names)}}
+    assert lc.Trend([], {}).seconds is None and lc._seconds(lc.Trend([], {})) == {}
 
 
 def test_bot_checks_up_at_many_employers_open_the_comment(tmp_path, clock):

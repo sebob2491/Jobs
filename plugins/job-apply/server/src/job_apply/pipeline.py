@@ -130,6 +130,9 @@ NOTICE_WAIT = 5  # seconds for a notice agreed to for the person to go (one may 
 # many agreements a job at most (the newest)
 AGREED_WORDS = 4000
 AGREED_KEPT = 20
+AGREED_WINDOW = 300  # and past those characters, this many either side of a waiver's or a sign-up's words
+AGREED_WINDOWS = 10
+_ANYWHERE_WORDS = re.compile("|".join(f"(?:{NEVER[kind].pattern})" for kind in sorted(ANYWHERE)), re.I | re.S)
 # A job that went in keeps its tab (its confirmation, for the person to see) while it's among the newest
 # this many: one tab per job adds up over a long queue
 DONE_TABS_KEPT = 3
@@ -1032,9 +1035,10 @@ class Run:
     went_in: WentIn = field(default_factory=WentIn)
     # What was agreed to for the person (a notice, a terms gate, an attestation: settings.accept_notices; an account's
     # terms boxes: settings.manage_accounts), each in the words its rules read: {"what", "heading", "button", "words"
-    # (their first AGREED_WORDS characters), "sha" (sha1 of them all)} (keep_agreed). For the live check's audit, which reads
+    # (their first AGREED_WORDS characters), "choices", "windows", "sha" (sha1 of them all)} (keep_agreed). For the live
+    # check's audit, which reads
     # them again (scripts/live_audit.py); never in public(): Claude and the desk's page have the log's line
-    agreed: list[dict[str, str]] = field(default_factory=list)
+    agreed: list[dict[str, Any]] = field(default_factory=list)
     # Filled at once with other jobs (settings.jobs_at_once): in a step that may email the person now (a sign-in, an
     # account, a password reset, an emailed code), which one job under way at a time is; the site its tab is on (a
     # job system's host, or an employer's own domain) and since when; and its place in the order the jobs began
@@ -1079,12 +1083,23 @@ class Run:
                 "went_in": None if self.status in ("queued", "running") else self.went_in.public(),
                 "code": self.code if self.status == "needs_you" else ""}  # (a stop's alone: never one gone by)
 
-    def keep_agreed(self, what: str, heading: str, button: str, words: str) -> None:
-        """What was just agreed to for the person, in the words its rules read (Run.agreed): kept, never shown. `what`:
-        "notice", "terms gate" (its words the whole page's), "attestation" or "account box"."""
+    def keep_agreed(self, what: str, heading: str, button: str, words: str, choices: list[str] | None = None) -> None:
+        """What was just agreed to for the person, in the words its rules read (Run.agreed): kept, never shown.
+        `what`: "notice" (heading: its heading; words: its text), "terms gate" (heading: the page's first heading;
+        words: the whole page's), "attestation" (heading: its label; choices: what was picked from a list or a group,
+        none for a box ticked) or "account box" (heading: its label; choices: its options; words: the words above it
+        that it agrees to, where they were read). Each kept apart, as the desk read each. Past the first AGREED_WORDS
+        characters of the words, only the AGREED_WINDOW characters either side of each of never.ANYWHERE's words
+        (a waiver, arbitration, a sign-up in so many words) are kept ("windows"), at most AGREED_WINDOWS."""
         words = str(words or "")
+        windows = []
+        for m in _ANYWHERE_WORDS.finditer(words, AGREED_WORDS):
+            windows.append(words[max(0, m.start() - AGREED_WINDOW):m.end() + AGREED_WINDOW])
+            if len(windows) == AGREED_WINDOWS:
+                break
         self.agreed.append({"what": what, "heading": str(heading or ""), "button": str(button or ""),
-                            "words": words[:AGREED_WORDS],
+                            "words": words[:AGREED_WORDS], "choices": [str(c) for c in choices or []],
+                            "windows": windows,
                             "sha": hashlib.sha1(words.encode("utf-8", "surrogatepass")).hexdigest()})
         del self.agreed[:-AGREED_KEPT]
 
@@ -5603,12 +5618,14 @@ class Applier:
 
     @classmethod
     def _keep_ticked(cls, run: Run, boxes: list[dict[str, Any]], button: str) -> None:
-        """An account form's boxes ticked for the person (its terms, a consent it requires), each kept in its own words
-        and its choice's, with the words above it that it agrees to where those were read (_said_terms): Run.agreed."""
+        """An account form's boxes ticked for the person (its terms, a consent it requires), each kept in its own words,
+        the choice given (_tick's, for a choice and not a tick), and the words above it that it agrees to where those
+        were read (_said_terms), each apart: Run.agreed."""
         for f in boxes:
-            words = [clean_label(f.get("label") or ""), *(o for o in f.get("options") or [] if isinstance(o, str)),
-                     str(f.get("words_above") or "")]
-            run.keep_agreed("account box", cls._choice_said(f), button, "\n".join(w for w in words if w))
+            value = _tick(f)
+            choices = [str(v) for v in value] if isinstance(value, list) else [value] if isinstance(value, str) else []
+            run.keep_agreed("account box", clean_label(f.get("label") or ""), button, str(f.get("words_above") or ""),
+                            choices)
 
     async def _give_other_positions(self, run: Run, data: dict[str, Any], fields: list[dict[str, Any]],
                                     refused: bool = False) -> bool:
@@ -6179,10 +6196,10 @@ class Applier:
                     else f"picked “{attest[q['id']]}” for"
                 self._log(run, f"{what} “{_short(q.get('label') or '')}” for you (settings.accept_notices)")
                 run.went_in.agree(f"{what} “{_short(q.get('label') or '')}”")
-                value = attest[q["id"]]  # (a choice's words are what it agrees to, besides the label's)
-                picked = "ticked" if value is True else "; ".join(map(str, value)) if isinstance(value, list) else str(value)
-                run.keep_agreed("attestation", q.get("label") or "", picked,
-                                f"{q.get('label') or ''}\n{picked}" if picked != "ticked" else q.get("label") or "")
+                value = attest[q["id"]]  # (a choice's words are what it agrees to, apart from its list's label)
+                picked = [] if value is True else [str(v) for v in value] if isinstance(value, list) else [str(value)]
+                run.keep_agreed("attestation", q.get("label") or "", "; ".join(picked) or "ticked", q.get("label") or "",
+                                picked)
         return [q for q in pending if q["id"] not in done]
 
     async def _said_above(self, pending: list[dict[str, Any]]) -> list[dict[str, Any]]:

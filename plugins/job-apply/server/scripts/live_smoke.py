@@ -2111,8 +2111,9 @@ async def finish_account_choices(run: Any) -> str:
 
 def agreed_words(agreed: list[dict[str, Any]], seen: set[tuple[str, str, str]] | None = None) -> list[dict[str, Any]]:
     """What the desk agreed to for the applicant (pipeline.Run.agreed: each notice, terms gate, attestation and account
-    box, in the words its rules read), for the live audit to read again (live_audit.py's agreements): scrubbed as a
-    page the run stopped on is (job_apply.fixtures: the profile's details taken out), and masked as all the run writes
+    box, in the words its rules read: their first 4,000 characters, and past them the windows around a waiver's or a
+    sign-up's words), for the live audit to read again (live_audit.py's agreements): every text scrubbed as a page
+    the run stopped on is (job_apply.fixtures: the profile's details taken out), and masked as all the run writes
     (the test identity's email and passwords). With `seen`, only those not in it, which it then holds."""
     secrets = personal_strings(Profile.load())
 
@@ -2127,7 +2128,8 @@ def agreed_words(agreed: list[dict[str, Any]], seen: set[tuple[str, str, str]] |
                 continue
             seen.add(key)
         out.append({"what": str(a.get("what") or ""), "heading": scrub(a.get("heading")), "button": scrub(a.get("button")),
-                    "words": scrub(a.get("words")), "sha": key[0]})
+                    "words": scrub(a.get("words")), "choices": [scrub(c) for c in a.get("choices") or []],
+                    "windows": [scrub(w) for w in a.get("windows") or []], "sha": key[0]})
     return out
 
 
@@ -2246,6 +2248,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
         if TEST_IDENTITY and run is not None and (rec.get("rounds") or [{}])[-1].get("need") == "email_code":
             await report_inbox(company["name"], applier, run)
         await applier.stop()
+        if run is not None:  # what it agreed to after its last round was recorded (a code read, a time limit's end)
+            rec["agreed_after"] = agreed_words(run.agreed, agreed)
         if (rec.get("rounds") or [{}])[-1].get("need") == "sign_in":
             rec["account_form"] = await account_form()
         if run is not None and any(_NO_MATCH.search(q.get("error") or "") for q in run.questions):
@@ -2261,16 +2265,22 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
             with contextlib.suppress(OSError, ValueError, AttributeError):
                 rec["form"] = live_compare.form_shape(
                     json.loads((dest / "snapshot.json").read_text(encoding="utf-8")).get("fields") or [])
-            if run is not None and run.agreed:  # (all the job's agreements, beside the page it stopped on)
-                _save(dest / "agreed.json", json.dumps(agreed_words(run.agreed), indent=1, ensure_ascii=False))
             if _mask is not _no_mask:  # (password boxes are saved empty; the test inbox's address is masked too)
                 live_identity.mask_files(dest, _mask)
             if INBOX_IN_PROFILE:
                 live_identity.drop_images(dest)
+            if run is not None and run.agreed:  # (all the job's agreements, beside the page: after the masking above,
+                try:                            # and never in its way; written scrubbed and masked itself)
+                    _save(dest / "agreed.json", json.dumps(agreed_words(run.agreed), indent=1, ensure_ascii=False))
+                except Exception as e:
+                    rec["agreed_error"] = f"{type(e).__name__}: {str(e)[:200]}"
             if fixtures and stopped_short(rec):
                 # the page it stopped on, whatever the stop, as a test fixture (the fake applicant's details only),
                 # and what the desk decides on it (decide_fixture, below)
-                rec["fixture"] = make_fixture(dest, f"pipeline-{slug(company['name'])}", out)
+                try:
+                    rec["fixture"] = make_fixture(dest, f"pipeline-{slug(company['name'])}", out)
+                except Exception as e:  # (the page is saved all the same: not a snapshot's failure)
+                    rec["fixture_error"] = f"{type(e).__name__}: {str(e)[:200]}"
         except Exception as e:  # the record matters more than the snapshot
             rec["snapshot_error"] = f"{type(e).__name__}: {str(e)[:200]}"
         if run is not None and (rec.get("rounds") or [{}])[-1].get("status") != "ready":

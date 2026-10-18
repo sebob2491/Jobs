@@ -7,9 +7,11 @@ fails, one ::error:: line a finding, where the run broke a rule the product keep
   - consents: a log line saying the desk agreed to, ticked, pressed, chose or accepted something that names
     a newsletter, job alerts, a talent community, marketing, texts or automated calls, arbitration, at-will
     employment or a waiver, which are never the desk's to give;
-  - agreements: the words of each notice, terms gate, attestation or account box the desk agreed to (each round's
-    "agreed": pipeline.Run.agreed, scrubbed by live_smoke.py) read again for a legal waiver, an arbitration
-    agreement or a sign-up in so many words (never._never_for_them, AGREED_KINDS), wherever in them it sits;
+  - agreements: each notice, terms gate, attestation or account box the desk agreed to (each round's "agreed" and
+    the record's "agreed_after": pipeline.Run.agreed, scrubbed by live_smoke.py) read again for a legal waiver, an
+    arbitration agreement or a sign-up in so many words (never._never_for_them, AGREED_KINDS): its heading, its
+    choices, the first 4,000 characters of its words and, past them, the 300 characters either side of each such
+    word, each apart and with the kinds the desk read it for (_texts_read);
   - submitting: a round whose status is "submitted" (the live check never submits: JOB_APPLY_NEVER_SUBMIT);
   - secrets: the test identity's email and passwords (LIVE_TEST_EMAIL, LIVE_TEST_EMAIL_PASSWORD and
     LIVE_TEST_SITE_PASSWORD, read from the environment as the check's machine has them) in any file the
@@ -221,27 +223,46 @@ def record_findings(check: str, rec: dict[str, Any]) -> Iterator[str]:
 # opening), and read anywhere they'd fail every night's audit on a plain privacy notice. A terms gate's words are its
 # whole page's (pipeline._terms_gate reads them for a waiver): a careers site's "Join our Talent Community" in its
 # footer is no part of what the gate agrees to
+#
+# Each text of an agreement is read apart, never one run into the next (a sign-up's words are read up to 60 characters
+# on), and with the kinds the desk read it for: a list's or a group's own label (an attestation's, "... accept our
+# privacy notice, and tell us if you would like to receive marketing emails", whose privacy choice alone was picked)
+# for a waiver alone, as the choices picked are read for the rest
 AGREED_KINDS = ANYWHERE
 _GATE_KINDS = frozenset({"arbitration", "waiver"})
 _AGREED_SAYS = {"arbitration": "names arbitration", "waiver": "waives a right", "signs up": "signs the applicant up"}
 
 
 def agreements(rec: dict[str, Any]) -> list[dict[str, Any]]:
-    """What the desk agreed to for the applicant at one employer, in the words its rules read (each round's "agreed":
-    live_smoke.py's agreed_words of pipeline.Run.agreed)."""
-    return [a for rnd in rec.get("rounds") or [] if isinstance(rnd, dict)
+    """What the desk agreed to for the applicant at one employer, in the words its rules read (each round's "agreed",
+    and "agreed_after": what it agreed to after the last round was recorded; live_smoke.py's agreed_words of
+    pipeline.Run.agreed). Of each: its heading, button, choices, the first 4,000 characters of its words and, past
+    them, the 300 characters either side of each of a waiver's or a sign-up's words ("windows")."""
+    return [a for rnd in [*(rec.get("rounds") or []), {"agreed": rec.get("agreed_after")}] if isinstance(rnd, dict)
             for a in rnd.get("agreed") or [] if isinstance(a, dict)]
 
 
+def _texts_read(a: dict[str, Any]) -> list[tuple[str, frozenset[str]]]:
+    """An agreement's texts, each with the kinds it's read for (AGREED_KINDS, or a waiver alone)."""
+    what, heading, button = a.get("what"), str(a.get("heading") or ""), str(a.get("button") or "")
+    words = [str(a.get("words") or ""), *(str(w) for w in a.get("windows") or [])]
+    choices = [str(c) for c in a.get("choices") or []]
+    if what == "terms gate":  # (its words the whole page's: a footer's talent community is none of the gate's)
+        return [(t, _GATE_KINDS) for t in (heading, button, *words)]
+    if what == "attestation":  # (a list's or a group's label for a waiver; a box's own label, and each choice, whole)
+        return [(heading, _GATE_KINDS if choices else AGREED_KINDS), *((c, AGREED_KINDS) for c in choices)]
+    if what == "account box":  # (its label, the choice given and the words above it)
+        return [(t, AGREED_KINDS) for t in (heading, *choices, *words)]
+    return [(t, AGREED_KINDS) for t in (heading, button, *choices, *words)]  # (a notice)
+
+
 def agreement_findings(check: str, rec: dict[str, Any]) -> Iterator[str]:
-    """Each agreement whose words hold what's never agreed to for the person (AGREED_KINDS), one line each."""
+    """Each agreement whose texts hold what's never agreed to for the person (_texts_read), one line each."""
     name = str(rec.get("company") or "?")
     for a in agreements(rec):
-        heading, button = " ".join(str(a.get("heading") or "").split()), str(a.get("button") or "")
-        kinds = _GATE_KINDS if a.get("what") == "terms gate" else AGREED_KINDS
-        kind = _never_for_them("\n".join((heading, button, str(a.get("words") or ""))), only=kinds)
+        kind = next((k for text, kinds in _texts_read(a) if text and (k := _never_for_them(text, only=kinds))), None)
         if kind:
-            said = heading or button or "a notice"
+            said = " ".join(str(a.get("heading") or a.get("button") or "a notice").split())
             said = said if len(said) <= 80 else said[:79] + "…"
             yield f'{check}/{name}: agreed to "{said}" which {_AGREED_SAYS.get(kind, kind)}'
 
@@ -256,6 +277,19 @@ _STREET = str(_PERSONAL["address"]["line1"]).casefold()
 _ZIP = re.compile(re.escape(str(_PERSONAL["address"]["postal_code"])) + r"(?:-\d{4})?")
 _LINKEDIN = re.sub(r"^https?://(?:www\.)?", "", str(_PERSONAL["linkedin_url"])).casefold()
 _NOT_A_BOX = {"password", "file", "checkbox", "radio", "checkbox_group", "radio_group"}
+# A label that asks for the detail a box holds, though resolve_field gives it no rule ("Home Phone", "Contact Number",
+# "Sign-in Email", "City, State or Zip", "Applicant Name", "Sign", "Website", "Social Media Profile"): no finding; but
+# one whose words are about someone else, or an employee's number, is (a reference's name, "Employee ID Number")
+_NAMES_IT = {what: re.compile(words, re.I) for what, words in {
+    "phone": r"phone|mobile|\bcell|\btel\b|telephone|contact (?:number|no)",
+    "email": r"e-?mail|user ?(?:name|id)|log ?in|sign[- ]?in",
+    "zip code": r"\bzip|postal|post ?code|location|\bcity\b",
+    "street": r"address|street",
+    "LinkedIn address": r"linked ?in|website|\burl\b|social|profile|portfolio|\blinks?\b",
+    "full name": r"\bname\b|\bsign",
+}.items()}
+_SOMEONE_ELSES = re.compile(r"\breferen|emergency|manager|supervisor|\breferr|relative|spouse|contact person|recruiter|"
+                            r"employee", re.I)
 
 
 def personal_value(value: Any) -> str | None:
@@ -300,8 +334,11 @@ def box_findings(where: str, fields: list[Any], profile: Profile) -> Iterator[st
             answer = None
         if what == "email" and _user_name_box({"label": label}):
             continue  # (an account's user name: the desk puts the email in it, pipeline._sign_in)
-        if answer is None or personal_value(answer.value) != what:
-            yield f'{where}: box "{label[:80]}" holds the profile\'s {what}'
+        if answer is not None and personal_value(answer.value) == what:
+            continue
+        if _NAMES_IT[what].search(label) and not _SOMEONE_ELSES.search(label):
+            continue  # (a box whose label asks for that detail, as a site may: "Home Phone", "Sign-in Email")
+        yield f'{where}: box "{label[:80]}" holds the profile\'s {what}'
 
 
 def _saved_pages(folders: list[Path], name: str) -> dict[str, Path]:
@@ -329,20 +366,25 @@ def boxes_findings(check: str, records: dict[str, dict[str, Any]], folders: list
 
 def stop_pages(check: str, records: dict[str, dict[str, Any]], folders: list[Path]) -> tuple[int, int, list[str]]:
     """The employers the check stopped short of their review page (their last round not "ready"), how many of them had
-    the page they stopped on saved (pipeline/<employer>/page.html, with no snapshot_error), and a line for each that
-    hadn't: (saved, stops, lines)."""
+    the page they stopped on saved (pipeline/<employer>/page.html), and a line for each that hadn't, or whose saving
+    or fixture said an error all the same (live_smoke.py's snapshot_error, fixture_error): (saved, stops, lines)."""
     pages = _saved_pages(folders, "page.html")
     saved, stops, lines = 0, 0, []
     for name, rec in records.items():
-        rounds = rec.get("rounds") or []
-        if not rounds or (rounds[-1] or {}).get("status") == "ready":
+        rounds = [r for r in rec.get("rounds") or [] if isinstance(r, dict)]
+        if not rounds or rounds[-1].get("status") == "ready":
             continue
         stops += 1
-        if slug(name) in pages and not rec.get("snapshot_error"):
-            saved += 1
-        else:
-            lines.append(f"{check}/{name}: the page it stopped on wasn't saved"
-                         + (f" ({str(rec['snapshot_error'])[:120]})" if rec.get("snapshot_error") else ""))
+        error = str(rec.get("snapshot_error") or "")[:120]
+        if slug(name) not in pages:
+            lines.append(f"{check}/{name}: the page it stopped on wasn't saved" + (f" ({error})" if error else ""))
+            continue
+        saved += 1
+        if error:
+            lines.append(f"{check}/{name}: the page it stopped on was saved, but saving it failed after ({error})")
+        elif rec.get("fixture_error"):
+            lines.append(f"{check}/{name}: the page it stopped on was saved, but its fixture failed "
+                         f"({str(rec['fixture_error'])[:120]})")
     return saved, stops, lines
 
 

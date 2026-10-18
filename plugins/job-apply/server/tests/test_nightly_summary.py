@@ -516,6 +516,20 @@ def test_a_quiet_day_has_no_digest(tmp_path, capsys):
     assert ns.digest() == "" and ns.digest_from() == ""
 
 
+def test_a_form_changed_or_an_employer_slower_alone_makes_no_digest():
+    """The compare's two quiet-night alarms (T4) go in the issue's body, and in a comment only beside a change of
+    result: neither is the digest's to post, from the body or from a changes comment that carries them."""
+    state = {"pipeline": {"ASM": "ready", "KLA": "ready"}}
+    current = {"pipeline": {n: lc.Result("ready", "Field Service Engineer") for n in state["pipeline"]}}
+    reshaped = [lc.FormChange("pipeline", "ASM", "ready", 3, 5)]
+    slow = [lc.Slower("pipeline", "KLA", 95, 41)]
+    body = lc.render_body(state, current, checked_at="2026-10-18 10:47 UTC", reshaped=reshaped, slow=slow)
+    assert "**Form changed" in body and "**Slower" in body
+    comment = lc.render_comment([lc.Change("search", "USAA", "error", "works")], forms=reshaped, slow=slow)
+    assert "Form changed at ASM" in comment and "Slower at KLA" in comment
+    assert ns.digest_from(body=body, comment=comment) == ""
+
+
 def test_each_thing_that_needs_a_person_makes_a_digest(tmp_path, capsys):
     """Any one of them alone is a comment, headed "Needs a person" with the run's link."""
     went = QUIET + ("\n**Went backwards:** 1 employer no longer reaches the review page: KLA (accounts: "

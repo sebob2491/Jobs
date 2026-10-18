@@ -36,10 +36,11 @@ The outcomes:
 
 The comment also opens with "Bot checks up" when the employers stopped by a bot check or a CAPTCHA are
 5 or more and twice the last run's (one cause behind many changes), and ends with the employers still
-at their review page whose form there changed ("Form changed": a sha of its boxes' labels and kinds,
-live_smoke.py's "form"; never counted as went backwards) and those an apply check took twice their
-usual time or more, and 60 s or more ("Slower": the median of their last 10 runs, kept in the trend
-issue). Either alone writes a comment.
+at their review page whose form there changed on the same posting ("Form changed": a sha of its boxes'
+labels and kinds, live_smoke.py's "form"; never counted as went backwards) and those an apply check took
+twice their usual time or more, and 60 s or more, this run and the last ("Slower": against the median of
+their runs before, kept in the trend issue; never one whose result changed or that waited on an emailed
+code). Those two are in the body too, and alone they write no comment (a quiet night's).
 
 An employer missing from a check that finished has left the list ("removed"). One missing
 from a check that didn't finish (--partial) keeps its last outcome, and a check that reported
@@ -215,7 +216,7 @@ def run_seconds(check: str, text: str) -> dict[str, float]:
             if isinstance(rec.get("seconds"), (int, float)) and not isinstance(rec.get("seconds"), bool)}
 
 
-FORM_SHA = 12  # the hex digits of a form's sha kept: enough to tell two forms apart, on two hundred rows
+FORM_SHA = 8  # the hex digits of a form's sha kept: enough to tell one employer's two forms apart, on 400 rows
 
 
 def form_shape(fields: Any) -> dict[str, Any]:
@@ -227,14 +228,27 @@ def form_shape(fields: Any) -> dict[str, Any]:
     return {"n": len(pairs), "sha": hashlib.sha1(json.dumps(pairs).encode("utf-8")).hexdigest()[:FORM_SHA]}
 
 
+POST_SHA = 6  # the hex digits kept of the posting a form was on (its address, or its title)
+
+
 def run_forms(check: str, text: str) -> dict[str, dict[str, Any]]:
-    """Each employer's form (form_shape), where its record says."""
+    """Each employer's form (form_shape), where its record says, with the posting it was on ("post": a sha of its
+    address, or its title): a form is compared only with one on the same posting (another posting's form is another
+    form, and the search picks the newest posting each night)."""
     out = {}
     for name, rec in read_log(text, CHECKS[check].prefix).items():
-        form = rec.get("form")
-        if isinstance(form, dict) and isinstance(form.get("n"), int) and isinstance(form.get("sha"), str):
-            out[name] = {"n": form["n"], "sha": form["sha"][:FORM_SHA]}
+        form, posting = rec.get("form"), rec.get("posting")
+        post = str(posting.get("url") or posting.get("title") or "") if isinstance(posting, dict) else ""
+        if isinstance(form, dict) and isinstance(form.get("n"), int) and isinstance(form.get("sha"), str) and post:
+            out[name] = {"n": form["n"], "sha": form["sha"][:FORM_SHA],
+                         "post": hashlib.sha1(post.encode("utf-8")).hexdigest()[:POST_SHA]}
     return out
+
+
+def mail_waits(check: str, text: str) -> set[str]:
+    """The employers whose rounds waited on an emailed code or link (their time is the inbox's as much as theirs)."""
+    return {name for name, rec in read_log(text, CHECKS[check].prefix).items()
+            if any(isinstance(r, dict) and r.get("need") == "email_code" for r in rec.get("rounds") or [])}
 
 
 def compare(previous: dict[str, dict[str, str]] | None, current: dict[str, dict[str, Result]],
@@ -312,16 +326,24 @@ def read_reached(body: str | None) -> dict[str, dict[str, str]]:
 
 
 def read_forms(body: str | None) -> dict[str, dict[str, dict[str, Any]]]:
-    """The form each apply check's employers had at their review page, as saved ({check: {employer: {"n", "sha"}}});
-    none before version 3."""
-    forms = (_saved(body) or {}).get("forms")
+    """The form each apply check's employers had at their review page, as saved ({check: {employer: {"n", "sha",
+    "post"}}}): a string a check, "<boxes>:<sha>:<post>" an employer ("" for none) in the order of the check's saved
+    outcomes' names, sorted as Python sorts them; none before version 3, nor where the two don't line up (an edit's)."""
+    forms, state = (_saved(body) or {}).get("forms"), read_state(body) or {}
     out: dict[str, dict[str, dict[str, Any]]] = {}
-    for check, found in (forms.items() if isinstance(forms, dict) else ()):
-        for name, said in (found.items() if isinstance(found, dict) else ()):
-            n, _, sha = str(said).partition(":")
-            if n.isdigit() and sha:
-                out.setdefault(str(check), {})[str(name)] = {"n": int(n), "sha": sha}
+    for check, said in (forms.items() if isinstance(forms, dict) else ()):
+        names, each = sorted(state.get(str(check)) or {}), str(said).split(",")
+        if len(names) != len(each):
+            continue
+        for name, one in zip(names, each):
+            n, sha, post = (one.split(":") + ["", ""])[:3]
+            if n.isdigit() and sha and post:
+                out.setdefault(str(check), {})[name] = {"n": int(n), "sha": sha, "post": post}
     return out
+
+
+def _form_saved(form: dict[str, Any] | None) -> str:
+    return f"{form['n']}:{form['sha']}:{form['post']}" if form else ""
 
 
 def forms_to_save(previous: dict[str, dict[str, dict[str, Any]]], state: dict[str, dict[str, str]],
@@ -355,8 +377,8 @@ def form_changes(previous: dict[str, dict[str, str]] | None, saved: dict[str, di
                  current: dict[str, dict[str, Result]],
                  forms: dict[str, dict[str, dict[str, Any]]]) -> list[FormChange]:
     """The employers an apply check took to their review page in the last run and this one whose form there isn't the
-    same (form_shape's sha): something new asked, or something gone. Never a step back (went_back): the employer is
-    still as far as it goes."""
+    same (form_shape's sha) on the same posting: something new asked, or something gone. Never a step back (went_back):
+    the employer is still as far as it goes."""
     out = []
     for check in current:
         if check not in _APPLY_CHECKS:
@@ -365,14 +387,14 @@ def form_changes(previous: dict[str, dict[str, str]] | None, saved: dict[str, di
             outcome = current[check][name].outcome
             was, now = (saved.get(check) or {}).get(name), (forms.get(check) or {}).get(name)
             if (outcome in REACHED and ((previous or {}).get(check) or {}).get(name) in REACHED and was and now
-                    and was["sha"] != now["sha"]):
+                    and was.get("post") == now.get("post") and was["sha"] != now["sha"]):
                 out.append(FormChange(check, name, outcome, int(was["n"]), int(now["n"])))
     return out
 
 
-# An employer slower than its usual: this many times the median of its last runs (Trend.seconds), and this many seconds
-# or more, after this many runs of it at least (one slow night alone is no usual). nightly_summary.py's job systems
-# compare by the same factor
+# An employer slower than its usual: this many times the median of its runs before (Trend.seconds), and this many
+# seconds or more, this run and the last (one slow night is no news), after this many runs of it at least before those.
+# nightly_summary.py's job systems compare by the same factor
 SLOWER = 2.0
 SLOWER_FLOOR = 60
 SLOWER_RUNS = 3
@@ -386,20 +408,25 @@ class Slower(NamedTuple):
 
 
 def slower(trend: Trend | None, seconds: dict[str, dict[str, float]],
-           partial: set[str] | frozenset[str] = frozenset()) -> list[Slower]:
-    """The employers this run took SLOWER times their usual or more (the median of their last runs, the trend's), and
-    SLOWER_FLOOR seconds or more: a site, or the desk, gone slow before any result changes. Apply checks that
-    finished only."""
+           partial: set[str] | frozenset[str] = frozenset(), changes: list[Change] | None = None,
+           mail: dict[str, set[str]] | None = None) -> list[Slower]:
+    """The employers this run and the last both took SLOWER times their usual or more (the median of their runs before
+    those, the trend's), and SLOWER_FLOOR seconds or more: a site, or the desk, gone slow before any result changes.
+    Apply checks that finished only; never an employer whose result changed this run (a new step takes its time), nor
+    one whose rounds waited on an emailed code (`mail`: the inbox's time)."""
+    changed = {(c.check, c.employer) for c in changes or []}
     out = []
     for check in _ordered(seconds):
         if check not in _APPLY_CHECKS or check in partial:
             continue
         for name, took in sorted(seconds[check].items(), key=lambda kv: kv[0].lower()):
-            last = ((trend.seconds if trend else {}).get(check) or {}).get(name) or []
-            if len(last) < SLOWER_RUNS:
+            if (check, name) in changed or name in (mail or {}).get(check, set()):
                 continue
-            usual = statistics.median(last)
-            if took >= SLOWER_FLOOR and took >= SLOWER * usual:
+            last = (_seconds(trend).get(check) or {}).get(name) or []
+            if len(last) < SLOWER_RUNS + 1:
+                continue
+            usual, before = statistics.median(last[:-1]), last[-1]
+            if min(took, before) >= SLOWER_FLOOR and min(took, before) >= SLOWER * usual:
                 out.append(Slower(check, name, round(took), round(usual)))
     return out
 
@@ -478,13 +505,13 @@ def _grouped(outcomes: dict[str, str]) -> dict[str, list[str]]:
 
 def _body(state: dict[str, dict[str, str]], current: dict[str, dict[str, Result]], *, checked_at: str,
           run_url: str, partial: set[str] | frozenset[str], reached: dict[str, dict[str, str]],
-          forms: dict[str, dict[str, dict[str, Any]]], detail_chars: int) -> str:
+          forms: dict[str, dict[str, dict[str, Any]]], reshaped: list[FormChange], slow: list[Slower],
+          detail_chars: int) -> str:
     lines = [
         "<!-- Rewritten by .github/workflows/live-nightly.yml after every run: edits here are lost. -->",
         "A check of employers' career sites every night (scripts/live_smoke.py: a fake profile, submitting "
         "turned off; only the test identity's check makes accounts). A comment is added here only when an "
-        "employer's result changes, its review page asks something else, or it takes twice as long as usual; the "
-        "tables are the latest run's.",
+        "employer's result changes; the tables are the latest run's.",
         "",
         f"Last checked: {checked_at}" + (f" · [run]({run_url})" if run_url else ""),
     ]
@@ -494,6 +521,11 @@ def _body(state: dict[str, dict[str, str]], current: dict[str, dict[str, Result]
         lines += ["", f"**Still back:** {n} employer{'' if n == 1 else 's'} reached the review page in an earlier run "
                   "but not in the last: " + ", ".join(f"{name} ({check}; last there {date})" for check, name, date in back)
                   + "."]
+    # (here, and in a comment only beside a change of result: a quiet night's look, which notifies no one)
+    if reshaped:
+        lines += ["", f"**{FORM_CHANGED}:** " + "; ".join(_form_said(f) for f in reshaped) + "."]
+    if slow:
+        lines += ["", f"**{SLOWER_SAID}:** " + "; ".join(_slow_said(s) for s in slow) + "."]
     if detail_chars < DETAIL_CHARS:
         lines += ["", "(The details are " + ("shortened" if detail_chars else "left out")
                   + " to keep this page within GitHub's size for an issue.)"]
@@ -513,9 +545,11 @@ def _body(state: dict[str, dict[str, str]], current: dict[str, dict[str, Result]
                         "reached": {check: dict(sorted(dates.items(), key=lambda kv: kv[0].lower()))
                                     for check, dates in reached.items() if dates},
                         # (one short string an employer: the body's size is GitHub's, and two hundred rows share it)
-                        "forms": {check: {name: f"{form['n']}:{form['sha']}"
-                                          for name, form in sorted(found.items(), key=lambda kv: kv[0].lower())}
-                                  for check, found in forms.items() if found}},
+                        # (one string a check, its employers' forms in the order of its saved outcomes' names sorted
+                        # as Python sorts them, a comma between: no name written again, as the body is GitHub's size)
+                        "forms": {check: ",".join(_form_saved((forms.get(check) or {}).get(name))
+                                                  for name in sorted(state.get(check) or {}))
+                                  for check, found in forms.items() if found and check in state}},
                        separators=(",", ":"), sort_keys=True, ensure_ascii=False)
     lines += ["", "<details><summary>Saved outcomes (the next run compares with these)</summary>", "",
               STATE_MARK, "```json", saved, "```", "", "</details>", ""]
@@ -525,13 +559,16 @@ def _body(state: dict[str, dict[str, str]], current: dict[str, dict[str, Result]
 def render_body(state: dict[str, dict[str, str]], current: dict[str, dict[str, Result]], *, checked_at: str,
                 run_url: str = "", partial: set[str] | frozenset[str] = frozenset(),
                 reached: dict[str, dict[str, str]] | None = None,
-                forms: dict[str, dict[str, dict[str, Any]]] | None = None, limit: int = BODY_LIMIT) -> str:
-    """The issue's body: the tables, the still-back line and the saved state (the outcomes, the dates and the review
-    pages' forms: forms_to_save), within GitHub's size (the details shortened, then left out, when the tables outgrow
-    it; BodyTooLong when even that doesn't fit)."""
-    for detail_chars in (DETAIL_CHARS, DETAIL_CHARS // 2, 0):
+                forms: dict[str, dict[str, dict[str, Any]]] | None = None, reshaped: list[FormChange] | None = None,
+                slow: list[Slower] | None = None, limit: int = BODY_LIMIT) -> str:
+    """The issue's body: the tables, the still-back line, the review pages whose form changed and the employers slower
+    than usual (`reshaped`, `slow`), and the saved state (the outcomes, the dates and the review pages' forms:
+    forms_to_save), within GitHub's size (the details shortened, then left out, when the tables outgrow it;
+    BodyTooLong when even that doesn't fit)."""
+    # (and then the forms left out: the next run's form alarm is lost, never the outcomes it compares with)
+    for detail_chars, kept in ((DETAIL_CHARS, forms), (DETAIL_CHARS // 2, forms), (0, forms), (0, None)):
         body = _body(state, current, checked_at=checked_at, run_url=run_url, partial=partial, reached=reached or {},
-                     forms=forms or {}, detail_chars=detail_chars)
+                     forms=kept or {}, reshaped=reshaped or [], slow=slow or [], detail_chars=detail_chars)
         if len(body) <= limit:
             return body
     raise BodyTooLong(f"the issue's body would be {len(body):,} characters even with its details left out, over "
@@ -549,11 +586,26 @@ def _plus_minus(before: int, after: int) -> str:
     return f"+{after - before}" if after > before else f"−{before - after}" if after < before else "±0, other boxes"
 
 
+FORM_CHANGED = "Form changed (still at the review page, the same posting: never a step back)"
+SLOWER_SAID = (f"Slower ({SLOWER:g}× an employer's usual time or more, and {SLOWER_FLOOR} s or more, this run and "
+               "the last)")
+
+
+def _form_said(f: FormChange) -> str:
+    return f"{f.employer} ({f.check}, still {_code(f.outcome)}): {f.before} → {f.after} boxes, " \
+        f"{_plus_minus(f.before, f.after)}"
+
+
+def _slow_said(s: Slower) -> str:
+    return f"{s.employer} ({s.check}): {s.seconds} s, its usual {s.usual} s"
+
+
 def render_comment(changes: list[Change], run_url: str = "", *, forms: list[FormChange] | None = None,
                    slow: list[Slower] | None = None, bots: tuple[int, int] | None = None) -> str:
     """The changes since the last run, a check at a time, after the alarms: the bot checks up (bots_up), the employers
     that went backwards (went_back); and at the end the review pages whose form changed (form_changes, never a step
-    back) and the employers much slower than usual (slower). None of the alarms' lines reads as a change's line
+    back) and the employers much slower than usual (slower), which the body says too. A comment is written only for a
+    change of result (main): those two alone are a quiet night's. None of the alarms' lines reads as a change's line
     (nightly_summary.py's triage reads those)."""
     n = len(changes)
     lines = []
@@ -573,12 +625,9 @@ def render_comment(changes: list[Change], run_url: str = "", *, forms: list[Form
             after = _code(c.after) if c.after is not None else "*no longer checked*"
             lines.append(f"- {c.employer}: {before} → {after}" + (f" ({_code(c.detail)})" if c.detail else ""))
     if forms:
-        lines += ["", "**Form changed** (still at the review page: never a step back)", ""]
-        lines += [f"- Form changed at {f.employer} ({f.check}, still {_code(f.outcome)}): {f.before} → {f.after} "
-                  f"boxes, {_plus_minus(f.before, f.after)}" for f in forms]
+        lines += ["", f"**{FORM_CHANGED}**", ""] + [f"- Form changed at {_form_said(f)}" for f in forms]
     if slow:
-        lines += ["", f"**Slower** ({SLOWER:g}× an employer's usual time or more, and {SLOWER_FLOOR} s or more)", ""]
-        lines += [f"- Slower at {s.employer} ({s.check}): {s.seconds} s, its usual {s.usual} s" for s in slow]
+        lines += ["", f"**{SLOWER_SAID}**", ""] + [f"- Slower at {_slow_said(s)}" for s in slow]
     return "\n".join(lines) + "\n"
 
 
@@ -620,7 +669,12 @@ class Trend(NamedTuple):
     employers with letters."""
     runs: list[dict[str, Any]]
     letters: dict[str, dict[str, str]]
-    seconds: dict[str, dict[str, list[int]]] = {}
+    seconds: dict[str, dict[str, list[int]]] | None = None
+
+
+def _seconds(trend: Trend | None) -> dict[str, dict[str, list[int]]]:
+    """A history's seconds (Trend.seconds), none for no history or one made without them."""
+    return (trend.seconds if trend else None) or {}
 
 
 def _ordered(checks: Any) -> list[str]:
@@ -671,7 +725,7 @@ def add_run(trend: Trend | None, current: dict[str, dict[str, Result]], *, at: s
         if check not in _APPLY_CHECKS:
             continue
         now = ((seconds or {}).get(check) or {}) if check in counted else {}
-        was_took = (trend.seconds if trend else {}).get(check) or {}
+        was_took = _seconds(trend).get(check) or {}
         kept: dict[str, list[int]] = {}
         for name in strings:
             last = list(was_took.get(name) or []) + ([min(SECONDS_MOST, max(0, round(now[name])))] if name in now else [])
@@ -715,11 +769,13 @@ def _pack(trend: Trend) -> dict[str, Any]:
         if any(one and one.get("median_seconds") is not None for one in ones):
             entry["median_seconds"] = [one.get("median_seconds") if one else None for one in ones]
         counts[check] = entry
-    # each check's employers' seconds in its letters' order, without their names again: two base-36 digits a run, an
-    # employer's runs run together, a comma between employers ("1o1q,,2b": none for the second)
-    took = {check: ",".join("".join(_b36(s) for s in trend.seconds.get(check, {}).get(name) or [])
-                            for name in trend.letters[check])
-            for check in trend.letters if trend.seconds.get(check)}
+    # each check's employers' seconds in the order of its letters' names sorted as Python sorts them (as the saved
+    # block's keys are, and _unpack reads them: never the letters' own order, by name without case), without their
+    # names again: two base-36 digits a run, an employer's runs run together, a comma between employers ("1o1q,,2b":
+    # none for the second)
+    took = {check: ",".join("".join(_b36(s) for s in _seconds(trend).get(check, {}).get(name) or [])
+                            for name in sorted(trend.letters[check]))
+            for check in trend.letters if _seconds(trend).get(check)}
     return {"version": TREND_VERSION, "runs": [{"at": run["at"], "run_url": run.get("run_url") or ""} for run in runs],
             "counts": counts, "letters": trend.letters, **({"seconds": took} if took else {})}
 
@@ -760,7 +816,7 @@ def _unpack(data: dict[str, Any]) -> Trend:
                 letters.setdefault(str(check), {})[str(name)] = said
     kept_seconds: dict[str, dict[str, list[int]]] = {}
     for check, said in (data.get("seconds") or {}).items():
-        names, each = list((data.get("letters") or {}).get(check) or {}), str(said).split(",")
+        names, each = sorted(str(n) for n in (data.get("letters") or {}).get(check) or {}), str(said).split(",")
         if len(names) != len(each) or str(check) not in letters:  # (an edit's: the seconds let go, the rest kept)
             continue
         for name, runs_took in zip(names, each):
@@ -910,6 +966,7 @@ def main(argv: list[str] | None = None) -> int:
     current: dict[str, dict[str, Result]] = {}
     seconds: dict[str, dict[str, float]] = {}
     forms: dict[str, dict[str, dict[str, Any]]] = {}
+    mail: dict[str, set[str]] = {}
     for spec in args.log:
         check, sep, path = spec.partition("=")
         if not sep or check not in CHECKS:
@@ -923,6 +980,7 @@ def main(argv: list[str] | None = None) -> int:
         seconds[check] = run_seconds(check, text)
         if check in _APPLY_CHECKS:
             forms[check] = run_forms(check, text)
+            mail[check] = mail_waits(check, text)
         print(f"{check}: {len(current[check])} employers reported")
         if not current[check]:
             print(f"::warning::{check}: no employers reported; keeping the last run's results")
@@ -939,11 +997,12 @@ def main(argv: list[str] | None = None) -> int:
     reached = reached_dates(read_reached(issue.get("body")) if issue else None, state, current, now.strftime("%Y-%m-%d"))
     saved_forms = read_forms(issue.get("body")) if issue else {}
     reshaped = form_changes(previous, saved_forms, current, forms)
-    slow = slower(_last_trend(args.trend_issues, args.trend_title), seconds, partial)
+    slow = slower(_last_trend(args.trend_issues, args.trend_title), seconds, partial, changes, mail)
     bots = bots_up(previous, current)
     try:
         body = render_body(state, current, checked_at=now.strftime("%Y-%m-%d %H:%M UTC"), run_url=args.run_url,
-                           partial=partial, reached=reached, forms=forms_to_save(saved_forms, state, current, forms))
+                           partial=partial, reached=reached, forms=forms_to_save(saved_forms, state, current, forms),
+                           reshaped=reshaped, slow=slow)
     except BodyTooLong as e:  # before the comment: the next run compares with the same saved outcomes, and reports again
         print(f"::error::{e}")
         return 1
@@ -951,10 +1010,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"issue body: {len(body):,} of {BODY_LIMIT:,} characters")
     for check, name, date in still_back(state, reached):
         print(f"still back: {name} ({check}; last there {date})")
-    # (the comment's items: the changes, and the review pages whose form changed and the employers much slower, which
-    # come with no change of result; the workflow comments when there are any)
-    said = len(changes) + len(reshaped) + len(slow)
-    if said:
+    # (a comment only for a change of result: a review page's form changed and an employer slower are in the body,
+    # and in the comment beside a change, never one of their own)
+    if changes:
         args.comment_out.write_text(render_comment(changes, args.run_url, forms=reshaped, slow=slow, bots=bots),
                                     encoding="utf-8")
     elif args.comment_out.exists():
@@ -980,7 +1038,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.github_output:
         number, issue_state = (issue.get("number") or "", issue.get("state") or "") if issue else ("", "")
         with args.github_output.open("a", encoding="utf-8") as f:
-            f.write(f"issue={number}\nissue_state={issue_state}\nchanges={said}\nwent_back={len(back)}\n")
+            f.write(f"issue={number}\nissue_state={issue_state}\nchanges={len(changes)}\nwent_back={len(back)}\n")
             if args.trend_body_out:
                 f.write(f"trend_issue={(trend_issue or {}).get('number') or ''}\n")
     return 0
