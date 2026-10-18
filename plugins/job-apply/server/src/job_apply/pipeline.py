@@ -4236,8 +4236,8 @@ class Applier:
         way to its own Register (_register_from_posting); and on the second stall on a step (or the eighth in a row),
         or one the page says something is wrong on, what it says is put right where the desk can (the step reloaded,
         boxes typed, answered or filled again, a step still saving waited on, the boxes the errors name gone back to)
-        for the step to be pressed again, or the stop is said. AGAIN: the page looked at again (the lap's `continue`); STOP: the pass ends (its
-        `return`); ON: a first stall with nothing said wrong, and the lap goes on (to its end)."""
+        for the step to be pressed again, or the stop is said. AGAIN: the page looked at again (the lap's `continue`);
+        STOP: the pass ends (its `return`); ON: a first stall with nothing said wrong, and the lap goes on (to its end)."""
         srv = self.srv
         if await srv.browser.challenge_showing():  # the click brought up a CAPTCHA
             await self._bring_forward(run)
