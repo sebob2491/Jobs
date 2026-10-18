@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS not_interested (
     company TEXT DEFAULT '',
     title TEXT DEFAULT '',
     location TEXT DEFAULT '',
+    req_ids TEXT DEFAULT '',
     reason TEXT DEFAULT '',
     at TEXT NOT NULL
 );
@@ -963,27 +964,32 @@ class Tracker:
 
     @_locked
     def set_not_interested(self, url: str, company: str = "", title: str = "", reason: str = "",
-                           job_id: int | None = None, location: str = "") -> None:
+                           job_id: int | None = None, location: str = "", external_id: str = "",
+                           description: str = "") -> None:
         """The person said Not interested in the opening at this address (the desk's Not interested), for `reason` (one
         of NOT_INTERESTED_REASONS, or none), kept until undone. The mark is the job's when the opening is one (the job at
         the address, or `job_id`: the one the desk's row shows, saved from another site): on its number and each of its
-        addresses, and said in its history. With the opening's place, for a job saved since that's the same posting."""
+        addresses, and said in its history. With the opening's place and the requisition numbers it gives (its external
+        id, its title's, a job board's text: _req_ids, as a posting is matched), for a job saved since that is surely
+        the same posting (not_interested_marks)."""
         if reason and reason not in NOT_INTERESTED_REASONS:
             raise ValueError(f"reason should be one of {', '.join(NOT_INTERESTED_REASONS)}, or none")
-        now = _now()
+        now, url = _now(), normalize_url(url)
+        ids = ",".join(sorted(_req_ids(title, external_id, description, url, _board(url, ""))))
         job = self._the_job(job_id=job_id) if job_id is not None else self._the_job(url=url)
-        for address in dict.fromkeys([normalize_url(url), *(self._addresses(job) if job is not None else [])]):
-            self.conn.execute("INSERT OR REPLACE INTO not_interested (url, job_id, company, title, location, reason, at) "
-                              "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        for address in dict.fromkeys([url, *(self._addresses(job) if job is not None else [])]):
+            self.conn.execute("INSERT OR REPLACE INTO not_interested (url, job_id, company, title, location, req_ids, "
+                              "reason, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                               (address, job["id"] if job is not None else None, company or "", title or "",
-                               location or "", reason or "", now))
+                               location or "", ids, reason or "", now))
         if job is not None:
             self.conn.execute("INSERT INTO events (job_id, at, status, note) VALUES (?, ?, '', ?)",
                               (job["id"], now, "not interested" + (f" ({reason})" if reason else "")))
         self.conn.commit()
 
     @_locked
-    def undo_not_interested(self, url: str, job_id: int | None = None) -> bool:
+    def undo_not_interested(self, url: str, job_id: int | None = None,
+                            listed: Iterable[dict[str, Any]] = ()) -> bool:
         """The person's Undo on Not interested: the opening shows again, and its job (`job_id`: the one the desk's row
         is, saved from another site; or the job at the address), whichever of its addresses it was marked at, on its
         number, or as an opening the same posting marked before the job was saved. Whether anything was marked."""
@@ -992,7 +998,7 @@ class Tracker:
         if job is None:  # (an opening marked with the job its row showed, saved from another site: by its mark)
             row = self.conn.execute("SELECT job_id FROM not_interested WHERE url = ?", (url,)).fetchone()
             job = self._the_job(job_id=row["job_id"]) if row is not None and row["job_id"] is not None else None
-        same = self.not_interested_marks().matched if job is not None else {}
+        same = self.not_interested_marks(listed).matched if job is not None else {}
         addresses = [url, *(self._addresses(job) if job is not None else []),
                      *(u for u, j in same.items() if job is not None and j == job["id"])]
         marks = ", ".join("?" for _ in addresses)
@@ -1010,40 +1016,68 @@ class Tracker:
         """The addresses marked Not interested (normalized), each with its job's number (None for an opening not saved
         as one), company, title, reason ("" for none) and when (`at`). One job marked has a line for each of its
         addresses: not_interested_marks checks openings and jobs against them."""
-        rows = self.conn.execute("SELECT url, job_id, company, title, location, reason, at FROM not_interested "
+        rows = self.conn.execute("SELECT url, job_id, company, title, location, req_ids, reason, at FROM not_interested "
                                  "ORDER BY at")
         return {r["url"]: {"job_id": r["job_id"],
-                           **{k: r[k] or "" for k in ("company", "title", "location", "reason", "at")}}
+                           **{k: r[k] or "" for k in ("company", "title", "location", "req_ids", "reason", "at")}}
                 for r in rows}
 
     @_locked
-    def not_interested_marks(self) -> NotInterested:
-        """The person's Not interested marks, read once, to check many openings against (the desk's list): with each
-        opening marked before it was a job matched to the job saved since that is surely the same posting (an employer's
-        posting marked on the desk, and its Indeed copy Claude saved later): alike, with no requisition number telling
-        them apart, and the only one (_match, as the desk's one row per posting is matched), begun or not, saved when it
-        was (the rules for making two jobs one aren't a mark's). All of them in one look over the jobs."""
+    def not_interested_marks(self, listed: Iterable[dict[str, Any]] = ()) -> NotInterested:
+        """The person's Not interested marks, read once, to check many openings against (the desk's list). An opening
+        marked before it was a job (a loose mark) is linked to a job saved since only when that job is surely the same
+        posting (_sure_link: the same requisition number, or neither naming one and each the other's only match among
+        the jobs and the openings the desk lists, `listed`); otherwise it marks its own address alone."""
         rows = [{"url": u, **said} for u, said in self.not_interested().items()]
         loose = [r for r in rows if r["job_id"] is None]
         matched: dict[str, int] = {}
         if loose:
             saved: dict[tuple[str, str], builtins.list[_Job]] = self._postings()
             known: dict[int, frozenset[str]] = {}
+            # the openings that could be any job's posting: the desk's (by address), and the loose marks' own
+            openings = {normalize_url(o["url"]): _key(o.get("company"), o.get("title"), o.get("location"))
+                        for o in listed if isinstance(o.get("url"), str)}
             for r in loose:
-                board = _board(r["url"], "")
-                key = _key(r["company"], r["title"], r["location"])
-                one, _, _ = self._match(_Job(0, key, board, "saved", None, False),
-                                        _req_ids(r["title"], "", "", r["url"], board), saved.get(key[:2], []), known)
+                openings.setdefault(r["url"], _key(r["company"], r["title"], r["location"]))
+            for r in loose:
+                one = self._sure_link(r, saved, known, openings)
                 if one is not None:
-                    matched[r["url"]] = one.id
+                    matched[r["url"]] = one
         return NotInterested(rows, matched)
 
+    def _sure_link(self, mark: dict[str, Any], saved: dict[tuple[str, str], builtins.list[_Job]],
+                   known: dict[int, frozenset[str]], openings: dict[str, tuple[str, str, str | None]]) -> int | None:
+        """The job a loose mark is surely the same posting as, or None. A job from the other side (a job board's copy
+        for an employer's posting), alike it (_alike), and either (a) the two name a requisition number, the same one,
+        and no other job names it; or (b) neither names one, it's the mark's only such job, and the job is alike no
+        other job on the mark's side and no other opening (the desk's, or another loose mark's): each the other's only
+        match. Numbers that differ never link, nor does one named on one side only, nor anything ambiguous: an Intel
+        listing's JR1 marked is never JR2's Indeed copy."""
+        key, board = _key(mark["company"], mark["title"], mark["location"]), _board(mark["url"], "")
+        mine = frozenset(i for i in str(mark.get("req_ids") or "").split(",") if i)
+        group = saved.get((key[0], key[1]), [])
+        side = [j for j in group if _alike(key, j.key)]
+        theirs = [j for j in side if j.board is not None or j.aliased] if board is None else \
+            [j for j in side if j.board is None]
+        if mine:  # (a)
+            named = [j for j in theirs if mine & self._ids(j, known)]
+            return named[0].id if len(named) == 1 else None
+        if len(theirs) != 1 or self._ids(theirs[0], known):  # (b): its only one, naming no number either
+            return None
+        job = theirs[0]
+        others = [j for j in group if j.id != job.id and _alike(job.key, j.key) and (j.board is None) == (board is None)]
+        if others or any(u != mark["url"] and _alike(k, job.key) for u, k in openings.items()):
+            return None
+        return job.id
+
     @_locked
-    def marked_not_interested(self, url: str | None = None, job_id: int | None = None) -> dict[str, Any] | None:
+    def marked_not_interested(self, url: str | None = None, job_id: int | None = None,
+                              listed: Iterable[dict[str, Any]] = ()) -> dict[str, Any] | None:
         """The Not interested mark on an opening (by its address) or a job (by its number), or None: the job it is
-        (_the_job) marked by its number or at any of its addresses, or the address itself marked. What the desk's Apply,
-        its queue and Claude's tools go by."""
-        marks = self.not_interested_marks()
+        (_the_job) marked by its number or at any of its addresses, or the address itself marked, or a loose mark surely
+        its posting (`listed`: the openings the desk lists, which make one ambiguous: not_interested_marks). What the
+        desk's Apply, its queue and Claude's tools go by."""
+        marks = self.not_interested_marks(listed)
         if not marks:
             return None
         job = self._the_job(url=url, job_id=job_id)

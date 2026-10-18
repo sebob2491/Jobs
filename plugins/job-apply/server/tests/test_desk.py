@@ -4160,6 +4160,91 @@ def test_undo_on_an_employers_row_hidden_by_its_indeed_jobs_mark_brings_it_back(
     assert status == 409 and body["error"].startswith("There was nothing to undo"), seen["again"]
 
 
+JR1 = "https://intel.wd1.myworkdayjobs.com/External/job/US-Arizona-Chandler/Equipment-Technician_JR0001111"
+JR2 = "https://intel.wd1.myworkdayjobs.com/External/job/US-Arizona-Chandler/Equipment-Technician_JR0002222"
+INDEED_COPY = "https://www.indeed.com/viewjob?jk=5555555555555555"
+
+
+def _intel_openings(srv, home: Path, numbered: bool, both: bool = True) -> Desk:
+    """A desk listing Intel's Equipment Technician in Chandler (JR1, and JR2 with `both`), each with its requisition
+    number with `numbered`, its last search saved as Find jobs saves it; JR1 marked Not interested before any job."""
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    desk.listings = [{"url": url, "title": "Equipment Technician", "company": "Intel", "location": "US-Arizona-Chandler",
+                      "ats": "workday", "fit": _fit(80), **({"external_id": number} if numbered else {})}
+                     for url, number in ((JR1, "JR0001111"), (JR2, "JR0002222"))[:2 if both else 1]]
+    (home / "recommendations.json").write_text(json.dumps({"results": desk.listings, "at": time.time()}),
+                                              encoding="utf-8")
+    desk.not_interested(JR1, "pay")
+    return desk
+
+
+def _indeed_copy(srv, number: str = "") -> dict:
+    """The Indeed copy of one of them, saved by Claude after the mark: naming its requisition number, or none."""
+    return srv.add_job(url=INDEED_COPY, title="Equipment Technician", company="Intel Corporation", location="Chandler, AZ",
+                       source="indeed", description=f"Requisition ID: {number}" if number else "")["job"]
+
+
+def test_a_mark_made_before_its_job_never_takes_another_requisitions_copy(srv, job_apply_home):
+    """The quick check of 0.3.207 (MEDIUM): a mark made before its job existed (Intel's JR1) was linked to an Indeed
+    copy that names JR2, matched on employer, title and place alone: JR2's row (that copy's) was hidden, and Apply
+    refused it, though the person never declined JR2. Numbers that differ never link."""
+    desk = _intel_openings(srv, job_apply_home, numbered=True)
+    copy = _indeed_copy(srv, "JR0002222")
+    rows = {r["url"]: r for r in desk.state()["listings"]}
+    assert rows[JR2]["job_id"] == copy["id"] and rows[JR2]["not_interested"] is None, rows[JR2]
+    assert rows[JR1]["not_interested"]["reason"] == "pay"
+    assert srv.tracker().marked_not_interested(job_id=copy["id"], listed=desk.listings) is None
+    assert "not_interested" not in {j["id"]: j for j in srv.list_jobs()["jobs"]}[copy["id"]]
+    assert desk.apply(urls=[JR2], job_ids=[], submit=False) == ([copy["id"]], [])
+
+
+def test_a_mark_made_before_its_job_never_takes_a_copy_two_openings_are_alike(srv, job_apply_home):
+    """The quick check of 0.3.207 (MEDIUM): with no numbers to go by, JR1's mark was linked to an Indeed copy that JR2
+    is just as alike: JR2's row showed, but its Apply was refused as Not interested. Ambiguous never links: the mark
+    keeps to its own address."""
+    desk = _intel_openings(srv, job_apply_home, numbered=False)
+    copy = _indeed_copy(srv)
+    rows = {r["url"]: r for r in desk.state()["listings"]}
+    assert rows[JR2]["not_interested"] is None and rows[JR1]["not_interested"]["reason"] == "pay"
+    assert "not_interested" not in {j["id"]: j for j in srv.list_jobs()["jobs"]}[copy["id"]]
+    queued, refused = desk.apply(urls=[JR2], job_ids=[], submit=False)
+    assert len(queued) == 1 and refused == [], (queued, refused)
+    assert desk.apply(urls=[JR1], job_ids=[], submit=False) == ([], [])  # (its own address, still)
+    assert srv.tracker().marked_not_interested(job_id=copy["id"], listed=desk.listings) is None
+
+
+def test_a_mark_made_before_its_job_takes_its_copy_naming_the_same_number(srv, job_apply_home):
+    """The same requisition number links a mark made before its job to that job (the Indeed copy of JR1, saved by
+    Claude later), JR2 alike it or not: hidden on the desk, refused by Apply and the queue, said by Claude's tools."""
+    desk = _intel_openings(srv, job_apply_home, numbered=True)
+    copy = _indeed_copy(srv, "JR0001111")
+    rows = {r["url"]: r for r in desk.state()["listings"]}
+    assert rows[JR1]["job_id"] == copy["id"] and rows[JR1]["not_interested"]["reason"] == "pay"
+    assert rows[JR2]["not_interested"] is None
+    assert {j["id"]: j for j in srv.list_jobs()["jobs"]}[copy["id"]].get("not_interested_reason") == "pay"
+    assert desk.apply(urls=[], job_ids=[copy["id"]], submit=False) == ([], [])
+    with pytest.raises(ValueError, match="marked Not interested"):
+        desk.applier.enqueue(copy["id"])
+    assert srv.tracker().marked_not_interested(job_id=copy["id"], listed=desk.listings)["reason"] == "pay"
+
+
+def test_a_mark_made_before_its_job_takes_its_only_copy_where_neither_names_a_number(srv, job_apply_home):
+    """With no numbers on either side, a mark made before its job is linked to the job saved since when each is the
+    other's only match: the only opening alike it listed, and no other job alike it."""
+    desk = _intel_openings(srv, job_apply_home, numbered=False, both=False)
+    copy = _indeed_copy(srv)
+    assert {j["id"]: j for j in srv.list_jobs()["jobs"]}[copy["id"]].get("not_interested_reason") == "pay"
+    assert desk.apply(urls=[], job_ids=[copy["id"]], submit=False) == ([], [])
+    assert desk.state()["listings"][0]["not_interested"]["reason"] == "pay"
+    assert srv.tracker().marked_not_interested(job_id=copy["id"], listed=desk.listings)["reason"] == "pay"
+    # another Intel opening alike it, listed by the next search: which one the copy is can't be told any more
+    desk.listings.append({"url": JR2, "title": "Equipment Technician", "company": "Intel",
+                          "location": "US-Arizona-Chandler", "ats": "workday", "fit": _fit(80)})
+    assert srv.tracker().marked_not_interested(job_id=copy["id"], listed=desk.listings) is None
+
+
 @pytest.mark.parametrize("cookies", [False, True])
 def test_practice_modes_line_says_what_it_still_agrees_to(srv, job_apply_home, cookies):
     """The re-review of 0.3.207 (LOW): in practice mode the line said "agrees to nothing for you", but with Accept

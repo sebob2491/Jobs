@@ -149,6 +149,7 @@ class Desk:
         self.srv = srv
         # (its queue kept as it changes, and picked up again as the desk starts after a restart: pipeline.QUEUE_FILE)
         self.applier = Applier(srv, keep_queue=True)
+        self.applier.listed = lambda: self.listings  # (the openings listed here: for its Not interested check)
         self.fetch = fetch_posting  # reads each recommended posting's requirements
         self.token = secrets.token_urlsafe(18)
         self.port: int | None = None
@@ -786,34 +787,46 @@ class Desk:
         if job is not None and job.get("status") in SENT:
             raise ValueError("This job is already sent in, or waiting on its review page.")
         said = item or job or {}
+        posting = (item or {}).get("posting") or {}
+        # (with the requisition numbers it gives, for a job saved since that is surely this posting: never another's)
         t.set_not_interested(url, company=str(said.get("company") or ""), title=str(said.get("title") or ""),
                              reason=reason, job_id=job["id"] if job is not None else None,
-                             location=str(said.get("location") or ""))
+                             location=str(said.get("location") or ""),
+                             external_id=str((item or {}).get("external_id") or posting.get("external_id") or ""),
+                             description=str(posting.get("description") or ""))
 
     def interested_again(self, url: str) -> bool:
         """Undo on an opening's Not interested: the opening, and the job its row is (_job_of: the job saved from a job
         board that an employer's posting not saved yet is), shown again. Whether anything was marked."""
         job = self._job_of(url)
-        return self.srv.tracker().undo_not_interested(url, job_id=job["id"] if job is not None else None)
+        return self.srv.tracker().undo_not_interested(url, job_id=job["id"] if job is not None else None,
+                                                      listed=self.listings)
 
-    def unwanted(self, url: str) -> dict[str, Any] | None:
+    def unwanted(self, url: str, rows: dict[str, Any] | None = None) -> dict[str, Any] | None:
         """The person's Not interested mark on an opening, if any: on its address, or on the job its row is (_job_of),
-        by that job's number or any of its addresses (Tracker.marked_not_interested)."""
+        by that job's number or any of its addresses, or a mark made before that job was saved that is surely its
+        posting (Tracker.marked_not_interested, with the openings listed here: JR1 marked is never JR2's)."""
         t = self.srv.tracker()
-        mark = t.marked_not_interested(url=url)
-        if mark is None and (job := self._job_of(url)) is not None:
-            mark = t.marked_not_interested(job_id=job["id"])
+        mark = t.marked_not_interested(url=url, listed=self.listings)
+        if mark is None and (job := self._job_of(url, rows)) is not None:
+            mark = t.marked_not_interested(job_id=job["id"], listed=self.listings)
         return mark
 
-    def _job_of(self, url: str) -> dict[str, Any] | None:
-        """The job an opening's row is: the one at its address (or with it among its other addresses), or, for an
-        opening on the employer's site not saved yet, the job saved from a job board that it surely is (one row, as
-        state() lists them: Tracker.same_posting)."""
+    def _row_jobs(self) -> dict[str, Any]:
+        """The job each opening's row is, by its address, as state() lists them: the one at its address (or with it
+        among its other addresses), or, for an opening on the employer's site not saved yet, the job saved from a job
+        board that it surely is, unless another opening is alike that job too (Tracker.same_posting, all at once)."""
         t = self.srv.tracker()
-        job = t.find_by_url(url)
-        if job is None and (item := self._listing(url)) is not None:
-            job = t.same_posting([item])[0]
-        return job
+        tracked = [t.find_by_url(item["url"]) for item in self.listings]
+        copies = iter(t.same_posting([item for item, job in zip(self.listings, tracked) if job is None]))
+        return {item["url"]: job if job is not None else next(copies) for item, job in zip(self.listings, tracked)}
+
+    def _job_of(self, url: str, rows: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        """The job an opening's row is (_row_jobs: `rows`, worked out once for many), or the job at an address not
+        listed."""
+        if self._listing(url) is not None:
+            return (rows if rows is not None else self._row_jobs()).get(url)
+        return self.srv.tracker().find_by_url(url)
 
     def apply(self, urls: list[str], job_ids: list[int], submit: bool,
               notes: dict[str, Any] | None = None) -> tuple[list[int], list[str]]:
@@ -826,11 +839,12 @@ class Desk:
         t = self.srv.tracker()
         left_out: list[str] = []
         ids = [int(j) for j in job_ids]
+        rows = self._row_jobs() if any(self._listing(str(url)) is not None for url in urls) else {}
         for url in urls:
             if not re.match(r"(?i)^(https?|file)://", str(url)) or config.own_file(str(url)):
                 continue  # a listing whose link isn't a web address ("javascript:…"), or is one of the desk's own files
-            if self.unwanted(url):  # (never saved for Apply either: by its address, or the job its row is)
-                left_out.append(str((self._listing(url) or self._job_of(url) or {}).get("title") or "a job"))
+            if self.unwanted(url, rows):  # (never saved for Apply either: by its address, or the job its row is)
+                left_out.append(str((self._listing(url) or self._job_of(url, rows) or {}).get("title") or "a job"))
                 continue
             tracked = t.find_by_url(url)
             if tracked is not None and self._listing(url) is None:
@@ -851,7 +865,7 @@ class Desk:
         # site is that job)
         kept = []
         for j in dict.fromkeys(ids):
-            if t.marked_not_interested(job_id=j) is None:
+            if t.marked_not_interested(job_id=j, listed=self.listings) is None:
                 kept.append(j)
             else:
                 left_out.append(str((t.get(j, with_description=False) or {}).get("title") or f"job {j}"))
@@ -976,7 +990,7 @@ class Desk:
         also = t.aliases()
         # the openings the person said Not interested in (shown only in that group of the bar), and the employers they
         # said it of for reason Company, whose other openings score lower
-        marks = t.not_interested_marks()  # (by the job each row is too: NotInterested)
+        marks = t.not_interested_marks(self.listings)  # (by the job each row is too: NotInterested)
         employers = unwanted_employers(marks)
         since = self.seen_since
 
@@ -1391,7 +1405,7 @@ def whats_new(tracker: Any, since: float) -> list[dict[str, Any]]:
     listings = [r for r in results if isinstance(r, dict) and isinstance(r.get("url"), str)] \
         if isinstance(results, list) else []
     searched, found = _seconds(saved.get("at")) if isinstance(saved, dict) else None, read_found()
-    marks = tracker.not_interested_marks()  # (by the job each is too: NotInterested)
+    marks = tracker.not_interested_marks(listings)  # (by the job each is too: NotInterested)
     employers = unwanted_employers(marks)
     also = tracker.aliases()
     out: list[dict[str, Any]] = []
@@ -1496,6 +1510,20 @@ def troubleshoot_query(query: str) -> str:
 
 
 _desk: Desk | None = None
+
+
+def listed_openings() -> list[dict[str, Any]]:
+    """The openings the desk lists: the running desk's, or its last search's (recommendations.json): what makes a Not
+    interested mark made before its job was saved ambiguous (Tracker.not_interested_marks)."""
+    if _desk is not None:
+        return list(_desk.listings)
+    try:
+        saved = json.loads(_recommendations_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    results = saved.get("results") if isinstance(saved, dict) else None
+    return [r for r in results if isinstance(r, dict) and isinstance(r.get("url"), str)] \
+        if isinstance(results, list) else []
 
 
 def get_desk(srv: Any) -> Desk:

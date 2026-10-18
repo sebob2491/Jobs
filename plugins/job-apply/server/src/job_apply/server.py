@@ -563,7 +563,7 @@ def list_jobs(status: str | None = None, company: str | None = None, limit: int 
     jobs = t.list(status=status, company=company, limit=limit)
     sent = any(j["status"] in APPLICATION_STATUSES for j in jobs)  # (none sent: neither the emails nor the profile read)
     heard, days = (t.last_heard(), _follow_up_days()) if sent else ({}, config.FOLLOW_UP_DAYS_DEFAULT)
-    marks = t.not_interested_marks()
+    marks = t.not_interested_marks(_listed())
     also = t.aliases() if marks else {}
     out = []
     for j in jobs:
@@ -585,7 +585,7 @@ def get_job(job_id: int) -> dict[str, Any]:
     marked Not interested on the Job Desk has `not_interested: true` and
     `not_interested_reason`: ask before applying to it."""
     job = _job(job_id)
-    if (mark := tracker().marked_not_interested(job_id=job["id"])) is not None:
+    if (mark := _not_interested(job["id"])) is not None:
         job = {**job, "not_interested": True, "not_interested_reason": mark["reason"]}
     return {"job": job, "history": tracker().events(job_id)}
 
@@ -1281,7 +1281,14 @@ def _not_interested(job_id: int | None, url: str | None = None) -> dict[str, Any
     address not saved as a job; None for none."""
     if job_id is None and not url:
         return None
-    return tracker().marked_not_interested(url=url if job_id is None else None, job_id=job_id)
+    return tracker().marked_not_interested(url=url if job_id is None else None, job_id=job_id, listed=_listed())
+
+
+def _listed() -> list[dict[str, Any]]:
+    """The openings the Job Desk lists (a mark made before its job was saved is ambiguous among them)."""
+    from . import desk as job_desk  # (the desk's own module imports this one)
+
+    return job_desk.listed_openings()
 
 
 def _maybe_same(job_id: int | None) -> list[dict[str, Any]]:
