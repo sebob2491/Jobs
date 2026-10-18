@@ -1,0 +1,22 @@
+{
+ "job": {
+  "id": 21,
+  "title": "Field Service Technician",
+  "company": "Sample Tools Inc",
+  "location": "Phoenix, AZ",
+  "status": "saved",
+  "ats": "indeed",
+  "url": "https://www.indeed.com/viewjob?jk=0000000000example21",
+  "description": "Sample Tools Inc needs a Field Service Technician to install and repair vacuum equipment at customer sites around Phoenix. Travel up to 25%. 2+ years of field service or equipment maintenance. Valid driver's license.",
+  "apply_url": null,
+  "notes": "",
+  "folder": "~/.job-apply/applications/21-sample-tools-inc"
+ },
+ "history": [
+  {
+   "at": "2026-10-03T09:12:00",
+   "status": "saved",
+   "note": "saved"
+  }
+ ]
+}

@@ -12,6 +12,12 @@ name: weekly
 # - the suite's coverage of job_apply, module by module: one under its floor (scripts/coverage_floor.py, today's
 #   measure less two points) fails the run, and the functions with the most lines never run are in its summary
 #   (T5, the review of Oct 18).
+# - the skills evals (A8, the review of Oct 18): `claude plugin eval` runs plugins/job-apply/evals (a case per skill,
+#   and the rules the product keeps: no password asked for in chat, no Submit the person didn't press, LinkedIn's and
+#   Indeed's Submit always theirs, answers only from the profile or the person, coursework never a degree) against
+#   stand-ins for the job-apply server and Gmail, so no browser, site or inbox is touched. A case scored under the
+#   threshold fails the run. It runs on the repository's ANTHROPIC_API_KEY secret, capped in dollars; without the
+#   secret the job says what to set and passes.
 on:
   schedule:
     - cron: "23 14 * * 1"  # Mondays, 7:23 in Arizona
@@ -105,3 +111,80 @@ jobs:
         env:
           JOB_APPLY_SLOW_FIRST: "1"
       - run: uv run --frozen python scripts/coverage_floor.py coverage.json
+
+  evals:
+    name: skills evals (claude plugin eval)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash  # (with pipefail: the eval's exit code comes through the tee)
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      # (the uv environment the tools listing starts the server in is copied, not hard-linked from uv's cache: the
+      # CLI refuses a plugin folder holding a file with two names)
+      UV_LINK_MODE: copy
+    steps:
+      - name: Is the API key set?
+        id: key
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::notice title=Skills evals skipped::Set the repository secret ANTHROPIC_API_KEY (Settings > Secrets and variables > Actions) to run them."
+            {
+              echo "### Skills evals: skipped"
+              echo "The repository has no \`ANTHROPIC_API_KEY\` secret. Set one (Settings > Secrets and variables >"
+              echo "Actions > New repository secret) and the next weekly run evaluates the skills, at most \$3 a run."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.key.outputs.run == 'true'
+      - uses: astral-sh/setup-uv@v6
+        if: steps.key.outputs.run == 'true'
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: plugins/job-apply/server/uv.lock
+      - uses: actions/setup-node@v4
+        if: steps.key.outputs.run == 'true'
+        with:
+          node-version: "22"
+      # (the version whose case, grader and mock format the suite is written to: tests/test_evals.py checks that)
+      - if: steps.key.outputs.run == 'true'
+        run: npm install -g @anthropic-ai/claude-code@2.1.302
+      # The stand-in shows Claude the real tools' descriptions and arguments, listed again from the server as it is
+      # now (it starts in a temporary home, reads no profile and opens no browser)
+      - if: steps.key.outputs.run == 'true'
+        working-directory: plugins/job-apply/server
+        run: uv run --no-project python scripts/mcp_handshake.py --save-tools ../evals/mocks/job-apply/_tools.json
+      # Each case once (--runs 1), on Sonnet with Sonnet judging, scored alone (--ablation none: no second run
+      # without the plugin, and the check that the skill fired counts). A case under the threshold exits 1 and the
+      # cost ceiling 2: either fails the run. --mocks record starts no real server (every job-apply tool is mocked,
+      # and Gmail is a stand-in); --no-publish keeps the report off claude.ai.
+      - name: Run the evals
+        if: steps.key.outputs.run == 'true'
+        working-directory: plugins/job-apply
+        run: |
+          mkdir -p "$RUNNER_TEMP/evals"
+          claude plugin eval . --trust-plugin --mocks record --ablation none --runs 1 \
+            --model sonnet --judge-model sonnet --threshold 0.8 --max-cost-usd 3 --no-publish \
+            --output-dir "$RUNNER_TEMP/evals" --json "$RUNNER_TEMP/evals/result.json" \
+            --report "$RUNNER_TEMP/evals/report.html" 2>&1 | tee "$RUNNER_TEMP/evals.txt"
+      - name: Summary
+        if: always() && steps.key.outputs.run == 'true'
+        run: |
+          {
+            echo "### Skills evals"
+            echo '```'
+            tail -n 150 "$RUNNER_TEMP/evals.txt" 2>/dev/null || echo "(no output)"
+            echo '```'
+            echo "Each case's runs, graders and the judge's reasons: the evals artifact's report.html."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.key.outputs.run == 'true'
+        with:
+          name: evals
+          path: ${{ runner.temp }}/evals
+          retention-days: 30

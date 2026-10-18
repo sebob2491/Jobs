@@ -1,0 +1,3 @@
+# claude plugin eval's run results, and the answers it records for agent mocks
+results/
+mocks/.replay/

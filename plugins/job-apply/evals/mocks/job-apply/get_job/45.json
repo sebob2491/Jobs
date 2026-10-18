@@ -1,0 +1,30 @@
+{
+ "job": {
+  "id": 45,
+  "title": "Facilities Technician",
+  "company": "Example Wafer Works",
+  "location": "Tempe, AZ",
+  "status": "applied",
+  "ats": "workday",
+  "url": "https://examplewafer.wd1.myworkdayjobs.example/jobs/45",
+  "applied_at": "2026-10-08",
+  "last_heard": null,
+  "follow_up_due": null,
+  "description": "Example Wafer Works is hiring a Facilities Technician to keep its fab's support systems running: process cooling water, vacuum and exhaust, gas cabinets and the PLC-controlled interlocks around them. Requirements: 3+ years maintaining industrial or semiconductor equipment; read electrical and P&ID drawings; lockout/tagout; on-call one weekend a month. You will report to the facilities maintenance manager.",
+  "apply_url": null,
+  "notes": "",
+  "folder": "~/.job-apply/applications/45-example-wafer-works"
+ },
+ "history": [
+  {
+   "at": "2026-10-03T09:12:00",
+   "status": "saved",
+   "note": "saved"
+  },
+  {
+   "at": "2026-10-08T10:30:00",
+   "status": "applied",
+   "note": "submitted"
+  }
+ ]
+}

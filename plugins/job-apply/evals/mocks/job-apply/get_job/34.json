@@ -1,0 +1,23 @@
+{
+ "job": {
+  "id": 34,
+  "title": "Electronics Technician",
+  "company": "Example Controls Inc",
+  "location": "Phoenix, AZ",
+  "status": "saved",
+  "ats": "lever",
+  "url": "https://jobs.examplecontrols.example/electronics-technician",
+  "pay": "$24–$29/hr (≈$50k–$60k/yr)",
+  "description": "Build, test and repair control boards and cable harnesses. Requirements: associate degree in Electronics Technology or a related field, or equivalent experience; able to read schematics; soldering to IPC standards.",
+  "apply_url": null,
+  "notes": "",
+  "folder": "~/.job-apply/applications/34-example-controls-inc"
+ },
+ "history": [
+  {
+   "at": "2026-10-03T09:12:00",
+   "status": "saved",
+   "note": "saved"
+  }
+ ]
+}
