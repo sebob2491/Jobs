@@ -290,18 +290,14 @@ def _frame(r, part: str):
     return next((f for f in r.page.frames if part in f.url), None)
 
 
-# The desk's bug this walk found (to be fixed in the desk, with a review): Applier._sign_in reads only the page's own
-# boxes, never a frame's ("never a password box inside a frame from another site"), but iCIMS' sign-in and Create
-# Account are drawn in the employer's iCIMS frame, on iCIMS' own address. So past the CAPTCHA the framed walk stops on
-# "Sign in (or create your account) on iCIMS" with an iCIMS password saved and manage_accounts on. Its boxes count
-# where the frame's own address is the saved password's system (password_for of the frame's url).
-ICIMS_FRAME_BUG = ("desk bug: Applier._sign_in skips every frame's boxes, so the saved iCIMS password and manage_accounts "
-                   "never reach iCIMS' own sign-in and Create Account inside its frame")
+# The desk's bug this walk found: Applier._sign_in read only the page's own boxes, never a frame's, but iCIMS' sign-in
+# and Create Account are drawn in the employer's iCIMS frame, on iCIMS' own address. So past the CAPTCHA the framed walk
+# stopped on "Sign in (or create your account) on iCIMS" with an iCIMS password saved and manage_accounts on. A frame's
+# boxes now count where the frame's own address is the saved password's system (pipeline._password_place).
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("framed", [pytest.param(True, marks=pytest.mark.xfail(strict=True, reason=ICIMS_FRAME_BUG)),
-                                    False], ids=["framed", "alone"])
+@pytest.mark.parametrize("framed", [True, False], ids=["framed", "alone"])
 def test_icims_walk(srv, fake_ats, job_apply_home, monkeypatch, framed):
     """iCIMS, start to review page, inside the employer's iCIMS frame: the employer's cookie bar declined, "Apply for
     this job online", the Privacy Notice acknowledged (accept_notices), the email step, whose Next brings up hCaptcha's
@@ -348,7 +344,7 @@ def test_icims_walk(srv, fake_ats, job_apply_home, monkeypatch, framed):
     assert fake_ats.said("captcha") == [], fake_ats.events  # (never a press in the challenge)
     assert made == [] and mail == [], (made, mail)  # (no account, no email, before the person has passed the check)
     assert any(line.startswith("agreed to Example Fab's “I Acknowledge the Privacy Notice”") for line in log), log
-    # (past the check: the account made with the saved password, and on to the questions; framed, the bug's stop)
+    # (past the check: the account made with the saved password, framed in iCIMS' own frame too, and on to the questions)
     assert asked[:3] == ("needs_you", "questions", ["Do you have a valid driver's license? *"]), asked
     [account] = fake_ats.said("account")
     assert (account["email"], account["password"], account["alerts"]) == (

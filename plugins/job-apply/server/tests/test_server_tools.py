@@ -217,6 +217,32 @@ def test_a_saved_password_goes_only_into_a_password_box_on_its_own_site(srv, job
 
 
 @needs_browser
+def test_a_saved_password_goes_into_a_frame_by_the_frames_own_address(srv, job_apply_home, monkeypatch):
+    """fill_secret checks the address of the frame the box is in, never the page's around it: an iCIMS password goes
+    into iCIMS' own frame on an employer's careers page, and never into a frame from another site on iCIMS' own page.
+    (Made-up addresses.)"""
+    icims, widget = "https://careers-examplefab.icims.com/jobs/1/login", "https://widgets.examplead.example/signin"
+    for url, page in (("https://careers.examplefab.example/jobs/1", f'<iframe src="{icims}"></iframe>'),
+                      ("https://careers-examplefab.icims.com/jobs/1/job", f'<iframe src="{widget}"></iframe>'),
+                      (icims, FORM.format(title="Sign in", action="x")), (widget, FORM.format(title="Sign in", action="x"))):
+        monkeypatch.setitem(PAGES, url, f"<!doctype html><html><body>{page}</body></html>" if "<iframe" in page else page)
+    routed(srv)
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+
+    def password_box() -> str:
+        return next(f["id"] for f in run(srv.inspect_form(False))["fields"] if f["kind"] == "password")
+
+    run(srv.browser.goto("https://careers-examplefab.icims.com/jobs/1/job"))
+    box = password_box()
+    assert box.startswith("f"), box  # (in the frame)
+    out = run(srv.fill_secret(box, "icims_password"))
+    assert out["ok"] is False and "another site" in out["error"], out
+    run(srv.browser.goto("https://careers.examplefab.example/jobs/1"))
+    assert run(srv.fill_secret(password_box(), "icims_password")) == {"ok": True}
+    assert "not-a-real-password" not in str(run(srv.inspect_form(False)))
+
+
+@needs_browser
 def test_the_desks_own_files_arent_opened_or_read_as_postings_by_claudes_tools(srv, job_apply_home):
     """A file: address into ~/.job-apply given to ingest_job(use_browser=True) opened the file in the browser and
     saved its text as a posting, where Claude reads it (a file the browser draws: the desk's settings, a saved page,

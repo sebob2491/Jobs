@@ -7574,9 +7574,12 @@ def test_the_saved_password_only_goes_to_its_own_system():
 
 
 def test_a_password_box_inside_an_embedded_frame_is_left_alone(srv, monkeypatch):
-    """A frame can come from anywhere; the saved password only goes into the page's own form."""
+    """A frame can come from anywhere; the saved password goes only into the page's own form and a frame on its own
+    system (_password_place), never into a frame from another site."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
-    saved_password(monkeypatch)
+    saved_password(monkeypatch)  # (the page around the frame is the password's system; the frame's address isn't)
+    monkeypatch.setattr(pipeline, "password_for", lambda url: "test_site_password" if url.endswith("/framed-signin.html")
+                        else None)
     job = srv.add_job(url=fixture_url("site/framed-signin.html"), title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
 
@@ -7594,6 +7597,143 @@ def test_a_password_box_inside_an_embedded_frame_is_left_alone(srv, monkeypatch)
     assert r.need == "sign_in", (r.status, r.reason, r.log)
     assert values == ["", ""]
     assert not any("saved password" in line for line in r.log)
+
+
+# A careers page around a job system's sign-in frame (made-up employer and addresses), and the sign-in drawn in it: its
+# Sign In keeps what it was sent in the frame's own storage (window.sent), and nothing else
+FRAMING_PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Careers at Example Fab</title></head><body>
+<h2>Example Fab Careers</h2><p>Sign in below to continue your application.</p>
+{frames}</body></html>"""
+FRAMED_SIGN_IN = """<!doctype html><html><head><meta charset="utf-8"><title>Sign In</title></head><body>
+<h2>Sign In</h2>
+<form id="signin" novalidate>
+  <label for="em">Email Address</label><input id="em" type="email" required>
+  <label for="pw">Password</label><input id="pw" type="password" required>
+  <button type="submit">Sign In</button>
+</form>
+<script>
+  window.sent = () => JSON.parse(localStorage.getItem('sent') || 'null');
+  document.getElementById('signin').addEventListener('submit', (e) => {
+    e.preventDefault();
+    localStorage.setItem('sent', JSON.stringify([em.value, pw.value]));
+    document.body.innerHTML = '<h2>Welcome back</h2><p>You are signed in.</p>';
+  });
+</script></body></html>"""
+ICIMS_HOST = "https://careers-examplefab.icims.com"
+
+
+async def _framed_site(srv, pages: dict[str, str]) -> None:
+    """`pages` at their https addresses in the desk's browser (routed: nothing leaves the machine), the rest 404."""
+    async def handler(route):
+        body = pages.get(route.request.url.split("?")[0])
+        with contextlib.suppress(Exception):  # (a tab closed as the test ends)
+            await route.fulfill(status=200 if body else 404, content_type="text/html",
+                                body=body or "<html><body>not found</body></html>")
+
+    await srv.browser.page()
+    await srv.browser._ctx.route(lambda url: url.startswith("https://"), handler)
+
+
+def test_the_saved_password_goes_into_its_systems_own_frame_on_an_employers_page(srv, monkeypatch):
+    """iCIMS draws its sign-in in its frame, on its own address, inside an employer's careers page (here on the
+    employer's own domain). With an iCIMS password saved, that frame's boxes are the sign-in's: the email and the saved
+    password go in, and its Sign In is pressed. The desk read only the page's own boxes, never a frame's, and stopped
+    for the person (the fake-site walks' framed iCIMS)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    careers = "https://careers.examplefab.example/jobs/2002"
+    login = ICIMS_HOST + "/jobs/2002/login"
+    job = srv.add_job(url=careers, title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _framed_site(srv, {careers: FRAMING_PAGE.format(frames=f'<iframe src="{login}?in_iframe=1" width="600" '
+                                                                         'height="300"></iframe>'),
+                                 login: FRAMED_SIGN_IN})
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            frame = next(f for f in r.page.frames if f.url.startswith(login))
+            return r, await frame.evaluate("() => window.sent ? window.sent() : JSON.parse(localStorage.getItem('sent'))")
+        finally:
+            await applier.stop()
+
+    r, sent = run(go())
+    assert sent == ["sam.rivera@example.com", "not-a-real-password"], (sent, r.reason, r.log)
+    assert "pressed “Sign In” with your saved password" in r.log, r.log
+
+
+def test_a_frame_from_another_site_gets_no_password_and_no_press_on_its_systems_page(srv, monkeypatch):
+    """The page is iCIMS' own, and an iCIMS password is saved, but the sign-in boxes are in frames from elsewhere: a
+    third party's widget, and an address that only begins like iCIMS' (careers-examplefab.icims.com.evil.example).
+    Neither gets the email or the password, nor has its Sign In pressed (the desk pressed a frame's Sign In from any
+    site on a page whose own boxes it had none of); the sign-in is the person's."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    page = ICIMS_HOST + "/jobs/2002/job"
+    widget, lookalike = "https://widgets.examplead.example/signin", ICIMS_HOST + ".evil.example/login"
+    job = srv.add_job(url=page, title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        frames = "".join(f'<iframe src="{u}" width="600" height="300"></iframe>' for u in (widget, lookalike))
+        await _framed_site(srv, {page: FRAMING_PAGE.format(frames=frames), widget: FRAMED_SIGN_IN,
+                                 lookalike: FRAMED_SIGN_IN})
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you", about=state(r))
+            await asyncio.sleep(1)  # (a press would have shown by now)
+            seen = []
+            for url in (widget, lookalike):
+                frame = next(f for f in r.page.frames if f.url == url)
+                seen.append(await frame.evaluate("() => [window.sent(), document.getElementById('em')?.value, "
+                                                 "document.getElementById('pw')?.value]"))
+            return r, seen
+        finally:
+            await applier.stop()
+
+    r, seen = run(go())
+    assert r.need == "sign_in", (r.status, r.reason, r.log)
+    assert seen == [[None, "", ""], [None, "", ""]], (seen, r.log)
+    assert not any("saved password" in line or line.startswith("pressed") for line in r.log), r.log
+
+
+def test_the_saved_passwords_place_is_the_page_and_its_frames_on_its_own_system():
+    """_password_place: the page's own boxes where it's on the saved password's system, and a frame's only where the
+    frame's own address is on that system too. Never a frame from another site, a lookalike address, another job
+    system's, nor a frame whose address isn't known."""
+    place = pipeline._password_place
+    icims, employer = ICIMS_HOST + "/jobs/2002/login?in_iframe=1", "https://careers.examplefab.example/jobs/2002"
+    # iCIMS' frame on the employer's own domain: the frame alone
+    assert place({"url": employer, "frame_urls": {"": employer, "f1-": icims}}) == ("icims_password", {"f1-"})
+    # iCIMS' page around iCIMS' frame: both; around a widget's, a lookalike's, Workday's: the page alone
+    assert place({"url": icims, "frame_urls": {"": icims, "f2-": icims}}) == ("icims_password", {"", "f2-"})
+    for other in ("https://widgets.examplead.example/signin", ICIMS_HOST + ".evil.example/login",
+                  "https://evil.example/icims.com/login", "http://careers-examplefab.icims.com/login",
+                  "https://acme.wd5.myworkdayjobs.com/login"):
+        assert place({"url": icims, "frame_urls": {"": icims, "f1-": other}}) == ("icims_password", {""}), other
+        assert place({"url": employer, "frame_urls": {"": employer, "f1-": other}})[1] <= {"f1-"}, other
+        assert place({"url": employer, "frame_urls": {"f1-": other}}) != ("icims_password", {"f1-"}), other
+    # a frame's address not known (an older reader's look): the page alone, as before
+    assert place({"url": icims}) == ("icims_password", {""})
+    assert place({"url": employer}) == (None, set())
+    # fields and buttons go by their id's frame
+    assert [pipeline._frame_of({"id": i}) for i in ("pw", "f1-pw", "f12-b3", None)] == ["", "f1-", "f12-", ""]
+
+
+def test_an_emailed_code_goes_only_into_this_jobs_own_frames(srv):
+    """An emailed code's boxes (Applier._code_boxes): the tab's own, and a frame's on this job's own place (the iCIMS
+    frame on the page it paused on, a frame from the employer's own site), never a frame from another site."""
+    job = srv.add_job(url="https://careers.examplefab.example/jobs/2002", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+    r = pipeline.Run(job["id"], "FSE", "Example Fab", url=job["url"], paused_host="careers.examplefab.example")
+    box = {"kind": "text", "label": "Verification code"}
+    data = {"url": job["url"], "fields": [{**box, "id": i} for i in ("c1", "f1-c2", "f2-c3", "f3-c4", "f4-c5", "f5-c6")],
+            "frame_urls": {"": job["url"], "f1-": ICIMS_HOST + "/jobs/2002/login", "f2-": "https://apply.examplefab.example/x",
+                           "f3-": "https://widgets.examplead.example/code", "f4-": ICIMS_HOST + ".evil.example/code"}}
+    assert [f["id"] for f in applier._code_boxes(r, data)] == ["c1", "f1-c2", "f2-c3"]
 
 
 def test_skip_closes_the_jobs_tabs_both_the_posting_and_the_application(srv, monkeypatch):

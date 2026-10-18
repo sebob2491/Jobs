@@ -2728,6 +2728,24 @@ class Applier:
         job = self.srv.tracker().get(run.job_id, with_description=False) or {}
         return {(urlparse(u).hostname or "").lower() for u in (run.url, job.get("url"), job.get("apply_url")) if u}
 
+    def _code_boxes(self, run: Run, data: dict[str, Any]) -> list[dict[str, Any]]:
+        """An emailed code's boxes on a job's tab: the page's own (a tab still this job's: _enter_code), and a frame's
+        whose own address is this job's too, as the tab's must be (_own_place: an iCIMS frame on the employer's careers
+        page), or on the employer's own site (careers.acme.com's frame from apply.acme.com, as the mail's links are
+        taken). Never a frame from anywhere else, nor one whose address isn't known: as a saved password goes only
+        into a frame on its own system (_password_place)."""
+        urls = data.get("frame_urls") or {}
+        own = {h for h in self._own_hosts(run) | {run.paused_host} if h}
+        own_sites = {mailbox.site_domain(h) for h in own if shared_system(f"https://{h}/") is None}
+
+        def ours(prefix: str) -> bool:
+            url = str(urls.get(prefix) or "")
+            host = (urlparse(url).hostname or "").lower()
+            return bool(url) and (self._own_place(run, url, own) or bool(host) and shared_system(url) is None
+                                  and mailbox.site_domain(host) in own_sites)
+
+        return [f for f in data.get("fields") or [] if _code_box(f) and (not _frame_of(f) or ours(_frame_of(f)))]
+
     @staticmethod
     def _poll_for(runs: list[Run]) -> float:
         """How soon to look at tabs waiting on the person again: every POLL_SECONDS while one of them changed or
@@ -2824,7 +2842,7 @@ class Applier:
             run.mail_last = f"couldn't read its tab: {type(e).__name__}"
             run.mail_looked = time.time()  # (a look that failed is one tried: a reset's wait runs on, as on its own)
             return
-        boxes = [f for f in data.get("fields") or [] if _code_box(f)]
+        boxes = self._code_boxes(run, data)
         senders = self._mail_senders(run)
 
         own = {h for h in self._own_hosts(run) | {run.paused_host} if h}
@@ -2962,7 +2980,7 @@ class Applier:
             run.mail_last += "; not typed: its tab couldn't be used"
             return False
         data = await srv.inspect_form(include_dropdown_options=False)
-        boxes = [f for f in data.get("fields") or [] if _code_box(f)]
+        boxes = self._code_boxes(run, data)
         if not boxes:  # the page moved on meanwhile
             run.mail_last += "; not typed: no code box on the page"
             return False
@@ -5836,7 +5854,8 @@ class Applier:
                 break
             await asyncio.sleep(0.5)
         address = config.Profile.load().get("personal.email")
-        boxes = [f for f in data.get("fields") or [] if f.get("kind") in ("text", "email")
+        places = _password_place(data)[1]  # (the reset's own boxes: the page's, or its frame's on the password's system)
+        boxes = [f for f in data.get("fields") or [] if f.get("kind") in ("text", "email") and _frame_of(f) in places
                  and re.search(r"e-?mail|user ?name|login", f.get("label") or "", re.I)]
         if (not _RESET_PAGE.search(" ".join([text[:2000], *(data.get("headings") or [])])) or not boxes or not address
                 or any(f.get("kind") == "password" for f in data.get("fields") or [])):
@@ -6054,7 +6073,7 @@ class Applier:
         passwords = _new_password_boxes(data, text)
         if not passwords:
             return None
-        secret = password_for(data["url"])
+        secret = _password_place(data)[0]  # (the system whose page or frame the boxes are on)
         if secret is None or _secret(secret) is None:
             return None
         for box in passwords:
@@ -6345,7 +6364,7 @@ class Applier:
         password, but for one more after a reset, a new account or a Resume on its sign-in card);
         `details=False` leaves a Create Account form's other boxes as they are."""
         srv = self.srv
-        secret = password_for(data["url"])
+        secret, places = _password_place(data)
         saved = _secret(secret) if secret is not None else None
         if secret is None or saved is None:
             return None
@@ -6353,9 +6372,9 @@ class Applier:
         if key != run.sign_in_key:  # a password saved since: not the one the site refused
             run.sign_in_key, run.sign_in_tries = key, 0
             run.reset_set = run.reset_opened = False  # (nor the one a reset set: its refusal is the ordinary path's)
-        # the page's own fields: never a password box inside a frame from another site
-        fields = [f for f in data.get("fields") or [] if not re.match(r"f\d+-", str(f.get("id")))]
-        actions = [a for a in data.get("actions") or [] if not a.get("disabled")]
+        # the boxes and buttons of the page and its frames on the password's own system: never a frame from another site
+        fields = [f for f in data.get("fields") or [] if _frame_of(f) in places]
+        actions = [a for a in data.get("actions") or [] if not a.get("disabled") and _frame_of(a) in places]
         if not fields:
             # Workday's "Sign in with email"; or, after its own password reset, its "Password has been reset"
             # and a "Sign In" that opens the form (issue #112, note 14, live test 2, Oct 2026)
@@ -6726,8 +6745,10 @@ _ACCOUNT_FIELD = re.compile(r"e-?mail|password|user ?name|log ?in|terms|privacy|
 
 def _new_password_boxes(data: dict[str, Any], text: str) -> list[dict[str, Any]]:
     """A password reset's page (opened from its email): its new-password boxes. [] for any other page (a Create Account
-    form asks for the email; a change asks the old one; a sign-in has one box, not a new password's)."""
-    fields = [f for f in data.get("fields") or [] if not re.match(r"f\d+-", str(f.get("id")))]
+    form asks for the email; a change asks the old one; a sign-in has one box, not a new password's). Only the page's
+    and its frames' on the saved password's own system (_password_place)."""
+    places = _password_place(data)[1]
+    fields = [f for f in data.get("fields") or [] if _frame_of(f) in places]
     passwords = [f for f in fields if f.get("kind") == "password" and not _code_box(f)]
     named = [f for f in fields if f.get("kind") in ("text", "email")
              and re.search(r"e-?mail|user ?name|login", f.get("label") or "", re.I)]
@@ -7250,6 +7271,26 @@ def password_for(url: str) -> str | None:
         if parsed.scheme == "https" and any(host == d or host.endswith("." + d) for d in domains):
             return f"{ats}_password"
     return None
+
+
+def _frame_of(item: dict[str, Any]) -> str:
+    """The frame a box or button is in, by its id's prefix ("f2-"); "" for the page itself."""
+    m = re.match(r"f\d+-", str(item.get("id") or ""))
+    return m.group(0) if m else ""
+
+
+def _password_place(data: dict[str, Any]) -> tuple[str | None, set[str]]:
+    """The saved password that belongs on this page (its name, as password_for gives it), and where on the page it may
+    go: the page itself and each frame whose own address is on that password's system, by their ids' prefix ("" for
+    the page). iCIMS draws its sign-in and Create Account in its frame, on its own address, inside an employer's
+    careers page (whose own address is iCIMS' or the employer's): that frame is the password's place. A frame from
+    anywhere else (an ad, a third party's widget, another job system) never is, nor are its boxes and buttons; nor a
+    frame whose address isn't known. With no password for the page's own address, the first frame's that has one.
+    fill_secret checks the frame's own address again as it types (Browser.fill_secret)."""
+    urls = {"": str(data.get("url") or "")}
+    urls.update({p: str(u or "") for p, u in (data.get("frame_urls") or {}).items() if p})
+    secret = password_for(urls[""]) or next((name for p, u in urls.items() if p and (name := password_for(u))), None)
+    return secret, {p for p, u in urls.items() if secret is not None and password_for(u) == secret}
 
 
 # The systems whose password the desk page lets the person save, by the name it shows
