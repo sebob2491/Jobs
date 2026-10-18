@@ -777,9 +777,36 @@ def _phone_code(prof: Profile, job: dict) -> str | None:
     return f"{canonical_country(country)} ({code})" if country else code
 
 
+# The words an employer's name may end in that don't make it another employer's ("Intel Corporation" is Intel's)
+_LEGAL_ENDINGS = {"inc", "incorporated", "llc", "ltd", "limited", "corp", "corporation", "co", "company", "group",
+                  "holdings", "plc", "lp", "llp"}
+
+
+def _employer_key(name: str) -> str:
+    """An employer's name without what doesn't tell it from another: case, punctuation ("&" is "and": norm), a leading
+    "The" and the legal words it ends in ("The Example Fab Group, Inc." is "example fab")."""
+    words = norm(name).split()
+    if len(words) > 1 and words[0] == "the":
+        words = words[1:]
+    while len(words) > 1 and words[-1] in _LEGAL_ENDINGS:
+        words.pop()
+    return " ".join(words)
+
+
 def _same_employer(a: str, b: str) -> bool:
-    """One name holds the other as whole words: "Intel" ~ "Intel Corporation", not
-    "Intelligent Systems"."""
+    """The same employer's name, the whole of it (_employer_key): "Intel" is "Intel Corporation", "Microchip Technology"
+    is "Microchip Technology Inc.". Never one name inside another: "Example Fab Services" isn't Example Fab, nor "ASM
+    Pacific Technology" ASM International, nor "Intelligent Fabrication" Intel. Only this says the person worked
+    somewhere."""
+    key = _employer_key(a)
+    return bool(key) and key == _employer_key(b)
+
+
+def _may_be_employer(a: str, b: str) -> bool:
+    """One name holds the other as whole words ("Example Fab Services" and "Example Fab", "Intel" and "Intel Federal"):
+    perhaps the same employer, perhaps not (not "Intelligent Systems" and Intel). Never said to be another employer's:
+    what says the person never worked there (a No, a "not a current employee" box) isn't said of it either."""
+    a, b = _employer_key(a), _employer_key(b)
     return bool(a and b and (re.search(rf"(^| ){re.escape(a)}( |$)", b) or re.search(rf"(^| ){re.escape(b)}( |$)", a)))
 
 
@@ -823,19 +850,32 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     entries = [e for e in _listed(prof.get("work_history")) if isinstance(e, dict)]
     past += [norm(e.get("company")) for e in entries]
     if not any(_same_employer(c, company) for c in past if c):
-        # "...or any of its subsidiaries or affiliates": the profile can't say it's none of those
-        return None if re.search(r"\b(subsidiar|affiliat)", asked) else "No"
-    return "Yes, currently" if works_there_now(prof, company) else "Yes, previously"
+        # an employer whose name only holds this one's, or is held in it ("Example Fab Services" for Example Fab): the
+        # profile doesn't say whether it's this one, so neither Yes nor No; and "...or any of its subsidiaries or
+        # affiliates": the profile can't say it's none of those
+        if any(_may_be_employer(c, company) for c in past if c) or re.search(r"\b(subsidiar|affiliat)", asked):
+            return None
+        return "No"
+    if works_there_now(prof, company):  # (a job now whose name only holds this one's: the person's to say)
+        return "Yes, currently" if any(_same_employer(c, company) for c in _current_employers(prof)) else None
+    return "Yes, previously"
 
 
-def works_there_now(prof: Profile, company: str) -> bool:
-    """Does the profile have the person working for this employer now: a work_history entry that
-    runs to the present, or experience.current_company?"""
-    company = norm(company)
+def _current_employers(prof: Profile) -> list[str]:
+    """Where the profile has the person working now: its work_history entries that run to the present, and
+    experience.current_company."""
     entries = [e for e in _listed(prof.get("work_history")) if isinstance(e, dict)]
     now = [norm(e.get("company")) for e in entries if is_present(entry_dates(e)[1]) or e.get("current") is True]
     now.append(norm(prof.get("experience.current_company")))
-    return bool(company) and any(_same_employer(c, company) for c in now if c)
+    return [c for c in now if c]
+
+
+def works_there_now(prof: Profile, company: str) -> bool:
+    """Might the profile have the person working for this employer now: a work_history entry that runs to the
+    present, or experience.current_company, whose name may be this one's (_may_be_employer: a "not a current
+    employee" box is never ticked for someone at "Example Fab Services" applying to Example Fab)?"""
+    company = norm(company)
+    return bool(company) and any(_may_be_employer(c, company) for c in _current_employers(prof))
 
 
 def _said_no(prof: Profile, key: str) -> bool:
@@ -929,8 +969,8 @@ def _not_staff_choice(field: dict, prof: Profile, job: dict) -> str | None:
         return None  # (a profile that says nothing of their work says nothing of this either)
     known = [norm(e.get("company")) for e in entries] + [norm(c) for c in _listed(prof.get("history.previous_employers"))]
     known.append(norm(prof.get("experience.current_company")))
-    if any(_same_employer(c, company) for c in known if c):
-        return None
+    if any(_may_be_employer(c, company) for c in known if c):
+        return None  # (one that may be this employer: "not staff" is the person's to say)
     fits = []
     for o in field.get("options") or []:
         said = norm(o)
@@ -938,7 +978,7 @@ def _not_staff_choice(field: dict, prof: Profile, job: dict) -> str | None:
         if not m or _SAYS_MORE.search(said):
             continue
         named = [n.strip() for n in (m.group("who"), m.group("of")) if n and n.strip()]
-        if all(_same_employer(n, company) for n in named):
+        if all(_may_be_employer(n, company) for n in named):
             fits.append(o)
     return fits[0] if len(fits) == 1 else None
 

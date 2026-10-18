@@ -1876,6 +1876,53 @@ def test_a_former_employee_question_naming_another_company_is_never_answered_fro
         assert resolve_field(f(asked, "radio_group", options=yes_no), prof(), job).value == "Yes", asked
 
 
+def test_worked_there_before_only_where_the_profile_names_the_employer_itself():
+    """The fake-site walks (Oct 2026): the profile's "Example Fab Services" answered Example Fab's "Have you ever been
+    employed with Example Fab before?" with Yes, previously, as one name held the other. It's Yes only where a job in the
+    profile is at the employer itself, its whole name but for case, punctuation, "The" and its legal words ("Intel
+    Corporation" is Intel). A name that only holds the employer's, or is held in it, may be it or not: the question is
+    the person's, never a Yes (nor a No). A name that's neither ("ASM Pacific Technology" for ASM International) is No."""
+    from job_apply.autofill import _same_employer
+
+    same = [("Intel Corporation", "Intel"), ("Microchip Technology Inc.", "Microchip Technology"),
+            ("The Example Fab Group, Inc.", "example fab"), ("Example Fab, LLC", "EXAMPLE FAB CO."),
+            ("Smith & Sons Holdings", "Smith and Sons"), ("Example Fab Ltd", "Example Fab Corp")]
+    other = [("Example Fab Services", "Example Fab"), ("ASM Pacific Technology", "ASM International"),
+             ("Intel", "Intelligent Fabrication"), ("Intel Federal", "Intel"), ("ASM", "ASM Pacific Technology"),
+             ("Fab", "Example Fab"), ("", ""), ("Inc", "LLC")]
+    for a, b in other:
+        assert not _same_employer(a, b) and not _same_employer(b, a), (a, b)
+    for a, b in same:
+        assert _same_employer(a, b) and _same_employer(b, a), (a, b)
+
+    asked = "Have you ever been employed with Example Fab before?"
+    yes_no = ["Yes", "No"]
+
+    def worked(history: list[str], company: str, label: str = asked) -> str | None:
+        person = _person(work_history=[{"company": c, "title": "Technician", "start": "2019-01", "end": "2022-05"}
+                                       for c in history])
+        return _answer(label, person, kind="radio_group", options=yes_no, job={"company": company})
+
+    assert worked(["Example Fab Services"], "Example Fab") is None  # (was Yes)
+    assert worked(["Example Fab"], "Example Fab Services") is None
+    assert worked(["Intel"], "Intelligent Fabrication", "Have you ever been employed with Intelligent Fabrication?") == "No"
+    assert worked(["ASM Pacific Technology"], "ASM International", "Have you ever worked for ASM International?") == "No"
+    assert worked(["Intel"], "Intel Corporation", "Have you previously been employed by Intel?") == "Yes"
+    assert worked(["Microchip Technology Inc."], "Microchip Technology",
+                  "Have you previously been employed by Microchip?") == "Yes"
+    # a job there now, at a name that only holds the employer's: whether it's this one is the person's
+    person = _person(work_history=[{"company": "Example Fab", "title": "Technician", "start": "2019-01", "end": "2021-05"},
+                                   {"company": "Example Fab Services", "title": "Technician", "start": "2021-06",
+                                    "end": "present"}])
+    asm = ["I am CURRENTLY employed by Example Fab", "I was PREVIOUSLY employed by Example Fab",
+           "I have NEVER been employed by Example Fab"]
+    assert _answer(asked, person, kind="radio_group", options=asm, job={"company": "Example Fab"}) is None
+    # an employee ID kept for one employer goes only on that employer's forms, never on one whose name holds it
+    keeps = Profile({"history": {"employee_ids": {"Example Fab": "E1234567"}}})
+    assert resolve_field(f("Employee ID (if applicable)"), keeps, {"company": "Example Fab Services"}) is None
+    assert resolve_field(f("Employee ID (if applicable)"), keeps, {"company": "Example Fab, Inc."}).value == "E1234567"
+
+
 def test_an_employee_id_goes_only_on_its_own_employers_forms():
     """A person who has worked for an employer has an ID there, which its forms ask for
     ("Employee ID (if applicable)", "please provide your WWID"). It's never put on another's."""
