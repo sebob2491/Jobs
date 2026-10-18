@@ -3436,3 +3436,75 @@ def test_a_persons_no_for_a_lone_box_leaves_it_unticked():
         p = Profile({"answers": [{"match": "reliable transportation", "answer": said}]})
         a = resolve_field(f("I have reliable transportation", "checkbox"), p)
         assert a is not None and a.value is ticked, said
+
+
+# The wrong answers the mutation pass found (Oct 18)
+
+
+def test_a_lone_box_is_ticked_only_by_the_persons_plain_yes():
+    """A single box the person's own answer names was ticked for any answer but a no: "Decline to self-identify"
+    ticked "I identify as a protected veteran", and "Maybe" ticked "I am willing to relocate". Only a yes ticks it;
+    a decline, "Prefer not to say", "Maybe", "Only if required" or anything else that isn't one leaves it."""
+    for match, label in (("veteran", "I identify as a protected veteran"), ("disabilit", "I have a disability"),
+                         ("relocat", "I am willing to relocate")):
+        for said in ("Decline to self-identify", "Prefer not to say", "Maybe", "Only if required", "Not applicable"):
+            p = Profile({"answers": [{"match": match, "answer": said}]})
+            a = resolve_field(f(label, "checkbox"), p)
+            assert a is None or a.value is False, (label, said, a)
+            assert not plan_autofill([f(label, "checkbox")], p)["to_fill"], (label, said)
+        p = Profile({"answers": [{"match": match, "answer": "Yes"}]})
+        assert resolve_field(f(label, "checkbox"), p).value is True, label
+
+
+def test_a_long_signature_date_label_gets_todays_date_never_the_name():
+    """"Signature Date (please enter the date in MM/DD/YYYY format)" is the signing date as "Signature Date" is:
+    today. Over 45 characters it went to the signature rule, and the person's name went into the date box. A label
+    that names a date is never the signature box; a long question that mentions a date signed further on still gets
+    no date, and "Signature" alone is still the name."""
+    from datetime import date
+
+    today, p = date.today().strftime("%m/%d/%Y"), prof()
+    for label in ("Signature Date (please enter the date in MM/DD/YYYY format)",
+                  "Signature date - enter today's date as MM/DD/YYYY",
+                  "Signature Date: Please enter the date you are signing this form"):
+        a = resolve_field(f(label), p)
+        assert a is not None and (a.value, a.rule) == (today, "signed_date"), (label, a)
+    assert resolve_field(f("Electronic Signature Date"), p).value == today  # (a short one, wherever it says so)
+    named = resolve_field(f("Enter the date beside your electronic signature (MM/DD/YYYY)"), p)
+    assert named is None or named.rule != "signature", named
+    assert resolve_field(f("If you have previously signed an agreement with us, enter the date signed"), p) is None
+    for label in ("Signature", "Please sign your full name"):
+        assert resolve_field(f(label), p).value == "Sam Rivera", label
+
+
+def test_a_us_citizen_question_written_without_dots_is_the_us_citizen_question():
+    """"Are you a US Citizen?" is the U.S. citizen question as "Are you a U.S. citizen?" is: the profile's Yes in a
+    text box or among Yes and No. It was read as the citizenship question ("United States" in a box, nothing among
+    Yes and No). "Us" the pronoun is never the country."""
+    p = Profile({"work_authorization": {"us_citizen": True, "citizenship": "United States"}})
+    for label in ("Are you a US Citizen?", "Are you a USA citizen?", "Are you a citizen of the US?",
+                  "Are you a United States citizen?"):
+        assert _answer(label, p) == "Yes", label
+        assert _answer(label, p, kind="radio_group", options=["Yes", "No"]) == "Yes", label
+    for label in ("Are you willing to join us?", "Tell us about your citizenship"):
+        a = resolve_field(f(label), p, {"company": "Acme"})
+        assert a is None or a.rule != "us_citizen", (label, a)
+
+
+def test_a_closest_city_box_with_no_city_in_the_profile_gets_nothing_not_the_state():
+    """Kforce's "Closest Metropolitan City" Region takes the profile's city; a profile without one leaves it, never
+    its state ("Arizona" went into the box)."""
+    p = Profile({"personal": {"address": {"state": "AZ", "country": "United States"}}})
+    assert resolve_field(f("Region", section="Closest Metropolitan City"), p) is None
+    region = f("Region", "select", section="Closest Metropolitan City", options=["Not Specified", "Anthem", "Arizona"])
+    assert resolve_field(region, p) is None
+
+
+def test_is_sponsorship_required_drawn_as_a_text_area_takes_the_profiles_no():
+    """Nikon's sponsorship text area takes the profile's plain No however the question starts: "Is sponsorship
+    required for you to work in the US?" was left (only "are/do/will/... you" questions were read as yes or no)."""
+    p = Profile({"work_authorization": {"authorized_to_work": True, "requires_sponsorship": False}})
+    assert _answer("Is sponsorship required for you to work in the US?", p, kind="textarea") == "No"
+    assert _answer("Is visa sponsorship needed for you?", p, kind="textarea") == "No"
+    assert _answer("Is employment sponsorship required for you?", p, kind="textarea") == "No"
+    assert _answer("Visa sponsorship needed (explain)", p, kind="textarea") is None

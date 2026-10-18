@@ -1485,7 +1485,9 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("expected_grad", r"(expected|anticipated|projected) (graduation|completion)|graduation date.{0,20}(expected|anticipated)",
      _expected_graduation, 80, None),
     ("grad_year", r"graduation (year|date)|year of graduation", _graduated, 60, None),
-    ("signature", r"(electronic |e )?signature|sign your (full )?name", _full_name, 80, {"text"}),
+    # (never a box that names a date: "Signature date - enter today's date" is the day, not the name)
+    ("signature", r"^(?!.*\bdates?\b).*?(?:(electronic |e )?signature|sign your (full )?name)", _full_name, 80,
+     {"text"}),
     # questions (any length)
     # the same facts asked the other way round come first
     # (years of age: never 18 months, hours, credits or years of experience, the review of Oct 15; nor "if under 18,
@@ -1539,8 +1541,10 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("us_person", r"^(?!.*\b(other than|another country|any (other )?country|foreign)\b).*"
      r"(\bu ?s person\b|citizen.{0,80}(permanent resident|green card|refugee|asyl|protected individual))",
      _us_person, None, None),
-    ("us_citizen", r"are you a (u s|united states) citizen\b|are you a citizen of the (u s|united states)( of america)?$",
-     _yn("work_authorization.us_citizen"), None, None),
+    # (the country however it's written: "U.S.", "US", "USA"; "us" stands only where the country does, never the
+    # pronoun's "join us")
+    ("us_citizen", r"are you a (u ?s( ?a)?|united states) citizen\b|are you a citizen of the (u ?s( ?a)?|united states)"
+     r"( of america)?$", _yn("work_authorization.us_citizen"), None, None),
     # "Are you an alien illegally in the United States?", "...admitted under a nonimmigrant visa?" (Axon)
     ("alien", r"^are you an? (illegal )?alien\b", lambda p, j: "No" if p.get("work_authorization.us_citizen") is True else None,
      200, {"select", "listbox", "combobox", "radio_group"}),
@@ -2196,17 +2200,21 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
     if kind == "checkbox":
         # Single checkboxes are usually consents/attestations: leave for a person,
         # except ones the user pre-approved in the answer bank.
+        # (only a yes ticks one, and a no unticks it: an answer that is neither, "Decline to self-identify" for a
+        # veteran's box or "Maybe" for relocating, is no yes, and ticking it says what the person never said: the
+        # mutation pass of Oct 18)
         ans = _answer_bank(prof, raw_label, job)
-        if ans is not None:
-            pol = polarity(ans.value)
-            return Answer(pol if pol is not None else bool(ans.value), ans.rule)
-        return None
+        pol = polarity(ans.value) if ans is not None else None
+        return Answer(pol, ans.rule) if ans is not None and pol is not None else None
 
     ans = _answer_bank(prof, raw_label, job)
     if ans is None and _NEVER_GUESS.search(label):
         return None
     section = norm(field.get("section"))
-    if ans is None and kind == "text" and len(label) <= 45 and _SIGNED_DATE.search(label) \
+    # (a longer label that starts with it is that date too, with its format or a note after: "Signature Date (please
+    # enter the date in MM/DD/YYYY format)"; a long question that mentions a date signed further on asks another day)
+    if ans is None and kind == "text" \
+            and (len(label) <= 45 and _SIGNED_DATE.search(label) or _SIGNED_DATE.match(label)) \
             and not (label == "date" and _OTHER_EVENT.search(section)):
         return Answer(_today_for(field), "signed_date")
     someone_else = _SOMEONE_ELSE.search(f"{label} {section}") or _OTHER_PARTY_LABEL.search(label) \
@@ -2217,8 +2225,9 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
         # Taleo's "Closest Metropolitan City": its Region list is cities (Kforce's, live run 12, Oct 2026: Anthem,
         # Bisbee, ... Chandler): the profile's city, not its state, which the list doesn't have
         city = prof.get("personal.address.city")
-        if city:
-            ans = Answer(city, "personal.address.city")
+        if not city:
+            return None  # (never the state the rules below would give: the list is cities)
+        ans = Answer(city, "personal.address.city")
     if ans is None and kind == "checkbox_group" and (none := _plans_none(field, prof)):
         return Answer(none, "background.plans")  # (one of its own choices, as it reads)
     if ans is None:
@@ -2263,7 +2272,7 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
     # (a yes/no question drawn as a text area, as Nikon's UKG Pro draws its work-authorization questions, live run
     # 14, Oct 2026: the profile's plain Yes or No)
     yes_no_box = ans.rule in {"authorized", "sponsorship", "no_sponsorship"} and polarity(ans.value) is not None \
-        and bool(re.match(r"(are|do|will|would|can|have|is) you\b", label))
+        and bool(re.match(r"(are|do|will|would|can|have|is) you\b|is (visa |employment )?sponsorship\b", label))
     # (and where a person lives, asked as a question in a text area: GCU's "In what city do you live?", the full run
     # of Oct 12)
     home_box = ans.rule in {"city", "home_state"} and bool(re.match(
