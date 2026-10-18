@@ -90,6 +90,22 @@ _JWT = re.compile(r"\beyJ[\w-]{4,}\.[\w-]{4,}")
 # toll-free lines, the 555 numbers made up for tests and a form's 000 placeholder; an employer's published HR line
 _NOBODYS_AREA = {"800", "888", "877", "866", "855", "844", "833", "000"}
 _PUBLIC_LINES = {"510-572-4477"}  # Lam Research's HR support, on its captured pages
+# Ten digits with no separators after a word that says they're a phone's (fixtures._PHONE_SAID: the review of Oct 18)
+_PHONE_SAID = re.compile(r"\b(?:phone|mobile|cell|telephone|tel|fax|call|text|sms|whatsapp)\b"
+                         r"(?:\W{1,3}(?:number|no|us|me|at|on|is)\b)*\W{1,4}?(?:\+?1)?(\d{3})(\d{3})\d{4}(?!\d)", re.I)
+# A box with a value on a captured page: the scrubber empties every box but a choice's (fixtures.clean_html), so one
+# that's kept its value skipped the scrubber (the review of Oct 18). Only on the captured pages (live/): the mock sites'
+# pages are written by hand, some with their boxes filled on purpose, with the tests' fake profile (conftest.PROFILE)
+_INPUT = re.compile(r"<input\b[^>]*>", re.I)
+_ATTR = re.compile(r"""([\w:-]+)\s*=\s*("[^"]*"|'[^']*'|[^\s"'>]+)""")
+_TYPED_BOX = {"text", "email", "tel", "hidden"}
+# Someone greeted by name ("Welcome, Jordan", "Signed in as Jordan Quill"): the scrubber takes out only the profile's
+_GREETING = re.compile(r"\b(?:Welcome(?: back)?|Hi|Hello|Signed in as|Logged in as)[,!:]?\s+([A-Z][\w'-]+(?:\s+[A-Z][\w'-]+)?)")
+# what a page greets that's no one: the scrubber's stand-in, a page's own words ("Welcome Back" on onsemi's Oracle
+# page, "Hello World" in a UI library's strings on Ebara's)
+_NOBODY = {"REDACTED", "Back", "World", "To", "There", "Everyone", "Again", "Aboard", "Guest", "Candidate", "Applicant",
+           "User", "Friend"}
+_FAKE_NAME = {"Sam", "Rivera"}  # the tests' fake profile (conftest.PROFILE), on a mock site's page
 
 
 def _employer_domains() -> set[str]:
@@ -111,7 +127,8 @@ def test_captured_pages_hold_no_personal_data():
     can't know: no address at a public mail provider or at a domain that isn't a listed employer's or a job
     system's (an employer's own accommodation inbox is fine), and none of the fake profile's or the test
     identity's details (the whole-program review of Oct 15 asked for it); and nobody's phone (one with separators or a
-    click-to-call link's digits), SSN-shaped number or token (the reviews of Oct 15 and 0.3.189)."""
+    click-to-call link's digits), SSN-shaped number or token (the reviews of Oct 15 and 0.3.189); nor ten bare digits
+    after a phone word, anyone greeted by name, or a captured page's box that kept its value (the review of Oct 18)."""
     allowed = _employer_domains() | JOB_SYSTEMS | {"example.com", "example.org", "example.net"}
     problems = []
     for path in sorted(FIXTURES.rglob("*")):
@@ -132,8 +149,19 @@ def test_captured_pages_hold_no_personal_data():
             if exchange != "555" and area not in _NOBODYS_AREA \
                     and re.sub(r"^(?:tel:\s*)?\+?1[-. ]?", "", m.group(0), flags=re.I) not in _PUBLIC_LINES:
                 problems.append(f"{shown}: a phone number {m.group(0)!r}")
+        problems += [f"{shown}: a phone number {m.group(0)!r}" for m in _PHONE_SAID.finditer(text)
+                     if m.group(2) != "555" and m.group(1) not in _NOBODYS_AREA]
         problems += [f"{shown}: an SSN's shape {v!r}" for v in _SSN.findall(text)]
         problems += [f"{shown}: a token {v[:12]!r}…" for v in _JWT.findall(text)]
+        for m in _GREETING.finditer(text):
+            words = m.group(1).split()
+            if words[0] not in _NOBODY and not set(words) <= _FAKE_NAME:
+                problems.append(f"{shown}: someone greeted by name {m.group(0)!r}")
+        if path.relative_to(FIXTURES).parts[0] == "live":
+            for m in _INPUT.finditer(text):
+                attrs = {k.lower(): v.strip("\"'") for k, v in _ATTR.findall(m.group(0)[len("<input"):])}
+                if attrs.get("type", "text").lower() in _TYPED_BOX and attrs.get("value", "").strip():
+                    problems.append(f"{shown}: a box that kept its value {m.group(0)[:120]!r}")
     assert not problems, "personal data in the fixtures:\n" + "\n".join(sorted(set(problems)))
 
 

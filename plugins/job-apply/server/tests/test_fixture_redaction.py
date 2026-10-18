@@ -276,3 +276,39 @@ def test_the_expectations_are_scrubbed_like_their_page(tmp_path):
         assert leaked not in written, leaked
     for field in json.loads(written)["fields"]:
         assert f">{field['label']}<" in page, field["label"]
+
+
+def test_the_shapes_the_review_of_oct_18_found_surviving_are_taken_out(tmp_path):
+    """The review of Oct 18 planted more on a page: a third party's phone as ten bare digits after a phone word and with
+    no separator after its area code, the person's own phone written with slashes, birth dates with the month's name,
+    and a license's, a passport's, an EIN's, an IBAN's and a card's numbers after their labels. All stayed, in the page
+    and in its .expect.json; none does now. (Every value made up.)"""
+    planted = {
+        "bare phone": "Phone: 6025550188", "call us": "call us at +16025550177", "no gap": "(602)5550166",
+        "own phone": "480/555/0142", "born": "Born 14 March 1990", "birthday": "Birthday: March 14, 1990",
+        "born on": "born on 3rd of Sept. 1985", "license": "Driver's License #: D12345678",
+        "passport": "Passport number: X98765432", "ein": "EIN: 12-3456789",
+        "iban": "IBAN: DE89 3704 0044 0532 0130 00", "card": "Card number: 4111 1111 1111 1111",
+    }
+    values = {"bare phone": "6025550188", "call us": "6025550177", "no gap": "5550166", "own phone": "480/555/0142",
+              "born": "14 March 1990", "birthday": "March 14, 1990", "born on": "Sept. 1985", "license": "D12345678",
+              "passport": "X98765432", "ein": "3456789", "iban": "3704 0044", "card": "1111 1111"}
+    prof = Profile({"personal": {"first_name": "Jordan", "last_name": "Quill", "phone": "480-555-0142"}})
+    snap = tmp_path / "snap"
+    snap.mkdir()
+    (snap / "page.html").write_text("<html><body>" + "".join(
+        f'<label for="f{i}">{what}</label><input id="f{i}"><p title="{text}">{text}</p>'
+        for i, (what, text) in enumerate(planted.items())) + "</body></html>", encoding="utf-8")
+    (snap / "snapshot.json").write_text(json.dumps({
+        "url": "https://x.example/apply", "frames": [{"file": "page.html", "url": "https://x.example/apply"}],
+        "fields": [{"label": f"{what} ({text})", "kind": "text"} for what, text in planted.items()]}), encoding="utf-8")
+    convert(snap, "shapes", tmp_path / "out", prof)
+    page = (tmp_path / "out" / "shapes.html").read_text(encoding="utf-8")
+    written = (tmp_path / "out" / "shapes.expect.json").read_text(encoding="utf-8")
+    for what, value in values.items():
+        assert value not in page and value not in written, (what, value)
+    # (the labels stay, and what isn't anyone's: a requisition's ten digits, a word that only starts like a label)
+    for kept in ("Phone: ", "Driver's License #: ", "IBAN: ", "Card number: ", "Born "):
+        assert kept in page and kept in written, kept
+    kept = clean_html("<p>Requisition 6025550188. Licensed in 2019. Cardinal 12345. Born to lead.</p>", [])
+    assert "Requisition 6025550188. Licensed in 2019. Cardinal 12345. Born to lead." in kept
