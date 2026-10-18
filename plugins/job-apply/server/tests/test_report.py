@@ -650,3 +650,28 @@ def test_a_report_hides_the_runs_own_answers_however_a_page_echoes_them(srv, job
         for value in ("555-0177", "5550177", "555.0177", "300mm etch", "across two fabs", "Q7Z", "Rex"):
             assert value not in text, (value, text)
         assert "review page shows errors" in text and "exceeds 100 characters" in text, text
+
+
+def test_a_report_hides_the_runs_own_in_an_addresss_path_but_never_its_host_nor_a_dates_digits(
+        srv, job_apply_home, monkeypatch):
+    """The second look at the review's fixes (Oct 18): an address was left whole unless it was all one value, so a code
+    in a verify link and an email typed into a form, in a profile page's path, stayed; and an answer with a few
+    numbers in it ("Worked 2019-2023 at a fab") was hidden by its digits run together, "2019-2023" anywhere. In an
+    address, a value goes as a whole word of its path or query, never from its host; a number's digits only for a
+    value that's mostly a number."""
+    import time
+
+    from job_apply import pipeline
+
+    job = srv.add_job(url="https://example.com/jobs/fse", title="Technician", company="Example Fab")["job"]
+    monkeypatch.setitem(pipeline._MAIL_TAKEN, ("noreply@example.com", "482913", time.time()), job["id"])
+    r = Run(job["id"], "Technician", "Example Fab", status="needs_you", need="stuck", reason="stopped on the profile",
+            once={"Email": "jq.applies@example.org", "Experience": "Worked 2019-2023 at a fab", "Site": "fabnights"},
+            log=["opened https://fabnights.example/verify/482913?code=482913",
+                 "opened https://fabnights.example/profile/jq.applies@example.org/edit",
+                 "the page shows dates 2019-2023 shown"])
+    text = _reported(srv, job_apply_home, job, r)[0]
+    for value in ("482913", "jq.applies"):
+        assert value not in text, (value, text)
+    assert "https://fabnights.example/verify/REDACTED" in text and "https://fabnights.example/profile/REDACTED/edit" in text
+    assert "dates 2019-2023 shown" in text, text

@@ -123,6 +123,9 @@ _QUOTED = re.compile(r"\u201c[^\u201d]*\u201d|(?<!\w)'[^'\n]*'(?!\w)|(?<!\w)\"[^
 _ANSWER_SAID = re.compile(r"(yours: |your profile's answer )\u201c[^\u201d]*\u201d")
 # What a long number may be written with between its digits (fixtures._pattern's): "602.555.0142", "(602) 555-0142"
 _PHONE_APART = re.compile(r"[\s.\-()/]+")
+# A number's characters: its digits, and what it may be written with between them and before it ("+1 (602) 555-0177")
+_NUMBER_CHARS = re.compile(r"[\d\s.\-()/+]")
+_URL_HOST = re.compile(r"https?://[^/?#]*", re.I)
 
 
 def _repository() -> str:
@@ -233,12 +236,15 @@ def _hiding(scrub: Callable[[Any], str], hide: Iterable[Any]) -> Callable[[Any],
     person gave for this application and what was typed into the form, an account form's answers, the codes the inbox
     gave, the desk's secrets), each as a whole word, of 3 characters or more, however a page may write it: a page's error
     the desk quotes ("review page shows errors: …") can echo what was typed. A number of 7 digits or more goes with any
-    separators ("602-555-0177" as "(602) 555-0177" or "6025550177"), and a long answer by its start too, as far as the
-    text goes on with it (a page's error that cut it short: "I maintained 300mm etch tools across… exceeds 100
-    characters"). Never inside an address but an address that's one of them (a reset link the inbox gave)."""
+    separators where it's mostly digits ("602-555-0177" as "(602) 555-0177" or "6025550177"; never "Worked 2019-2023 at
+    a fab" as "20192023"), and a long answer by its start too, as far as the text goes on with it (a page's error that
+    cut it short: "I maintained 300mm etch tools across… exceeds 100 characters"). In an address, only as a whole word
+    of its path or query (a code in a verify link, an email in a profile's path), never its host; or the whole address,
+    when it's one of them (a reset link the inbox gave)."""
     values = {v for v in (" ".join(str(h or "").split()) for h in hide) if len(v) >= 3}
     hidden = {s for v in values for s in _spellings(v) if len(s) >= 3}
-    hidden |= {digits for v in values if len(digits := re.sub(r"\D", "", v)) >= 7}
+    hidden |= {digits for v in values if len(digits := re.sub(r"\D", "", v)) >= 7
+               and len(_NUMBER_CHARS.findall(v)) >= 0.8 * len(v)}
     if not hidden:
         return scrub
     ordered = sorted(hidden, key=len, reverse=True)
@@ -254,10 +260,21 @@ def _hiding(scrub: Callable[[Any], str], hide: Iterable[Any]) -> Callable[[Any],
                                        else all(w.rstrip(".,").casefold() in low for w in s.split()))]
         return redact(said, near) if near else said
 
+    def address(url: str) -> str:
+        if _without_query(url) in links:
+            return REDACTED
+        host = _URL_HOST.match(url)
+        site, rest = (host.group(0), url[host.end():]) if host else ("", url)
+        low = rest.casefold()
+        for s in ordered:  # (as whole words alone: never "nightshift" in a path for "Nights")
+            if all(w.rstrip(".,").casefold() in low for w in s.split()):
+                rest = re.sub(_pattern(s), REDACTED, rest, flags=re.I)
+        return site + rest
+
     def first(text: Any) -> str:
         said, out, at = str(text or ""), [], 0
         for m in _URL.finditer(said):
-            out += [words(said[at:m.start()]), REDACTED if _without_query(m.group(0)) in links else m.group(0)]
+            out += [words(said[at:m.start()]), address(m.group(0))]
             at = m.end()
         return "".join([*out, words(said[at:])])
     return lambda text: scrub(first(text))
