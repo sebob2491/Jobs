@@ -5330,7 +5330,7 @@ def test_each_switch_that_is_on_is_said_under_the_openings_head(srv, job_apply_h
     """The review of Oct 18 (U4): the Openings head's switches said what they do only in tooltips (none on a phone),
     and Troubleshooting, a developer's mode, sat beside the main filter. Each switch that's on is said in a muted line
     under the head, and gone once it's off; Troubleshooting and Search by itself are under the head's More."""
-    monkeypatch.setattr(config, "handled_employers", lambda: {"example fab", "example litho"})
+    monkeypatch.setattr(config, "handled_employers", lambda: {"example fab", "example litho", "example quiet"})
     searched: list[str] = []
 
     async def no_search(query, companies=None, location=None, limit_per_company=10):
@@ -5344,6 +5344,9 @@ def test_each_switch_that_is_on_is_said_under_the_openings_head(srv, job_apply_h
     desk.listings = [{"company": name, "title": "Technician", "url": f"https://example.com/{i}", "location": "Phoenix, AZ",
                       "fit": _fit(70)} for i, name in enumerate(["Example Fab", "Example Fab", "Example Litho",
                                                                   "Example Bank"])]
+    # (one the desk goes all the way at, but not recommended: not shown, so not counted among the employers shown)
+    desk.listings.append({"company": "Example Quiet", "title": "Technician", "url": "https://example.com/quiet",
+                          "location": "Phoenix, AZ", "fit": _fit(40)})
 
     async def go():
         await desk.start(port=0, open_browser=False)
@@ -5508,3 +5511,122 @@ def test_the_preflight_dialog_defaults_to_seeing_to_things_first(srv, job_apply_
     assert seen["picked"] == "workday" and seen["pw_focused"] == "pw" and seen["pw_in_view"], seen
     assert seen["applied"] == [url], seen
     assert seen["native"] == [], seen  # (no browser confirm: the page's own window)
+
+
+def _preflight_desk(srv, url: str, ats: str) -> Desk:
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    desk.listings = [{"company": "Example Fab", "title": "Technician", "url": url, "ats": ats,
+                      "location": "Phoenix, AZ", "fit": _fit(80)}]
+    return desk
+
+
+def test_see_to_these_first_for_the_common_questions_shows_them_all(srv, job_apply_home):
+    """The review of U11: See to these first, when the common questions came first, went to their card, which showed
+    only the most asked four while every one unanswered stops a job. It shows them all."""
+    desk = _preflight_desk(srv, "https://boards.greenhouse.io/example/jobs/1", "greenhouse")  # (no account, no code)
+    unanswered = [q["id"] for q in desk.state()["bank"] if q.get("answer") in (None, "")]
+    assert len(unanswered) > 4, unanswered
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        seen: dict = {}
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1200, "height": 700})
+                await page.goto(desk.url)
+                await page.wait_for_selector("#bank-card:not([hidden]) [data-act=bank-all]")
+                seen["before"] = await page.locator("#bank [data-bank]").count()
+                await page.click("text=Select recommended")
+                await page.click("#apply")
+                await page.wait_for_selector("#preflight[open]")
+                seen["said"] = await page.eval_on_selector_all("#preflight-lines li", "ls => ls.map((l) => l.innerText)")
+                await page.keyboard.press("Enter")  # (See to these first)
+                await page.wait_for_selector("#preflight", state="hidden")
+                await page.wait_for_selector("#bank [data-act=bank-all]", state="detached")
+                seen["after"] = await page.eval_on_selector_all("#bank [data-bank]", "bs => bs.map((b) => b.dataset.bank)")
+                seen["in_view"] = await page.evaluate("(() => { const r = document.getElementById('bank-h')"
+                                                      ".getBoundingClientRect(); return r.top >= 0 && r.top < innerHeight; })()")
+                seen["tasks"] = list(desk.applier.tasks)
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    assert len(seen["said"]) == 1 and "common question" in seen["said"][0], seen
+    assert seen["before"] == 4 and sorted(seen["after"]) == sorted(unanswered) and seen["in_view"], seen
+    assert seen["tasks"] == [], seen
+
+
+def test_two_quick_presses_of_apply_ask_the_preflight_once(srv, job_apply_home):
+    """The review of U11: a double click on Apply to selected asked the pre-flight twice and opened its window over
+    itself. An Apply under way (its pre-flight asked, or its window open) makes another press do nothing."""
+    url = "https://acme.wd1.myworkdayjobs.com/External/job/Phoenix-AZ/Technician_R1"
+    desk = _preflight_desk(srv, url, "workday")
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        calls: list[str] = []
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                page.on("request", lambda r: calls.append(r.url.split("?")[0].rsplit("/api/", 1)[-1])
+                        if "/api/preflight" in r.url or "/api/apply" in r.url else None)
+                await page.goto(desk.url)
+                await page.wait_for_selector("text=Technician")
+                await page.click("text=Select recommended")
+                await page.dblclick("#apply")
+                await page.wait_for_selector("#preflight[open]")
+                await page.wait_for_timeout(800)
+                await page.click("#preflight-apply")
+                await _until(lambda: desk.applier.tasks)
+                await page.wait_for_timeout(500)
+                await browser.close()
+                return calls, list(desk.applier.tasks)
+        finally:
+            await desk.stop()
+
+    calls, tasks = run(go())
+    assert calls == ["preflight", "apply"], calls
+    assert len(tasks) == 1, tasks
+
+
+def test_more_stays_open_while_troubleshooting_is_on(srv, job_apply_home, monkeypatch):
+    """The review of U4: Troubleshooting under a closed More could be on with the box that turns it off out of sight.
+    While it's on, More is open (closed again, it opens on the page's next refresh); with it off, More starts closed."""
+    async def no_search(query, companies=None, location=None, limit_per_company=10):
+        return {"results": [], "errors": {}, "browser_only": []}  # (never the real sites)
+
+    monkeypatch.setattr(srv, "search_company_jobs", no_search)
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    desk.troubleshoot = desk.applier.hold_submits = True  # (as its box sets them: settings_view)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        seen: dict = {}
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("#troubleshoot:visible")
+                seen["open"] = await page.eval_on_selector("#more", "d => d.open")
+                await page.click("#more summary")  # (closed by the person)
+                await page.wait_for_selector("#troubleshoot:visible")  # (open again with the next refresh)
+                seen["checked"] = await page.is_checked("#troubleshoot")
+                await page.uncheck("#troubleshoot")
+                await page.wait_for_function("() => !document.getElementById('troubleshoot').checked")
+                await _until(lambda: not desk.troubleshoot)
+                await page.reload()
+                await page.wait_for_selector("#plugin-version:not(:empty)")
+                seen["off_open"] = await page.eval_on_selector("#more", "d => d.open")
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    assert seen == {"open": True, "checked": True, "off_open": False}, seen

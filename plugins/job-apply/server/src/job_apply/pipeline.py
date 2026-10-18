@@ -7953,7 +7953,7 @@ def _short_said(site: str, short: dict[str, tuple[int, int]]) -> str:
     names = " and ".join(_blocks(s, *n) for s, n in short.items())
     return (f"{site} shows only {names}: the Add button is covered by something on the page, so the rest weren't "
             "added. Press Add in the desk's browser window until all are there (the desk fills them in), or close "
-            "what covers it, then press Carry on. Carry on with nothing added goes on without them.")
+            "what covers it, then press Carry on. Pressing Carry on with nothing added goes on without them.")
 
 
 def _site(run: Run, data: dict[str, Any]) -> str:

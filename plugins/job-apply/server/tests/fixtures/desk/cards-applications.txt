@@ -37,16 +37,21 @@ Interviewing: 1
 Common questions
 1 of 12 answered
 Most applications ask these, and your profile doesn't say. Answer once: the desk fills them in at every employer from then on (kept in ~/.job-apply/answers.yaml).
-When could you start after an offer? (e.g. "Two weeks after an offer")
-Would you agree to a background check if offered a job?
-Yes
-No
-Can you do a job's essential functions, with or without reasonable accommodation?
-Yes
-No
+Which shifts would you work?
+Days
+Evenings
+Nights
+Any shift
 Have you ever been fired, or asked to resign, from a job?
 No
 Yes
+Are you bound by a non-compete, non-solicitation or similar agreement with a current or past employer?
+No
+Yes
+Are you looking for full-time or part-time work?
+Full Time
+Part Time
+Either
 Show all 11
 Your answers
 What pay are you looking for? Write it as the site would ask, e.g. "$28 per hour" or "$60,000 per year".

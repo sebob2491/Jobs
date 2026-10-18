@@ -89,8 +89,8 @@ def test_jobs_at_once_is_two_unless_the_profile_says_and_never_past_three():
 
 def test_follow_up_days_is_ten_unless_the_profile_says_and_from_one_to_ninety():
     """settings.follow_up_days: how many days an application sent in waits with no reply before the desk's My
-    applications marks it "Follow up?" (the code review's worth building 7). Ten where the profile doesn't say; 1 to 90
-    as written; anything else is said, and the nearest it can be (or ten). A key a letter short of it is said too, and
+    applications marks it for a follow-up (the code review's worth building 7). Ten where the profile doesn't say; 1 to
+    90 as written; anything else is said, and the nearest it can be (or ten). A key a letter short of it is said too, and
     the template has it, with nothing said of it."""
     def days(raw):
         s = config.Settings.from_dict({} if raw is None else {"follow_up_days": raw})

@@ -31,7 +31,7 @@
   },
   {
    "name": "add_job",
-   "description": "Save a job from details you already have (e.g. from the Indeed connector or text the\n    user pasted) when ingest_job can't read the page.",
+   "description": "Save a job from details you already have (e.g. from the Indeed connector or text the\n    user pasted) when ingest_job can't read the page. employment_type: the type as given\n    (Indeed's job_type: \"Full-time\", \"Contract\"), for the desk's Type filter.",
    "inputSchema": {
     "properties": {
      "url": {
@@ -69,6 +69,11 @@
      "source": {
       "default": "",
       "title": "Source",
+      "type": "string"
+     },
+     "employment_type": {
+      "default": "",
+      "title": "Employment Type",
       "type": "string"
      }
     },
@@ -397,7 +402,7 @@
   },
   {
    "name": "list_jobs",
-   "description": "List tracked jobs, newest activity first. status is one of:\n    saved, in_progress, ready_to_submit, applied, interviewing, offer, rejected, withdrawn, skipped.\n\n    A job sent in (ready_to_submit and after) also has `last_heard`, the newest employer\n    email logged for it with log_email (category, day, one-line summary; null for none\n    yet), and `follow_up_due`: the day a follow-up became due, for one applied to\n    settings.follow_up_days days ago (10 unless the profile says) or more with no email\n    logged, not even a confirmation; null otherwise. The Job Desk's My applications\n    marks those \"Follow up?\".\n\n    A job the user marked Not interested on the Job Desk has `not_interested: true` and\n    `not_interested_reason` (title, company, location, pay, other, or \"\" for none): ask\n    before applying to it.\n\n    A job whose pay is listed has `pay` (\"$26–$28/hr (≈$54k–$58k/yr)\") and `pay_yearly` (the most it pays a year;\n    for \"from $X\", X a year). min_pay (dollars a year; hourly pay counts 2,080 hours) leaves out a job whose pay is\n    listed on its pay line (or in its own data) and below it; a job that doesn't list its pay, or whose pay is only\n    read from its words, stays. Up to `limit` jobs either way.",
+   "description": "List tracked jobs, newest activity first. status is one of:\n    saved, in_progress, ready_to_submit, applied, interviewing, offer, rejected, withdrawn, skipped.\n\n    A job sent in (ready_to_submit and after) also has `last_heard`, the newest employer\n    email logged for it with log_email (category, day, one-line summary; null for none\n    yet), and `follow_up_due`: the day a follow-up became due, for one applied to\n    settings.follow_up_days days ago (10 unless the profile says) or more with no email\n    logged, not even a confirmation; null otherwise. The Job Desk's My applications\n    marks those with the day it became due and a Follow up button (a request to draft one, for Claude).\n\n    A job the user marked Not interested on the Job Desk has `not_interested: true` and\n    `not_interested_reason` (title, company, location, pay, other, or \"\" for none): ask\n    before applying to it.\n\n    A job whose pay is listed has `pay` (\"$26–$28/hr (≈$54k–$58k/yr)\") and `pay_yearly` (the most it pays a year;\n    for \"from $X\", X a year). min_pay (dollars a year; hourly pay counts 2,080 hours) leaves out a job whose pay is\n    listed on its pay line (or in its own data) and below it; a job that doesn't list its pay, or whose pay is only\n    read from its words, stays. Up to `limit` jobs either way.",
    "inputSchema": {
     "properties": {
      "status": {
@@ -714,7 +719,7 @@
   },
   {
    "name": "search_company_jobs",
-   "description": "Search employers' own careers sites for openings through their applicant tracking\n    system's public search: Workday, Greenhouse, Lever, Eightfold, SmartRecruiters, Oracle,\n    ApplicantStack, Taleo, Talemetry, iCIMS Jibe, Jobvite, Cornerstone, Phenom, amazon.jobs and Phoenix\n    Children's own site. ASML's site, iCIMS portals, Paycom and UKG Pro boards and SuccessFactors'\n    newer search (Edwards) and older career sites (Amkor) and Infor CloudSuite boards (Benchmark)\n    are read in a background browser tab.\n\n    query: keywords; separate alternatives with \"|\", e.g. \"field service | equipment engineer\".\n    companies: names from the plugin's companies list (default: all of them).\n    location: state code/name or city alternatives (\"AZ\", \"Phoenix|Chandler\"); null for anywhere.\n    Results already in the tracker carry `tracked`. Companies in `browser_only` have no\n    search the plugin can use, and some turn automated browsers away: give the user their\n    careers_url to search in their own browser.\n    every_list: every plugin list's employers too, not only the person's (the desk's troubleshooting).\n    min_pay: dollars a year (hourly pay counts 2,080 hours): leaves out an opening whose pay is listed (by its\n    site's list, or its job in the tracker) on its pay line or in its own data, and the most it pays is below this\n    (pay only read from a posting's other words never leaves one out). Most lists don't give pay: those openings\n    stay, with no `pay` (read the posting, or ingest_job, for it). Results with pay carry `pay`.\n    posted_within_days: leaves out openings posted longer ago (7, 14, 30...); one whose site gives no date stays\n    (ApplicantStack, Talemetry, Jobvite, Avature and a few others never do). `below_min_pay` counts what min_pay left\n    out.",
+   "description": "Search employers' own careers sites for openings through their applicant tracking\n    system's public search: Workday, Greenhouse, Lever, Eightfold, SmartRecruiters, Oracle,\n    ApplicantStack, Taleo, Talemetry, iCIMS Jibe, Jobvite, Cornerstone, Phenom, amazon.jobs and Phoenix\n    Children's own site. ASML's site, iCIMS portals, Paycom and UKG Pro boards and SuccessFactors'\n    newer search (Edwards) and older career sites (Amkor) and Infor CloudSuite boards (Benchmark)\n    are read in a background browser tab.\n\n    query: keywords; separate alternatives with \"|\", e.g. \"field service | equipment engineer\".\n    companies: names from the plugin's companies list (default: all of them).\n    location: state code/name or city alternatives (\"AZ\", \"Phoenix|Chandler\"); null for anywhere.\n    Results already in the tracker carry `tracked`. Companies in `browser_only` have no\n    search the plugin can use, and some turn automated browsers away: give the user their\n    careers_url to search in their own browser.\n    every_list: every plugin list's employers too, not only the person's (the desk's troubleshooting).\n    min_pay: dollars a year (hourly pay counts 2,080 hours): leaves out an opening whose pay is listed (by its\n    site's list, or its job in the tracker) on its pay line or in its own data, and the most it pays is below this\n    (pay only read from a posting's other words never leaves one out). Most lists don't give pay: those openings\n    stay, with no `pay` (read the posting, or ingest_job, for it). Results with pay carry `pay`.\n    posted_within_days: leaves out openings posted longer ago (7, 14, 30...); one whose site gives no date stays\n    (ApplicantStack, Talemetry, Jobvite, Avature and a few others never do). `below_min_pay` counts what min_pay left\n    out.\n    workplace: \"remote\", \"hybrid\" or \"onsite\", or several (\"remote, hybrid\"): leaves out an opening its site says\n    (its own field, or its location's words: \"Remote - US\") is done another way. Most don't say: those stay. Results\n    that say carry `workplace` and `workplace_source` (structured, location); `other_workplace` counts what it left\n    out.\n    employment_type: \"full_time\", \"part_time\", \"contract\", \"temporary\", \"internship\" or \"per_diem\", or several\n    (\"full_time, contract\"): leaves out an opening its site (or its job in the tracker) says is only of other types.\n    Most lists don't say: those stay. Results that say carry `employment_type` (the site's words) and\n    `employment_types` (these names); `other_employment_type` counts what it left out.",
    "inputSchema": {
     "properties": {
      "query": {
@@ -781,6 +786,30 @@
       ],
       "default": null,
       "title": "Posted Within Days"
+     },
+     "workplace": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Workplace"
+     },
+     "employment_type": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Employment Type"
      }
     },
     "required": [

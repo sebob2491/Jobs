@@ -871,10 +871,32 @@ function askPreflight(lines) {
   });
 }
 
+// Apply to selected: what will stop these jobs, said once before they go (the same list isn't asked about twice), then
+// queued
+let applying = false;  // an Apply under way (its pre-flight asked, or its window open): another press waits for it
+async function applyTicked(urls, auto) {
+  const pre = await api("/api/preflight", {urls});
+  const said = (pre.lines || []).join("\n");
+  if (said && said !== preflightSeen) {
+    if (!await askPreflight(pre.lines)) { seeToFirst(pre.lines[0]); return; }
+    preflightSeen = said;
+  }
+  const out = await api("/api/apply", {urls, submit: auto});
+  selected.clear();
+  // (two or more queued together go the likeliest to go all the way first: said once, here)
+  if (out.ordered) toast(`Queued ${out.queued.length}, the ones likely to go all the way first.`);
+  if ((out.already_applied || []).length) alert("Already applied or skipped, so not queued: " + out.already_applied.join(", ")
+    + ". Undo on a skipped job puts it back.");
+  if ((out.not_interested || []).length) alert("You said you're not interested, so not queued: "
+    + out.not_interested.join(", ") + ". Undo on it (under Not interested) brings it back.");
+}
+
 // See to these first: the card for the first thing said (the Common questions card, or Site passwords with that
 // job system picked), scrolled to
 function seeToFirst(line) {
   if (/common question/i.test(line) && !$("bank-card").hidden) {
+    bankAll = true;  // (every one unanswered, not only the most asked four: each stops a job)
+    renderBank();
     $("bank-card").scrollIntoView({block: "start"});
     return;
   }
@@ -949,10 +971,12 @@ function sorted(rows) {
 
 // Under the Openings head, a line for each switch that's on, saying what it does now (their tooltips aren't seen on a
 // phone, and two of them sit under More)
-function renderSwitchHint(mine) {
+function renderSwitchHint(mine, rows) {
   const s = state.settings || {};
-  const employers = new Set((state.listings || []).filter((r) => r.handled)
-    .map((r) => String(r.company || "").trim().toLowerCase())).size;
+  // (the employers among the openings the list shows now)
+  const employers = new Set(rows.filter((r) => r.handled).map((r) => String(r.company || "").trim().toLowerCase())).size;
+  // Troubleshooting on: More stays open, so the box that turns it off is always in sight
+  if (s.troubleshoot && !$("more").open) $("more").open = true;
   const lines = [
     s.handled_only ? `Only where the desk goes all the way: showing ${employers ? `the ${employers} employer${employers === 1 ? "" : "s"}` : "the employers"} where the plugin's live check reached the review page; bot checks and steps the desk can't do yet are elsewhere.` : "",
     s.troubleshoot ? "Troubleshooting: nothing is submitted; Find jobs searches every list; only the employers where the desk doesn't go all the way yet are shown." : "",
@@ -968,7 +992,7 @@ function renderRows() {
   if (!state) return;
   const mine = filter === "mine";
   document.querySelectorAll(".openings-only").forEach((el) => { el.hidden = mine; });
-  renderSwitchHint(mine);
+  if (mine) renderSwitchHint(true, []);
   $("mine-count").textContent = (state.applications || []).length ? `(${state.applications.length})` : "";
   if (mine) { renderApps(); return; }
   $("app-groups").hidden = true;
@@ -980,6 +1004,7 @@ function renderRows() {
     || r.not_interested);
   renderStops(listed.filter(shown));
   const rows = sorted(listed.filter(shown).filter(inStop));
+  renderSwitchHint(false, rows);
   const entries = rows.map((r) => {
     const fit = r.fit || {score: 0, reasons: [], concerns: []};
     const done = DONE.has(r.status) || (r.run && UNDER_WAY.has(r.run.status)) || !!r.not_interested;
@@ -1956,25 +1981,13 @@ document.addEventListener("click", (e) => {
   if (a === "select-none") { selected.clear(); renderRows(); }
   if (a === "apply") {
     const urls = [...selected].filter(selectable);
-    if (!urls.length) return;
+    // (one Apply at a time: a second quick press would ask the pre-flight twice and open its window over itself)
+    if (!urls.length || applying || $("preflight").open) return;
     const auto = state.settings.auto_submit && !state.settings.dry_run && !state.settings.troubleshoot;
     if (auto && !confirm(`Submit ${urls.length} application(s) for you wherever nothing needs you?`)) return;
+    applying = true;
     act(async () => {
-      // what will stop these jobs, said once before they go (the same list isn't asked about twice)
-      const pre = await api("/api/preflight", {urls});
-      const said = (pre.lines || []).join("\n");
-      if (said && said !== preflightSeen) {
-        if (!await askPreflight(pre.lines)) { seeToFirst(pre.lines[0]); return; }
-        preflightSeen = said;
-      }
-      const out = await api("/api/apply", {urls, submit: auto});
-      selected.clear();
-      // (two or more queued together go the likeliest to go all the way first: said once, here)
-      if (out.ordered) toast(`Queued ${out.queued.length}, the ones likely to go all the way first.`);
-      if ((out.already_applied || []).length) alert("Already applied or skipped, so not queued: " + out.already_applied.join(", ")
-        + ". Undo on a skipped job puts it back.");
-      if ((out.not_interested || []).length) alert("You said you're not interested, so not queued: "
-        + out.not_interested.join(", ") + ". Undo on it (under Not interested) brings it back.");
+      try { await applyTicked(urls, auto); } finally { applying = false; }
     });
   }
   if (jobAct === "fill") {
