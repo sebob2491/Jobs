@@ -294,7 +294,11 @@ def test_the_databases_and_the_browsers_failures_reach_claude_in_their_own_words
 
 def test_the_mcp_server_reports_the_plugins_version(srv):
     """The review of Oct 18: the server said 0.3.0 (pyproject's) to the app while the plugin was 0.3.209."""
-    assert srv.mcp.version == config.plugin_version() and srv.mcp.version.count(".") == 2
+    import json
+
+    # (read from plugin.json here: test_doctor patches config.plugin_version, and the server reads it once on import)
+    manifest = json.loads((config.PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    assert srv.mcp.version == manifest["version"] and srv.mcp.version.count(".") == 2
 
 def test_a_profile_with_a_typo_says_where(job_apply_home):
     config.profile_path().write_text('documents:\n  resume: "C:\\Users\\Sam\\resume.pdf"\n', encoding="utf-8")

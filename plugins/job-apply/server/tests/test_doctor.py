@@ -34,6 +34,8 @@ def fine(monkeypatch):
         raise AssertionError("the browser is only started with --launch")
 
     monkeypatch.setattr(doctor, "launches", never)
+    import job_apply.server  # noqa: F401  (imported first: it reads the plugin's version once, as it's imported)
+
     monkeypatch.setattr(config, "plugin_version", lambda: "0.3.92")
 
 

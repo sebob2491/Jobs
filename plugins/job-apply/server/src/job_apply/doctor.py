@@ -368,7 +368,10 @@ def check_tracker() -> Check | None:
         return None
     # (a URI the way SQLite takes it, without resolve(): on Windows that turns a mapped drive into a UNC path, which as
     # a file:// address SQLite refuses for its server name)
-    uri = "file:" + pathname2url(str(path.absolute())) + "?mode=ro"
+    url = pathname2url(str(path.absolute()))
+    if url.startswith("//") and not url.startswith("////"):  # (a UNC path, as Python 3.12+ writes it: four slashes)
+        url = "//" + url
+    uri = "file:" + url + "?mode=ro"
     refused = False
     try:
         conn = sqlite3.connect(uri, uri=True, timeout=5)

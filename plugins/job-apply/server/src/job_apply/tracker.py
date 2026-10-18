@@ -460,7 +460,8 @@ DB_TIMEOUT = 15
 # needs nothing more: _migrate compares the columns on every open and adds what the file lacks. One that must change
 # rows too adds a step here and raises SCHEMA_VERSION to it. Version 1 is the schema of 0.3.210, when versions began.
 # (An index in _SCHEMA on a column a release adds would be made before _migrate adds it, and fail on an older file:
-# make such an index in a MIGRATIONS step.)
+# make such an index in a MIGRATIONS step. A step uses conn.execute, never executescript, which would commit the
+# transaction _migrate holds the step in.)
 SCHEMA_VERSION = 1
 MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = []
 
