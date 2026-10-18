@@ -10,16 +10,32 @@ import threading
 from pathlib import Path
 
 import pytest
-from conftest import browser_available
+from conftest import FAST_WAITS, browser_available
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SERVER = Path(__file__).parent.parent
 
-RUN = """
+# The process run here never sees conftest's fixtures, so it shortens the waits itself: the desk's as FAST_WAITS does
+# (and FORM_DRAW_WAIT: a page with no form, the assessment's start, read again 50 ms apart, not 500), and live_smoke's
+# own, for the fixtures' pages (which answer at once, or within ?late=3000)
+SMOKE_WAITS = {"TAKE_BUTTON_WAIT": 3, "ASSESSMENT_OPEN_WAIT": 8, "ASSESSMENT_LOOK": 0.2, "ASSESSMENT_TAB_WAIT": 300,
+               "ASSESSMENT_ANSWERED_WAIT": 400, "ASSESSMENT_MARKS_WAIT": 200, "ASSESSMENT_CLICK_WAIT": 400,
+               "ACCOUNT_MADE_WAIT": 0.5}
+BROWSER_WAITS = {**FAST_WAITS["browser"], "FORM_DRAW_WAIT": 50}
+PRELUDE = f"""
 import asyncio, json, sys, types
 sys.path.insert(0, "scripts")
 import live_smoke
-from job_apply import server
+from job_apply import browser, pipeline, server
+
+for module, waits in ((browser, {BROWSER_WAITS!r}), (pipeline, {FAST_WAITS["pipeline"]!r}),
+                      (live_smoke, {SMOKE_WAITS!r})):
+    for name, value in waits.items():
+        assert hasattr(module, name), name  # (a wait renamed: said, never just left at its own value)
+        setattr(module, name, value)
+"""
+
+RUN = PRELUDE + """
 
 async def main(url, *vendors):
     live_smoke.ASSESSMENT_VENDORS.update(vendors)  # (a site taken for an assessment vendor's, for this test)
@@ -119,11 +135,7 @@ def test_an_assessment_page_with_no_way_on_keeps_its_boxes_as_read():
         grouped
 
 
-ACCOUNT = """
-import asyncio, json, sys, types
-sys.path.insert(0, "scripts")
-import live_smoke
-from job_apply import server
+ACCOUNT = PRELUDE + """
 
 async def main(url, pressed):
     await server.browser.goto(url)

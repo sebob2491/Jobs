@@ -1703,6 +1703,11 @@ ASSESSMENT_PAGES = 100  # (Circle K's: a page for each statement, run 62)
 ASSESSMENT_SECONDS = 600
 ASSESSMENT_OPEN_WAIT = 20  # seconds for the assessment to open after Take Assessment (Circle K's: a moment after)
 TAKE_BUTTON_WAIT = 6  # seconds for the Take Assessment button itself to be drawn (a slow page, or a slow Windows runner)
+ASSESSMENT_LOOK = 0.5  # seconds between looks for that button, and for the assessment's tab
+ASSESSMENT_TAB_WAIT = 1000  # ms for a tab just opened to have its address
+ASSESSMENT_ANSWERED_WAIT = 1500  # ms for a page's way on to be drawn once it's answered (Circle K's Next)
+ASSESSMENT_MARKS_WAIT = 500  # ms between a "most likely" mark and its "least likely" (Circle K's, run 64)
+ASSESSMENT_CLICK_WAIT = 1500  # ms for a page to go on after a click on its answer tile or its way on
 _TAKE_ASSESSMENT = re.compile(r"^(?:take|start|begin|launch|continue)\s+(?:the\s+|your\s+)?assessment\b", re.I)
 _ASSESSMENT_ON = re.compile(r"^(?:next|continue|start|begin|get started|let'?s (?:begin|start)|proceed|ok|okay|"
                             r"i agree|agree|accept|i accept|i understand|i'?m ready|ready|"
@@ -1875,7 +1880,7 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
         if take is None and time.monotonic() - start > TAKE_BUTTON_WAIT:
             return "no Take Assessment button"
         if take is None:
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(ASSESSMENT_LOOK)
     ctx = run.page.context
     before = {id(p) for p in ctx.pages}
     out = await server.click(take["id"])  # (the desk's own guard)
@@ -1893,7 +1898,7 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
         if away is not None:
             browser.use_tab(away)
             break
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(ASSESSMENT_LOOK)
     else:
         now = await server.inspect_form(include_dropdown_options=False)
         steps.append({"after": {"headings": [h[:80] for h in (now.get("headings") or [])[:4]],
@@ -1910,7 +1915,7 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
             await page.wait_for_load_state("load", timeout=15000)
         host = (urlsplit(page.url).hostname or "").lower()
         if not host:  # (a tab just opened, its address not there yet)
-            await page.wait_for_timeout(1000)
+            await page.wait_for_timeout(ASSESSMENT_TAB_WAIT)
             continue
         data = await server.inspect_form(include_dropdown_options=True)
         if host not in vendor and host not in application and detect_ats(page.url) == "company_site" \
@@ -1956,7 +1961,7 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
         on = way_on(actions)
         if on is None and answers:
             # its way on drawn only once it's answered (Circle K's Next), or the page gone on by itself
-            await page.wait_for_timeout(1500)
+            await page.wait_for_timeout(ASSESSMENT_ANSWERED_WAIT)
             now = await server.inspect_form(include_dropdown_options=True)
             on = way_on([a for a in now.get("actions") or [] if not a.get("disabled") and not a.get("cookie")
                          and not _NOT_PRESSED.search(a.get("text") or "")])
@@ -2000,10 +2005,10 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
                     best, worst = random.sample(range(marks[0]), 2)
                     steps[-1]["clicked"] = f"most likely {best + 1}, least likely {worst + 1} of {marks[0]}"
                     await page.locator(f'[data-ja-best="{best}"]').first.click(timeout=10000)  # (a vendor's page)
-                    await page.wait_for_timeout(500)
+                    await page.wait_for_timeout(ASSESSMENT_MARKS_WAIT)
                     with contextlib.suppress(Exception):  # (gone on with the first, its Auto Advance)
                         await page.locator(f'[data-ja-worst="{worst}"]').first.click(timeout=5000)
-                await page.wait_for_timeout(1500)
+                await page.wait_for_timeout(ASSESSMENT_CLICK_WAIT)
                 # (three clicks in a row that change nothing on the page: it doesn't take them. A page gone with the
                 # click, back to the application say, has changed)
                 now_shown = None
@@ -2052,10 +2057,11 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
                 steps[-1]["ticked_more"] = sum(1 for r in (await server.fill_form(more_ticks))["results"] if r.get("ok"))
         seen.append(key)
         await browser._locator(page, on["id"]).click(timeout=10000)  # (a vendor's page: never the application's)
-        await page.wait_for_timeout(1500)
+        await page.wait_for_timeout(ASSESSMENT_CLICK_WAIT)
     return "page limit"
 
 
+ACCOUNT_MADE_WAIT = 5  # seconds for an account to be made once its button is pressed again (finish_account_choices)
 _CREATED_WITH = re.compile(r"pressed \u201c([^\u201d]+)\u201d to (?:create|finish creating) your account")
 
 
@@ -2094,7 +2100,7 @@ async def finish_account_choices(run: Any) -> str:
     if not any(r.get("ok") for r in filled):
         return ""
     await server.browser._locator(run.page, button["id"]).click(timeout=10000)  # (the account's, never an application's)
-    await asyncio.sleep(5)
+    await asyncio.sleep(ACCOUNT_MADE_WAIT)
     return "; ".join(f"{_mask(f.get('label') or '')[:60]}: {_mask(str(a['value']))[:60]}" for f, a in zip(left, answers)) \
         + f"; pressed \u201c{pressed}\u201d"
 
