@@ -19,6 +19,11 @@ whole body or a run's logs.
     uv run python scripts/nightly_summary.py --import-fixtures DIR_OR_ZIP [--companies "KLA"] [--replace]
         # the pages a run stopped on, already scrubbed (its fixtures/ folders), into tests/fixtures/live:
         # tests/test_live_fixtures.py then checks every night's stops offline
+    uv run python scripts/nightly_summary.py --probes DIR_OR_ZIP [--companies "KLA"]
+        # the weekly probes' results (a live-probes artifact: scripts/live_probes.py): the desk's failures and what
+        # couldn't be checked this week (the site's or the person's), each under its own heading, then each reset
+        # tenant's passes, step by step, and each tailored-resume employer's verdict; with --companies, those runs'
+        # steps too
 
 The issue ("Nightly live check", #54) is read over GitHub's public API, no sign-in needed; `--issue-file`
 reads a saved copy instead. The trend issue ("Nightly live trends", label live-trends: the last 60 runs) is
@@ -42,6 +47,7 @@ from typing import Any, Iterable, Iterator
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import live_audit  # noqa: E402  (scripts/live_audit.py, beside this one: the review pages' values)
 import live_compare  # noqa: E402  (scripts/live_compare.py, beside this one)
+import live_probes  # noqa: E402  (scripts/live_probes.py, beside this one: the weekly probes' results)
 
 REPO = "sebob2491/Jobs"
 HANDLED_FILE = Path(__file__).resolve().parents[2] / "data" / "desk_handled.yaml"
@@ -421,6 +427,25 @@ def steps(rec: dict[str, Any], log_lines: int = 6) -> str:
     return "\n".join(out)
 
 
+_PROBE_RUN = re.compile(r"(?:^|/)((?:reset|tailored)-[^/]+)/pipeline\.json$")
+
+
+def probe_records(where: Path, wanted: list[str]) -> Iterator[tuple[str, dict[str, Any]]]:
+    """The weekly probes' runs in a live-probes artifact (a zip or its folder): (the run's folder, e.g. reset-kla-1,
+    its employer's record), for the employers named in `wanted` (any part of a name)."""
+    found: list[tuple[str, Any]] = []
+    if where.is_file() and where.suffix == ".zip":
+        with zipfile.ZipFile(where) as z:
+            found = [(m.group(1), json.loads(z.read(n))) for n in sorted(z.namelist()) if (m := _PROBE_RUN.search(n))]
+    elif where.is_dir():
+        found = [(p.parent.name, json.loads(p.read_text(encoding="utf-8"))) for p in sorted(where.rglob("pipeline.json"))
+                 if _PROBE_RUN.search(p.relative_to(where).as_posix())]
+    for run, data in found:
+        for rec in _listed(data):
+            if any(w in str(rec.get("company", "")).lower() for w in wanted):
+                yield run, rec
+
+
 LIVE_FIXTURES = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "live"
 
 
@@ -521,7 +546,22 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--timing", type=Path, help="a run's artifact: the time each job system's employers took")
     ap.add_argument("--against", type=Path, help="with --timing: an earlier run's artifact (a week before: artifacts "
                     "are kept 7 days); a job system twice as slow as there says so")
+    ap.add_argument("--probes", type=Path, help="a run's live-probes artifact (zip or folder): the weekly probes' "
+                    "results; with --companies, those employers' runs step by step too")
     args = ap.parse_args(argv)
+    if args.probes:
+        try:
+            results = live_probes.read_results(args.probes)
+        except (OSError, ValueError, zipfile.BadZipFile) as e:
+            print(f"the probes' results can't be read: {e}", file=sys.stderr)
+            return 1
+        for line in live_probes.summary_lines(results):
+            print(line)
+        wanted = [w.strip().lower() for w in args.companies.split(",") if w.strip()]
+        for run, rec in probe_records(args.probes, wanted) if wanted else ():
+            print(f"-- {run}")
+            print(steps(rec))
+        return 0
     if args.trend is not None:
         try:
             trend = load_trend(args.trend_file, offline=bool(args.issue_file))

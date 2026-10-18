@@ -51,6 +51,10 @@ stays green. It takes about 15 minutes to set up.
 - To stop the accounts check, delete any one of the three secrets. To use a different job-site
   password later, change `LIVE_TEST_SITE_PASSWORD`: the check resets each site's password to the
   new one through the site's own "Forgot password" email, where the site lets it.
+- Once a week the probes (`live_probes.py`, next to this file) reset the test identity's password at two Workday
+  employers to one made from `LIVE_TEST_SITE_PASSWORD`, then back to it, through each site's "Forgot password"
+  email: the inbox gets those emails. If the run's summary says a site may be left on the made one, the nightly's
+  own reset sets it back.
 - If Google emails the test inbox about a sign-in it blocked, open that email and confirm it was
   you: the check reads the inbox from GitHub's computers.
 - When an employer's run ends still waiting on an emailed code, the log has a `LIVE_INBOX` line:
