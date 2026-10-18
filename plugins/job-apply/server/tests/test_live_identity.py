@@ -280,33 +280,23 @@ def test_an_employer_without_its_reasons_is_refused(tmp_path):
         li.load_employers(path)
 
 
-# --- live_smoke.py --test-identity, short of a browser ------------------------------
+# --- live_smoke.py --test-identity, short of a browser (conftest's smoke_script) ------------------------------
 
-def _smoke(tmp_path, env, *args):
-    """live_smoke.py in a process of its own, with only `env` of the test identity's values (its
-    home goes in tmp_path)."""
-    clean = {k: v for k, v in os.environ.items()
-             if not k.startswith(("LIVE_TEST_", "JOB_APPLY_SECRET_", "JOB_APPLY_LIVE_TEST_"))}
-    out = subprocess.run([sys.executable, str(SCRIPTS / "live_smoke.py"), *args, "--out", str(tmp_path / "out")],
-                         env={**clean, **env, "TMPDIR": str(tmp_path)}, capture_output=True, text=True, timeout=120)
-    return out.returncode, out.stdout + out.stderr
-
-
-def test_live_smoke_refuses_to_start_without_the_test_identitys_values(tmp_path):
-    code, said = _smoke(tmp_path, {li.ENV_EMAIL: EMAIL, li.ENV_SITE_PASSWORD: SITE_PASSWORD},
-                        "--pipeline", "--test-identity")
+def test_live_smoke_refuses_to_start_without_the_test_identitys_values(tmp_path, smoke_script):
+    code, said = smoke_script({li.ENV_EMAIL: EMAIL, li.ENV_SITE_PASSWORD: SITE_PASSWORD},
+                              "--pipeline", "--test-identity")
     assert code == 2 and li.ENV_EMAIL_PASSWORD in said and "Nothing was run" in said, said
     assert EMAIL not in said and SITE_PASSWORD not in said
     assert not (tmp_path / "out").exists()
-    code, said = _smoke(tmp_path, ENV, "--test-identity")
+    code, said = smoke_script(ENV, "--test-identity")
     assert code == 2 and "goes with --pipeline" in said, said
 
 
-def test_live_smoke_sets_up_the_test_identity_and_never_says_its_secrets(tmp_path, monkeypatch):
+def test_live_smoke_sets_up_the_test_identity_and_never_says_its_secrets(tmp_path, monkeypatch, smoke_script):
     """Everything up to the first employer (--companies matches none, so no browser starts): its
     profile and resume, its employers' lists, and its passwords kept out of every file."""
-    code, said = _smoke(tmp_path, {**ENV, li.ENV_EMAIL: f" {EMAIL}\n"}, "--pipeline", "--test-identity",
-                        "--fake-passwords", "--companies", "no-such-employer")
+    code, said = smoke_script({**ENV, li.ENV_EMAIL: f" {EMAIL}\n"}, "--pipeline", "--test-identity",
+                              "--fake-passwords", "--companies", "no-such-employer")
     assert code == 0, said
     assert f"Test identity: Jobdesk Test ({li.EMAIL_MASK}), at KLA (Workday)" in said
     assert not any(s.lower() in said.lower() for s in (*SECRETS, EMAIL)), said
@@ -429,7 +419,7 @@ def test_the_plus_probe_applies_with_the_inboxs_own_plus_address_and_nothing_els
     assert short("as ab+kla@gmail.com, then AB+X@GMAIL.COM") == f"as {li.EMAIL_MASK}, then {li.EMAIL_MASK}"
 
 
-def test_the_test_identitys_security_answers_are_a_listed_question_and_one_of_its_own(tmp_path):
+def test_the_test_identitys_security_answers_are_a_listed_question_and_one_of_its_own(smoke_script):
     """--security-answers (the owner's call, Oct 14): the live check answers an account form's security questions on
     the desk's card for the test identity (Edward Jones' BrassRing), so it goes on into the application. The list's
     first real question, and an answer made from its site password: the same each run (the account keeps it), its own
@@ -443,5 +433,5 @@ def test_the_test_identitys_security_answers_are_a_listed_question_and_one_of_it
     assert answer == li.security_answer(box, SITE_PASSWORD) and answer != li.security_answer(box, "another password")
     assert answer != li.security_answer({**box, "label": "Question 2 Answer"}, SITE_PASSWORD)
     assert SITE_PASSWORD not in answer and len(answer) >= 12
-    code, said = _smoke(tmp_path, ENV, "--pipeline", "--security-answers")
+    code, said = smoke_script(ENV, "--pipeline", "--security-answers")
     assert code == 2 and "--security-answers goes with --test-identity" in said, said

@@ -416,11 +416,9 @@ def test_a_pasted_indeed_link_for_a_job_saved_from_the_employers_site_makes_no_n
     assert [r["job_id"] for r in desk.state()["listings"]] == [own["id"]]
 
 
-def test_the_desk_searches_by_itself_only_with_its_switch_on_and_a_search_can_be_stopped(srv, monkeypatch):
-    """Issue #112, note 44: the page searched by itself whenever the openings were 12 hours old, with no setting, and
-    Pause queue didn't stop it. It searches only when Find jobs is pressed, unless "Search by itself every 12 hours"
-    is on (off by default), and then not while the queue is paused. A search running is said in the header (by
-    itself, or pressed), with Stop search beside it: the search ends, and the openings found before it stay."""
+def _held_search(srv, monkeypatch) -> tuple[list[str], dict[str, asyncio.Event]]:
+    """The employers' search as one taking its time, as the real one does: each query is noted in the list this gives,
+    and none ends (finding nothing) until the test sets gate["open"] (an Event it makes on its own loop)."""
     searched: list[str] = []
     gate: dict[str, asyncio.Event] = {}
 
@@ -430,6 +428,15 @@ def test_the_desk_searches_by_itself_only_with_its_switch_on_and_a_search_can_be
         return {"results": [], "errors": {}, "browser_only": []}
 
     monkeypatch.setattr(srv, "search_company_jobs", fake_search)
+    return searched, gate
+
+
+def test_the_desk_searches_by_itself_only_with_its_switch_on_and_a_search_can_be_stopped(srv, monkeypatch):
+    """Issue #112, note 44: the page searched by itself whenever the openings were 12 hours old, with no setting, and
+    Pause queue didn't stop it. It searches only when Find jobs is pressed, unless "Search by itself every 12 hours"
+    is on (off by default), and then not while the queue is paused. A search running is said in the header (by
+    itself, or pressed), with Stop search beside it: the search ends, and the openings found before it stay."""
+    searched, gate = _held_search(srv, monkeypatch)
     desk = Desk(srv)
     desk.applier.start = lambda: None
     assert desk.auto_search is False  # (off unless the person turns it on)
@@ -484,13 +491,7 @@ def test_the_desk_searches_by_itself_only_with_its_switch_on_and_a_search_can_be
 def test_a_search_asked_by_the_page_itself_needs_the_switch_and_a_running_queue(srv, monkeypatch):
     """The server's side of note 44: a search the page asks for by itself ({"auto": true}) starts only with the
     switch on and the queue not paused; Find jobs (no "auto") always does. Stop search keeps the openings before."""
-    gate: dict[str, asyncio.Event] = {}
-
-    async def fake_search(query, companies=None, location=None, limit_per_company=10):
-        await gate["open"].wait()
-        return {"results": [], "errors": {}, "browser_only": []}
-
-    monkeypatch.setattr(srv, "search_company_jobs", fake_search)
+    _, gate = _held_search(srv, monkeypatch)
     desk = Desk(srv)
     desk.applier.start = lambda: None
     before = time.time() - 13 * 3600
@@ -3499,7 +3500,7 @@ def test_a_kept_queue_naming_a_job_made_one_with_another_goes_on_with_the_one_ke
         run(q.stop())
 
 
-def test_a_job_that_may_be_one_begun_or_applied_to_on_indeed_waits_for_the_persons_say(srv, monkeypatch):
+def test_a_job_that_may_be_one_begun_or_applied_to_on_indeed_waits_for_the_persons_say(srv, fake_open):
     """The review of 0.3.206 (HIGH): an employer's posting alike an Indeed job applied to or begun is kept apart (the
     tracker can't be sure it's that one), and the desk asks before applying to it: a card, with nothing opened, Submit
     for me or not. Apply anyway goes on (for this job only: it's asked no more), and Skip job skips it."""
@@ -3513,14 +3514,7 @@ def test_a_job_that_may_be_one_begun_or_applied_to_on_indeed_waits_for_the_perso
     lam = srv.add_job(url="https://careers.lamresearch.com/careers/job/1", title="Field Service Engineer",
                       company="Lam Research", location="Tempe, AZ")["job"]
     assert len({applied["id"], begun["id"], intel["id"], lam["id"]}) == 4  # (kept apart)
-    opened: list[int] = []
-
-    async def open_(self, r):  # (where the application's page would open)
-        opened.append(r.job_id)
-        r.status, r.reason = "ready", "Filled and waiting on the review page."
-        return False
-
-    monkeypatch.setattr(pipeline.Applier, "_open", open_)
+    opened = fake_open
     desk = Desk(srv)
     desk.search.update(status="done", at=time.time())  # (no search of the real sites)
 

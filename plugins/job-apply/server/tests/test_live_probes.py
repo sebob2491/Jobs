@@ -518,28 +518,20 @@ def test_the_tailored_resume_has_a_new_name_each_day_that_the_desk_still_takes_f
     assert tailored_document({"folder": str(tmp_path)}, "resume") == str(tmp_path / one)
 
 
-# --- live_smoke.py's switches, short of a browser --------------------------------------------------------------------
+# --- live_smoke.py's switches, short of a browser (conftest's smoke_script) ------------------------------------------
 
-def _smoke(tmp_path, env, *args):
-    clean = {k: v for k, v in os.environ.items()
-             if not k.startswith(("LIVE_TEST_", "JOB_APPLY_SECRET_", "JOB_APPLY_LIVE_TEST_"))}
-    out = subprocess.run([sys.executable, str(SCRIPTS / "live_smoke.py"), *args, "--out", str(tmp_path / "out")],
-                         env={**clean, **env, "TMPDIR": str(tmp_path)}, capture_output=True, text=True, timeout=120)
-    return out.returncode, out.stdout + out.stderr
-
-
-def test_live_smokes_probe_switches_go_only_with_what_they_need(tmp_path):
-    code, said = _smoke(tmp_path, ENV, "--pipeline", "--derived-password")
+def test_live_smokes_probe_switches_go_only_with_what_they_need(smoke_script):
+    code, said = smoke_script(ENV, "--pipeline", "--derived-password")
     assert code == 2 and "--derived-password goes with --test-identity" in said, said
-    code, said = _smoke(tmp_path, ENV, "--tailored-resume")
+    code, said = smoke_script(ENV, "--tailored-resume")
     assert code == 2 and "--tailored-resume goes with --pipeline" in said, said
 
 
-def test_live_smoke_with_the_derived_password_says_so_and_never_says_it(tmp_path):
+def test_live_smoke_with_the_derived_password_says_so_and_never_says_it(tmp_path, smoke_script):
     """Everything up to the first employer (--companies matches none, so no browser starts), with --derived-password:
     the run says Workday's saved password is the derived one, and neither it nor the real one shows anywhere."""
-    code, said = _smoke(tmp_path, ENV, "--pipeline", "--test-identity", "--everywhere", "--derived-password",
-                        "--companies", "no-such-employer")
+    code, said = smoke_script(ENV, "--pipeline", "--test-identity", "--everywhere", "--derived-password",
+                              "--companies", "no-such-employer")
     assert code == 0, said
     assert "Workday's saved password this run is the one derived from its site password" in said
     assert not any(s in said for s in (DERIVED, SITE, EMAIL, INBOX.replace(" ", ""))), said
