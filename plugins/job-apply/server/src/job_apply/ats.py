@@ -52,6 +52,14 @@ COMPANY_HOSTS = {
 }
 
 
+def host_of(url: str | None) -> str:
+    """An address's host, lowercased: "" for none, or for an address that doesn't parse ("https://[::1")."""
+    try:
+        return (urlparse(url or "").hostname or "").lower()
+    except ValueError:
+        return ""
+
+
 def _host_and_path(url: str) -> tuple[str, str]:
     parsed = urlparse(url if "://" in url else "https://" + url)
     return (parsed.hostname or "").lower().rstrip("."), parsed.path or ""

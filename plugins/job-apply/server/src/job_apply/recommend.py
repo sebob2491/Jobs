@@ -15,9 +15,9 @@ import re
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from typing import Any, Awaitable, Callable
-from urllib.parse import urlparse
 
 from . import pay, workplace
+from .ats import host_of
 from .autofill import _PARTIAL_STUDY, degree_key, entry_dates, norm, school_under_way
 from .config import Profile, listed
 from .postings import QUESTIONS_HEADING, Posting, fetch_posting
@@ -1055,7 +1055,7 @@ async def recommend(prof: Profile, search: Search, limit_per_company: int = 10, 
         failed: set[str] = set()
         hard = 0
         for item in sorted((i for i in to_read if not _has_text(i.get("posting"))), key=lambda i: -i["fit"].score):
-            host = urlparse(item["url"]).hostname or ""
+            host = host_of(item["url"])
             if hard >= HARD_READS or host in failed:
                 continue
             hard += 1

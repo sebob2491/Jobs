@@ -68,7 +68,7 @@ from . import config
 from . import workplace as wplace
 from .ats import csod_parts, shared_system, workday_parts
 from .autofill import US_STATES, norm
-from .postings import (USER_AGENT, csod_context, csod_place, html_to_text, icims_workplace, place_in_text,
+from .postings import (USER_AGENT, csod_context, csod_place, html_to_text, icims_workplace, place_in_text, posted_date,
                        said_workplace, smartrecruiters_workplace, successfactors_place, successfactors_workplace)
 
 WORKDAY_PAGE = 20  # Workday rejects larger pages
@@ -915,7 +915,7 @@ async def _lever(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, te
         created = j.get("createdAt")
         out.append(Listing(
             company="", title=j.get("text", ""), url=j.get("hostedUrl", ""), location=cats.get("location") or "",
-            posted=datetime.fromtimestamp(created / 1000, timezone.utc).date().isoformat() if created else "",
+            posted=posted_date(created),
             external_id=j.get("id", ""), ats="lever",
         ))
     return out
@@ -950,7 +950,7 @@ def parse_eightfold(data: Any, host: str) -> list[Listing]:
             url=link or f"https://{host}/careers/job/{p.get('id')}",
             location="; ".join(loc for loc in locs if loc),
             external_id=str(p.get("display_job_id") or p.get("displayJobId") or p.get("id") or ""),
-            posted=_epoch_date(p.get("t_create") or p.get("postedTs") or p.get("creationTs")), ats="eightfold",
+            posted=posted_date(p.get("t_create") or p.get("postedTs") or p.get("creationTs")), ats="eightfold",
         ))
     return out
 
@@ -1259,7 +1259,7 @@ async def _taleo(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, te
                 continue
             places = [p for i in req.get("locationsColumns") or [] if isinstance(i, int) and 0 <= i < len(columns)
                       for p in _taleo_places(columns[i])]
-            when = next((d for d in map(_sf_date, columns[1:]) if d), "")
+            when = next((d for d in map(posted_date, columns[1:]) if d), "")
             out.append(Listing(company="", title=title, ats="taleo", external_id=job,
                                url=f"https://{host}/careersection/{section}/jobdetail.ftl?" + urlencode({"job": job,
                                                                                                         "lang": "en"}),
@@ -1621,7 +1621,7 @@ def parse_randstad(html: str) -> list[Listing]:
         out.append(Listing(company="", title=title, url=url.split("?")[0], ats="custom",
                            location=", ".join(str(x) for x in (where.get("city"), where.get("stateAbbreviation") or
                                                                where.get("state")) if x),
-                           posted=_epoch_date(int(hit["createdDate"]) // 1000) if str(hit.get("createdDate") or "").isdigit()
+                           posted=posted_date(int(hit["createdDate"]) // 1000) if str(hit.get("createdDate") or "").isdigit()
                            else "", external_id=str(hit.get("atsReference") or "")))
     return out
 
@@ -1901,7 +1901,7 @@ def parse_csod(reqs: list[Any], parts: dict[str, str], us_dates: bool = True) ->
         places = [csod_place(p) for p in req.get("locations") or []]
         out.append(Listing(
             company="", title=title, ats="csod", external_id=rid,
-            posted=_paycom_date(req.get("postingEffectiveDate")) if us_dates else "",
+            posted=posted_date(req.get("postingEffectiveDate")) if us_dates else "",
             url=f"https://{parts['host']}/ux/ats/careersite/{parts['site']}/home/requisition/{rid}?"
                 + urlencode({"c": parts["corp"]}),
             location="; ".join(dict.fromkeys(p for p in places if p))))
@@ -1986,7 +1986,7 @@ async def _amazon(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, t
         places = _amazon_places(job.get("locations") or [])
         out.append(Listing(company="", title=title, url=urljoin("https://www.amazon.jobs/", path), ats="amazon",
                            location="; ".join(places) or str(job.get("normalized_location") or job.get("location") or ""),
-                           posted=_sf_date(" ".join(str(job.get("posted_date") or "").split())),  # "July  9, 2026"
+                           posted=posted_date(" ".join(str(job.get("posted_date") or "").split())),  # "July  9, 2026"
                            external_id=str(job.get("id_icims") or job.get("id") or "")))
     return out
 
@@ -2059,7 +2059,7 @@ def parse_paycom(data: Any, cfg: Any) -> list[Listing]:
         listing = Listing(
             company="", title=title, url=f"https://www.paycomonline.net/v4/ats/web.php/portal/{cfg}/jobs/{p['jobId']}",
             location=_paycom_place(re.sub(r"\s+", " ", str(p.get("locations") or "")).strip()),
-            posted=_paycom_date(p.get("postedOn")), external_id=req.group(1) if req else str(p["jobId"]), ats="paycom",
+            posted=posted_date(p.get("postedOn")), external_id=req.group(1) if req else str(p["jobId"]), ats="paycom",
             **said_workplace(p.get("remoteType")),  # ("Hybrid", "Remote", "On-site"; "" for none)
             employment_type=str(p.get("positionType") or ""),  # ("Full Time")
         )
@@ -2067,16 +2067,6 @@ def parse_paycom(data: Any, cfg: Any) -> list[Listing]:
             listing.notes.append(f"Paycom lists it as {p['remoteType']}")
         out.append(listing)
     return out
-
-
-def _paycom_date(value: Any) -> str:
-    """'10/01/2026' or '2026-10-01T...' -> '2026-10-01'; Ebara's board leaves it empty."""
-    text = str(value or "")
-    us = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", text)
-    if us:
-        return f"{us.group(3)}-{int(us.group(1)):02d}-{int(us.group(2)):02d}"
-    return text[:10] if re.match(r"\d{4}-\d{2}-\d{2}", text) else ""
-
 
 
 # ------------------------------------------------------- UKG Pro / UltiPro (Nikon), through the browser
@@ -2259,15 +2249,6 @@ async def rmk_places(listings: list[Listing], read: Callable[[str], Awaitable[st
         await asyncio.gather(*(one(x, reading) for x in todo))
 
 
-def _rmk_date(value: Any) -> str:
-    """'7/27/26' -> '2026-07-27'."""
-    m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{2,4})$", str(value or "").strip())
-    if not m:
-        return ""
-    year = int(m.group(3))
-    return f"{year + 2000 if year < 100 else year}-{int(m.group(1)):02d}-{int(m.group(2)):02d}"
-
-
 def parse_rmk(data: Any, origin: str) -> list[Listing]:
     results = data.get("jobSearchResult") or [] if isinstance(data, dict) else []
     out = []
@@ -2282,7 +2263,7 @@ def parse_rmk(data: Any, origin: str) -> list[Listing]:
         out.append(Listing(
             company="", title=title, url=f"{origin}/job/{slug}/{job['id']}-{locale}",
             location=state.group(1) if state and state.group(1) in US_STATES else "",
-            posted=_rmk_date(job.get("unifiedStandardStart")), external_id=str(job["id"]), ats="successfactors",
+            posted=posted_date(job.get("unifiedStandardStart")), external_id=str(job["id"]), ats="successfactors",
         ))
     return out
 
@@ -2331,15 +2312,6 @@ async def _successfactors(client: httpx.AsyncClient, cfg: Any, query: str, limit
     return out
 
 
-def _sf_date(text: str) -> str:
-    for fmt in ("%b %d, %Y", "%B %d, %Y", "%d %b %Y", "%m/%d/%Y", "%Y-%m-%d"):
-        try:
-            return datetime.strptime(text.strip(), fmt).date().isoformat()
-        except ValueError:
-            continue
-    return ""
-
-
 def _parse_sf(page: str, site: str) -> tuple[list[Listing], int | None, int]:
     """A SuccessFactors search page's openings, drawn as table rows (Qorvo's) or as tiles
     (Salt River Project's), each with its place and date; how many the search found; and how
@@ -2375,7 +2347,7 @@ def _parse_sf(page: str, site: str) -> tuple[list[Listing], int | None, int]:
                 or row.select_one('.section-field.date [id$="date-value"]'))
         job_id = re.search(r"/(\d+)/?(?:\?|$)", str(link["href"]))
         out.append(Listing(company="", title=title, url=url, location=where,
-                           posted=_sf_date(when.get_text(" ", strip=True)) if when is not None else "",
+                           posted=posted_date(when.get_text(" ", strip=True)) if when is not None else "",
                            external_id=job_id.group(1) if job_id else "", ats="successfactors"))
     label = soup.select_one(".paginationLabel, #tile-search-results-label")  # "Showing 1 to 16 of 16 Jobs"
     total = _SF_TOTAL.search(label.get_text(" ", strip=True)) if label is not None else None
@@ -2411,7 +2383,7 @@ def parse_sfclassic(page: str, cfg: Any) -> list[Listing]:
         note = row.select_one(".noteSection")
         posted = re.search(r"Posted on (\d{1,2}/\d{1,2}/\d{4})", note.get_text(" ", strip=True)) if note else None
         out.append(Listing(company="", title=link.get_text(" ", strip=True), url=sfclassic_posting_url(cfg, req.group(1)),
-                           posted=_sf_date(posted.group(1)) if posted else "", external_id=req.group(1),
+                           posted=posted_date(posted.group(1)) if posted else "", external_id=req.group(1),
                            ats="successfactors"))
     return out
 
@@ -2551,7 +2523,7 @@ async def _eightfold_v2(client: httpx.AsyncClient, host: str, domain: str, query
             batch.append(Listing(company="", title=str(p["name"]).strip(), ats="eightfold",
                                  url=p.get("canonicalPositionUrl") or f"https://{host}/careers/job/{p['id']}",
                                  location="; ".join(places) or str(p.get("location") or ""),
-                                 posted=_epoch_date(p.get("t_create")),
+                                 posted=posted_date(p.get("t_create")),
                                  external_id=str(p.get("display_job_id") or p.get("ats_job_id") or p["id"])))
         out.extend(batch)
         if not positions or start >= int(data.get("count") or 0):
@@ -2694,13 +2666,6 @@ SEARCHERS: dict[str, Callable[[httpx.AsyncClient, Any, str, int, list[str]], Awa
     "csod": _csod,
     "phenom": _phenom,
 }
-
-
-def _epoch_date(value: Any) -> str:
-    try:
-        return datetime.fromtimestamp(int(value), timezone.utc).date().isoformat()
-    except (TypeError, ValueError, OSError):
-        return ""
 
 
 def _retry_after(r: httpx.Response) -> float | None:

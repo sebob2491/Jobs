@@ -29,7 +29,7 @@ from . import config, pay
 from . import employment
 from . import places as towns
 from . import workplace as wplace
-from .ats import ATS_NAMES, detect_ats, greenhouse_form_url, shared_system, workday_parts
+from .ats import ATS_NAMES, detect_ats, greenhouse_form_url, host_of, shared_system, workday_parts
 from .autofill import common_questions as bank_questions
 from .autofill import (is_eeo_rule, is_empty_value, is_how_heard, is_name_rule, is_school_rule, norm, place_words,
                        plan_autofill, profile_entries, resolve_field)
@@ -178,8 +178,8 @@ def _same_site(job: dict[str, Any], url: str) -> bool:
     from .ats import shared_system
     from .mailbox import site_domain
 
-    host = (urlparse(url or "").hostname or "").lower()
-    own = {(urlparse(u).hostname or "").lower() for u in (job.get("url"), job.get("apply_url")) if u}
+    host = host_of(url)
+    own = {host_of(u) for u in (job.get("url"), job.get("apply_url")) if u}
     if not host or host in own:
         return bool(host)
     return shared_system(url) is None and any(h and site_domain(h) == site_domain(host) for h in own)
@@ -436,7 +436,7 @@ def listed_employer(url: str) -> str | None:
     its own name. (One employer's site may show a sister company's postings: Pfeiffer Vacuum's shows Busch's, named
     Pfeiffer Vacuum here, as the search names them.)"""
     parts = workday_parts(url)
-    host = (urlsplit(url).hostname or "").lower()
+    host = host_of(url)
     own_site = detect_ats(url) == "successfactors" and shared_system(url) is None
     if not parts and not own_site:
         return None
@@ -454,7 +454,7 @@ def listed_employer(url: str) -> str | None:
             if parts and theirs and (theirs["host"], theirs["tenant"]) == (parts["host"], parts["tenant"]):
                 return str(c.get("name") or "") or None
         sf = search.get("successfactors")
-        if own_site and isinstance(sf, str) and (urlsplit(sf).hostname or "").lower() == host and c.get("name"):
+        if own_site and isinstance(sf, str) and host_of(sf) == host and c.get("name"):
             named.append(str(c["name"]))
     return named[0] if len(set(named)) == 1 else None
 
@@ -1246,7 +1246,7 @@ async def fill_secret(field_id: str, secret_name: str) -> dict[str, Any]:
         if site in PASSWORD_SITES:
             return False
         parsed = urlparse(url or "")
-        host = re.sub(r"[^a-z0-9.]", "", (parsed.hostname or "").lower())
+        host = re.sub(r"[^a-z0-9.]", "", host_of(url))
         domain, named = site_domain(host), site.replace("_", "")
         return bool(parsed.scheme == "https" and site and (
             named in (domain.split(".")[0], domain.replace(".", ""), host.replace(".", ""))

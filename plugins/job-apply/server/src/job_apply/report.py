@@ -29,10 +29,10 @@ from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import quote, urlparse
+from urllib.parse import quote
 
 from . import config
-from .ats import ATS_NAMES, detect_ats, shared_system
+from .ats import ATS_NAMES, detect_ats, host_of, shared_system
 from .autofill import US_STATES, is_empty_value
 from .fixtures import REDACTED, _pattern, _spellings, _without_query, convert, personal_strings, redact
 from .history import HIDE_PREFIX
@@ -337,7 +337,7 @@ def _employer_forms(company: str, urls: list[Any]) -> list[str]:
     if words and words[0].strip(".,").lower() not in _COMMON_WORDS | _COMPANY_WORDS:
         forms.add(words[0].strip(".,"))
     for url in urls:
-        tenant = (urlparse(str(url)).hostname or "").lower().split(".")[0] if url and shared_system(str(url)) else ""
+        tenant = host_of(str(url)).split(".")[0] if url and shared_system(str(url)) else ""
         if tenant and tenant not in _SYSTEM_LABELS and tenant not in _COMMON_WORDS:
             forms |= {tenant, tenant.upper(), tenant.capitalize()}  # (a one-word form is matched as written: _as_written)
     # (a short form of 4 letters or more, or an all-capitals one of 3: "NXP", "ASM", "TEL")
@@ -379,7 +379,7 @@ def _anonymous(job: dict[str, Any], run: Any, urls: list[Any], secrets: list[str
                 exact.add(form)
     sites = set()
     for url in urls:
-        host = (urlparse(str(url or "")).hostname or "").lower().removeprefix("www.")
+        host = host_of(str(url or "")).removeprefix("www.")
         if host:
             own = shared_system(f"https://{host}/") is None and re.search(r"[a-z]", host)
             sites |= {host, site_domain(host)} if own else {host}
@@ -387,7 +387,7 @@ def _anonymous(job: dict[str, Any], run: Any, urls: list[Any], secrets: list[str
     for url in (job.get("url"), job.get("apply_url"), getattr(run, "url", ""), info.get("url")):
         # the employer's own domain's name, as a page may write it ("examplegroup", "EXAMPLEGROUP"): the job's own
         # addresses only, never a frame's (a CAPTCHA's, a video's)
-        host = (urlparse(str(url or "")).hostname or "").lower()
+        host = host_of(str(url or ""))
         label = site_domain(host).split(".")[0] if host and not shared_system(f"https://{host}/") else ""
         if len(label) >= 4 and re.search(r"[a-z]", label) and label not in _SYSTEM_LABELS | _COMMON_WORDS | _COMPANY_WORDS:
             for form in {label, label.upper(), label.capitalize(), *([label.replace("-", " ")] if "-" in label else [])}:
