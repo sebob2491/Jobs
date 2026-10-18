@@ -1,0 +1,184 @@
+{
+  "file": "pipeline-infineon.html",
+  "address": "https://jobs.infineon.com/careers/apply?pid=563808971834447",
+  "applicant": "the live check's test applicant",
+  "refused": 0,
+  "page": "form",
+  "next": null,
+  "captcha": false,
+  "security_asked": false,
+  "account_and_application": false,
+  "job_search": false,
+  "errors": [
+    "3 errors found",
+    "Error: Last Name cannot be left blank.",
+    "Error: Email cannot be left blank.",
+    "Phone number is invalid. Only use digits (0-9), dashes (-) or parentheses ()."
+  ],
+  "buttons": [
+    "Sign In",
+    "English",
+    "Position Location(s)",
+    "Resume",
+    "Contact Information 3 errors found",
+    "Additional Personal Information",
+    "Additional Information",
+    "Additional Personal Information (Singapore-specific)",
+    "Disclaimer for Agencies",
+    "Position specific questions",
+    "Remove Singapore",
+    "Select file",
+    "Clear First Name",
+    "Clear Last Name",
+    "Clear Email",
+    "Clear Phone Number",
+    "Clear Country of Residence",
+    "Select files",
+    "Clear Unique Identification Number",
+    "Read more",
+    "Clear What is your expected fixed annual salary?",
+    "Cancel",
+    "Clear form",
+    "Submit application"
+  ],
+  "dialogs": [],
+  "boxes": [
+    {
+      "label": "Preferred location for Engineer / Senior Engineer Product Engineering",
+      "kind": "combobox",
+      "required": true,
+      "plan": "left",
+      "why": "shows an answer already"
+    },
+    {
+      "label": "Accepted file format: doc, docx or pdf",
+      "kind": "file",
+      "required": false,
+      "plan": "fill",
+      "rule": "documents.resume",
+      "value": "<documents.resume>"
+    },
+    {
+      "label": "First Name",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "first_name",
+      "value": "<first_name>"
+    },
+    {
+      "label": "Last Name",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "last_name",
+      "value": "<last_name>"
+    },
+    {
+      "label": "Email",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "email",
+      "value": "<email>"
+    },
+    {
+      "label": "Country code",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "phone_code",
+      "value": "<phone_code>"
+    },
+    {
+      "label": "Phone Number",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "phone",
+      "value": "<phone>"
+    },
+    {
+      "label": "Gender",
+      "kind": "combobox",
+      "required": false,
+      "plan": "fill",
+      "rule": "gender",
+      "value": "<gender>"
+    },
+    {
+      "label": "Country of Residence",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "country",
+      "value": "<country>"
+    },
+    {
+      "label": "Language of Application",
+      "kind": "combobox",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Preferred Start Date",
+      "kind": "combobox",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "",
+      "kind": "file",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Salary Expectation",
+      "kind": "text",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "How did you hear about us?",
+      "kind": "combobox",
+      "required": false,
+      "plan": "fill",
+      "rule": "how_heard",
+      "value": "<how_heard>"
+    },
+    {
+      "label": "Identity Type",
+      "kind": "combobox",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Unique Identification Number",
+      "kind": "text",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "What is your expected fixed annual salary?",
+      "kind": "text",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Save my answers for future applications",
+      "kind": "checkbox",
+      "required": false,
+      "plan": "left",
+      "why": "shows an answer already"
+    }
+  ],
+  "agreement": null,
+  "notice": null
+}

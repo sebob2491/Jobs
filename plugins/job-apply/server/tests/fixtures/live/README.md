@@ -15,5 +15,10 @@ CAPTCHA, security-question, account-and-application and job-search reads, and ea
 an intended change is accepted with `nightly_summary.py --import-fixtures --replace`, or
 `JOB_APPLY_REDECIDE=1` on that test for a page no run has captured again.
 
+`tests/fixtures/replay/<name>.json` is what `job-apply-doctor --replay <name>.html` says of the page offline (the
+reads and decisions above, each box's plan by its rule's name, the agreement verdicts); `tests/test_replay.py` replays
+every page here and compares. A page imported or replaced gets its golden written with `JOB_APPLY_UPDATE_REPLAY=1` on
+that test: look the diff over.
+
 The converter removes scripts and replaces profile values (name, email, phone,
 address, links). Review the HTML for any other personal data before committing.

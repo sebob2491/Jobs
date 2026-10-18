@@ -1,0 +1,53 @@
+{
+  "file": "live-intel.html",
+  "address": "https://intel.wd1.myworkdayjobs.com/en-US/External/job/US%2C-Arizona%2C-Phoenix/Foundry-Advanced-Packaging-Customer-Engineer_JR0287201-1/apply/applyManually",
+  "applicant": "the live check's test applicant",
+  "refused": 0,
+  "page": "sign_in",
+  "next": null,
+  "captcha": false,
+  "security_asked": false,
+  "account_and_application": false,
+  "job_search": false,
+  "errors": [],
+  "buttons": [
+    "Sign In",
+    "Life at Intel",
+    "Search for Jobs",
+    "Join Our Talent Community",
+    "main menu",
+    "Back to Job Posting",
+    "Create Account",
+    "Create Account",
+    "Sign In",
+    "Forgot your password?",
+    "Facebook"
+  ],
+  "dialogs": [],
+  "boxes": [
+    {
+      "label": "Email Address*",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "email",
+      "value": "<email>"
+    },
+    {
+      "label": "Password*",
+      "kind": "password",
+      "required": true,
+      "plan": "left",
+      "why": "a password: the desk's own step (sign-in or account)"
+    },
+    {
+      "label": "Verify New Password*",
+      "kind": "password",
+      "required": true,
+      "plan": "left",
+      "why": "a password: the desk's own step (sign-in or account)"
+    }
+  ],
+  "agreement": null,
+  "notice": null
+}

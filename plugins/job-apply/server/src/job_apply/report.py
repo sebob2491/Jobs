@@ -546,6 +546,8 @@ def build(job: dict[str, Any], run: Any = None, profile: config.Profile | None =
     if run is not None:
         lines += [f"**Desk status:** {getattr(run, 'status', '')} {getattr(run, 'need', '')}".rstrip() + _code(run),
                   f"**What the desk said:** {said(getattr(run, 'reason', ''))}"]
+        if last := last_action_said(getattr(run, "last_action", None), said):
+            lines.append(f"**Last action:** {last}")
         steps = [said(s) for s in (getattr(run, "log", None) or [])][-40:]
         if steps:
             lines += ["", "### What the desk did", *[f"{i}. {s}" for i, s in enumerate(steps, 1)]]
@@ -574,6 +576,89 @@ def build(job: dict[str, Any], run: Any = None, profile: config.Profile | None =
             f"{getattr(run, 'need', '') or getattr(run, 'status', '') or 'a problem'}"
     return {"folder": str(out_dir), "zip": str(zip_path), "preview": text, "issue_url": _issue_url(title, text),
             "pages": pages}
+
+
+LAST_ACTIONS = ("pressed", "typed", "picked", "uploaded")
+LAST_ACTION_SAID = 120  # characters of a last action's target a report or a stop's record says (after it's scrubbed)
+STOP_TEXT = 300  # characters of the page's words around its first error, in a stop's record (stop.json)
+STOP_WINDOW = 1500  # characters either side of the first error read (and scrubbed) to cut that from
+STOP_RECORD = "stop.json"
+
+
+def last_action_said(last: Any, said: Callable[[Any], str]) -> str:
+    """The desk's last action on a job's pages (pipeline's Run.last_action) as a report says it: 'pressed “Next” at
+    14:02:11', its target (a button's words, a box's label: never what was typed) through the report's scrubber
+    `said`, then cut short (a value across the cut is taken out whole first). "" for none."""
+    if not isinstance(last, dict) or last.get("what") not in LAST_ACTIONS or not str(last.get("target") or "").strip():
+        return ""
+    at = last.get("at")
+    when = datetime.fromtimestamp(at).strftime(" at %H:%M:%S") if isinstance(at, (int, float)) else ""
+    return f"{last['what']} “{said(str(last['target']))[:LAST_ACTION_SAID]}”{when}"
+
+
+_UNSEEN = re.compile(r"(?is)<(script|style|noscript|template|head|svg)\b.*?</\1\s*>|<!--.*?-->")
+_TAG = re.compile(r"(?s)<[^>]*>")
+
+
+def _page_words(html_text: str) -> str:
+    """A saved page's words, read quickly (a stop's page can be megabytes: a parser took seconds): its tags taken out,
+    and what's never shown (scripts, styles, its head)."""
+    import html as html_lib
+
+    return " ".join(html_lib.unescape(_TAG.sub(" ", _UNSEEN.sub(" ", html_text))).split())
+
+
+def stop_facts(run: Any) -> dict[str, Any]:
+    """What a stop's record says of the run (its code, need, reason and last action), copied as the stop is saved."""
+    last = getattr(run, "last_action", None)
+    return {"code": getattr(run, "code", "") or "", "need": getattr(run, "need", "") or "",
+            "reason": str(getattr(run, "reason", "") or ""), "last_action": dict(last) if isinstance(last, dict) else None}
+
+
+def write_stop(folder: Path, facts: dict[str, Any], hide: Iterable[Any] = (),
+               profile: config.Profile | None = None) -> Path | None:
+    """A stop's record, stop.json, beside the page it stopped on (`folder`: the snapshot pipeline's Applier._save_stop
+    saved; `facts`: stop_facts' of the run): its code, need and reason, the desk's last action (what it pressed, typed,
+    picked or uploaded, by its label), the page's errors, and about STOP_TEXT characters of the page's words around
+    the first of them (none where its words aren't found: never the page's first words instead), all scrubbed as a
+    report's text is: the profile's details (report_strings) and what's the run's alone (`hide`,
+    Applier._report_hidden: the answers given for it, what was typed into its form). Only the STOP_WINDOW characters
+    either side of the error are scrubbed, never the whole page (megabytes: seconds), and the cut is made after. The
+    last action goes into the snapshot's details too. A record only: None where there's no page saved, and nothing
+    that goes wrong here is the stop's trouble. Run off the desk's event loop (pipeline: asyncio.to_thread)."""
+    try:
+        meta_path = folder / "snapshot.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        page = folder / "page.html"
+        words = _page_words(page.read_text(encoding="utf-8")) if page.is_file() else ""
+        said = _hiding(_scrubber(report_strings(profile or config.Profile.load())), hide)
+        raw = [" ".join(str(e).split()) for e in meta.get("errors") or [] if str(e or "").strip()][:5]
+        errors = [said(e)[:STOP_TEXT] for e in raw]
+        text = ""
+        for error, shown in zip(raw[:1], errors[:1]):  # (the first error, as written, else its first words)
+            for probe in (error, " ".join(error.split()[:4])):
+                if probe and (at := words.casefold().find(probe.casefold())) >= 0:
+                    window = said(words[max(0, at - STOP_WINDOW):at + len(probe) + STOP_WINDOW])
+                    # (where it is once scrubbed: as said, else its first words, else about where it was)
+                    found = window.casefold().find(shown.casefold()) if shown else -1
+                    if found < 0 and shown.split():
+                        found = window.casefold().find(" ".join(shown.split()[:4]).casefold())
+                    start = max(0, (found if found >= 0 else min(at, STOP_WINDOW)) - STOP_TEXT // 3)
+                    text = window[start:start + STOP_TEXT]
+                    break
+        last = facts.get("last_action")
+        last = {**last, "target": said(str(last.get("target") or ""))[:LAST_ACTION_SAID]} if isinstance(last, dict) \
+            else None
+        record = {"code": facts.get("code") or "", "need": facts.get("need") or "", "reason": said(facts.get("reason")),
+                  "last_action": last, "errors": errors, "text": text}
+        out = folder / STOP_RECORD
+        out.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
+        details = meta.get("details") if isinstance(meta.get("details"), dict) else {}
+        meta["details"] = {**details, "last_action": last}
+        meta_path.write_text(json.dumps(meta, indent=2, default=str), encoding="utf-8")
+        return out
+    except Exception:  # (a record: never the stop's trouble)
+        return None
 
 
 def _code(run: Any, bare: bool = False) -> str:

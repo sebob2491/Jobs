@@ -1,0 +1,151 @@
+{
+  "file": "pipeline-amkor-technology.html",
+  "address": "https://career8.successfactors.com/portalcareer",
+  "applicant": "the live check's test applicant",
+  "refused": 0,
+  "page": "form",
+  "next": "Next",
+  "captcha": false,
+  "security_asked": false,
+  "account_and_application": false,
+  "job_search": false,
+  "errors": [
+    "Your Work Has Not Been Saved! Please correct the errors below."
+  ],
+  "buttons": [
+    "Delete Profile",
+    "Print Preview",
+    "Upload Resume",
+    "",
+    "+ Add",
+    "",
+    "+ Add",
+    "",
+    "+ Add",
+    "",
+    "+ Add",
+    "",
+    "+ Add",
+    "",
+    "+ Add",
+    "",
+    "+ Add",
+    "",
+    "",
+    "",
+    "",
+    "LinkedIn Profile:",
+    "Save",
+    "Cancel",
+    "Next",
+    "Upload",
+    "Cancel",
+    "Close"
+  ],
+  "dialogs": [],
+  "boxes": [
+    {
+      "label": "*First Name:",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "first_name",
+      "value": "<first_name>"
+    },
+    {
+      "label": "Middle Name:",
+      "kind": "text",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "*Last Name:",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "last_name",
+      "value": "<last_name>"
+    },
+    {
+      "label": "*Phone:",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "phone",
+      "value": "<phone>"
+    },
+    {
+      "label": "*Email:",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "email",
+      "value": "<email>"
+    },
+    {
+      "label": "*Address 1",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "address1",
+      "value": "<address1>"
+    },
+    {
+      "label": "Address 2",
+      "kind": "text",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "*City/Town",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "city",
+      "value": "<city>"
+    },
+    {
+      "label": "State/Province",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "state",
+      "value": "<state>"
+    },
+    {
+      "label": "*Zip Code",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "postal",
+      "value": "<postal>"
+    },
+    {
+      "label": "Country",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "country",
+      "value": "<country>"
+    },
+    {
+      "label": "Choose File",
+      "kind": "file",
+      "required": false,
+      "plan": "fill",
+      "rule": "documents.resume",
+      "value": "<documents.resume>"
+    },
+    {
+      "label": "Hear more about career opportunities",
+      "kind": "checkbox",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    }
+  ],
+  "agreement": null,
+  "notice": null
+}

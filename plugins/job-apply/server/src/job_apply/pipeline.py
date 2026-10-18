@@ -848,6 +848,8 @@ class WentIn:
                 "left": [dict(e) for e in self.left.values()], "full": self.full}
 
 
+LAST_ACTION_KEPT = 300  # characters of a last action's target kept (Run.did): scrubbed, then cut, where it's said
+
 # Why a job stopped for the person, as a word that stays put when the words said to them change (the review of Oct 18:
 # the nightly sorted its stops by their messages' words, and a message reworded moved an employer between "look at"
 # and "expected"). Every Applier._pause names one (tests/test_pause_messages.py reads each call); it's the run's
@@ -887,6 +889,9 @@ class Run:
     need: str = ""
     reason: str = ""
     code: str = ""  # its stop's (STOP_CODES), while it needs the person: set with need and reason by Applier._pause
+    # the desk's last press, typing, pick or upload on its pages in this pass, {"at", "what", "target"} (Run.did: a
+    # record only)
+    last_action: dict[str, Any] | None = None
     questions: list[dict[str, Any]] = field(default_factory=list)
     log: list[str] = field(default_factory=list)
     logged: int = 0  # lines ever logged (the log keeps the last 40): something done since
@@ -1082,6 +1087,38 @@ class Run:
                 # page's state megabytes, every poll)
                 "went_in": None if self.status in ("queued", "running") else self.went_in.public(),
                 "code": self.code if self.status == "needs_you" else ""}  # (a stop's alone: never one gone by)
+
+    def did(self, what: str, target: Any, data: dict[str, Any] | None = None) -> None:
+        """A record only (the review of Oct 18, T10): what the desk last did on the job's pages, for the stop's record
+        (stop.json beside its saved page), the desk's state and a problem report's "Last action". Nothing reads it to
+        decide anything, and nothing here can fail the step it's written before or after.
+        `what`: "pressed", "typed", "picked" or "uploaded"; "" for a box's, by its kind (`data`: the page it's on).
+        `target`: the button or the box (its words or its label), several (the last of them: where a fill ended), or
+        its name written out. Only ever its words or label: never what was typed (a fill's value isn't read), and never
+        the label of a box the "What went in" panel keeps out (_kept_out, _guarded: a security question's, which says the
+        question chosen; a password's or an emailed code's), said only as what kind of box it was. Kept to
+        LAST_ACTION_KEPT characters: a report or a stop's record scrubs it, then cuts it shorter."""
+        try:
+            last = target[-1] if isinstance(target, (list, tuple)) and target else target
+            if isinstance(last, dict):
+                box = next((f for f in (data or {}).get("fields") or [] if isinstance(f, dict)
+                            and last.get("id") is not None and f.get("id") == last.get("id")), {})
+                kind = last.get("kind") or box.get("kind")
+                what = what or ("uploaded" if last.get("uploaded") or kind == "file"
+                                else "picked" if kind in _CHOICE_KINDS else "typed")
+                said = (last.get("text") or last.get("label")) if what == "pressed" else \
+                    (last.get("label") or box.get("label") or last.get("text"))
+                whole = {**box, **{k: v for k, v in last.items() if k != "value"}}
+                if what != "pressed" and (_kept_out(whole, "", set())
+                                          or str(whole.get("id")) in _guarded(({**(data or {})},) if data else ())):
+                    said = "a password box" if kind == "password" else "a box whose words are kept out of view"
+            else:
+                said = last if isinstance(last, str) else ""
+            said = " ".join(final_text(str(said or "")).split())[:LAST_ACTION_KEPT]
+            if said and what in ("pressed", "typed", "picked", "uploaded"):
+                self.last_action = {"at": round(time.time(), 3), "what": what, "target": said}
+        except Exception:  # (a record: never the step's trouble)
+            pass
 
     def keep_agreed(self, what: str, heading: str, button: str, words: str, choices: list[str] | None = None) -> None:
         """What was just agreed to for the person, in the words its rules read (Run.agreed): kept, never shown.
@@ -2251,6 +2288,7 @@ class Applier:
         cut = False  # (and its pass cut short by that, not ended by itself)
         began, at_once = time.time(), self.at_once()  # (for the pass's line in the desk's history)
         run.pass_steps = set()
+        run.last_action = None  # (a new pass: a stop's record never names what an earlier one did)
         ended_as: tuple[str, str, str, str] | None = None  # (how its pages ended, before its stop's page was saved)
         try:
             with self.srv.browser.desk_view(run.job_id):
@@ -2928,6 +2966,7 @@ class Applier:
         ids = [box["id"] for box in boxes] if 1 < len(boxes) == len(found.value) else [boxes[0]["id"]]
         why = ""
         try:
+            run.did("typed", boxes[:1] if len(ids) == 1 else boxes)
             read = re.sub(r"[^0-9A-Za-z]", "", "".join(await srv.browser.type_code(ids, found.value)))
             # (all of it; or, typed into a first box that moved on by itself to boxes the reader didn't count, its
             # first digit)
@@ -2951,6 +2990,7 @@ class Applier:
                      after[0] if after else None)
         made = press is None and (press := self._account_code_button(run, data)) is not None
         mine = made or (press is None and (press := await self._code_only_submit(data)) is not None)
+        run.did("pressed", press)
         try:
             if mine and press is not None:  # (the code step's own "Submit": it sends the code only)
                 pressed = (await srv.browser.click(press["id"], allow_submit=True)).get("clicked") is not False
@@ -3060,6 +3100,9 @@ class Applier:
             await self.srv.browser.snapshot(debug / f"{stamp}-{STOP}", note=f"stopped: {run.need}")
             for old in sorted(debug.glob(f"*-{STOP}"))[:-report.PAGES]:
                 shutil.rmtree(old, ignore_errors=True)
+            # (stop.json: a record only, written off the event loop)
+            await asyncio.to_thread(report.write_stop, debug / f"{stamp}-{STOP}", report.stop_facts(run),
+                                    self._report_hidden(run))
         except Exception:
             logging.getLogger(__name__).warning("couldn't save the page job %s stopped on", run.job_id, exc_info=True)
 
@@ -3702,6 +3745,7 @@ class Applier:
                     ps.entries_done.add(key)
                     for section in ("work", "education"):
                         # (one block fewer for each school deleted from this job's form: never added back)
+                        run.did("pressed", f"Add ({section})")
                         added = await srv.add_entries(section, **({"count": len(profile_entries(
                             config.Profile.load(), "education_history")) - len(run.schools_dropped)}
                             if section == "education" and run.schools_dropped else {}))
@@ -3826,6 +3870,7 @@ class Applier:
                          and not a.get("disabled")), None) if action is None and kind == "page" else None
             if note is not None and note["text"] not in ps.dismissed:
                 ps.dismissed.add(note["text"])  # the posting under it is hidden until it goes
+                run.did("pressed", note)
                 await srv.click(note["id"])
                 self._log(run, f"dismissed a note (\u201c{note['text'].strip()}\u201d)")
                 continue
@@ -3997,6 +4042,7 @@ class Applier:
                 ps.on_pages.add(key)
             ps.pressed_on.append(f"\u201c{action['text'].strip()}\u201d on {_page_said(data)}")
             looked = _fingerprint(data)
+            run.did("pressed", action)
             try:
                 clicked = await srv.click(action["id"])
             except KeyError:  # the page changed between looking and clicking (a tab opened): look again
@@ -4159,6 +4205,7 @@ class Applier:
                 return _Then.STOP
             words = await srv.page_text(40000)  # (what _terms_gate reads, kept with the agreement: Run.agreed)
             if _terms_gate(agree, data, words) and _may_accept_notices():
+                run.did("pressed", agree)
                 try:
                     clicked = await self._press_agreement(agree["id"])
                 except KeyError:  # the page changed between looking and clicking: look again
@@ -4449,6 +4496,7 @@ class Applier:
                 ps.redone_pages.add(looked)
                 ids = {f["id"] for f in wrong}
                 redone = (await srv.autofill(job_id=run.job_id, redo=sorted(ids))).get("filled") or []
+                run.did("", redone, seen_now)
                 _went_in(run, redone, seen_now)
                 given = {f.get("id") for f in redone if f.get("id") in ids}
                 ps.filled_ids |= {str(f["id"]) for f in redone if f.get("id")}
@@ -4460,6 +4508,7 @@ class Applier:
                                                        and f.get("role") == "spinbutton"])
                 theirs_again: set[str] = set()
                 if theirs:
+                    run.did("typed", [f for f in seen_now.get("fields") or [] if f.get("id") in theirs])
                     out = await srv.fill_form([{"id": fid, "value": value, "again": True}
                                                for fid, value in theirs.items()])
                     results = out.get("results") or []
@@ -4480,6 +4529,7 @@ class Applier:
             lost = [f for f in lost if f.get("role") != "spinbutton"]
             if lost and looked not in ps.retyped:
                 ps.retyped.add(looked)
+                run.did("typed", lost)
                 again = await srv.browser.retype([f["id"] for f in lost])
                 if again:
                     names = ", ".join(clean_label(f.get("label") or "") for f in lost if f["id"] in again)
@@ -4494,6 +4544,7 @@ class Applier:
             if emptied and looked not in ps.refilled_pages:
                 ps.refilled_pages.add(looked)
                 refill = (await srv.autofill(job_id=run.job_id)).get("filled") or []
+                run.did("", refill, seen_now)
                 _went_in(run, refill, seen_now)
                 again_filled = [f for f in refill if f.get("id") in {e["id"] for e in emptied}]
                 ps.filled_ids |= {str(f["id"]) for f in again_filled if f.get("id")}
@@ -4529,6 +4580,7 @@ class Applier:
                 boxes = [f["id"] for f in shown.get("fields") or [] if f.get("kind") == "text"
                          and f.get("required") and not f.get("disabled") and not is_empty_value(f.get("value"))
                          and len(str(f.get("value"))) <= 80]  # (not a long answer: typed key by key)
+                run.did("typed", [f for f in shown.get("fields") or [] if f.get("id") in boxes])
                 if boxes and await srv.browser.retype(boxes):
                     self._log(run, f"typed {len(boxes)} required box(es) again: the page may have lost what "
                               "was typed in them")
@@ -4584,12 +4636,14 @@ class Applier:
                 "upload your resume again, then press Resume.")
         if not run.reuploaded:
             run.reuploaded = True
+            run.did("pressed", "Delete (the resume's upload)")
             if (deleted := await srv.browser.delete_unkept_upload(name)) == "gone":  # (the row went; its name stays)
                 said = (f"{_site(run, data)} showed {name} as uploaded, but hadn't kept it: I pressed its Delete to "
                         "upload it again, but the page still shows the file's name. In the desk's browser window, "
                         "delete the file if it's still there, upload your resume again, then press Resume.")
             elif deleted == "deleted":
                 # (the resume's box, empty again: its file goes up again)
+                run.did("uploaded", "the resume's upload")
                 _went_in(run, (await srv.autofill(job_id=run.job_id)).get("filled") or [], data)
                 state = ""
                 for _ in range(20):  # (the page takes a moment to keep it)
@@ -4657,6 +4711,7 @@ class Applier:
             # it's the tailored one sent again. So is a file of the tailored one's name (every tailored resume has the
             # same name: autofill.kept_documents). Never where which file is the old one isn't sure (several, or a box
             # for a resume and a cover letter both): the person's
+            run.did("pressed", "" if box["unsure"] else f"Delete ({box['where']})")
             deleted = "" if box["unsure"] else await self.srv.browser.delete_kept_upload(
                 box["id"], box["shown"][0] if box["shown"] else "")
             if deleted == "deleted":
@@ -4854,6 +4909,7 @@ class Applier:
             if not fills:
                 break
             sent.update({f["id"]: by_id[f["id"]] for f in fills})
+            run.did("", [fields[f["id"]] for f in fills if f["id"] in fields], data)
             out = await self.srv.fill_form(fills)
             failed = {by_id[r["id"]]: {**{k: fields[r["id"]][k] for k in ("id", "kind", "label", "section", "required",
                                                                           "options")
@@ -4905,6 +4961,7 @@ class Applier:
             return out
         if not checking or page in run.draft_pages:
             result = await self.srv.autofill(job_id=run.job_id)
+            run.did("", result.get("filled"), data)
             if checking and (others := replaced(result.get("filled") or [])):
                 self._draft_changes(run, others, data)
             return result
@@ -4912,6 +4969,7 @@ class Applier:
         keep = [str(f["id"]) for f in data.get("fields") or [] if f.get("id") is not None
                 and (placed_key(f) in run.once or question_key(f.get("label") or "") in run.once)]
         result = await self.srv.autofill(job_id=run.job_id, refresh=True, keep=keep)
+        run.did("", result.get("filled"), data)
         changed = [f for f in result.get("filled") or [] if f.get("refreshed")]
         refused = [f for f in result.get("failed") or [] if f.get("refreshed")]
         # what each box the refresh went into held, and holds now (for the job's "What went in" panel alone: the log, notes
@@ -5018,6 +5076,7 @@ class Applier:
         if delete is None or last in run.schools_tried:
             return False
         run.schools_tried.append(last)  # (pressed once a block, whatever comes of it)
+        run.did("pressed", delete)
         try:
             await self.srv.click(delete["id"])
         except Exception:  # gone, or it won't take a click: the person's, as before
@@ -5094,6 +5153,7 @@ class Applier:
                 if not any(site_filled(h) for h in marked):
                     continue
             tried.add(block)  # (pressed once a block, whatever comes of it)
+            run.did("pressed", delete)
             try:
                 await self.srv.click(delete["id"])
             except Exception:  # gone, or it won't take a click: the person's, as before
@@ -5277,8 +5337,10 @@ class Applier:
         button = self._account_button(own, _MAKE_ACCOUNT)
         if button is None:
             return False
+        run.did("picked", boxes)
         if boxes and not (await srv.fill_form([{"id": f["id"], "value": _tick(f)} for f in boxes])).get("ok"):
             return False
+        run.did("pressed", button)
         try:
             await srv.browser.click(button["id"], allow_submit=True)  # (the form's own button: it creates the account)
         except Exception:
@@ -5327,6 +5389,7 @@ class Applier:
                 self._log(run, f"your answers to the security questions didn't match the form on {_site(run, data)} "
                           "any more, so they're asked again")
             return ""
+        run.did("typed", "your answers to its security questions")  # (never a box's label: it says the question chosen)
         results = await self.srv.browser.fill([{"id": f["id"], "value": answers[placed_key(f)], "secret": True}
                                                for f in boxes])
         now, _ = await self._look(text=False)
@@ -5348,6 +5411,7 @@ class Applier:
         said = link["text"].strip()
         notice = None
         for _ in range(2):  # (live, APS's once opened nothing at the first press: a second press after a moment)
+            run.did("pressed", link)
             try:
                 await self.srv.browser.click(link["id"])
             except Exception as e:  # gone, or it won't take a click: the person's, as without the setting
@@ -5403,6 +5467,7 @@ class Applier:
             terms = await self._said_terms(_terms_boxes(now))
             boxes = terms + _other_positions_boxes(now)
             pressable = None
+            run.did("picked", boxes)
             if boxes and not (await srv.fill_form([{"id": f["id"], "value": _tick(f)} for f in boxes])).get("ok"):
                 why = "its terms box wouldn't tick"
             else:  # greyed out until its terms are ticked: a moment for the page to take that in
@@ -5420,6 +5485,7 @@ class Applier:
                     why = ("it shows a CAPTCHA, which is yours to solve" if _captcha_on(now) else
                            "it asks security questions too, whose answers are yours to choose")
             if pressable is not None:
+                run.did("pressed", pressable)
                 try:
                     await srv.browser.click(pressable["id"], allow_submit=True)  # (it creates the account)
                 except Exception as e:  # (said in the log: Nikon's UKG Pro, live, Oct 2026, gave no clue why)
@@ -5507,6 +5573,7 @@ class Applier:
             return await self._account_theirs(run, data, f"{site} has no account for your email yet, and its sign-in shows "
                                         "a picture check (CAPTCHA), which is yours", code="account_theirs")
         run.accounts_tried += 1
+        run.did("pressed", create)
         try:
             await self.srv.click(create["id"])
         except Exception:  # gone, or it won't take a click: the person's, as without the setting
@@ -5554,6 +5621,7 @@ class Applier:
                                         f"on {site}", code="no_step_button")
         if view == "consent":
             ticked = _consent_boxes(data)
+            run.did("picked", ticked)
             if ticked and not (await srv.fill_form([{"id": f["id"], "value": True} for f in ticked])).get("ok"):
                 return await self._account_theirs(run, data, f"{site} asks you to agree to its terms before making your "
                                             "account, and its box didn't take my tick", code="account_step_failed")
@@ -5571,7 +5639,9 @@ class Applier:
                 return await self._account_theirs(run, data, f"{site} asks for your email to make your account, and your "
                                             "profile has none", code="profile_gap")
             if str(box.get("value") or "").strip().lower() != address.strip().lower():
+                run.did("typed", box)
                 await srv.fill_form([{"id": box["id"], "value": address}])
+        run.did("pressed", button)
         try:
             # (its agreement's "Submit" sends that agreement only: the application isn't on the page yet)
             await srv.browser.click(button["id"], allow_submit=True)
@@ -5591,6 +5661,7 @@ class Applier:
             # refused without its consent to be considered for other open positions too: given, and pressed again
             again = self._account_button(now.get("actions") or [], _ACCOUNT_ON)
             if again is not None and await self._give_other_positions(run, now, wanted, refused=True):
+                run.did("pressed", again)
                 with contextlib.suppress(Exception):
                     await srv.browser.click(again["id"], allow_submit=True)
                     now, _ = await self._after_press(now)
@@ -5634,6 +5705,7 @@ class Applier:
         said so when its button was pressed), logging each. False when one wouldn't take it."""
         if not fields:
             return True
+        run.did("picked", fields)
         if not (await self.srv.fill_form([{"id": f["id"], "value": _tick(f)} for f in fields])).get("ok"):
             return False
         why = "it wouldn't go on without it" if refused else "it requires it"
@@ -5718,6 +5790,7 @@ class Applier:
             return "no_account"
 
         async def press(action: dict[str, Any], allow_submit: bool = False) -> bool:
+            run.did("pressed", action)
             try:
                 out = await (srv.browser.click(action["id"], allow_submit=True) if allow_submit else srv.click(action["id"]))
             except Exception:  # gone (a page drawn again after the failed sign-in) or won't take a click
@@ -5765,6 +5838,7 @@ class Applier:
             # BrassRing's asks for a picture code (live, Oct 2026), never touched: its Continue pressed
             # without one only said "Captcha text Required field"
             return await instead("opened its password reset, which has a CAPTCHA (yours to solve)", data)
+        run.did("typed", boxes[:1])
         if not (await srv.fill_form([{"id": boxes[0]["id"], "value": address}])).get("ok"):
             return await instead("opened its password reset, which didn't take your email", data)
         if captcha:  # (and no new account to go back for: the site said the email has one)
@@ -5848,6 +5922,7 @@ class Applier:
         way = _account_way(data.get("actions") or []) if _fingerprint(data) == looked else None
         if way is None:
             return False
+        run.did("pressed", way)
         try:
             clicked = await self.srv.click(way["id"])
         except KeyError:  # the page changed between looking and clicking
@@ -5906,6 +5981,7 @@ class Applier:
             watching = "The desk is watching your inbox for it: it opens the link, then signs in with your saved password."
             if stale and resend is not None and not run.verify_resent:
                 try:
+                    run.did("pressed", resend)
                     await self.srv.browser.click(resend["id"])
                     pressed = True
                 except Exception:  # gone (the page drawn again) or won't take a click
@@ -5973,6 +6049,7 @@ class Applier:
         if secret is None or _secret(secret) is None:
             return None
         for box in passwords:
+            run.did("typed", box)
             if not (await srv.fill_secret(box["id"], secret)).get("ok"):
                 return None
         site = _site(run, data)
@@ -5982,6 +6059,7 @@ class Applier:
                         "code and press its button; the desk carries on after that.", seen=data, code="captcha")
             return "paused"
         button = self._account_button(data.get("actions") or [], _RESET_SET, full=False)
+        run.did("pressed", button)
         try:
             pressed = button is not None and (await srv.browser.click(button["id"], allow_submit=True)).get("clicked") is not False
         except Exception:
@@ -6053,6 +6131,7 @@ class Applier:
                        and (a.get("cookie") or mentioned and (not other_dialog
                                                               or _NAMES_COOKIES.search(a.get("text", ""))))), None)
         if button is not None:
+            run.did("pressed", button)
             result = await self.srv.click(button["id"])
             if result.get("clicked"):
                 self._log(run, f"declined cookies (\u201c{button['text']}\u201d)")
@@ -6065,6 +6144,7 @@ class Applier:
         if not banner or not banner.get("cookie"):  # gone, or an application's own consent box
             return None
         if may_accept_cookies(banner):
+            run.did("pressed", accept)
             result = await self.srv.click(accept["id"])  # (its guard checks the banner again)
             if result.get("clicked"):
                 self._log(run, f"accepted cookies (\u201c{accept['text'].strip()}\u201d), as your settings allow: "
@@ -6095,6 +6175,7 @@ class Applier:
                            or takes_ok and _TAKES_IN.match(final_text(b.get("text") or "")))), None)
         allowed = ai and agree is not None and _may_accept_notices()
         if allowed and agree is not None and heading not in agreed:
+            run.did("pressed", agree)
             try:
                 clicked = await self._press_agreement(agree["id"])
             except Exception as e:  # gone, or it won't take a click: the person's, as without the setting
@@ -6143,6 +6224,7 @@ class Applier:
                         "and it stayed open. Look at it in the desk's browser window, then press Resume.",
                         code="agreement_stayed")
             return "paused"
+        run.did("pressed", enter)
         try:
             pressed = await self.srv.click(enter["id"])
         except KeyError:  # the dialog went by itself meanwhile: looked at again
@@ -6188,6 +6270,7 @@ class Applier:
         attest = {q["id"]: value for q in pending if (value := _attestation(q)) is not None}
         if not attest or not _may_accept_notices():
             return pending
+        run.did("picked", [q for q in pending if q["id"] in attest])
         out = await self.srv.fill_form([{"id": fid, "value": value} for fid, value in attest.items()])
         done = {r["id"] for r in out.get("results") or [] if r.get("ok")}
         for q in pending:
@@ -6271,6 +6354,7 @@ class Applier:
                 (a for a in actions if re.match(r"^(sign|log) ?in$", a["text"].strip(), re.I) and not a.get("cookie")), None)
             if email_button is None or tried.get("email_step", 0) >= 2:
                 return None
+            run.did("pressed", email_button)
             await srv.click(email_button["id"])
             return "email_step"
         passwords = [f for f in fields if f["kind"] == "password" and not _code_box(f)]
@@ -6297,6 +6381,7 @@ class Applier:
                     or reset_first and _forgot_action(actions) or run.reset_set or run.reset_opened
                     or run.account_known):
                 return "refused"
+            run.did("pressed", create)
             try:
                 await srv.click(create["id"])
             except KeyError:
@@ -6321,6 +6406,7 @@ class Applier:
             way = next((a for a in ways if a.get("in_account_form") or a.get("after_password")), None) or next(iter(ways), None)
             if way is not None:
                 tried["to_sign_in"] = 1
+                run.did("pressed", way)
                 try:
                     await srv.click(way["id"])
                 except KeyError:
@@ -6354,10 +6440,13 @@ class Applier:
             if details:
                 await self._fill_account_details(fields, data.get("headings"))
             if boxes:
+                run.did("typed", boxes)
                 await srv.fill_form([{"id": f["id"], "value": address} for f in boxes])
         elif boxes:
+            run.did("typed", boxes[:1])
             await srv.fill_form([{"id": boxes[0]["id"], "value": address}])
         for box in passwords:
+            run.did("typed", box)
             if not (await srv.fill_secret(box["id"], secret)).get("ok"):
                 return None  # it didn't go in: say nothing about a saved password
         as_user = any(_user_name_box(f) for f in (boxes if new_account else boxes[:1]))
@@ -6374,6 +6463,7 @@ class Applier:
             (a for a in own if a.get("sign_in_form") and _SIGN_IN_SUBMIT.match(final_text(a["text"]).strip())), None)
         if button is None:
             return "filled"
+        run.did("pressed", button)
         await srv.click(button["id"])
         run.sign_in_tries += 1
         # whether that signed in is the next look's to say
@@ -6411,6 +6501,7 @@ class Applier:
         result = await srv.autofill(job_id=run.job_id)
         if result["filled"]:
             self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
+        run.did("", result.get("filled"), data)
         pending, missing_files = _pending(result, once_failed)
         self._note_skipped(run, result)
         pending = await self._attest(run, pending)
@@ -6477,6 +6568,7 @@ class Applier:
             # the page is read again
             run.invalid_redone = True
             redone = (await srv.autofill(job_id=run.job_id, redo=invalid)).get("filled") or []
+            run.did("", redone, data)
             _went_in(run, redone, data)
             again = [f for f in redone if f.get("id") in invalid]
             if again:
@@ -6562,6 +6654,7 @@ class Applier:
                                "sent (is the disk full?), so a restart could send it twice. Press Submit yourself in "
                                "the desk's browser window, then press I submitted it myself here.",
                                code="not_submitted")
+        run.did("pressed", "Submit")
         try:
             result = await srv.submit_application(job_id=run.job_id, user_confirmed=True)
         except Exception:

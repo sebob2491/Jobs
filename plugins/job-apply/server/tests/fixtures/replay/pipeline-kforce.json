@@ -1,0 +1,58 @@
+{
+  "file": "pipeline-kforce.html",
+  "address": "https://myhiring.kforce.com/careersection/careersection/candidateacquisition/flow.jsf",
+  "applicant": "the live check's test applicant",
+  "refused": 0,
+  "page": "form",
+  "next": "Save and Continue",
+  "captcha": false,
+  "security_asked": false,
+  "account_and_application": false,
+  "job_search": false,
+  "errors": [
+    "Errors occurred on this page, could not proceed. Please correct the errors before proceeding. Beginning of error list. You must select at least one relevant file.",
+    "You must select at least one relevant file."
+  ],
+  "buttons": [
+    "Save and Continue",
+    "Save as Draft",
+    "Attach",
+    "Delete",
+    "Save and Continue",
+    "Save as Draft"
+  ],
+  "dialogs": [],
+  "boxes": [
+    {
+      "label": "Select the file to attach",
+      "kind": "file",
+      "required": false,
+      "plan": "fill",
+      "rule": "documents.resume",
+      "value": "<documents.resume>"
+    },
+    {
+      "label": "Comments about the file",
+      "kind": "text",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Select the file: REDACTED-resume.pdf",
+      "kind": "checkbox",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Document is a resume",
+      "kind": "checkbox",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    }
+  ],
+  "agreement": null,
+  "notice": null
+}

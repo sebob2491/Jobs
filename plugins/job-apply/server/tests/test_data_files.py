@@ -1,5 +1,7 @@
 """The YAML shipped with the plugin must load and use known values."""
 
+from pathlib import Path
+
 import pytest
 import yaml
 
@@ -373,3 +375,91 @@ def test_a_settings_key_the_desk_doesnt_read_is_said():
     broken = config.Settings.from_dict("review")
     assert broken.manage_accounts is False and len(broken.warnings) == 1
     assert broken.warnings[0].startswith("settings: should be a section") and "'review'" in broken.warnings[0]
+
+
+def test_the_templates_settings_are_the_ones_the_desk_reads():
+    """The review of Oct 18 (T9): the profile template's settings are exactly the ones the desk reads
+    (config.KNOWN_SETTINGS: a key it doesn't read is said as unknown), and every settings.<key> a skill tells Claude or
+    the person about is one of them."""
+    import re
+
+    template = yaml.safe_load(config.TEMPLATE_PROFILE.read_text(encoding="utf-8"))
+    assert set(template["settings"]) == set(config.KNOWN_SETTINGS)
+    named = {(p.parent.name, key) for p in sorted((config.PLUGIN_ROOT / "skills").glob("*/SKILL.md"))
+             for key in re.findall(r"\bsettings\.([a-z_]+)", p.read_text(encoding="utf-8"))}
+    assert len({key for _, key in named}) >= 10  # (the skills' are read)
+    assert {(skill, key) for skill, key in named if key not in config.KNOWN_SETTINGS} == set()
+
+
+# The job systems on the plugin's employer lists that no page in tests/fixtures/live comes from yet (the review of
+# Oct 18, T9): the form reader and the desk's decisions are checked offline on none of their pages. This set may only
+# shrink: a page imported from a run (`nightly_summary.py --import-fixtures`) takes its system off it, and a system new
+# to the lists comes with a page of its own.
+WITHOUT_FIXTURE_YET = frozenset({"applicantstack", "avature", "csod", "greenhouse", "icims", "infor", "jobvite", "lever",
+                                 "phenom", "smartrecruiters", "ukg"})
+WITHOUT_FIXTURE_ON_OCT_18 = 11  # (lower it as the set shrinks; never raise it)
+
+
+def _listed_systems() -> dict[str, list[str]]:
+    """Each job system on the plugin's employer lists, with its employers: the list's `ats`, or for a "custom" or
+    "unknown" one, the system its careers address is on (a company's own site)."""
+    from job_apply.ats import detect_ats
+    from job_apply.search import employer_lists
+
+    systems: dict[str, list[str]] = {}
+    for path in employer_lists().values():
+        for c in yaml.safe_load(path.read_text(encoding="utf-8"))["companies"]:
+            system = c["ats"] if c["ats"] not in ("custom", "unknown") else detect_ats(c["careers_url"])
+            systems.setdefault(system, []).append(c["name"])
+    return systems
+
+
+def _fixture_systems() -> set[str]:
+    """The job systems the pages in tests/fixtures/live come from (each page's address, as its expect.json keeps it)."""
+    import json
+
+    from job_apply.ats import detect_ats
+
+    return {detect_ats(json.loads(p.read_text(encoding="utf-8")).get("source_url"))
+            for p in (Path(__file__).parent / "fixtures" / "live").glob("*.expect.json")}
+
+
+def test_every_job_system_has_a_fixture_or_is_listed_as_waiting():
+    """A job system the desk meets on the employer lists either has a page in tests/fixtures/live (so a change to the
+    form reader or the desk's decisions that breaks its pages fails offline) or is in WITHOUT_FIXTURE_YET; and a system
+    whose page has come in leaves that set."""
+    systems, pages = _listed_systems(), _fixture_systems()
+    assert len(systems) >= 15 and len(pages) >= 5  # (both are read)
+    missing = {s: names for s, names in systems.items() if s not in pages and s not in WITHOUT_FIXTURE_YET}
+    assert not missing, f"no page in tests/fixtures/live for {missing}: import one (nightly_summary --import-fixtures)"
+    assert not WITHOUT_FIXTURE_YET & pages, f"{sorted(WITHOUT_FIXTURE_YET & pages)} have a page now: take them off it"
+    assert WITHOUT_FIXTURE_YET <= set(systems), WITHOUT_FIXTURE_YET - set(systems)  # (none of an employer gone)
+    assert len(WITHOUT_FIXTURE_YET) <= WITHOUT_FIXTURE_ON_OCT_18
+
+
+def _mentions(path: Path) -> set[str]:
+    """The words a test file names: each underscore-separated part of its names, attributes, functions and imports
+    (search_module._careerpages, sfclassic_search, RMK_ANSWER), and the words of its strings, lowercased."""
+    import ast
+    import re
+
+    words: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        named = (node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute)
+                 else node.name if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.alias)) else None)
+        if named:
+            words |= {w for w in named.lower().split("_") if w}
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            words |= set(re.findall(r"[a-z]+", node.value.lower()))
+    return words
+
+
+def test_every_search_kind_is_tested():
+    """The review of Oct 18 (T9): each kind of employer search (search.SEARCHERS and BROWSER_SEARCHES) is named in
+    tests/test_search.py (its reader called, or a list entry of its kind searched): a new kind comes with its test."""
+    from job_apply.search import BROWSER_SEARCHES, SEARCHERS
+
+    kinds = set(SEARCHERS) | BROWSER_SEARCHES
+    assert len(kinds) >= 25
+    assert kinds - _mentions(Path(__file__).parent / "test_search.py") == set()
+    assert "nosuchkind" not in _mentions(Path(__file__).parent / "test_search.py")

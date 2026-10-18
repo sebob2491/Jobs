@@ -261,6 +261,8 @@ def test_every_fixture_is_used():
         if path.name.endswith((".expect.json", ".decision.json")) \
                 or path.with_name(path.stem + ".expect.json").exists():
             return True
+        if path.parent.name == "replay" and (FIXTURES / "live" / f"{path.stem}.expect.json").exists():
+            return True  # (a captured page's replay golden: test_replay.py replays every one of them)
         return any(path.name in text for name, text in pages.items() if name != path.name)
 
     dead = [p.relative_to(SERVER).as_posix() for p in files if not used(p)]

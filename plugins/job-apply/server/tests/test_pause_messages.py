@@ -5,6 +5,7 @@ out in its source (pipeline._pause's reason); one built elsewhere (a variable) i
 import ast
 import re
 from pathlib import Path
+from typing import Union
 
 PIPELINE = Path(__file__).resolve().parents[1] / "src" / "job_apply" / "pipeline.py"
 # A thing the person does (the review of 0.3.189: "look", "read", "use", "let" and "run" made almost any message pass)
@@ -27,6 +28,25 @@ def _words(node: ast.AST) -> str:
     return "{}"
 
 
+def _variants(node: ast.AST, most: int = 64) -> list[str]:
+    """Each message a reason can be, its computed parts as "{}": a conditional's two sides apart, so a stop that says
+    what to do on one side only fails (the review of T10: _words read both as one message, which the side with an
+    action carried)."""
+    if isinstance(node, ast.Constant):
+        return [node.value if isinstance(node.value, str) else "{}"]
+    if isinstance(node, ast.IfExp):
+        return (_variants(node.body, most) + _variants(node.orelse, most))[:most]
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return [a + b for a in _variants(node.left, most) for b in _variants(node.right, most)][:most]
+    if isinstance(node, ast.JoinedStr):
+        out = [""]
+        for v in node.values:
+            parts = [v.value] if isinstance(v, ast.Constant) and isinstance(v.value, str) else ["{}"]
+            out = [a + b for a in out for b in parts]
+        return out
+    return ["{}"]
+
+
 def _ends_without_action(message: str) -> bool:
     """A message whose last two sentences say nothing for the person to do. One mostly built elsewhere, or ending in a
     part built elsewhere ("...: {}"), has its action there."""
@@ -36,16 +56,144 @@ def _ends_without_action(message: str) -> bool:
     return not ACTION.search(" ".join(sentences[-2:]))
 
 
-def test_every_stop_says_what_the_person_can_do():
+_SAID = (ast.Constant, ast.JoinedStr, ast.BinOp, ast.IfExp)
+_Scope = Union[ast.Module, ast.FunctionDef, ast.AsyncFunctionDef]
+
+
+class _Source:
+    """The driver's source, read for what a variable passed as a stop's reason can hold (the review of Oct 18, T9: six
+    reasons were variables, read as "{}" and so never checked): a name's assignments in the function it's used in (or
+    the module's, for a name assigned only there), and a part of a tuple it was unpacked from: a tuple written out,
+    one a method returns, one kept on a state's attribute, or one the function's callers gave a parameter."""
+
+    def __init__(self, tree: ast.Module):
+        self.tree = tree
+        self.functions = [f for f in ast.walk(tree) if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        self.scope: dict[int, _Scope] = {id(n): tree for n in ast.walk(tree)}
+        for f in self.functions:  # (an inner function's nodes are walked last: theirs)
+            for n in ast.walk(f):
+                self.scope[id(n)] = f
+
+    def said(self, node: ast.AST, path: tuple[int, ...] = (), depth: int = 0) -> list[str] | None:
+        """Every message `node` can be (or the part of it at `path`, a tuple's index within a tuple's), None where
+        one can't be read."""
+        scope = self.scope[id(node)]
+        if depth > 12:
+            return None
+        if isinstance(node, ast.Await):
+            return self.said(node.value, path, depth + 1)
+        if not path and isinstance(node, _SAID):
+            return _variants(node)
+        if path and isinstance(node, ast.Tuple):
+            return self.said(node.elts[path[0]], path[1:], depth + 1)
+        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) \
+                and isinstance(node.slice.value, int):
+            return self.said(node.value, (node.slice.value, *path), depth + 1)
+        if isinstance(node, ast.Name):
+            return self.named(node.id, path, scope, depth + 1)
+        if path and isinstance(node, ast.Attribute):  # (a tuple kept on a state: ps.back_from = (page, stuck))
+            kept = [a.value for a in ast.walk(self.tree) if isinstance(a, ast.Assign) and isinstance(a.value, ast.Tuple)
+                    and any(isinstance(t, ast.Attribute) and t.attr == node.attr for t in a.targets)]
+            return self._all([self.said(v, path, depth + 1) for v in kept])
+        if path and isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                and isinstance(node.func.value, ast.Name) and node.func.value.id == "self":
+            returned = [r.value for f in self.functions if f.name == node.func.attr for r in ast.walk(f)
+                        if isinstance(r, ast.Return) and self.scope[id(r)] is f and r.value is not None
+                        and not (isinstance(r.value, ast.Constant) and r.value.value is None)]
+            return self._all([self.said(v, path, depth + 1) for v in returned])
+        return None
+
+    def named(self, name: str, path: tuple[int, ...], scope: _Scope, depth: int) -> list[str] | None:
+        found: list[list[str] | None] = []
+        for a in ast.walk(scope):
+            if self.scope[id(a)] is scope and isinstance(a, (ast.Assign, ast.AnnAssign, ast.NamedExpr)) \
+                    and a.value is not None:
+                for target in a.targets if isinstance(a, ast.Assign) else [a.target]:
+                    found += [self.said(a.value, (*at, *path), depth + 1) for at in _places(target, name)]
+        if not isinstance(scope, ast.Module):
+            params = [p.arg for p in scope.args.args]
+            if name in params:  # (what the function's callers give it)
+                i = params.index(name) - (params[:1] == ["self"])
+                for call in ast.walk(self.tree):
+                    if isinstance(call, ast.Call) and getattr(call.func, "attr", getattr(call.func, "id", "")) \
+                            == scope.name:
+                        given = [k.value for k in call.keywords if k.arg == name] or call.args[i:i + 1]
+                        found += [self.said(g, path, depth + 1) for g in given] or [None]
+            elif not found:
+                return self.named(name, path, self.tree, depth + 1)
+        return self._all(found)
+
+    @staticmethod
+    def _all(found: list[list[str] | None]) -> list[str] | None:
+        return None if not found or None in found else [m for messages in found if messages for m in messages]
+
+
+def _places(target: ast.AST, name: str) -> list[tuple[int, ...]]:
+    """Where `name` is in an assignment's target: () for the target itself, (0, 1) for `(a, name), b = ...`."""
+    if isinstance(target, ast.Name):
+        return [()] if target.id == name else []
+    if isinstance(target, ast.Tuple):
+        return [(k, *at) for k, t in enumerate(target.elts) for at in _places(t, name)]
+    return []
+
+
+def _stops() -> tuple[list[tuple[int, list[str] | None]], ast.Module]:
+    """Each _pause call's line and every message its reason can be (None: one that can't be read)."""
     tree = ast.parse(PIPELINE.read_text(encoding="utf-8"))
-    pauses = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "_pause"
-              and len(n.args) >= 3]
-    assert len(pauses) > 50  # (the reader still finds the driver's stops)
+    source = _Source(tree)
+    pauses = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "_pause"]
+    return [(n.lineno, source.said(n.args[2]) if len(n.args) >= 3 else None) for n in pauses
+            if not (isinstance(n.args[1], ast.Constant) and n.args[1].value == "email_code")], tree
+
+
+def test_every_stop_says_what_the_person_can_do():
+    stops, tree = _stops()
+    pauses = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "_pause"]
+    assert len(pauses) == 93  # (a new stop: count it here, with its message)
+    unread = [line for line, said in stops if said is None]
+    assert not unread, unread  # (every reason is read, a variable's at each of its assignments: T9)
     # (an emailed code's wait is the desk's own: it watches the inbox, and the queue goes on)
-    silent = [(n.lineno, _words(n.args[2])[-160:]) for n in pauses
-              if not (isinstance(n.args[1], ast.Constant) and n.args[1].value == "email_code")
-              and _ends_without_action(_words(n.args[2]))]
+    silent = [(line, message[-160:]) for line, said in stops for message in said or []
+              if _ends_without_action(message)]
     assert not silent, silent
+
+
+def test_a_reason_passed_as_a_variable_is_read_where_it_is_built():
+    """The six reasons the driver passes by name (found[0] of _maybe_done_elsewhere's answer; `stuck`, `said`, kept on
+    the state's back_from, unpacked from _replace_kept's answer, or the module's _BOT_CHECK_SAYS) are each read at
+    every assignment, so a reworded one that tells the person nothing to do fails like one written in the call."""
+    tree = ast.parse("""
+WAIT = "The site is slow."
+class A:
+    def found(self):
+        return None
+        return "This may be a job you applied to. Apply anyway, or Skip?", [1]
+        def said(o):
+            return ("x", "y", "z")
+    def go(self, run, ps):
+        self._pause(run, "stuck", self.found()[0], code="a")
+        found = self.found()
+        self._pause(run, "stuck", found[0], code="a")
+        self._pause(run, "stuck", WAIT, code="a")
+        stuck = "The page didn't move on." if ps else "The site said no."
+        ps.back_from = (1, stuck)
+        (page, kept), ps.back_from = ps.back_from, None
+        self._pause(run, "stuck", kept, code="a")
+        self.after(run, (["box"], "I deleted the old file. Upload the new one, then press Resume."))
+        self._pause(run, "stuck", f(x), code="a")
+    def after(self, run, replacing):
+        emptied, stuck = replacing
+        self._pause(run, "stuck", stuck, code="a")
+""")
+    source = _Source(tree)
+    said = [source.said(n.args[2]) for n in ast.walk(tree) if isinstance(n, ast.Call)
+            and getattr(n.func, "attr", "") == "_pause"]
+    asked = "This may be a job you applied to. Apply anyway, or Skip?"
+    assert sorted(said, key=str) == sorted([[asked], [asked], ["The site is slow."],
+                                            ["The page didn't move on.", "The site said no."],
+                                            ["I deleted the old file. Upload the new one, then press Resume."],
+                                            None], key=str)
+
 
 
 def test_the_stops_said_in_one_place_say_what_to_do_too():
@@ -190,6 +338,18 @@ def test_a_stop_the_desk_caused_is_coded_as_the_desks():
             if fragment in said:
                 found.setdefault(fragment, set()).update(code)
     assert found == EXPECTED_CODES
+
+
+def test_each_side_of_a_conditional_stop_is_read_as_its_own_message():
+    """A stop whose reason is `X if c else Y`: each side is a message of its own, so one side that gives the person
+    nothing to do fails, however the other reads (the review of T10's plant: read as one message, it passed)."""
+    said = _variants(ast.parse('"The site lost the file again and again. Nothing more was said about it by the site '
+                               'this time." if run.draft else f"I deleted the {what}" + " (old). Upload the new one, '
+                               'then press Resume."', mode="eval").body)
+    assert said == ["The site lost the file again and again. Nothing more was said about it by the site this time.",
+                    "I deleted the {} (old). Upload the new one, then press Resume."]
+    assert [_ends_without_action(m) for m in said] == [True, False]
+    assert _variants(ast.parse('"a" + ("b" if x else "c") + f"d{e}"', mode="eval").body) == ["abd{}", "acd{}"]
 
 
 def test_the_code_audit_reads_only_literals():
