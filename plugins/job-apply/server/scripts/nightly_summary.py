@@ -19,6 +19,11 @@ whole body or a run's logs.
     uv run python scripts/nightly_summary.py --import-fixtures DIR_OR_ZIP [--companies "KLA"] [--replace]
         # the pages a run stopped on, already scrubbed (its fixtures/ folders), into tests/fixtures/live:
         # tests/test_live_fixtures.py then checks every night's stops offline
+    uv run python scripts/nightly_summary.py --digest --body-file B --comment-file C [--trend-body T] [--unfinished
+        "hr"] [--logs L ...] [--probes DIR] [--run-url U]
+        # what needs a person, as one comment (the workflow posts it to the issue), or nothing on a quiet night: an
+        # employer that went backwards, a check that didn't finish, desk_handled.yaml's drift, a probes desk
+        # failure, a test inbox that refused its login
     uv run python scripts/nightly_summary.py --probes DIR_OR_ZIP [--companies "KLA"]
         # the weekly probes' results (a live-probes artifact: scripts/live_probes.py): the desk's failures and what
         # couldn't be checked this week (the site's or the person's), each under its own heading, then each reset
@@ -182,15 +187,103 @@ def per_employer(check: str, state: dict[str, dict[str, str]], detail: dict[str,
 
 # --- Where It Stands' tables ---------------------------------------------------------
 
+# Where a stop is and what the person does there, by its stop code (pipeline.STOP_CODES, which every round of a run
+# carries since the review of Oct 18: live_compare puts it before the reason, "[step_not_saved] The page didn't move
+# on..."). A place in _EXPECTED's words is a site's or the rules' doing. A few places name the site, or tell two of a
+# code's stops apart, from the reason's words (_coded_why): never so that a reworded message moves between "look at"
+# and "expected". tests/test_nightly_summary.py holds this to pipeline.STOP_CODES, code for code.
+CODE_WHY: dict[str, tuple[str, str]] = {
+    "questions": ("Questions only you can answer", "Answer them once; remembered"),
+    "profile_gap": ("Details the profile lacks", "Add them to your profile once"),
+    "degree_list": ("Degree list without the profile's degree", "Choose the closest honest one"),
+    "box_refused_answer": ("A box refused the profile's answer", "Being looked into"),
+    "box_not_filled": ("A box the desk couldn't fill", "Being looked into"),
+    "upload_not_kept": ("An upload the page didn't keep", "Being looked into"),
+    "step_not_saved": ("Step not saved", "Being looked into"),
+    "no_step_button": ("No step button found", "Being looked into"),
+    "button_greyed": ("Step button greyed out", "Being looked into"),
+    "no_way_in": ("Apply opened no application", "Being looked into"),
+    "too_long": ("Too long without reaching the review page", "Being looked into"),
+    "agreement_stayed": ("A notice or dialog stayed after its button", "Being looked into"),
+    "blank_page": ("Blank page", "Being looked into"),
+    "page_not_loaded": ("Page didn't finish loading", "Being looked into"),
+    "site_error": ("Site error (the site's own page)", "Reload or open the posting later, then Resume"),
+    "site_down": ("Site error (down for maintenance)", "Resume once it's back"),
+    "site_blocks": ("Site blocks automated browsers", "Apply in your own browser"),
+    "try_later": ("Site error (it says try again later)", "Leave it a while, then Resume"),
+    "posting_closed": ("No opening found (the posting closed)", "Nothing to apply to"),
+    "bot_check": ("Bot check", "Solve it; the desk carries on"),
+    "captcha": ("CAPTCHA", "Solve it; the desk carries on"),
+    "cookie_banner": ("Cookie banner with no decline", "Choose in the banner (or turn on accept_cookies)"),
+    "notice_theirs": ("AI or privacy notice", "Accepted for you (accept_notices); practice runs leave it"),
+    "sends_first": ("Sends your name and email first", "Press its Apply yourself"),
+    "assessment": ("An assessment to take", "Take it, then press Resume"),
+    "screening": ("A tax credit screening", "Fill it in, then press Resume"),
+    "maybe_duplicate": ("May be a job applied to already", "Apply anyway, or Skip"),
+    "tailor": ("Waiting for a tailored resume", "Claude writes it, or use the usual resume"),
+    "account_theirs": ("Account needed (sign-in)", "Sign in or create the account"),
+    "account_form_filled": ("Account needed (site)", "The desk makes the account with its saved password"),
+    "account_captcha": ("Account form (site) with a CAPTCHA", "Solve the CAPTCHA, create the account"),
+    "security_questions": ("Account needed (site): security questions", "Answer them, create the account"),
+    "account_form_more": ("Account form wants more", "Being looked into"),
+    "sign_in_refused": ("Sign-in failed after the account was made", "Being looked into"),
+    "reset_failed": ("Password reset didn't take", "Being looked into"),
+    "email_code": ("Account needed (an emailed code)", "The desk reads it from the inbox"),
+    "verify_pending": ("Account needed (a link to confirm the email)", "Open the emailed link"),
+    "your_submit": ("Filled; its send button reads \"Apply\"", "Check it, press Apply"),
+    "account_as_you_apply": ("Account made as you apply", "Choose a password, press its Apply"),
+    "review_errors": ("Review page shows errors", "Being looked into"),
+    "not_submitted": ("Submit not pressed (see the run)", "Being looked into"),
+    "submit_failed": ("Submit pressed; the form stayed", "Being looked into"),
+    "check_submit": ("Submit pressed; no confirmation showed", "Check whether it went"),
+    "restarted": ("Begun before the desk restarted", "Resume it, or skip it"),
+}
+_CODED = re.compile(r"(?:^| \u00b7 )\[([a-z_]{1,40})\] ?")  # a detail's stop code, before its reason
+_SYSTEM = re.compile(r"\b(BrassRing|Eightfold|Amazon|Workday|SuccessFactors|Oracle)\b")
+_FORM_OF = re.compile(r"filled in (.+?)'s Create Account|^(.+?) asks for a few more details")
+
+
+def stop_code(said: str) -> tuple[str, str]:
+    """A detail's stop code and the reason after it; ("", the reason) for one without (from before the codes)."""
+    m = _CODED.search(said)
+    return (m.group(1), said[m.end():]) if m else ("", said.split(" \u00b7 ", 1)[-1])
+
+
+def _coded_why(code: str, d: str) -> tuple[str, str]:
+    """CODE_WHY's place for a code, naming the site from the reason (`d`) where it can: the place stays in its bucket
+    whatever the reason says."""
+    where, what = CODE_WHY[code]
+    form = _FORM_OF.search(d)
+    site = next((g for g in form.groups() if g), "") if form else ""
+    if code == "account_theirs" and (system := _SYSTEM.search(d)):
+        where = f"Account needed ({system.group(1)})"
+    elif code in ("account_form_filled", "account_captcha", "security_questions") and site:
+        where = where.replace("(site)", f"({site})", 1)
+    elif code == "site_error" and "Something went wrong" in d:
+        where, what = "Site error (\"Something went wrong\")", "Being looked into"
+    elif code == "notice_theirs" and "way on is" in d:
+        where, what = "Privacy notice to accept", "Accepted for you (accept_notices)"
+    elif code == "your_submit" and "doesn't allow automated" in d:
+        where, what = "Filled; its job system takes no automated Submit", "Check it, press Submit"
+    elif code == "sends_first" and d.startswith("Practice mode"):
+        where, what = "Practice mode stops at a button that sends", "Press it yourself (practice sends nothing)"
+    elif code == "profile_gap" and "past jobs" in d:
+        where = "Past jobs' details the profile lacks"
+    return where, what
+
+
 def why(outcome: str, said: str) -> tuple[str, str]:
-    """Where it stopped and what the person does there, in the page's words, from an outcome and its detail."""
-    d = said.split(" · ", 1)[-1]
+    """Where it stopped and what the person does there, from an outcome and its detail: by the stop's code (CODE_WHY)
+    where the detail has one, else in the page's words (a comment or round from before the codes)."""
+    code, d = stop_code(said)
     if outcome == "ready":
         return "Review page", "Check it, press Submit"
     if outcome == "no postings":
         return "No opening found", "Nothing to apply to"
     if outcome == "empty":  # (the search check's: answered, and found nothing anywhere)
         return "Search found nothing anywhere", "Being looked into"
+    if code in CODE_WHY:
+        return _coded_why(code, d)
     if "bot_check" in outcome:
         return "Bot check", "Solve it; the desk carries on"
     if "your_submit" in outcome:
@@ -327,9 +420,9 @@ def tables(state: dict[str, dict[str, str]], detail: dict[str, dict[str, str]]) 
 # found both dropped)
 _CHANGE = re.compile(r"^- (.+?): (?:`(.+?)`|\*new\*) \u2192 (?:`(.+?)`|\*no longer checked\*)(?: \(`(.*)`\))?\s*$")
 # where a stop is a site's or the rules' doing, not the desk's: no fix of the desk's moves it on
-_EXPECTED = re.compile(r"^(Bot check|No opening found|Site blocks automated browsers|Site error|Account needed|"
-                       r"Account form \(.+\) with a CAPTCHA|Account made as you apply|Cookie banner with no decline|"
-                       r"AI or privacy notice|Privacy notice to accept)")
+_EXPECTED = re.compile(r"^(Bot check|CAPTCHA|No opening found|Site blocks automated browsers|Site error|"
+                       r"Account needed|Account form \(.+\) with a CAPTCHA|Account made as you apply|"
+                       r"Cookie banner with no decline|AI or privacy notice|Privacy notice to accept)")
 _FURTHER = {"ready", "needs_you your_submit"}  # as far as a run goes: the person's own Submit (or Apply) is next
 _BROKEN = {"failed", "crash", "error", "empty"}  # (a pipeline's that broke; a search's that found nothing or failed)
 
@@ -374,6 +467,78 @@ def triage(comment: str) -> dict[str, list[str]]:
     return out
 
 
+# --- what needs a person: the digest ---------------------------------------------------------
+
+DIGEST_HEADING = "**Needs a person**"
+_WENT_BACK = re.compile(r"^\*\*Went backwards:\*\*.*$", re.M)
+# a LIVE_INBOX line (live_smoke.report_inbox) whose inbox wouldn't let the test identity in: the desk's own words
+# (mailbox.MailboxError's) or the IMAP server's
+_REFUSED = re.compile(r"didn't accept the email app password|AUTHENTICATIONFAILED|authentication failed|"
+                      r"invalid credentials|LOGIN failed", re.I)
+
+
+def inbox_refusals(logs: Iterable[str]) -> list[str]:
+    """The employers whose LIVE_INBOX line says the test inbox refused its login (each once), from run logs' text."""
+    out: list[str] = []
+    for text in logs:
+        for line in text.splitlines():
+            if not line.startswith("LIVE_INBOX "):
+                continue
+            try:
+                report = json.loads(line[len("LIVE_INBOX "):])
+            except ValueError:
+                continue
+            said = " ".join(str(report.get(k) or "") for k in ("mail_problem", "error")) if isinstance(report, dict) \
+                else ""
+            if _REFUSED.search(said) and (name := str(report.get("company") or "an employer")) not in out:
+                out.append(name)
+    return out
+
+
+def digest(*, comment: str = "", unfinished: Iterable[str] = (), drift: Iterable[str] = (),
+           probes: Iterable[str] = (), refused: Iterable[str] = (), run_url: str = "") -> str:
+    """One comment for the nightly issue when something needs a person (A2, the review of Oct 18), else "" (a quiet
+    night posts nothing): an employer that went backwards (the changes comment's own line), a check that didn't
+    finish, desk_handled.yaml against the last run (handled_drift), the weekly probes' desk failures, and a test
+    inbox that refused its login. (A Windows-only failure on main is the weekly flake report's: scripts/flake_rate.py;
+    a new "Report:" issue is GitHub's own notification.)"""
+    lines = []
+    if m := _WENT_BACK.search(comment or ""):
+        lines.append(m.group(0).replace("**Went backwards:**", "Went backwards:", 1))
+    if names := [n for n in unfinished if n]:
+        lines.append(f"A check didn't finish: {', '.join(names)} (its employers keep their last results; see its "
+                     "job's log).")
+    lines += list(drift)
+    lines += [f"Weekly probes, the desk's failure: {said}" for said in probes]
+    if names := list(refused):
+        lines.append(f"The test inbox refused its login (LIVE_INBOX at {', '.join(names)}): its app password may "
+                     "need renewing (scripts/TEST_IDENTITY.md).")
+    if not lines:
+        return ""
+    head = DIGEST_HEADING + (f" ([run]({run_url}))" if run_url else "") + ":"
+    return "\n".join([head, "", *(f"- {line}" for line in lines)]) + "\n"
+
+
+def digest_from(*, body: str = "", comment: str = "", trend_body: str = "", unfinished: str = "",
+                logs: Iterable[str] = (), probes_dir: Path | None = None, run_url: str = "") -> str:
+    """digest() from what the nightly's compare job (or the weekly probes' job) has at hand: the issue's new body and
+    the changes comment live_compare.py wrote, the trend issue's new body, the checks that didn't finish (their names,
+    space-separated), the checks' logs and the probes' folder. Nothing is fetched."""
+    drift: list[str] = []
+    state = (live_compare.read_state(body) or {}) if body else {}
+    if state.get("accounts"):
+        trend = live_compare.read_trend(trend_body) if trend_body else None
+        drift = handled_drift(handled(state, details(body)), listed_handled(), flippers(trend) if trend else {})
+    failures: list[str] = []
+    if probes_dir is not None:
+        try:
+            failures = live_probes.failed(live_probes.read_results(probes_dir))
+        except (OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile) as e:
+            failures = [f"the probes' results can't be read ({e}): see the run's log"]
+    return digest(comment=comment, unfinished=unfinished.split(), drift=drift, probes=failures,
+                  refused=inbox_refusals(logs), run_url=run_url)
+
+
 # --- a run's saved results ------------------------------------------------------------------
 
 def records(where: Path) -> Iterator[dict[str, Any]]:
@@ -402,7 +567,8 @@ def steps(rec: dict[str, Any], log_lines: int = 6) -> str:
     if rec.get("crash"):
         out.append(f"  crash: {rec['crash']}")
     for i, r in enumerate(rec.get("rounds") or []):
-        out.append(f"  [{i}] {r.get('status')} {r.get('need') or ''}: {str(r.get('reason') or '')[:400]}")
+        code = f" [{r['code']}]" if r.get("code") else ""
+        out.append(f"  [{i}] {r.get('status')} {r.get('need') or ''}{code}: {str(r.get('reason') or '')[:400]}")
         out += [f"      log: {line[:200]}" for line in (r.get("log") or [])[-log_lines:]]
         above = r.get("above") or []
         for i, q in enumerate(r.get("questions") or []):
@@ -552,7 +718,25 @@ def main(argv: list[str] | None = None) -> int:
                     "are kept 7 days); a job system twice as slow as there says so")
     ap.add_argument("--probes", type=Path, help="a run's live-probes artifact (zip or folder): the weekly probes' "
                     "results; with --companies, those employers' runs step by step too")
+    ap.add_argument("--digest", action="store_true",
+                    help="what needs a person, as one comment for the nightly issue, from the files below (nothing "
+                    "printed on a quiet night): the workflow posts it only when there's something")
+    ap.add_argument("--body-file", type=Path, help="with --digest: the issue's new body (live_compare's body.md)")
+    ap.add_argument("--comment-file", type=Path, help="with --digest: the changes comment (live_compare's comment.md)")
+    ap.add_argument("--trend-body", type=Path, help="with --digest: the trend issue's new body (trend.md)")
+    ap.add_argument("--unfinished", default="", help="with --digest: the checks that didn't finish (space-separated)")
+    ap.add_argument("--logs", type=Path, nargs="*", default=[], help="with --digest: the checks' run.log files")
+    ap.add_argument("--run-url", default="", help="with --digest: the run's address")
     args = ap.parse_args(argv)
+    if args.digest:
+        def text(path: Path | None) -> str:  # (a file a run didn't write: nothing)
+            return path.read_text(encoding="utf-8") if path is not None and path.is_file() else ""
+
+        said = digest_from(body=text(args.body_file), comment=text(args.comment_file), trend_body=text(args.trend_body),
+                           unfinished=args.unfinished, logs=[text(p) for p in args.logs], probes_dir=args.probes,
+                           run_url=args.run_url)
+        print(said, end="")
+        return 0
     if args.probes:
         try:
             results = live_probes.read_results(args.probes)

@@ -3,11 +3,12 @@ failed, skipped, cut short by the desk stopping, or marked as applied), kept in 
 and what some days of it come to (the desk's "This week" window, and Claude's desk_history tool).
 
 A line holds the job (its number, employer, title and the application's host), when the pass began and ended and how
-many minutes it took (waits for the site and the inbox included), how it ended (and, for a stop, its kind), the desk's
-own words for why (cut short: short_reason), the steps it pressed through, how many times the desk's rounds took the
-person to the job and they pressed Resume for it, and Jobs at once. Answers, codes and passwords are kept out of it as
-far as the desk can tell: the reason has the run's answers, codes and secrets, the profile's words, email addresses,
-phone numbers, runs of digits and an address's tokens taken out, should a page's words it quotes show one.
+many minutes it took (waits for the site and the inbox included), how it ended (and, for a stop, its kind and its code:
+pipeline.STOP_CODES), the desk's own words for why (cut short: short_reason), the steps it pressed through, how many
+times the desk's rounds took the person to the job and they pressed Resume for it, and Jobs at once. Answers, codes
+and passwords are kept out of it as far as the desk can tell: the reason has the run's answers, codes and secrets, the
+profile's words, email addresses, phone numbers, runs of digits and an address's tokens taken out, should a page's
+words it quotes show one.
 
 Lines are appended one at a time; past HISTORY_MAX lines the file is cut back to its last HISTORY_KEEP, whole or not at
 all (its lines counted once, then kept count of: _COUNTS). A line that won't read (cut short, changed by hand) is
@@ -34,12 +35,13 @@ HISTORY_FILE = "runs.jsonl"
 HISTORY_MAX = 5000  # lines past which the file is cut back
 HISTORY_KEEP = 4000  # and how many of the newest it keeps then
 REASON_CHARS = 200
-# How a pass ended: at its review page; sent by the desk; waiting on the person (with its kind of stop: "need");
+# How a pass ended: at its review page; sent by the desk; waiting on the person (with its kind of stop: "need", and why:
+# "code");
 # failed; skipped (by the person or the desk); cut short by the desk stopping; marked as applied (the person's "I
 # submitted it", or the tracker saying so already, or the site saying it went in: sent, but not by the desk)
 OUTCOMES = ("ready", "submitted", "needs_you", "failed", "skipped", "stopped", "marked_applied")
-FIELDS = ("job_id", "company", "title", "host", "started", "ended", "minutes", "outcome", "need", "reason", "pages",
-          "rounds", "resumes", "jobs_at_once")
+FIELDS = ("job_id", "company", "title", "host", "started", "ended", "minutes", "outcome", "need", "code", "reason",
+          "pages", "rounds", "resumes", "jobs_at_once")
 HIDE_PREFIX = 40  # an answer too long to be quoted whole is also hidden by its start, this long
 
 _said: set[str] = set()  # (what went wrong with the file, said once in the log)

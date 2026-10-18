@@ -888,7 +888,8 @@ def test_a_tab_that_cant_be_read_still_lets_the_queue_go_on(srv, monkeypatch):
 
     applier._moved_on = broken
     r = applier.runs[1] = Run(1, "FSE", "Example Fab", status="running")
-    applier._pause(r, "sign_in", "Sign in there, then press Resume.")  # a pause that holds the queue
+    # a pause that holds the queue
+    applier._pause(r, "sign_in", "Sign in there, then press Resume.", code="account_theirs")
     assert r.blocking and not r.left
     r.active_at -= pipeline.HANDS_ON_IDLE + 1  # nothing happened in its tab since
     run(applier._tick())
@@ -905,14 +906,14 @@ def test_a_pause_on_a_bot_check_or_captcha_is_marked_as_one(srv):
     for need, seen in [("bot_check", None), ("captcha", None), ("sign_in", {"captcha": True}),
                        ("sign_in", {"challenge": True}), ("sign_in", {}), ("questions", None)]:
         r = Run(1, "FSE", "Example Fab", status="running")
-        applier._pause(r, need, "Waiting.", seen=seen)
+        applier._pause(r, need, "Waiting.", seen=seen, code="questions")
         marks[(need, str(seen))] = r.public()["captcha"]
     assert marks == {("bot_check", "None"): True, ("captcha", "None"): True, ("sign_in", "{'captcha': True}"): True,
                      ("sign_in", "{'challenge': True}"): True, ("sign_in", "{}"): False, ("questions", "None"): False}
     # Submit pressed on a CAPTCHA's stop whose tab was closed meanwhile: a stop for Resume, no CAPTCHA's any more
     job = srv.add_job(url="https://example.com/job/1", title="FSE", company="Example Fab")["job"]
     r = applier.runs[job["id"]] = Run(job["id"], "FSE", "Example Fab", status="running")
-    applier._pause(r, "captcha", "Filled. The form has a CAPTCHA.")
+    applier._pause(r, "captcha", "Filled. The form has a CAPTCHA.", code="captcha")
     run(applier._submit(r))
     assert (r.status, r.need, r.captcha) == ("needs_you", "stuck", False), (r.status, r.need, r.reason)
 
@@ -9032,11 +9033,11 @@ def test_two_jobs_whose_codes_come_from_one_sender_each_get_their_own(srv, monke
     sent: dict = {}
     real_pause = Applier._pause
 
-    def pause(self, r, need, reason, questions=None, seen=None):
+    def pause(self, r, need, reason, questions=None, seen=None, *, code):
         if need == "email_code" and r.job_id not in sent:  # (the site emails its code as the step is pressed)
             sent[r.job_id] = time.time() - 1
             inbox.append(pipeline.mailbox.Found("code", "123456", "oraclecloud.com", sent[r.job_id]))
-        return real_pause(self, r, need, reason, questions, seen)
+        return real_pause(self, r, need, reason, questions, seen, code=code)
 
     def search(address, password, since, senders, want, allowed_link, before=None, look_back=120, others=None):
         got = [m for m in inbox if m.received >= since - look_back and (before is None or m.received < before)]
@@ -9097,7 +9098,7 @@ def test_a_job_marked_applied_while_it_runs_isnt_paused_after(srv):
     r = Run(job["id"], "FSE", "Acme Fab", status="running")
     applier.runs[job["id"]] = r
     applier.mark_applied(job["id"])
-    applier._pause(r, "questions", "Answer these")
+    applier._pause(r, "questions", "Answer these", code="questions")
     assert (r.status, r.need) == ("submitted", "")
 
 
@@ -9549,11 +9550,11 @@ def test_the_newest_few_stops_are_kept_and_one_that_cant_be_saved_still_waits(sr
     def stops():
         return sorted(p.name for p in debug.glob(f"*-{pipeline.STOP}")) if debug.is_dir() else []
 
-    applier._pause(r, "tailor", "Waiting for a resume written for this job.")
+    applier._pause(r, "tailor", "Waiting for a resume written for this job.", code="tailor")
     run(applier._save_stop(r))
     assert stops() == []
     for _ in range(4):
-        applier._pause(r, "stuck", "The page didn't move on.")
+        applier._pause(r, "stuck", "The page didn't move on.", code="step_not_saved")
         run(applier._save_stop(r))
     assert len(stops()) == pipeline.report.PAGES == 3
     newest = stops()
@@ -9562,7 +9563,7 @@ def test_the_newest_few_stops_are_kept_and_one_that_cant_be_saved_still_waits(sr
         raise OSError("disk full")
 
     monkeypatch.setattr(srv.browser, "snapshot", broken)
-    applier._pause(r, "sign_in", "Sign in.")
+    applier._pause(r, "sign_in", "Sign in.", code="account_theirs")
     run(applier._save_stop(r))
     assert (r.status, r.need) == ("needs_you", "sign_in") and stops() == newest
 
@@ -9850,19 +9851,20 @@ def test_a_degree_list_with_no_choices_at_all_isnt_one_without_a_choice_for_clas
     degree = {"id": "a", "label": "Degree*", "section": "Education 1", "required": True, "kind": "listbox",
               "options": ["Select One"]}
     assert not no_choice_for_no_degree(degree, config.Profile.load())
-    said, rest = Applier(srv)._entry_gaps(Run(1, "Technician", "Example Litho"),
-                                         {"url": "https://example.wd1.myworkdayjobs.com/x"}, [degree])
+    said, rest, code = Applier(srv)._entry_gaps(Run(1, "Technician", "Example Litho"),
+                                                {"url": "https://example.wd1.myworkdayjobs.com/x"}, [degree])
     assert f"list for {school} in Education 1 (Degree) showed no choices at all" in said, said
+    assert code == "page_not_loaded"  # (its stop's code: T1)
     assert "classes without a degree" not in said and rest == [], said
     # (a school's own list, filled once its Country or State is chosen, is no Degree list that didn't load; nor is a
     # search prompt, whose choices come as it's typed in)
     school_box = {"id": "b", "label": "School*", "section": "Education 1", "required": True, "kind": "select",
                   "options": ["Select One"]}
-    said, _ = Applier(srv)._entry_gaps(Run(1, "Technician", "Example Litho"),
-                                       {"url": "https://example.wd1.myworkdayjobs.com/x"}, [school_box])
+    said, _, _ = Applier(srv)._entry_gaps(Run(1, "Technician", "Example Litho"),
+                                          {"url": "https://example.wd1.myworkdayjobs.com/x"}, [school_box])
     assert "showed no choices" not in said, said
     prompt = {**degree, "kind": "combobox"}
-    said, _ = Applier(srv)._entry_gaps(Run(1, "Technician", "Example Litho"), {
+    said, _, _ = Applier(srv)._entry_gaps(Run(1, "Technician", "Example Litho"), {
         "url": "https://example.wd1.myworkdayjobs.com/x", "fields": [{**prompt, "search": True}]}, [prompt])
     assert "showed no choices" not in said and "no choice for your" not in said, said
 
@@ -9979,12 +9981,13 @@ def test_a_school_the_sites_list_refuses_is_not_called_missing_from_the_profile(
                 "error": "nothing in its list matched"},
                {"id": "b", "label": "From", "sublabel": "Month", "section": "Work Experience 3", "required": True},
                {"id": "c", "label": "Are you 18 or older?", "required": True, "kind": "text"}]
-    said, rest = applier._entry_gaps(r, {"url": "https://example.wd1.myworkdayjobs.com/x"}, pending)
+    said, rest, code = applier._entry_gaps(r, {"url": "https://example.wd1.myworkdayjobs.com/x"}, pending)
     assert "didn't take your profile's answer for: Arizona State University in Education 1 (School or University)" \
         in said
     assert "more blocks than your profile has entries: Work Experience 3 (your profile has no job 3) (From)" in said
     assert "your profile doesn't have" not in said, said
     assert [q["id"] for q in rest] == ["c"]
+    assert code == "box_refused_answer"  # (its stop's code: T1)
 
 
 def test_what_a_jobs_or_schools_block_lacks_is_said_for_its_own_list(srv):
@@ -10001,7 +10004,7 @@ def test_what_a_jobs_or_schools_block_lacks_is_said_for_its_own_list(srv):
     pending = [{"id": "a", "label": "From", "sublabel": "Year", "section": "Education 1", "required": True},
                {"id": "b", "label": "Reason for Leaving", "section": "Work Experience 1", "required": True},
                {"id": "c", "label": "From", "sublabel": "Day", "section": "Work Experience 2", "required": True}]
-    said, rest = applier._entry_gaps(r, {"url": "https://example.wd1.myworkdayjobs.com/x"}, pending)
+    said, rest, _ = applier._entry_gaps(r, {"url": "https://example.wd1.myworkdayjobs.com/x"}, pending)
     assert "your schools, and your profile doesn't have this for them: Arizona State University in Education 1 (From)" \
         in said
     assert "education_history" in said and "work_history" not in said, said
@@ -10021,7 +10024,7 @@ def test_a_schools_missing_degree_is_asked_for_as_a_degree_never_as_dates(srv):
     applier = Applier(srv)
     r = Run(1, "Technician", "Example Litho")
     pending = [{"id": "a", "label": "Degree*", "section": "Education 1", "required": True, "kind": "listbox"}]
-    said, rest = applier._entry_gaps(r, {"url": "https://example.wd1.myworkdayjobs.com/x"}, pending)
+    said, rest, _ = applier._entry_gaps(r, {"url": "https://example.wd1.myworkdayjobs.com/x"}, pending)
     assert "Arizona State University in Education 1 (Degree)" in said, said
     assert "Some college (no degree)" in said and "never a degree you didn't finish" in said, said
     assert "years as start" not in said, said
@@ -10074,8 +10077,8 @@ def test_a_degree_list_without_the_profiles_degree_says_so_not_that_the_profile_
     degree = {"id": "a", "label": "Degree*", "section": "Education 1", "required": True, "kind": "listbox",
               "options": ["Certificate", "Foundation", "Associate", "Bachelor", "Master", "Doctor", "Ph.D.", "Others",
                           "Some College", "No degree (Dropped out)"]}
-    said, rest = applier._entry_gaps(Run(1, "Technician", "Example Litho"),
-                                     {"url": "https://example.wd1.myworkdayjobs.com/x"}, [degree])
+    said, rest, _ = applier._entry_gaps(Run(1, "Technician", "Example Litho"),
+                                        {"url": "https://example.wd1.myworkdayjobs.com/x"}, [degree])
     assert f"The Degree list has no choice for your GED ({school} in Education 1)" in said, said
     assert "doesn't have this for them" not in said and "Others" in said, said
     assert rest == []
@@ -10089,8 +10092,8 @@ def test_a_degree_list_in_the_bare_singular_has_the_profiles_degree(srv):
     degree = {"id": "a", "label": "Degree*", "section": "Education 1", "required": True, "kind": "listbox",
               "options": ["Certificate", "Foundation", "Associate", "Bachelor", "Master", "Doctor", "Ph.D.", "Others",
                           "Some College", "No degree (Dropped out)"]}
-    said, rest = applier._entry_gaps(Run(1, "Technician", "Example Litho"),
-                                     {"url": "https://example.wd1.myworkdayjobs.com/x"}, [degree])
+    said, rest, _ = applier._entry_gaps(Run(1, "Technician", "Example Litho"),
+                                        {"url": "https://example.wd1.myworkdayjobs.com/x"}, [degree])
     assert not any("Degree list" in s for s in said), said  # (the conftest profile's BS Electrical Engineering is there)
 
 
@@ -10110,8 +10113,8 @@ def test_a_degree_list_with_several_kinds_of_the_profiles_degree_says_so(srv):
     degree = {"id": "a", "label": "Degree*", "section": "Education 1", "required": True, "kind": "listbox",
               "options": ["High School", "Associate of Science", "Bachelor of Arts", "Bachelor of Science",
                           "Master of Science"]}
-    said, rest = applier._entry_gaps(Run(1, "Technician", "Example Litho"),
-                                     {"url": "https://example.wd1.myworkdayjobs.com/x"}, [degree])
+    said, rest, _ = applier._entry_gaps(Run(1, "Technician", "Example Litho"),
+                                        {"url": "https://example.wd1.myworkdayjobs.com/x"}, [degree])
     assert (f"The Degree list for {school} in Education 1 has several kinds of Bachelor's Degree (Bachelor of Arts, "
             "Bachelor of Science)") in said, said
     assert "has no choice for" not in said and "degree: Bachelor of Science" in said, said
@@ -10135,19 +10138,21 @@ def test_a_degree_list_with_nothing_for_classes_leaves_the_pick_to_the_person(sr
     site = {"url": "https://example.wd1.myworkdayjobs.com/x"}
     degree = {"id": "a", "label": "Degree*", "section": "Education 2", "required": True, "kind": "listbox",
               "options": WORKDAY_DEGREES}
-    said, rest = applier._entry_gaps(r, site, [degree])
+    said, rest, code = applier._entry_gaps(r, site, [degree])
     assert f"The Degree list for {school} in Education 2 has no choice for classes without a degree" in said, said
+    assert code == "degree_list"  # (its stop's code: T1)
     assert "choose in the desk's browser window" in said and "Some college" not in said, said
     assert rest == []
 
     # a list that has such a choice: the profile can say it
-    said, _ = applier._entry_gaps(r, site, [{**degree, "options": [*WORKDAY_DEGREES, "Some College, No Degree"]}])
+    said, _, code = applier._entry_gaps(r, site, [{**degree, "options": [*WORKDAY_DEGREES, "Some College, No Degree"]}])
     assert f"{school} in Education 2 (Degree)" in said and "Some college (no degree)" in said, said
+    assert code == "profile_gap"
 
     # written as setup writes it, and turned down by the list: still the person's pick, never "the closest"
     profile["education_history"][1]["degree"] = "Some college (no degree)"
     path.write_text(yaml.safe_dump(profile), encoding="utf-8")
-    said, _ = applier._entry_gaps(r, site, [{**degree, "error": "ValueError: doesn't match any option"}])
+    said, _, _ = applier._entry_gaps(r, site, [{**degree, "error": "ValueError: doesn't match any option"}])
     assert "no choice for classes without a degree" in said and "closest choice" not in said, said
 
 
@@ -10843,10 +10848,10 @@ def test_a_drafts_answers_are_rechecked_after_a_card_but_not_after_a_stop_or_a_r
     card, stop = (Run(j, "Technician", "Example Fab", draft=True) for j in jobs)
     applier.runs.update({card.job_id: card, stop.job_id: stop})
     for need in ("questions", "email_code", "sign_in", "bot_check"):
-        applier._pause(card, need, "Waiting on you.")
+        applier._pause(card, need, "Waiting on you.", code="questions")
     assert not card.draft_off and not any("draft not re-checked" in line for line in card.log), card.log
-    applier._pause(stop, "stuck", "The page didn't move on.")
-    applier._pause(stop, "stuck", "The page didn't move on again.")
+    applier._pause(stop, "stuck", "The page didn't move on.", code="step_not_saved")
+    applier._pause(stop, "stuck", "The page didn't move on again.", code="step_not_saved")
     assert stop.draft_off and sum("draft not re-checked from here on" in line for line in stop.log) == 1, stop.log
     applier.resume(card.job_id)
     assert card.draft_off and card.log[-1].startswith("draft not re-checked from here on"), card.log
@@ -11233,7 +11238,8 @@ def _notes(home: Path) -> list[str]:
     return [p.read_text(encoding="utf-8") for p in sorted(folder.glob("*.md"))] if folder.is_dir() else []
 
 
-def _paused_run(srv, need="stuck", reason="I couldn't find the button that moves this application on.", **kw):
+def _paused_run(srv, need="stuck", reason="I couldn't find the button that moves this application on.",
+                code="no_step_button", **kw):
     job = srv.add_job(url="https://acme.wd1.myworkdayjobs.com/External/job/x", title="FSE", company="Acme Fab")["job"]
     applier = Applier(srv)
     r = Run(job["id"], "FSE", "Acme Fab", status="running", url="https://acme.wd1.myworkdayjobs.com/External/job/x/apply",
@@ -11241,7 +11247,7 @@ def _paused_run(srv, need="stuck", reason="I couldn't find the button that moves
                        "headings": ["My Information"], "actions": ["Save and Continue"], "errors": [],
                        "fields": [{"label": "First Name", "kind": "text", "required": True, "empty": False}]})
     applier.runs[job["id"]] = r
-    applier._pause(r, need, reason, **kw)
+    applier._pause(r, need, reason, code=code, **kw)
     return applier, r
 
 
@@ -11254,9 +11260,9 @@ def test_a_stop_the_desk_likely_got_wrong_is_noted_once(srv, job_apply_home, mon
     assert (r.status, r.need) == ("needs_you", "stuck")
     [text] = _notes(job_apply_home)
     assert "I couldn't find the button that moves this application on." in text and "My Information" in text
-    applier._pause(r, "stuck", "I couldn't find the button that moves this application on.")
+    applier._pause(r, "stuck", "I couldn't find the button that moves this application on.", code="no_step_button")
     assert len(_notes(job_apply_home)) == 1
-    applier._pause(r, "submit_failed", "I pressed Submit, but the form is still there.")
+    applier._pause(r, "submit_failed", "I pressed Submit, but the form is still there.", code="submit_failed")
     assert len(_notes(job_apply_home)) == 2
 
 
@@ -11267,7 +11273,8 @@ def test_a_stop_thats_the_persons_by_design_isnt_noted(srv, job_apply_home, need
     applier, r = _paused_run(srv, need, "Over to you.",
                              questions=[{"id": "1", "label": "Why us?", "kind": "text", "required": True}])
     assert r.need == need and _notes(job_apply_home) == []
-    applier._pause(r, "stuck", "The page didn't move on.")  # the same job stuck after it is noted
+    # the same job stuck after it is noted
+    applier._pause(r, "stuck", "The page didn't move on.", code="step_not_saved")
     assert len(_notes(job_apply_home)) == 1
 
 
@@ -12744,11 +12751,11 @@ def test_a_wait_on_an_emailed_code_holds_another_jobs_sign_in_until_its_code_is_
     paused: list = []
     real_pause = Applier._pause
 
-    def pause(self, r, need, reason, questions=None, seen=None):
+    def pause(self, r, need, reason, questions=None, seen=None, *, code):
         other = self.runs.get(waiting["id"])
         code_in = other is not None and any(line.startswith("entered the code from your email") for line in other.log)
         paused.append((r.job_id, need, code_in))
-        return real_pause(self, r, need, reason, questions, seen)
+        return real_pause(self, r, need, reason, questions, seen, code=code)
 
     monkeypatch.setattr(Applier, "_pause", pause)
 
@@ -12880,7 +12887,7 @@ def test_in_one_of_the_desks_rounds_the_jobs_under_way_go_on_and_none_comes_to_t
     assert run(go()) == (0.0, 0.0) and not any(line.startswith("waiting") for line in under_way.log), under_way.log
     assert applier._front_tab() is in_round.page
     run(applier._bring_forward(under_way))  # (it stops for the person meanwhile)
-    applier._pause(under_way, "stuck", "The page didn't move on.")
+    applier._pause(under_way, "stuck", "The page didn't move on.", code="step_not_saved")
     applier._slots.clear()  # (its pass over)
     assert fronted == [] and under_way.job_id in applier._behind
     applier.end_round()
@@ -12913,7 +12920,7 @@ def test_a_pause_is_still_watched_when_every_job_under_way_waits_on_it(srv):
         applier._slots[jobs[0]] = busy
         applier._waiting.add(jobs[0])  # under way, waiting on the sign-in below
         holder = applier.runs[jobs[1]] = Run(jobs[1], "FSE", "Employer 1", status="running")
-        applier._pause(holder, "sign_in", "Sign in there.")
+        applier._pause(holder, "sign_in", "Sign in there.", code="account_theirs")
         try:
             await applier._tick()
             return holder
@@ -13074,9 +13081,9 @@ def test_a_job_that_pauses_for_the_persons_hands_behind_another_is_brought_up_af
 
     async def go():
         await applier._bring_forward(a)
-        applier._pause(a, "sign_in", "Sign in there.")
+        applier._pause(a, "sign_in", "Sign in there.", code="account_theirs")
         await applier._bring_forward(b)  # (b comes to its own sign-in meanwhile)
-        applier._pause(b, "sign_in", "Sign in there.")
+        applier._pause(b, "sign_in", "Sign in there.", code="account_theirs")
         assert applier._front_tab() is a.page and b.job_id in applier._behind
         b.active_at -= 3600  # (long before a was done)
         a.active_at -= 3600
@@ -13660,9 +13667,9 @@ def test_the_queue_never_looks_at_a_tab_whose_pass_is_still_saving_its_stop(srv,
     jobs = [srv.add_job(url=f"https://{n}.example/job", title="FSE", company=n.title())["job"]["id"] for n in ("a", "b")]
     tab = SimpleNamespace(is_closed=lambda: False, url="https://a.example/code")
     holder = applier.runs[jobs[0]] = Run(jobs[0], "FSE", "A", status="running", page=tab)
-    applier._pause(holder, "email_code", "The site emailed you a code.")
+    applier._pause(holder, "email_code", "The site emailed you a code.", code="email_code")
     left = applier.runs[jobs[1]] = Run(jobs[1], "FSE", "B", status="running", page=tab)
-    applier._pause(left, "email_code", "The site emailed you a code.")
+    applier._pause(left, "email_code", "The site emailed you a code.", code="email_code")
     left.blocking, left.left = False, True
     applier._slots = {holder.job_id: object(), left.job_id: object()}  # (both still saving their stops)
     applier.jobs_at_once = 3
@@ -13689,14 +13696,14 @@ def test_a_stop_isnt_brought_over_a_sign_in_the_person_is_still_at_after_the_que
     jobs = [srv.add_job(url=f"https://{n}.example/job", title="FSE", company=n.title())["job"]["id"] for n in ("a", "b")]
     applier = Applier(srv)
     signing = applier.runs[jobs[0]] = Run(jobs[0], "FSE", "A", status="running", page=tab("a"))
-    applier._pause(signing, "sign_in", "Sign in there.")
+    applier._pause(signing, "sign_in", "Sign in there.", code="account_theirs")
     applier.later(signing.job_id)  # the queue went on without it; the person is at it still
     signing.paused_at -= 30
     applier._note_activity(signing, {"url": signing.page.url, "fields": [{"id": "email", "value": ""}]})
     applier._note_activity(signing, {"url": signing.page.url, "fields": [{"id": "email", "value": "a@"}]})  # typing
     other = applier.runs[jobs[1]] = Run(jobs[1], "FSE", "B", status="running", page=tab("b"))
     run(applier._bring_forward(other))
-    applier._pause(other, "bot_check", "A bot check.")
+    applier._pause(other, "bot_check", "A bot check.", code="bot_check")
     assert fronted == [] and applier._front_tab() is signing.page
     signing.active_at -= 3600  # nothing done in its tab for an hour
     run(applier._front_next())
@@ -13872,7 +13879,7 @@ def test_a_wait_on_an_email_the_desk_reads_itself_isnt_the_person_at_its_tab(srv
     jobs = [srv.add_job(url=f"https://{n}.example/job", title="FSE", company=n.title())["job"]["id"] for n in ("a", "b")]
     applier = Applier(srv)
     a = applier.runs[jobs[0]] = Run(jobs[0], "FSE", "A", status="running", page=tab("a"))
-    applier._pause(a, "email_code", "Waiting on the email.")
+    applier._pause(a, "email_code", "Waiting on the email.", code="email_code")
     a.blocking, a.left = False, True  # (as _await_reset_email and _await_verify_email leave it, the inbox watched)
     if wait == "reset":
         a.resetting = a.reset_waited = True
@@ -13880,7 +13887,7 @@ def test_a_wait_on_an_email_the_desk_reads_itself_isnt_the_person_at_its_tab(srv
         a.verifying = True
     b = applier.runs[jobs[1]] = Run(jobs[1], "FSE", "B", status="running", page=tab("b"))
     run(applier._bring_forward(b))
-    applier._pause(b, "sign_in", "Sign in there.")
+    applier._pause(b, "sign_in", "Sign in there.", code="account_theirs")
     assert applier._person_at(b) is None and fronted == ["b"] and not applier._behind, (fronted, applier._behind)
     assert applier._front_tab() is b.page
 
@@ -13903,7 +13910,7 @@ def test_the_desk_typing_a_left_jobs_emailed_code_isnt_the_person_at_its_tab(srv
     job = _oracle_job(srv, "Alpha")
     applier = Applier(srv)
     left = applier.runs[job] = Run(job, "FSE", "Alpha", status="running", page=page)
-    applier._pause(left, "email_code", "Enter the code we emailed you.")
+    applier._pause(left, "email_code", "Enter the code we emailed you.", code="email_code")
     applier.later(job)  # the queue went on without it
     left.paused_at = left.active_at = time.time() - 300  # (nothing done in its tab since)
     left.inbox_since = 0.0
@@ -13961,14 +13968,14 @@ def _person_at_a_left_sign_in(srv, fronted):
     jobs = [srv.add_job(url=f"https://{n}.example/job", title="FSE", company=n.title())["job"]["id"] for n in ("a", "b")]
     applier = Applier(srv)
     signing = applier.runs[jobs[0]] = Run(jobs[0], "FSE", "A", status="running", page=tab("a"))
-    applier._pause(signing, "sign_in", "Sign in there.")
+    applier._pause(signing, "sign_in", "Sign in there.", code="account_theirs")
     applier.later(signing.job_id)
     signing.paused_at -= 30
     applier._note_activity(signing, {"url": signing.page.url, "fields": [{"id": "email", "value": ""}]})
     applier._note_activity(signing, {"url": signing.page.url, "fields": [{"id": "email", "value": "a@"}]})
     b = applier.runs[jobs[1]] = Run(jobs[1], "FSE", "B", status="running", page=tab("b"))
     run(applier._bring_forward(b))
-    applier._pause(b, "sign_in", "Sign in there.")
+    applier._pause(b, "sign_in", "Sign in there.", code="account_theirs")
     assert b.blocking and b.job_id in applier._behind and fronted == []
     return applier, signing, b
 
@@ -14036,10 +14043,10 @@ def test_two_pauses_waiting_their_turn_come_up_one_after_the_other(srv, monkeypa
     applier = Applier(srv)
     a, b, c, d = (Run(j, "FSE", n.upper(), status="running", page=tab(n)) for j, n in zip(ids, "abcd"))
     applier.runs = {r.job_id: r for r in (a, b, c, d)}
-    applier._pause(a, "sign_in", "Sign in there.")  # the person's
+    applier._pause(a, "sign_in", "Sign in there.", code="account_theirs")  # the person's
     for r in (b, c):
         run(applier._bring_forward(r))
-        applier._pause(r, "sign_in", "Sign in there.")
+        applier._pause(r, "sign_in", "Sign in there.", code="account_theirs")
     assert {b.job_id, c.job_id} <= applier._behind and fronted == []
     a.blocking, a.status = False, "queued"  # the person got past its sign-in
     b.paused_at -= 1  # (b paused first)
@@ -14059,7 +14066,7 @@ def test_two_pauses_waiting_their_turn_come_up_one_after_the_other(srv, monkeypa
                                                                                                     applier._behind)
     assert b.blocking and c.blocking and not b.left and not c.left
     run(applier._bring_forward(d))  # (another pauses meanwhile: its turn comes after theirs)
-    applier._pause(d, "sign_in", "Sign in there.")
+    applier._pause(d, "sign_in", "Sign in there.", code="account_theirs")
     assert d.job_id in applier._behind and fronted == ["b"]
     b.blocking, b.status = False, "queued"  # the person got past b's
     run(applier._tick())
@@ -14077,7 +14084,7 @@ def test_a_pause_isnt_let_go_as_idle_just_after_the_desk_put_its_code_in(srv, mo
     applier = Applier(srv)
     b = applier.runs[job] = Run(job, "FSE", "B", status="running",
                                 page=SimpleNamespace(is_closed=lambda: False, url="https://b.example/verify"))
-    applier._pause(b, "email_code", "Enter the code we emailed you.")
+    applier._pause(b, "email_code", "Enter the code we emailed you.", code="email_code")
     b.paused_at = b.active_at = time.time() - pipeline.HANDS_ON_IDLE - 10
     b.desk_at = time.time() - 5  # the desk put its code in five seconds ago
 
@@ -14115,7 +14122,7 @@ def test_the_right_code_the_person_puts_in_after_the_desks_is_them_at_its_tab(sr
     job = _oracle_job(srv, "Alpha")
     applier = Applier(srv)
     left = applier.runs[job] = Run(job, "FSE", "Alpha", status="running", page=page)
-    applier._pause(left, "email_code", "Enter the code we emailed you.")
+    applier._pause(left, "email_code", "Enter the code we emailed you.", code="email_code")
     applier.later(job)
     left.paused_at = left.active_at = time.time() - 300
 
@@ -14208,12 +14215,14 @@ def test_a_pause_a_resume_a_round_and_a_skip_are_lines_in_the_history(srv, monke
             r = applier.enqueue(job)
             await until(lambda: r.status not in ("queued", "running"), about=state(r))
             assert (r.status, r.need) == ("needs_you", "questions"), (r.status, r.reason)
+            assert r.public()["code"] == "questions"  # (its stop's code, on its card: T1, the review of Oct 18)
             await until(lambda: job not in applier._slots)
             first = _history_lines()
             r.once[question_key(r.questions[0]["label"])] = "No"
             applier.resume(job)
             await until(lambda: r.status not in ("queued", "running"), about=state(r))
             assert r.status == "ready", (r.status, r.reason)
+            assert r.public()["code"] == ""  # (a stop gone by has none)
             await until(lambda: job not in applier._slots)
             applier.start_round(job)
             applier.start_round(job)  # (the same job still: one round)
@@ -14224,11 +14233,13 @@ def test_a_pause_a_resume_a_round_and_a_skip_are_lines_in_the_history(srv, monke
             await applier.stop()
 
     first = run(go())
-    assert [(e["outcome"], e.get("need")) for e in first] == [("needs_you", "questions")], first
+    assert [(e["outcome"], e.get("need"), e.get("code")) for e in first] == [("needs_you", "questions", "questions")], \
+        first
     assert "question" in first[0]["reason"] and first[0]["resumes"] == 0, first
     lines = _history_lines()
-    assert [(e["outcome"], e.get("need"), e["resumes"], e["rounds"]) for e in lines] == [
-        ("needs_you", "questions", 0, 0), ("ready", None, 1, 0), ("skipped", None, 1, 1)], lines
+    assert [(e["outcome"], e.get("need"), e.get("code"), e["resumes"], e["rounds"]) for e in lines] == [
+        ("needs_you", "questions", "questions", 0, 0), ("ready", None, None, 1, 0),
+        ("skipped", None, None, 1, 1)], lines
     skipped = lines[-1]
     assert "minutes" not in skipped and "started" not in skipped and "pages" not in skipped and skipped["ended"], skipped
     assert skipped["reason"] == "Skipped. Undo puts it back." and skipped["host"] == "careers.acme-fab.example", skipped

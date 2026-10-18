@@ -93,3 +93,63 @@ def test_the_window_has_one_name_and_so_has_i_submitted_it():
     desk = (PIPELINE.parent / "static" / "desk.html").read_text(encoding="utf-8")
     assert not re.search(r"automation browser|(?<!desk's )\bbrowser window", desk)
     assert not re.search(r">I submitted it(?! myself)|\"I submitted it(?! myself)", desk)
+
+
+def _codes(node: ast.AST) -> set[str] | None:
+    """The stop codes an argument can be: a literal's, or each branch's of a conditional of literals; None for any
+    other expression."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return {node.value}
+    if isinstance(node, ast.IfExp):
+        body, orelse = _codes(node.body), _codes(node.orelse)
+        return None if body is None or orelse is None else body | orelse
+    return None
+
+
+# The one stop whose code comes from elsewhere: what's left on a filled page (_stop_for_what_is_left) names the code
+# _entry_gaps gives for the entries the profile lacks (a Degree list, a box that refused its answer, ...)
+PASSED_ON = {("_stop_for_what_is_left", "gap_code"): "_entry_gaps"}
+
+
+def test_every_stop_has_a_code_in_stop_codes():
+    """T1 (the review of Oct 18): every pause names why as one of pipeline.STOP_CODES, written out where it pauses,
+    so the nightly sorts stops by it and never by a message's words. And every code is one some stop gives."""
+    from job_apply.pipeline import STOP_CODES
+
+    tree = ast.parse(PIPELINE.read_text(encoding="utf-8"))
+    functions = {f.name: f for f in ast.walk(tree) if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    where = {id(n): f.name for f in functions.values() for n in ast.walk(f)}  # (the innermost: walked last)
+    pauses = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "_pause"]
+    assert len(pauses) == 93  # (a new stop: count it here, with its code)
+    used: set[str] = set()
+    unread = []
+    for call in pauses:
+        given = next((k.value for k in call.keywords if k.arg == "code"), None)
+        codes = _codes(given) if given is not None else None
+        if codes is None and isinstance(given, ast.Name) and (where[id(call)], given.id) in PASSED_ON:
+            producer = functions[PASSED_ON[(where[id(call)], given.id)]]
+            returned = [r.value for r in ast.walk(producer) if isinstance(r, ast.Return) and r.value is not None
+                        and where[id(r)] == producer.name]  # (not a helper's defined inside it)
+            # (the last element of every value it returns, and the parameter's default)
+            parts = [_codes(r.elts[-1]) if isinstance(r, ast.Tuple) else None for r in returned]
+            args = functions[where[id(call)]].args
+            names = [a.arg for a in args.args][-len(args.defaults):] if args.defaults else []
+            parts.append(_codes(args.defaults[names.index(given.id)]) if given.id in names else None)
+            codes = None if None in parts else set().union(*parts)
+        if codes is None:
+            unread.append((call.lineno, ast.unparse(given) if given is not None else "no code"))
+        else:
+            used |= codes
+    assert not unread, unread
+    # (a stop made without _pause: a run waiting for its tailored resume, or begun before the desk restarted)
+    for call in ast.walk(tree):
+        if isinstance(call, ast.Call) and getattr(call.func, "id", "") == "Run":
+            used |= set().union(*(_codes(k.value) or {"(unread)"} for k in call.keywords if k.arg == "code"))
+    assert used - STOP_CODES == set(), used - STOP_CODES
+    assert STOP_CODES - used == set(), STOP_CODES - used
+
+
+def test_the_code_audit_reads_only_literals():
+    assert _codes(ast.parse('"a" if x else "b" if y else "c"', mode="eval").body) == {"a", "b", "c"}
+    assert _codes(ast.parse('"a" if x else code', mode="eval").body) is None
+    assert _codes(ast.parse("f(x)", mode="eval").body) is None

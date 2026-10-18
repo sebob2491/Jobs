@@ -267,7 +267,8 @@ def test_an_anonymous_report_says_only_the_job_system_and_the_step(job_apply_hom
     posting = "https://acme.wd1.myworkdayjobs.com/External/job/Phoenix-AZ/Field-Service-Engineer_R12345"
     job = {"id": 16, "title": "Field Service Engineer", "company": "Acme Semi", "ats": "workday",
            "external_id": "R12345", "url": posting, "apply_url": posting + "/apply", "folder": str(folder)}
-    r = Run(16, "Field Service Engineer", "Acme Semi", status="needs_you", need="stuck", url=posting + "/apply",
+    r = Run(16, "Field Service Engineer", "Acme Semi", status="needs_you", need="stuck", code="no_step_button",
+            url=posting + "/apply",
             reason="I couldn't find the button that moves this application on, on Acme Semi's site.",
             log=[f"opened {posting}/apply?source=LinkedIn", "clicked “Apply” for Field Service Engineer (R12345)",
                  "careers.acme-semi.example took too long to respond"],
@@ -278,7 +279,7 @@ def test_an_anonymous_report_says_only_the_job_system_and_the_step(job_apply_hom
     text = out["preview"]
     assert parse_qs(urlsplit(out["issue_url"]).query)["title"] == ["Report: a Workday employer, stuck"]
     assert "**Job:** a Workday employer" in text and "**Job system:** workday" in text and "**Address:**" not in text
-    assert "**Desk status:** needs_you stuck" in text and "on the employer's site" in text
+    assert "**Desk status:** needs_you stuck (`no_step_button`)" in text and "on the employer's site" in text
     assert "1. opened (a Workday address)" in text and "2. clicked “Apply” for the job (REDACTED)" in text
     assert "(a Workday address) (the job - the employer Careers)" in text and "- Why the employer? (textarea" in text
     assert "### Page saved 20261010-090000-000-stop: the job - the employer Careers" in text
@@ -449,7 +450,7 @@ def test_a_note_holds_the_stop_but_not_the_person_their_answers_or_the_employer(
     url = "https://acme.wd1.myworkdayjobs.com/External/job/x/apply"
     job = {"id": 12, "title": "Field Service Engineer", "company": "Acme Semi", "ats": "workday",
            "url": "https://acme.wd1.myworkdayjobs.com/External/job/x?source=jquill77"}
-    r = Run(12, "Field Service Engineer", "Acme Semi", status="needs_you", need="questions",
+    r = Run(12, "Field Service Engineer", "Acme Semi", status="needs_you", need="questions", code="questions",
             reason="1 question(s) your profile doesn't answer.", url=url + "?sid=SESS123",
             log=[f"step {i}" for i in range(30)] + [
                 f"opened {url};jsessionid=SESS123?email=jquill77%40example.org",
@@ -471,6 +472,7 @@ def test_a_note_holds_the_stop_but_not_the_person_their_answers_or_the_employer(
     text = report.note(job, r, PERSON)
     assert text.startswith("## questions: Field Service Engineer, at a Workday employer\n")
     assert "**Job system:** workday" in text and "Acme Semi" not in text and "the employer's site" in text
+    assert "**Job system:** workday \u00b7 **Stop:** `questions` \u00b7 **Noted:** " in text  # (its code: T1)
     assert "1 question(s) your profile doesn't answer." in text
     assert "15. " in text and "16. " not in text and "step 17\n" not in text  # its last 15 steps
     assert "(a Workday address) (Apply to the employer - REDACTED)" in text  # an address says its job system only

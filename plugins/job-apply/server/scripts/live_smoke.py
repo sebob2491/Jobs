@@ -1277,6 +1277,12 @@ def fake_answer(q: dict[str, Any]) -> Any:
     return "Test answer"
 
 
+def _stop_code(run: Any) -> str:
+    """A round's stop code (pipeline.STOP_CODES: why it stopped, whatever words it said), or "" when it didn't stop
+    for the person. The nightly's compare carries it with the reason, and nightly_summary.py sorts by it."""
+    return str(getattr(run, "code", "") or "") if run.status == "needs_you" else ""
+
+
 async def _question_markup(run: Any) -> list[str]:
     if run.page is None or run.page.is_closed():
         return []
@@ -2173,7 +2179,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                     raise TimeoutError(f"still {run.status} after {PIPELINE_WAIT}s; log: {run.log[-3:]}")
                 await asyncio.sleep(0.5)
             rec["rounds"].append({
-                "status": run.status, "need": run.need, "reason": run.reason, "url": run.url, "log": list(run.log),
+                "status": run.status, "need": run.need, "code": _stop_code(run), "reason": run.reason, "url": run.url,
+                "log": list(run.log),
                 "questions": [{k: q.get(k) for k in ("label", "kind", "required", "options", "error", "account")
                                if k != "account" or q.get(k)} for q in run.questions],
                 # each asked-about field's markup, to see what kind of control it is
@@ -2238,7 +2245,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
             if TEST_IDENTITY and run.need == "email_code" and list(run.log) != rec["rounds"][-1]["log"]:
                 # the wait ended, and the desk did something meanwhile (typed the code, said why it stopped):
                 # its record as it is now, not as it was when it paused
-                rec["rounds"].append({"status": run.status, "need": run.need, "reason": run.reason, "url": run.url,
+                rec["rounds"].append({"status": run.status, "need": run.need, "code": _stop_code(run),
+                                      "reason": run.reason, "url": run.url,
                                       "log": list(run.log), "questions": [], "markup": [], "page": run.page_info})
             break
     finally:

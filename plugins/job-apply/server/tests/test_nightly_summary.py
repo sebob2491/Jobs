@@ -121,6 +121,70 @@ def test_the_last_runs_changes_are_sorted_into_the_desks_the_sites_and_the_bette
                                      "hr: Axon: needs_you sign_in -> ready: Review page"]
 
 
+# A plausible need for each stop code's outcome (the bucket comes from the code, whatever the need)
+_NEED_OF = {"bot_check": "bot_check", "captcha": "captcha", "questions": "questions", "tailor": "tailor",
+            "maybe_duplicate": "maybe_duplicate", "your_submit": "your_submit", "account_as_you_apply": "your_submit",
+            "email_code": "email_code", "verify_pending": "email_code", "submit_failed": "submit_failed",
+            "check_submit": "check_submit", "restarted": "restarted"}
+
+
+def _coded_comment(reason) -> str:
+    """A changes comment with one employer stopped at each stop code, as live_compare writes it from a run's rounds
+    (the detail: the posting's title, then "[code] reason")."""
+    from job_apply.pipeline import STOP_CODES
+
+    changes = []
+    for i, code in enumerate(sorted(STOP_CODES)):
+        need = _NEED_OF.get(code, "sign_in" if code.startswith(("account", "sign_in", "reset", "security"))
+                            else "stuck")
+        rec = {"posting": {"title": "Technician"},
+               "rounds": [{"status": "needs_you", "need": need, "code": code, "reason": reason(code)}]}
+        result = lc.pipeline_outcome(rec)
+        changes.append(lc.Change("accounts", f"Employer {i} {code}", "ready", result.outcome,
+                                 result.detail))
+    return lc.render_comment(changes)
+
+
+def _buckets(triaged: dict) -> dict:
+    return {bucket: sorted(line.split(": ")[1] for line in lines) for bucket, lines in triaged.items()}
+
+
+def test_why_has_a_place_for_every_stop_code():
+    """T1 (the review of Oct 18): every stop code the desk gives has its own place in why(), and a reason's words never
+    outweigh its code (an old comment, without codes, is still read by its words)."""
+    from job_apply.pipeline import STOP_CODES
+
+    assert set(ns.CODE_WHY) == STOP_CODES
+    for code in STOP_CODES:
+        where, what = ns.why("needs_you stuck", f"Technician · [{code}] x")
+        assert where and what and where != "Stopped (see the run)", code
+    assert ns.why("needs_you stuck", "Technician · [step_not_saved] Something went wrong")[0] == "Step not saved"
+    assert ns.why("needs_you stuck", "[bot_check] Your page didn't move on")[0] == "Bot check"  # (no title)
+    assert ns.why("needs_you stuck", "Technician · The page didn't move on.")[0] == "Step not saved"  # (no code)
+    filled = "Engineer · [account_form_filled] I filled in Workday's Create Account form"
+    assert ns.why("needs_you sign_in", filled)[0] == "Account needed (Workday)"
+    assert ns.stop_code("Technician · [blank_page] The page stayed blank.") == ("blank_page", "The page stayed blank.")
+    assert ns.stop_code("Technician · The page stayed blank.") == ("", "The page stayed blank.")
+
+
+def test_a_coded_changes_comment_sorts_the_same_whatever_its_reasons_say():
+    """T1: "--changes output doesn't change when a message is reworded": the same comment with every reason replaced
+    by "x" sorts each employer into the same list, at each stop code."""
+    said = {"step_not_saved": "The page didn't move on.", "site_error": "Something went wrong on the site.",
+            "bot_check": "The site is checking that you're a person.",
+            "account_form_filled": "I filled in Workday's Create Account form with your details and saved password."}
+    worded = ns.triage(_coded_comment(lambda code: said.get(code, f"The desk stopped: {code.replace('_', ' ')}.")))
+    bare = ns.triage(_coded_comment(lambda code: "x"))
+    assert _buckets(worded) == _buckets(bare)
+    from job_apply.pipeline import STOP_CODES
+
+    assert sum(len(v) for v in bare.values()) == len(STOP_CODES)
+    look = set(_buckets(bare)["look"])
+    assert {f"Employer {i} {code}" for i, code in enumerate(sorted(STOP_CODES))
+            if code in ("step_not_saved", "no_step_button", "box_refused_answer")} <= look
+    assert not any(name.endswith((" bot_check", " site_blocks", " cookie_banner", " captcha")) for name in look)
+
+
 def test_a_runs_scrubbed_stop_pages_are_imported_into_the_tests(tmp_path):
     """live_smoke.py --fixtures leaves each page a run stopped on, scrubbed, in its folder's fixtures/: imported
     into tests/fixtures/live, test_live_fixtures.py checks every night's stops offline. One already there stays
@@ -386,3 +450,79 @@ def test_handled_without_the_trend_issue_is_as_before_with_a_warning(tmp_path, c
     assert ns.main(["--handled", "--issue-file", issue]) == 0
     out, err = capsys.readouterr()
     assert out == before and "--issue-file without --trend-file" in err
+
+
+# --- what needs a person: the digest (A2, the review of Oct 18) -------------------------------------------------
+
+def _digest_files(tmp_path, *, comment="", accounts=None, probes=None, log=""):
+    """The files the nightly's compare job has: the issue's new body (the accounts check's state as given, else none),
+    the changes comment, a check's log and the probes' folder."""
+    state = {"pipeline": {"KLA": "ready"}} | ({"accounts": accounts} if accounts else {})
+    current = {check: {name: lc.Result(outcome, "Technician") for name, outcome in outcomes.items()}
+               for check, outcomes in state.items()}
+    body = tmp_path / "body.md"
+    body.write_text(lc.render_body(state, current, checked_at="2026-10-18 10:00 UTC"), encoding="utf-8")
+    (tmp_path / "comment.md").write_text(comment, encoding="utf-8")
+    (tmp_path / "run.log").write_text(log, encoding="utf-8")
+    args = ["--digest", "--body-file", str(body), "--comment-file", str(tmp_path / "comment.md"),
+            "--logs", str(tmp_path / "run.log"), "--run-url", "https://example.com/run/9"]
+    if probes is not None:
+        (tmp_path / "probes").mkdir()
+        (tmp_path / "probes" / "probes.json").write_text(json.dumps(probes), encoding="utf-8")
+        args += ["--probes", str(tmp_path / "probes")]
+    return args
+
+
+QUIET = """2 changes since the last nightly live check:
+
+**Apply pipeline, semiconductor list (technician jobs): where it ended on one posting per employer**
+
+- Intel: `needs_you questions` → `ready` (`Technician`)
+- Micron: `needs_you stuck` → `needs_you bot_check` (`Technician · [bot_check] The site is checking`)
+"""
+
+
+def test_a_quiet_day_has_no_digest(tmp_path, capsys):
+    """Changes that need no one (an employer further on, a bot check), every check finished, the handled list as the
+    run, the probes passing and the inbox letting the test identity in: nothing is printed, so nothing is posted."""
+    listed = ns.listed_handled()
+    probes = {"reset": [{"employer": "Example", "status": "pass", "warning": "", "passes": []}], "tailored": []}
+    log = 'LIVE_INBOX {"company": "Acme", "messages": [], "mail_problem": null}\n'
+    args = _digest_files(tmp_path, comment=QUIET, accounts={name: "ready" for name in listed}, probes=probes, log=log)
+    assert ns.main(args) == 0
+    assert capsys.readouterr().out == ""
+    assert ns.digest() == "" and ns.digest_from() == ""
+
+
+def test_each_thing_that_needs_a_person_makes_a_digest(tmp_path, capsys):
+    """Any one of them alone is a comment, headed "Needs a person" with the run's link."""
+    went = QUIET + ("\n**Went backwards:** 1 employer no longer reaches the review page: KLA (accounts: "
+                    "`needs_you stuck`).\n")
+    cases = {
+        "went": (dict(comment=went), [], "Went backwards: 1 employer no longer reaches the review page: KLA"),
+        "unfinished": ({}, ["--unfinished", "accounts hr"], "A check didn't finish: accounts, hr"),
+        "drift": (dict(accounts={"Example Not Listed Co": "ready"}), [],
+                  "desk_handled.yaml: 1 all the way in the last run, not listed: Example Not Listed Co"),
+        "probes": (dict(probes={"reset": [{"employer": "Example Tenant", "status": "fail",
+                                           "warning": "pass 2 never signed in", "passes": []}], "tailored": []}), [],
+                   "Weekly probes, the desk's failure: Example Tenant: pass 2 never signed in"),
+        "inbox": (dict(log='LIVE_INBOX {"company": "Acme", "mail_problem": "The desk couldn\'t read your email: '
+                       'imap.example.com didn\'t accept the email app password."}\n'), [],
+                  "The test inbox refused its login (LIVE_INBOX at Acme)"),
+    }
+    for name, (files, more, said) in cases.items():
+        folder = tmp_path / name
+        folder.mkdir()
+        assert ns.main(_digest_files(folder, **files) + more) == 0
+        out = capsys.readouterr().out
+        assert out.startswith("**Needs a person** ([run](https://example.com/run/9)):\n\n- "), (name, out)
+        assert said in out, (name, out)
+
+
+def test_probes_that_wrote_no_results_and_a_refused_inbox_are_read_as_such(tmp_path):
+    (tmp_path / "empty").mkdir()
+    said = ns.digest_from(probes_dir=tmp_path / "empty")
+    assert "the probes' results can't be read" in said and said.startswith("**Needs a person**:")
+    assert ns.inbox_refusals(['LIVE_INBOX {"company": "A", "error": "error: b\'[AUTHENTICATIONFAILED] Invalid\'"}\n'
+                              'LIVE_INBOX {"company": "B", "error": "TimeoutError: timed out"}\nLIVE_INBOX not json',
+                              'LIVE_INBOX {"company": "A", "mail_problem": "AUTHENTICATIONFAILED"}']) == ["A"]

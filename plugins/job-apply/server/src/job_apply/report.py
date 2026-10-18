@@ -544,7 +544,7 @@ def build(job: dict[str, Any], run: Any = None, profile: config.Profile | None =
         *([] if anonymous else [f"**Address:** {scrub(job.get('apply_url') or job.get('url') or '')}"]),
     ]
     if run is not None:
-        lines += [f"**Desk status:** {getattr(run, 'status', '')} {getattr(run, 'need', '')}".rstrip(),
+        lines += [f"**Desk status:** {getattr(run, 'status', '')} {getattr(run, 'need', '')}".rstrip() + _code(run),
                   f"**What the desk said:** {said(getattr(run, 'reason', ''))}"]
         steps = [said(s) for s in (getattr(run, "log", None) or [])][-40:]
         if steps:
@@ -574,6 +574,15 @@ def build(job: dict[str, Any], run: Any = None, profile: config.Profile | None =
             f"{getattr(run, 'need', '') or getattr(run, 'status', '') or 'a problem'}"
     return {"folder": str(out_dir), "zip": str(zip_path), "preview": text, "issue_url": _issue_url(title, text),
             "pages": pages}
+
+
+def _code(run: Any, bare: bool = False) -> str:
+    """A stopped run's stop code (pipeline.STOP_CODES), as a report's status line ends with it: " (`step_not_saved`)";
+    `bare`, the code alone. Nothing for a run that isn't stopped, or has none."""
+    code = getattr(run, "code", "") if getattr(run, "status", "") == "needs_you" else ""
+    if not isinstance(code, str) or not re.fullmatch(r"[a-z_]{1,40}", code):
+        return ""
+    return code if bare else f" (`{code}`)"
 
 
 def notes_dir() -> Path:
@@ -633,7 +642,8 @@ def note(job: dict[str, Any], run: Any, profile: config.Profile | None = None, h
     lines = [
         f"## {stop}: {_note_scrubber(job, run, prof)(title)}, at {employer}",
         f"**Plugin version:** {config.plugin_version() or 'unknown'} \u00b7 **Job system:** {ats} \u00b7 "
-        f"**Noted:** {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        + (f"**Stop:** `{code}` \u00b7 " if (code := _code(run, bare=True)) else "")
+        + f"**Noted:** {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         f"**What the desk said:** {say(getattr(run, 'reason', ''))}",
     ]
     steps = [say(s) for s in (getattr(run, "log", None) or [])][-NOTE_STEPS:]
