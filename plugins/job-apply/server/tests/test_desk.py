@@ -1550,8 +1550,16 @@ def test_within_miles_is_off_and_the_window_says_why_without_a_home_town(srv, jo
                 await page.goto(desk.url)
                 await page.wait_for_selector("text=Tucson Technician")
                 assert await page.is_disabled("[data-within='25']")
-                assert await page.inner_text("#within-why") == "needs your home town"
                 assert "your profile doesn't say it" in await page.get_attribute("#within-group", "title")
+                # (the review, L3) the 10 miles kept from before shows, hiding nothing, and Any lets it go, so it
+                # doesn't come back on unseen once a home town is added
+                assert await page.get_attribute("[data-within='10']", "aria-pressed") == "true"
+                assert "10 mi hides nothing until then" in await page.inner_text("#within-why")
+                assert await page.is_enabled("[data-within='']")
+                async with page.expect_response("**/api/settings"):
+                    await page.click("[data-within='']")
+                assert desk.within_miles is None
+                await page.wait_for_function("document.querySelector('#within-why').innerText === 'needs your home town'")
                 await page.click("#area-btn")
                 note = await page.inner_text("#area-home")
                 assert note == ("Within N miles needs your home town, and your profile doesn't say it: add "
@@ -1569,6 +1577,10 @@ def test_within_miles_is_off_and_the_window_says_why_without_a_home_town(srv, jo
             await desk.stop()
 
     run(go())
+    # (the review, L4) a profile.yaml that doesn't read is said as that, not as one without a home town
+    (job_apply_home / "profile.yaml").write_text("personal: [unclosed\n", encoding="utf-8")
+    problem = desk.state()["profile"]["home_problem"]
+    assert "your profile can't be read" in problem and "doesn't say" not in problem
 
 
 def test_the_within_setting_refuses_what_isnt_one(srv, job_apply_home):

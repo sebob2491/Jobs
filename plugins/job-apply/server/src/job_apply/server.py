@@ -561,8 +561,10 @@ async def search_company_jobs(
     towns of Arizona and the Las Vegas and Reno areas (data/places.yaml), and nothing is looked up online. An opening
     whose place it doesn't know ("2 Locations", a town elsewhere), that names places it can't place, or that is
     remote always stays; a hybrid one is judged by its place. Results whose place it knows carry `miles` (whole
-    miles) and `miles_to` (the nearest town it names); `farther_away` counts what it left out. Refused, in words to
-    pass on, when the profile has no home town it knows."""
+    miles to the nearest town it names, `miles_to`) and `miles_sure` (true only when those are all its places, so
+    none can be nearer; otherwise say "N miles to the nearest place it names; another may be nearer");
+    `farther_away` counts what it
+    left out. Refused, in words to pass on, when the profile has no home town it knows."""
     _check_min_pay(min_pay)
     home = _home_for(within_miles)
     places = _check_workplace(workplace)
@@ -653,7 +655,7 @@ async def search_company_jobs(
         if home is not None:
             far = towns.away(home, r.get("location"), job.get("location") if job else None)
             if far is not None:
-                r["miles"], r["miles_to"] = round(far["miles"]), far["place"]
+                r["miles"], r["miles_to"], r["miles_sure"] = round(far["miles"]), far["place"], far["sure"]
             if not towns.keeps(far, r.get("workplace") or "", within_miles):
                 farther += 1  # (surely farther, and not remote: an unknown place always stays)
                 continue

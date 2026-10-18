@@ -16,6 +16,9 @@ AZ:
     Tempe: [33.425, -111.940]
     Mesa: [33.415, -111.831]
     Gilbert: [33.353, -111.789]
+    # (the old Williams air base's names: southeast Gilbert, and the Mesa airport; never the town of Williams)
+    Williams Field: [33.307, -111.700]
+    Williams Gateway: [33.308, -111.655]
     Scottsdale: [33.494, -111.926]
     Glendale: [33.539, -112.186]
     Peoria: [33.581, -112.238]
@@ -50,11 +53,11 @@ AZ:
     Eloy: [32.756, -111.555]
     Wickenburg: [33.969, -112.730]
     Tonopah: [33.493, -112.936]
-    Palo Verde: [33.388, -112.862]
+    Palo Verde: [33.388, -112.862]  # (the Palo Verde nuclear plant, by Tonopah)
     # Tucson and its towns
     Tucson: [32.223, -110.975]
     Oro Valley: [32.391, -110.966]
-    Marana: [32.437, -111.225]
+    Marana: [32.387, -111.127]
     Sahuarita: [31.958, -110.956]
     Green Valley: [31.854, -110.994]
     Vail: [32.048, -110.712]
@@ -101,6 +104,10 @@ NV:
     Henderson: [36.040, -114.982]
     Boulder City: [35.979, -114.833]
     Summerlin: [36.170, -115.310]
+    # (Del Webb's Sun City communities in the valley: never Arizona's Sun City or Anthem)
+    Sun City Anthem: [35.987, -115.097]
+    Sun City Aliante: [36.290, -115.163]
+    Sun City Summerlin: [36.205, -115.296]
     Paradise: [36.097, -115.147]
     Enterprise: [36.025, -115.242]
     Spring Valley: [36.108, -115.245]

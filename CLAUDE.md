@@ -23,6 +23,7 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   - `ats.py`: which job system a link is; `postings.py`: a posting read into a record;
   - `search.py`: employer job searches;
   - `recommend.py`: ranking;
+  - `places.py`: miles from the person's home town (the desk's "Within N miles"), from `data/places.yaml`;
   - `mailbox.py`: emailed codes, and the confirmation and password-reset links;
   - `tracker.py`: the SQLite tracker;
   - `report.py`: problem reports;
@@ -34,6 +35,7 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
 - `data/companies.yaml` is the default employer list (`semiconductor-az`), and
   `data/lists/*.yaml` holds the others (`phoenix-metro`, `las-vegas`). A person's own
   `~/.job-apply/companies.yaml` names lists under `lists:`.
+- `data/places.yaml`: hand-entered town centres (latitude, longitude) for "Within N miles"; no geocoding.
 - `data/question_bank.yaml`: the common questions the desk's "Common questions" card asks once (answers go to the
   person's own `answers.yaml` with the entry's pattern). `scripts/question_bank.py <run's artifacts>` lists the
   questions a nightly asked that no entry covers yet. Only questions whose answer is the person's own everywhere.

@@ -95,6 +95,32 @@ def test_a_job_in_several_places_is_as_near_as_its_nearest():
     ("Austin, TX", [], False),
     ("Remote - US", [], False),
     ("", [], False),
+    # (the review) longer names that are near places of their own, never a far town's: Del Webb's Sun City
+    # communities in the Las Vegas valley, and the old Williams air base's names in Gilbert and Mesa
+    ("Sun City Anthem", ["Sun City Anthem, NV"], True),
+    ("Sun City Anthem, Henderson, NV", ["Sun City Anthem, NV", "Henderson, NV"], True),
+    ("Sun City Aliante", ["Sun City Aliante, NV"], True),
+    ("Sun City Summerlin, NV", ["Sun City Summerlin, NV"], True),
+    ("Williams Field, AZ", ["Williams Field, AZ"], True),
+    ("Williams Gateway", ["Williams Gateway, AZ"], True),
+    ("Sun City, AZ", ["Sun City, AZ"], True),
+    # (the review) a comma-set piece naming a place it doesn't know, beside one it does: not all its places
+    ("Tucson, AZ, Fort Huachuca, AZ", ["Tucson, AZ"], False),
+    ("Tucson, AZ, Higley, AZ", ["Tucson, AZ"], False),
+    ("Tucson, Higley", ["Tucson, AZ"], False),
+    ("Chandler, AZ, US, 85226", ["Chandler, AZ"], True),
+    ("Chandler, AZ 85226, USA", ["Chandler, AZ"], True),
+    ("Tempe, AZ, United States (Hybrid)", ["Tempe, AZ"], True),
+    ("Ahwatukee, Phoenix, AZ", ["Ahwatukee, AZ", "Phoenix, AZ"], True),
+    ("Las Vegas, NV (Summerlin)", ["Las Vegas, NV", "Summerlin, NV"], True),
+    # (the review) a state as newspapers write it, or a code in lower case: another state's town isn't ours
+    ("Las Vegas, N.M.", [], False),
+    ("Peoria, Ill.", [], False),
+    ("Peoria, il", [], False),
+    ("Glendale, Calif.", [], False),
+    ("Chandler, Ariz.", ["Chandler, AZ"], True),
+    ("Henderson, Nev. 89052", ["Henderson, NV"], True),
+    ("Chandler, az", ["Chandler, AZ"], True),
 ])
 def test_a_location_names_the_towns_it_names(location, towns, sure):
     named, whole = places.read(location)
@@ -113,6 +139,22 @@ def test_only_a_job_surely_farther_than_asked_and_not_remote_is_left_out():
     assert places.keeps(tucson, "", None)  # (any distance)
 
 
+@pytest.mark.parametrize("locations", [
+    ("Tucson, AZ", "Tucson, AZ (+2 more)"),
+    ("Tucson, AZ", "Multiple Locations"),
+    ("Tucson, AZ", "Tucson, AZ; Statewide"),
+    ("Tucson, AZ", "Tucson, AZ; Remote"),
+    ("Tucson, AZ", "Tucson, AZ, Fort Huachuca, AZ"),
+    ("Tucson, AZ", None, "Phoenix, AZ (+1 more)"),
+])
+def test_one_location_saying_more_places_makes_the_distance_unsure(locations):
+    """(The review, M1) a job's list may say one town while its posting says more ("+2 more", "Multiple Locations",
+    "Statewide", "Remote", a place it can't place): its distance isn't sure, so Within never hides it."""
+    said = places.away(town("Chandler", "AZ"), *locations)
+    assert said is not None and said["sure"] is False
+    assert places.keeps(said, "", 25)
+
+
 def test_home_is_the_profiles_town_or_why_not():
     def home(**address):
         return places.home(config.Profile({"personal": {"address": address}}))
@@ -129,3 +171,9 @@ def test_home_is_the_profiles_town_or_why_not():
     assert home(city="Tonopah")[0] is None  # (Arizona's or Nevada's: it needs the state)
     assert home(city="Tonopah", state="NV")[0] == town("Tonopah", "NV")
     assert home(city="Mesa", state="CO")[0] is None
+    assert home(city="Chandler", state="Ariz.")[0] == town("Chandler", "AZ")
+    # (the review, L2) a town whose name is also a word or another place's, with no state: it asks for the state
+    for city in ("Tonopah", "Paradise", "Florence", "Miami", "Page", "Douglas", "Williams"):
+        none, why = home(city=city)
+        assert none is None and f"which {city} you mean" in why and "personal.address.state" in why, city
+    assert home(city="Paradise", state="NV")[0] == town("Paradise", "NV")

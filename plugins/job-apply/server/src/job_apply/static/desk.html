@@ -1394,13 +1394,17 @@ function renderHeader() {
   const minPay = $("min-pay");
   if (document.activeElement !== minPay) minPay.value = s.min_pay ? Number(s.min_pay).toLocaleString("en-US") : "";
   document.querySelectorAll("[data-posted]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.posted === String(s.posted_within || ""))));
-  // "Within __ miles": from the profile's home town; without one the desk knows, off, and why (the window says it too)
+  // "Within __ miles": from the profile's home town; without one the desk knows, off, and why (the window says it too).
+  // Any stays pressable then, so a choice kept from before can be let go of, and doesn't come back on unseen when a
+  // home town is added
   const home = state.profile && state.profile.home;
   document.querySelectorAll("[data-within]").forEach((b) => {
     b.setAttribute("aria-pressed", String(b.dataset.within === String(s.within_miles || "")));
-    b.disabled = !home;
+    b.disabled = !home && b.dataset.within !== "";
   });
   $("within-why").hidden = !!home;
+  $("within-why").textContent = s.within_miles
+    ? `needs your home town: ${s.within_miles} mi hides nothing until then (Any lets it go)` : "needs your home town";
   $("within-group").title = home
     ? `Hides a job whose places are all farther than this from your home, ${home}, in a straight line between town centres. One whose place the desk doesn't know, or that names places it can't place, always stays, as does a remote job; a hybrid job is judged by its place.`
     : (state.profile && state.profile.home_problem) || "";

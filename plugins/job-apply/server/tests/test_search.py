@@ -3322,6 +3322,8 @@ def test_within_miles_leaves_out_only_openings_surely_farther_from_home(srv, job
     assert out["farther_away"] == 2
     assert (out["results"][0]["miles"], out["results"][0]["miles_to"]) == (8, "Mesa, AZ")
     assert "miles" not in out["results"][2] and "miles" not in out["results"][4]
+    # (the review, L5) whether the distance is to the job's only place, or only to the nearest it names
+    assert out["results"][0]["miles_sure"] is True and out["results"][3]["miles_sure"] is False
     out = asyncio.run(server.search_company_jobs("field service", within_miles=100))
     assert out["farther_away"] == 0 and len(out["results"]) == 7
     full = asyncio.run(server.search_company_jobs("field service"))

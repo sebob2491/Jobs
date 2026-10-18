@@ -1058,6 +1058,9 @@ class Desk:
         since = self.seen_since
         # the person's home town, for each opening's distance ("Within __ miles"), or why there's none
         home, home_problem = places.home(prof)
+        if profile_problem:  # (a profile.yaml that doesn't read: not one without a home town)
+            home_problem = ("Within N miles can't find your home town just now: your profile can't be read "
+                            f"({profile_problem}).")
 
         def news(url: str, job: dict[str, Any] | None, run: Any) -> tuple[float | None, bool]:
             """When an opening was first saved (found by a search, or saved to the tracker), and whether it's New: first

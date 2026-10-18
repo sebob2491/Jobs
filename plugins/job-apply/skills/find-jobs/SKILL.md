@@ -80,7 +80,9 @@ The goal is a short, deduplicated list of real openings saved to the tracker
      is looked up online. An opening whose place it doesn't know ("2 Locations", a town
      elsewhere), that names places it can't place ("Tempe, AZ (+3 more)"), or that is remote
      always stays; a hybrid one is judged by its place. Results whose place it knows carry
-     `miles` and `miles_to` (say them as "about 12 miles from home, in a straight line"). With
+     `miles` to the nearest place it names (`miles_to`), and `miles_sure`: true when those are all
+     its places (say "about 12 miles from home, in a straight line"); false when it names others
+     it can't place (say "about 12 miles to the nearest place it names; another may be nearer"). With
      no home town it knows, the tool says so: pass that on, and search without it. Ask for it
      only when the user names a distance ("within 20 miles", "close to home").
    - Results already in the tracker carry `tracked`. Skip those.
