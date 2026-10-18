@@ -10,7 +10,9 @@ The goal is a short, deduplicated list of real openings saved to the tracker
 
 1. **Criteria.** Run `get_profile` and read `preferences.titles` and
    `preferences.locations`. Fill gaps from the request, or ask one question.
-   Default to the last 30 days.
+   Default to the last 30 days (`posted_within_days=30` below). A pay floor the user names
+   ("at least $60k", "$25 an hour or more") is `min_pay`, in dollars a year (an hourly rate
+   × 2,080).
 
 2. **Indeed.** If the Indeed connector's tools are available (`search_jobs`,
    `get_job_details`), search each title × location. For each promising result,
@@ -34,6 +36,17 @@ The goal is a short, deduplicated list of real openings saved to the tracker
    `setup_status` names: the plugin's `data/companies.yaml`, or the user's own
    `~/.job-apply/companies.yaml` when they have one (for other fields or places; the same shape).
    Pass `companies=[...]` to limit it to particular employers.
+   - `posted_within_days=30` (or 7, 14) leaves out older openings. An opening whose site
+     gives no date (ApplicantStack, Talemetry, Jobvite, Avature, KPMG, Phoenix Children's and
+     careers pages don't) stays: say its date is unknown. Greenhouse's date is the day the
+     posting was last updated.
+   - `min_pay` leaves out an opening whose pay is listed and below it (`below_min_pay` counts
+     them). Most employers' lists don't give pay, so most results have no `pay`: they stay,
+     and the posting says (`ingest_job` reads it: `pay` on the saved job, from the posting's
+     own data or its words, such as "Salary Range $26.00 - $28.00 Hourly"). Only pay the posting
+     states on its pay line (or in its own data) can leave a job out; pay only read from its
+     other words is shown with "≈" and never does. Never drop a job for pay it doesn't list.
+     `list_jobs(min_pay=...)` does the same over the tracker.
    - Results already in the tracker carry `tracked`. Skip those.
    - Eightfold sites (Lam Research, Micron, Infineon) refuse direct API calls, and
      ASML's, Daifuku's (iCIMS), Ebara's (Paycom), Nikon Precision's (UKG Pro), Edwards' and
@@ -77,8 +90,11 @@ The goal is a short, deduplicated list of real openings saved to the tracker
    the user doesn't have (and don't accept equivalent experience) go below the ranked
    list, each with its reason, as the Job Desk shows them under **All**: the user decides.
 
-6. **Report.** Give a table with id, company, title, location, job system and a one-line fit
-   note, then ask which ones to apply to. The `apply` skill takes it from there.
+6. **Report.** Give a table with id, company, title, location, pay ("not listed" where
+   the posting doesn't say), job system and a one-line fit note, then ask which ones to
+   apply to. The Job Desk shows the same pay on each opening, sorts by fit, pay or newest,
+   and has "Pay at least $__/yr" and "Posted: 7 / 14 / 30 days" filters that never hide an
+   opening that doesn't say. The `apply` skill takes it from there.
 
 7. **Each morning.** Offer once: "each morning: search, then whats_new". After a search
    (this skill's, or the Job Desk's Find jobs), `whats_new()` lists the openings first

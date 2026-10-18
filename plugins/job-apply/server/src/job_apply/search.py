@@ -72,7 +72,7 @@ WORKDAY_PAGE = 20  # Workday rejects larger pages
 MAX_ALTERNATIVES = 4
 # Semiconductor equipment roles, used when the profile names no target titles.
 DEFAULT_TITLES = ["field service", "customer service engineer", "customer engineer", "equipment technician"]
-FETCH_WHEN_FILTERING = 60  # results to scan per search when filtering by location ourselves
+FETCH_WHEN_FILTERING = 60  # results to scan per search when filtering by location (or date) ourselves
 EMPLOYERS_AT_ONCE = 8  # employers searched at the same time (each its own site; ~50 s for the Phoenix list, not ~100)
 EMPLOYER_SECONDS = 120  # one employer's searches, all its wordings, at most (the slowest take ~30 s); then they stop
 CLIENT_SIDE = {"greenhouse", "lever", "applicantstack", "paycom", "ukg", "sfclassic", "infor", "phoenixchildrens",
@@ -114,6 +114,13 @@ class Listing:
     # area however the site names it ("Banner Heart Hosp (6750 E Baywood Ave)": the review of Oct 15), so
     # keep_listings keeps it and recommend() never holds it for that place
     in_area: bool = False
+    # its pay, when the list gives it (pay.py: the figures, their period, where they came from); most lists don't, and
+    # the posting read later says (recommend's take)
+    pay_min: float | None = None
+    pay_max: float | None = None
+    pay_period: str = ""
+    pay_source: str = ""
+    pay_sure: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         out = asdict(self)
@@ -121,6 +128,9 @@ class Listing:
             del out["company_url"]
         if not out["in_area"]:
             del out["in_area"]
+        if not out["pay_period"]:  # (no pay given)
+            for k in ("pay_min", "pay_max", "pay_period", "pay_source", "pay_sure"):
+                del out[k]
         return out
 
 
@@ -2683,9 +2693,13 @@ def _pick(companies: list[dict[str, Any]], names: list[str] | None) -> list[dict
 
 
 def keep_listings(company: str, listings: list[Listing], terms: list[str], limit: int,
-                  query: str = "") -> list[dict[str, Any]]:
+                  query: str = "", posted_within_days: int | None = None) -> list[dict[str, Any]]:
     """Deduplicate, apply the location filter, note broad locations, put listings whose
-    title matches the query first (others matched on description), cap at `limit`."""
+    title matches the query first (others matched on description), cap at `limit`.
+    `posted_within_days`: leave out those posted longer ago; one whose date isn't given (seven systems give none) or
+    can't be read stays (a fact the list doesn't give never hides a job)."""
+    from .recommend import days_since  # (recommend reads the search's results: imported here, not at the top)
+
     kept: list[dict[str, Any]] = []
     seen: set[str] = set()
     if query:
@@ -2694,6 +2708,9 @@ def keep_listings(company: str, listings: list[Listing], terms: list[str], limit
         if listing.url in seen:
             continue
         seen.add(listing.url)
+        if posted_within_days is not None and (days := days_since(listing.posted)) is not None \
+                and days > posted_within_days:
+            continue
         listing.company = company
         where = location_matches(listing.location, terms)
         if where is False and listing.in_area:
@@ -2719,6 +2736,7 @@ async def search_companies(
     limit: int = 20,
     client: httpx.AsyncClient | None = None,
     companies: list[dict[str, Any]] | None = None,
+    posted_within_days: int | None = None,
 ) -> dict[str, Any]:
     companies = _pick(companies if companies is not None else load_companies(), names)
     terms = location_terms(location)
@@ -2740,7 +2758,7 @@ async def search_companies(
             else:
                 browser_only.append({"company": company["name"], "careers_url": company.get("careers_url", "")})
             return
-        fetch = max(limit, FETCH_WHEN_FILTERING) if terms else limit
+        fetch = max(limit, FETCH_WHEN_FILTERING) if terms or posted_within_days is not None else limit
         found: list[Listing] = []
         wordings = wordings_for(kind, query)
         failed: list[str] = []
@@ -2772,7 +2790,7 @@ async def search_companies(
             partial = len(failed) < len(wordings)
             errors[company["name"]] = failed[0] + (
                 f" ({len(failed)} of {len(wordings)} searches failed; the others' results are listed)" if partial else "")
-        results.extend(keep_listings(company["name"], found, terms, limit, query))
+        results.extend(keep_listings(company["name"], found, terms, limit, query, posted_within_days))
 
     places_read = _PLACES_READ.set({})  # (the employers' tasks share it: each posting is read once a run)
     try:

@@ -413,6 +413,44 @@ def posting_reads(text: str) -> tuple[dict[str, int], dict[str, list[str]]]:
     return read, short
 
 
+def posting_facts(text: str) -> dict[str, dict[str, int]]:
+    """By job system, the search check's postings read (`read`), those whose pay was found (`pay`: pay.py, from the
+    posting's data or its words), those whose date wasn't (`no_date`: neither the list nor the posting gave one) and how
+    many records said either way (`dated`: a run before the live check recorded dates has none): how far the desk's pay
+    listing and its Posted filter reach (the design of Oct 18, F1 and F2)."""
+    out: dict[str, dict[str, int]] = {}
+    for rec in live_compare.read_log(text, "LIVE_RESULT ").values():
+        p = rec.get("posting")
+        if not isinstance(p, dict) or p.get("error"):
+            continue
+        system = str(p.get("ats") or next(iter(rec.get("search_config") or {}), "") or "?")
+        facts = out.setdefault(system, {"read": 0, "pay": 0, "dated": 0, "no_date": 0})
+        facts["read"] += 1
+        facts["pay"] += bool(p.get("pay"))
+        if "posted" in p:
+            facts["dated"] += 1
+            facts["no_date"] += not p.get("posted")
+    return out
+
+
+def facts_said(facts: dict[str, dict[str, int]]) -> str:
+    """posting_facts in the summary line: "pay listed on 3 of 9 (paycom 1 of 1, workday 2 of 8); no date on 2 of 9
+    (applicantstack 2 of 2)"."""
+    if not facts:
+        return ""
+    read = sum(f["read"] for f in facts.values())
+    said = f"pay listed on {sum(f['pay'] for f in facts.values())} of {read} (" + ", ".join(
+        f"{system} {f['pay']} of {f['read']}" for system, f in sorted(facts.items())) + ")"
+    dated = {system: f for system, f in facts.items() if f["dated"]}
+    if dated:
+        undated = {system: f for system, f in dated.items() if f["no_date"]}
+        said += f"; no date on {sum(f['no_date'] for f in dated.values())} of {sum(f['dated'] for f in dated.values())}"
+        if undated:
+            said += " (" + ", ".join(f"{system} {f['no_date']} of {f['dated']}"
+                                     for system, f in sorted(undated.items())) + ")"
+    return said
+
+
 def posting_findings(text: str) -> list[str]:
     """posting_reads' short ones, one line a job system."""
     read, short = posting_reads(text)
@@ -458,6 +496,7 @@ def main(argv: list[str] | None = None) -> int:
     checks: list[str] = []
     postings: list[str] = []
     searched = short_reads = 0
+    facts: dict[str, dict[str, int]] = {}
     for spec in args.log:
         check, sep, path = spec.partition("=")
         if not sep:
@@ -474,6 +513,10 @@ def main(argv: list[str] | None = None) -> int:
         got, short = posting_reads(text)
         searched += sum(got.values())
         short_reads += sum(len(names) for names in short.values())
+        for system, f in posting_facts(text).items():
+            mine = facts.setdefault(system, dict.fromkeys(f, 0))
+            for k, n in f.items():
+                mine[k] += n
     secrets = {name: os.environ.get(name, "") for name in SECRETS}
     files = pages = 0
     values: list[str] = []
@@ -505,6 +548,8 @@ def main(argv: list[str] | None = None) -> int:
     if searched:
         said += (f"; postings: {short_reads} of {searched} not read whole" if short_reads
                  else f"; postings: all {searched} read whole")
+    if facts:
+        said += f"; {facts_said(facts)}"
     if findings:
         print(f"audit: {len(findings)} finding{'' if len(findings) == 1 else 's'} ({len(read)} records, {files} files); {said}")
         return 1

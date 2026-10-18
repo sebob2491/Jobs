@@ -34,13 +34,13 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
-from . import autofill, config, history, report
+from . import autofill, config, history, pay, report
 from .browser import _cookie_setting
 from .pipeline import (DESK_PASSWORDS, QUEUE_NO_LOCK, Applier, _may_accept_notices, _may_manage_accounts,
                        _test_identity, placed_key, question_key)
 from .ats import JOB_BOARDS, detect_ats, job_board
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
-from .recommend import not_interested_in, recommend, score_listing
+from .recommend import days_since, not_interested_in, recommend, score_listing
 from .search import (MAX_ALTERNATIVES, alternatives, every_employer, load_companies, own_companies_path, search_area,
                      set_search_area)
 from .tracker import APPLICATION_STATUSES, NotInterested, company_key, damaged, normalize_url, standing
@@ -156,6 +156,10 @@ class Desk:
         self.port: int | None = None
         self.listings: list[dict[str, Any]] = []
         self.handled_only = False  # the page shows only openings where the desk goes all the way (desk_handled.yaml)
+        # the page's filters (the design of Oct 18, Part 7): "Pay at least $__/yr" hides an opening whose pay is listed
+        # and below it, and "Posted" one posted more days ago than it; neither hides one that doesn't say (None: off)
+        self.min_pay: int | None = None
+        self.posted_within: int | None = None
         # Troubleshooting (the owner, Oct 12, to get the desk going at more employers): Find jobs searches every
         # list's employers, for the profile's titles and HR ones, and the page shows only the openings where the desk
         # doesn't go all the way yet, whatever their fit. Nothing is sent meanwhile (Applier.hold_submits)
@@ -204,6 +208,8 @@ class Desk:
             self.applier.auto_submit = saved.get("auto_submit") is True
             self.applier.tailor = saved.get("tailor_resumes") is True
             self.handled_only = saved.get("handled_only") is True
+            self.min_pay = _min_pay(saved.get("min_pay"))
+            self.posted_within = saved.get("posted_within") if saved.get("posted_within") in POSTED_WITHIN else None
             self.auto_search = saved.get("auto_search") is True
             self.troubleshoot = saved.get("troubleshoot") is True and not self.handled_only
             self.applier.hold_submits = self.troubleshoot
@@ -225,6 +231,7 @@ class Desk:
         config.write_text_atomic(_settings_path(), json.dumps({"auto_submit": self.applier.auto_submit,
                                                 "tailor_resumes": self.applier.tailor,
                                                 "handled_only": self.handled_only,
+                                                "min_pay": self.min_pay, "posted_within": self.posted_within,
                                                 "troubleshoot": self.troubleshoot,
                                                 "auto_search": self.auto_search,
                                                 "jobs_at_once": self.applier.jobs_at_once,
@@ -585,6 +592,14 @@ class Desk:
         at_once = body.get("jobs_at_once")
         if "jobs_at_once" in body and not (type(at_once) is int and 1 <= at_once <= config.JOBS_AT_ONCE_MAX):
             return self._bad(ValueError(f"jobs_at_once should be a number from 1 to {config.JOBS_AT_ONCE_MAX}"))
+        if "min_pay" in body and body["min_pay"] is not None and _min_pay(body["min_pay"]) is None:
+            return self._bad(ValueError("min_pay should be a yearly figure in dollars, or null for any pay"))
+        if "posted_within" in body and body["posted_within"] not in (None, *POSTED_WITHIN):
+            return self._bad(ValueError("posted_within should be 7, 14, 30 or null for any day"))
+        if "min_pay" in body:
+            self.min_pay = _min_pay(body["min_pay"])
+        if "posted_within" in body:
+            self.posted_within = body["posted_within"]
         if "jobs_at_once" in body:
             self.applier.jobs_at_once = at_once
             written = _profile_jobs_at_once()  # (as profile.yaml has it now: a later change there is the newer choice)
@@ -609,10 +624,11 @@ class Desk:
                 self._forget_openings()
         self.applier.hold_submits = self.troubleshoot
         if any(k in body for k in ("auto_submit", "tailor_resumes", "handled_only", "troubleshoot", "auto_search",
-                                   "jobs_at_once")):
+                                   "jobs_at_once", "min_pay", "posted_within")):
             self._save_settings()
         return JSONResponse({"auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor,
                              "handled_only": self.handled_only, "troubleshoot": self.troubleshoot,
+                             "min_pay": self.min_pay, "posted_within": self.posted_within,
                              "auto_search": self.auto_search, "jobs_at_once": self.applier.at_once()})
 
     def _forget_openings(self) -> None:
@@ -862,6 +878,7 @@ class Desk:
                 "external_id": item.get("external_id") or posting.get("external_id"),
                 "salary": posting.get("salary"), "employment_type": posting.get("employment_type"),
                 "posted_at": posting.get("posted_at") or item.get("posted"), "description": posting.get("description"),
+                **{k: (item if item.get("pay_period") else posting).get(k) for k in PAY_KEYS},
             })
             ids.append(job["id"])
         # and by the job each is (by its number, or any of its addresses: one made one with a job marked on another
@@ -1030,6 +1047,8 @@ class Desk:
             rows.append({
                 "url": item["url"], "title": item.get("title"), "company": item.get("company"),
                 "location": item.get("location"), "posted": item.get("posted"),
+                "posted_days": days_since(str(item.get("posted") or "")),
+                "pay": pay_of(item, job), "ats": item.get("ats") or (job or {}).get("ats") or "",
                 "fit": item.get("fit") if said else fit_for(item.get("fit"), item.get("company"), employers),
                 "notes": item.get("notes") or [], "job_id": jid, "status": job["status"] if job else None,
                 "run": run,
@@ -1051,13 +1070,16 @@ class Desk:
                 continue
             job = t.get(brief["id"]) or brief
             seen.add(job["id"])
-            listing = {"title": job.get("title"), "location": job.get("location"), "posted": job.get("posted_at")}
+            listing = {"title": job.get("title"), "location": job.get("location"), "posted": job.get("posted_at"),
+                       **{k: job.get(k) for k in PAY_KEYS}}
             said = marks.mark(job["url"], job, also.get(job["id"], [])) if marks else None
             fit = score_listing(listing, prof, job.get("description") or "").to_dict()
             first, new = news(job["url"], job, runs.get(job["id"]))
             rows.append({
                 "url": job["url"], "title": job.get("title"), "company": job.get("company"),
                 "location": job.get("location"), "posted": job.get("posted_at"),
+                "posted_days": days_since(str(job.get("posted_at") or "")),
+                "pay": pay_of(None, job), "ats": job.get("ats") or "",
                 "fit": fit if said else fit_for(fit, job.get("company"), employers), "notes": [],
                 "job_id": job["id"], "status": job["status"], "run": runs.get(job["id"]), "added": True,
                 "handled": str(job.get("company") or "").strip().casefold() in handled,
@@ -1079,6 +1101,7 @@ class Desk:
                          "manage_accounts_chosen": settings.manage_accounts_chosen,
                          "auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor,
                          "handled_only": self.handled_only, "troubleshoot": self.troubleshoot,
+                         "min_pay": self.min_pay, "posted_within": self.posted_within,
                          "auto_search": self.auto_search, "jobs_at_once": self.applier.at_once(),
                          "follow_up_days": settings.follow_up_days},
             "tailoring": len(self.applier.tailoring()),
@@ -1443,12 +1466,35 @@ def likely_order(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(jobs, key=tier)  # (sorted keeps the order of the ones alike)
 
 
+PAY_KEYS = pay.FIELDS
+POSTED_WITHIN = (7, 14, 30)  # the page's "Posted" choices, in days (none: any day)
+MIN_PAY_MOST = pay.MIN_PAY_MOST  # a "Pay at least" over this is a typo
+
+
+def _min_pay(value: Any) -> int | None:
+    """A "Pay at least $__/yr" as saved or sent: a whole number of dollars a year over 0, else None (any pay)."""
+    if type(value) is float and value.is_integer():
+        value = int(value)
+    return value if type(value) is int and 0 < value <= MIN_PAY_MOST else None
+
+
+def pay_of(item: dict[str, Any] | None, job: dict[str, Any] | None) -> dict[str, Any] | None:
+    """An opening's pay as its row says it (pay.view), or None when it isn't listed: the opening's own (its list's, or
+    its posting's once read: recommend's take), else the tracker's job's."""
+    for said in (item, job):
+        if said and said.get("pay_period"):
+            return pay.view(said, (said.get("posting") or {}).get("salary") or said.get("salary") or "")
+    return None
+
+
 def whats_new(tracker: Any, since: float) -> list[dict[str, Any]]:
     """The openings first saved at `since` (seconds) or after, best score first: the desk's (its last search's,
     recommendations.json, each by when a search first found it: openings_found.json) and the jobs saved to the tracker
     another way (by Claude, from Indeed or a link), none of them begun, sent or skipped since, and none the person said
     Not interested in. Each with its title, company, location, score (lower at an employer they said Not interested in),
-    whether it's recommended, its address, its job number once saved, and when it was first saved."""
+    whether it's recommended, its address, its job number once saved, when it was first saved, its pay in a few words
+    ("" when it isn't listed) with the most it pays a year (for "from $X", X a year), and its applicant tracking
+    system."""
     try:
         saved = json.loads(_recommendations_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -1464,7 +1510,7 @@ def whats_new(tracker: Any, since: float) -> list[dict[str, Any]]:
     taken: set[Any] = set()
 
     def add(url: str, job: dict[str, Any] | None, title: Any, company: Any, location: Any, fit: Any,
-            first: float | None) -> None:
+            first: float | None, item: dict[str, Any] | None = None) -> None:
         key = normalize_url(url)
         if key in taken or (job is not None and job["id"] in taken):
             return
@@ -1475,10 +1521,14 @@ def whats_new(tracker: Any, since: float) -> list[dict[str, Any]]:
         if first is None or first < since or unwanted or (job is not None and job.get("status") != "saved"):
             return
         fit = fit_for(fit if isinstance(fit, dict) else {}, company, employers)
+        shown = pay_of(item, job)
         out.append({"title": title or "", "company": company or "", "location": location or "",
                     "score": fit.get("score"), "recommended": bool(fit.get("recommended")), "url": url,
                     "job_id": job["id"] if job is not None else None,
-                    "saved_at": history.stamp(first)})
+                    "saved_at": history.stamp(first),
+                    # its pay in a few words ("" for not listed) and a year's most, and its applicant tracking system
+                    "pay": shown["shown"] if shown else "", "pay_yearly": shown["sort"] if shown else None,
+                    "ats": (item or {}).get("ats") or (job or {}).get("ats") or ""})
 
     tracked = [tracker.find_by_url(item["url"]) for item in listings]
     # (an opening on the employer's site not saved yet is the job saved from a job board that it surely is, as the desk
@@ -1489,7 +1539,7 @@ def whats_new(tracker: Any, since: float) -> list[dict[str, Any]]:
         at = [s for s in (found.get(item["url"], searched), _iso_seconds(job.get("created_at")) if job else None)
               if s is not None]
         add(item["url"], job, item.get("title"), item.get("company"), item.get("location"), item.get("fit"),
-            min(at) if at else None)
+            min(at) if at else None, item)
     try:
         prof = config.Profile.load()
     except Exception:  # (a profile with a typo: scored as for no one, as the desk's page does)
@@ -1499,7 +1549,8 @@ def whats_new(tracker: Any, since: float) -> list[dict[str, Any]]:
         if first is None or first < since or brief["id"] in taken or normalize_url(brief["url"]) in taken:
             continue
         job = tracker.get(brief["id"]) or brief
-        listing = {"title": job.get("title"), "location": job.get("location"), "posted": job.get("posted_at")}
+        listing = {"title": job.get("title"), "location": job.get("location"), "posted": job.get("posted_at"),
+                   **{k: job.get(k) for k in PAY_KEYS}}
         add(job["url"], job, job.get("title"), job.get("company"), job.get("location"),
             score_listing(listing, prof, job.get("description") or "").to_dict(), first)
     out.sort(key=lambda o: -(o["score"] or 0))  # (sorted keeps the search's order among equals)
