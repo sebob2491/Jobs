@@ -10555,6 +10555,9 @@ def test_a_self_identification_list_that_fetches_its_choices_on_first_open_is_wa
     on (PICK_LIST_WAIT, 10 s); one still empty after that is asked about as before. One that closed again by itself
     before its choices were read (&closes: Edwards' in run 114) is opened once more."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    for name, wait in (("LIST_OPEN_WAIT", 2000), ("COMBO_OPEN_WAIT", 900), ("LIST_PLACEHOLDER_WAIT", 5000),
+                       ("PICK_OPEN_WAIT", 2500), ("LIST_REOPEN_WAIT", 3000)):
+        monkeypatch.setattr(browser_module, name, wait)  # (production's: the list draws late)
     job = srv.add_job(url=fixture_url("site/sf-select-slow.html") + query, title="ET", company="Example Semi")["job"]
     applier = Applier(srv)
 
