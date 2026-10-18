@@ -40,6 +40,13 @@ name: live-nightly
 # artifact (scripts/nightly_summary.py --probes reads it). Only a desk failure fails the run (a pass 2 that didn't
 # restore the real password always does); a probe the site or the person stopped (a bot check, a CAPTCHA, a site's
 # error page, no posting) is said under "Couldn't check this week", and the run stays green.
+# And on Sundays (a full run's, in Arizona's day, and by hand with checks "awkward"), the awkward check: the pipeline
+# check again with the fake profile in an awkward shape (live_smoke.py --profile-shape awkward: its job with no end
+# date, two coursework entries at one school with no degree, a GED, a second phone), never the test identity, so no
+# accounts. Its artifact is shape-awkward, never live-*: the compare job never reads it (its results would read as
+# changes), and nothing of it goes to the issues. The shapes job compares it with the plain pipeline check of the same
+# run in the run's summary (scripts/nightly_summary.py --compare-shapes): where it got less far, and the values audit's
+# warnings only it drew (the design of Oct 18, A7).
 
 on:
   # GitHub starts this schedule hours late (5 to 10, Oct 2026), so a routine dispatches the run at 3:17 AM in Arizona
@@ -57,7 +64,7 @@ on:
         required: false
         default: ""
       checks:
-        description: "Only these checks (comma-separated: pipeline, hr, search, accounts, probes): a probe, not compared"
+        description: "Only these checks (comma-separated: pipeline, hr, search, accounts, probes, awkward): a probe, not compared"
         required: false
         default: ""
       plus:
@@ -78,12 +85,14 @@ jobs:
   # A scheduled run that a dispatched full run has already done today's work for (its "Last checked" in the issue
   # within 12 hours) runs nothing: two full runs a day would make the test identity's accounts twice. A dispatched
   # run always goes ahead. "go": the nightly's checks run; "probes": the weekly probes run (the weekly schedule's run,
-  # which runs nothing else, or a manual run whose checks name them).
+  # which runs nothing else, or a manual run whose checks name them); "awkward": the awkward check runs (a full run on
+  # a Sunday, in Arizona's day, or a manual run whose checks name it).
   fresh:
     runs-on: ubuntu-latest
     outputs:
       go: ${{ steps.last.outputs.go }}
       probes: ${{ steps.last.outputs.probes }}
+      awkward: ${{ steps.last.outputs.awkward }}
     steps:
       - name: When the issue was last written
         id: last
@@ -95,13 +104,19 @@ jobs:
           CHECKS: ${{ github.event.inputs.checks }}
           WEEKLY: "43 13 * * 0"  # (the weekly probes' schedule, as written under "on")
         run: |
+          # (Sunday in Arizona, where the 3:17 AM run is dispatched; DAY, 1 to 7, stands in for today in the tests)
+          sunday=false
+          if [ "${DAY:-$(TZ=America/Phoenix date +%u)}" = 7 ]; then sunday=true; fi
           if [ "$EVENT" = schedule ] && [ "$SCHEDULE" = "$WEEKLY" ]; then
             echo "The weekly probes' run: the probes alone (scripts/live_probes.py)." >> "$GITHUB_STEP_SUMMARY"
-            { echo "go=false"; echo "probes=true"; } >> "$GITHUB_OUTPUT"; exit 0
+            { echo "go=false"; echo "probes=true"; echo "awkward=false"; } >> "$GITHUB_OUTPUT"; exit 0
           fi
           if [ "$EVENT" != schedule ]; then
             checks=",${CHECKS// /},"
             if [[ "$checks" == *,probes,* ]]; then echo "probes=true"; else echo "probes=false"; fi >> "$GITHUB_OUTPUT"
+            # the awkward check: a full run's on a Sunday (no checks named), or named
+            if [[ "$checks" == *,awkward,* ]] || { [ -z "${CHECKS// /}" ] && [ "$sunday" = true ]; }; then
+              echo "awkward=true"; else echo "awkward=false"; fi >> "$GITHUB_OUTPUT"
             # (a manual run of the probes alone runs none of the nightly's checks)
             if [ "${checks//,probes,/,}" = "," ] && [ -n "${CHECKS// /}" ]; then echo "go=false"; else echo "go=true"; fi \
               >> "$GITHUB_OUTPUT"
@@ -114,9 +129,9 @@ jobs:
           last=$(printf '%s' "$body" | sed -n 's/^Last checked: \([0-9-]* [0-9:]*\) UTC.*/\1/p' | head -1)
           if [ -n "$last" ] && [ $(( $(date -u +%s) - $(date -u -d "$last" +%s) )) -lt 43200 ]; then
             echo "A full run was written to the issue at $last UTC, within 12 hours: this late scheduled run skips." >> "$GITHUB_STEP_SUMMARY"
-            echo "go=false" >> "$GITHUB_OUTPUT"
+            { echo "go=false"; echo "awkward=false"; } >> "$GITHUB_OUTPUT"
           else
-            echo "go=true" >> "$GITHUB_OUTPUT"
+            { echo "go=true"; echo "awkward=$sunday"; } >> "$GITHUB_OUTPUT"
           fi
 
   check:
@@ -159,6 +174,14 @@ jobs:
             slot: accounts-2
             args: --pipeline --test-identity --everywhere --security-answers --parallel 4 --machine 2/3 --fixtures
             minutes: 105
+          # Sundays only (the "fresh" job's awkward): the pipeline check with the fake profile in an awkward shape, in
+          # practice mode, never the test identity (no accounts), never --fixtures (its stops are decided again offline
+          # with the plain profile). Its artifact, shape-awkward, is never live-*: the compare job never reads it, and
+          # the shapes job compares it with live-pipeline in the run's summary
+          - check: awkward
+            artifact: shape-awkward
+            args: --pipeline --fake-passwords --parallel 4 --profile-shape awkward
+            minutes: 35
     defaults:
       run:
         working-directory: plugins/job-apply/server
@@ -171,11 +194,15 @@ jobs:
         env:
           CHECK: ${{ matrix.check }}
           CHECKS: ${{ github.event.inputs.checks }}
+          AWKWARD: ${{ needs.fresh.outputs.awkward }}
           # whether the test identity's secrets are there, never what they are
           HAS_SECRETS: ${{ secrets.LIVE_TEST_EMAIL != '' && secrets.LIVE_TEST_EMAIL_PASSWORD != '' && secrets.LIVE_TEST_SITE_PASSWORD != '' }}
         run: |
           if [ -n "$CHECKS" ] && ! echo ",${CHECKS// /}," | grep -q ",$CHECK,"; then
             echo "Not in this probe's checks ($CHECKS)." >> "$GITHUB_STEP_SUMMARY"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          elif [ "$CHECK" = awkward ] && [ "$AWKWARD" != true ]; then
+            echo "The awkward check runs on Sundays only (or by hand, with checks \"awkward\")." >> "$GITHUB_STEP_SUMMARY"
             echo "ready=false" >> "$GITHUB_OUTPUT"
           elif [ "$CHECK" = accounts ] && [ "$HAS_SECRETS" != true ]; then
             said="The accounts check is not set up: the repository has no LIVE_TEST_EMAIL, LIVE_TEST_EMAIL_PASSWORD and LIVE_TEST_SITE_PASSWORD secrets yet (see plugins/job-apply/server/scripts/TEST_IDENTITY.md)."
@@ -240,9 +267,10 @@ jobs:
           # not_set_up: the accounts check without its secrets, which the compare job leaves out
           if [ "$READY" = false ]; then echo not_set_up; else echo "$OUTCOME"; fi > "live-$SLOT/outcome"
       - uses: actions/upload-artifact@v4
-        if: always()
+        # (the awkward check's only when it ran: on the other six days it has nothing to keep)
+        if: always() && (matrix.check != 'awkward' || steps.setup.outputs.ready == 'true')
         with:
-          name: live-${{ matrix.slot || matrix.check }}
+          name: ${{ matrix.artifact || format('live-{0}', matrix.slot || matrix.check) }}
           path: plugins/job-apply/server/live-${{ matrix.slot || matrix.check }}
           retention-days: 7
 
@@ -409,6 +437,48 @@ jobs:
         run: |
           echo "::error::A check didn't finish ($UNFINISHED); see its job's log"
           exit 1
+
+  # Sundays' awkward check against the plain pipeline check of the same run (scripts/nightly_summary.py
+  # --compare-shapes): where the awkward profile got less far, and the values audit's warnings only it drew. In the
+  # run's summary alone: never compared with the last run, never written to an issue (no issues permission), never a
+  # failure.
+  shapes:
+    needs: [fresh, check]
+    if: always() && needs.fresh.outputs.awkward == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: plugins/job-apply/server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: plugins/job-apply/server/uv.lock
+      - run: uv sync --frozen
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: live-pipeline
+          path: plugins/job-apply/server/live-pipeline
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: shape-awkward
+          path: plugins/job-apply/server/shape-awkward
+      - name: The awkward profile against the plain one
+        continue-on-error: true
+        run: |
+          {
+            echo "### The awkward profile against the plain one (the pipeline check, this run)"; echo; echo '```'
+            uv run --frozen python scripts/nightly_summary.py --compare-shapes live-pipeline shape-awkward 2>&1 \
+              || echo "(not compared: see the job's log)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # The weekly probes (scripts/live_probes.py): the desk's password reset at two Workday tenants and a tailored resume
   # in the job's folder, as the test identity, never submitting. After this run's checks (never beside the accounts

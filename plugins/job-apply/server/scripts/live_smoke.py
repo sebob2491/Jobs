@@ -49,6 +49,12 @@ which the site refuses, so the desk resets the site to it; masked like the other
 (with --pipeline: a clearly marked tailored test resume in each job's folder before the desk applies,
 which the desk prefers to the profile's; its file's name goes in the employer's record as "tailored").
 
+--profile-shape awkward (with --pipeline; default plain) applies with the fake profile in an awkward shape
+(live_profile.awkward: its job held with no end date, two coursework entries at one school with `degree: ""`, a GED,
+a second phone): Sundays' awkward check (live-nightly.yml), which nightly_summary.py --compare-shapes compares with the
+plain pipeline check of the same run. Never with --test-identity (it applies as itself) or --fixtures (a stop page is
+decided again offline with the plain profile).
+
 --save-postings DIR (the search check, not --pipeline): each job system's first posting read from its API (Workday,
 Greenhouse, Lever, SmartRecruiters, Oracle, Cornerstone) goes to DIR/<system>.json, in the form of the posting readers'
 offline fixtures (tests/fixtures/postings): the answers it read (a page on the way only as what the reader takes from
@@ -87,7 +93,8 @@ import secrets  # noqa: E402
 import httpx  # noqa: E402
 import yaml  # noqa: E402
 
-from live_profile import FAKE_EMAIL, FAKE_PROFILE  # noqa: E402,F401  (scripts/live_profile.py: the fake applicant)
+import live_profile  # noqa: E402  (scripts/live_profile.py: the fake applicant, and its shapes)
+from live_profile import FAKE_EMAIL, FAKE_PROFILE  # noqa: E402,F401
 
 (_HOME / "profile.yaml").write_text(yaml.safe_dump(FAKE_PROFILE), encoding="utf-8")
 
@@ -137,6 +144,7 @@ ROLES: dict[str, dict[str, Any]] = {
 
 
 ROLE = "technician"  # the run's role (--role)
+SHAPE = "plain"  # the profile's shape (--profile-shape: live_profile.PROFILE_SHAPES)
 # the broad check's profile has the test inbox's address now (INBOX_AT): no screenshots printed or saved.
 # (The test identity keeps its own, for the accounts check: TEST_IDENTITY.md says its address can show there)
 INBOX_IN_PROFILE = False
@@ -167,6 +175,7 @@ def use_role(name: str, email: str | None = None) -> None:
     QUERY_AZ, QUERY_ANY = role["query_az"], role["query_any"]
     profile: dict[str, Any] = {**FAKE_PROFILE,
                                **{k: role[k] for k in ("work_history", "education_history", "education") if k in role}}
+    profile = live_profile.shaped(profile, SHAPE)  # (the role's background, in the run's shape)
     if TEST_IDENTITY:  # its name and inbox (with --plus, `email` is the employer: the inbox's "+employer" address)
         inbox = live_identity.credentials(os.environ)[0]
         profile = live_identity.identity_profile(profile, live_identity.plus_address(inbox, email) if email else inbox,
@@ -1113,6 +1122,10 @@ async def main() -> int:
                                                 "(default: semiconductor-az; e.g. phoenix-metro,semiconductor-az)")
     ap.add_argument("--role", choices=sorted(ROLES), default="technician",
                     help="the kind of job to look for, with a fake applicant to match (default: technician)")
+    ap.add_argument("--profile-shape", choices=live_profile.PROFILE_SHAPES, default="plain",
+                    help="with --pipeline: the fake profile as it is (plain), or written as a person might by hand "
+                         "(awkward: its job with no end date, two coursework entries at one school with no degree, a "
+                         "GED, a second phone; live_profile.awkward). Sundays' awkward check")
     ap.add_argument("--plus", action="store_true",
                     help="with --test-identity: its inbox's own \"+employer\" address at each employer, to see which "
                          "sites take one (a probe: Gmail delivers them all to the one inbox)")
@@ -1167,6 +1180,15 @@ async def main() -> int:
     if args.plus and not args.test_identity:
         print("--plus goes with --test-identity. Nothing was run.", file=sys.stderr)
         return 2
+    if args.profile_shape != "plain":
+        # (the test identity applies as itself, accounts and all; a stop page is decided again offline with the
+        # plain profile, fixtures.REPLAY_PROFILE; the search check applies with no profile)
+        clash = next((flag for flag, on in (("--test-identity", args.test_identity), ("--fixtures", args.fixtures))
+                      if on), None)
+        if clash or not args.pipeline:
+            said = f"goes without {clash}" if clash else "goes with --pipeline"
+            print(f"--profile-shape {args.profile_shape} {said}. Nothing was run.", file=sys.stderr)
+            return 2
     if args.test_identity:  # before anything else: without its inbox and passwords, nothing runs
         problem = live_identity.env_problem(os.environ) if args.pipeline else \
             "--test-identity goes with --pipeline. Nothing was run."
@@ -1182,8 +1204,11 @@ async def main() -> int:
         SECURITY_ANSWERS = args.security_answers
     else:
         mask_broad_email()
-    global TAILORED
+    global TAILORED, SHAPE
     TAILORED = args.tailored_resume
+    SHAPE = args.profile_shape
+    if SHAPE != "plain" and not args.shard:
+        print(f"Profile shape: {SHAPE} (live_profile.{SHAPE}).", flush=True)
     use_role(args.role)
     if args.lists and not TEST_IDENTITY:  # as a person's own companies.yaml names them, in this run's own home
         (_HOME / "companies.yaml").write_text(yaml.safe_dump({"lists": [n.strip() for n in args.lists.split(",")
@@ -2538,7 +2563,8 @@ async def parallel_main(args: argparse.Namespace) -> int:
               *(["--tailored-resume"] if args.tailored_resume else []),
               *(["--machine", args.machine] if args.machine else []),
               *(["--save-postings", str(args.save_postings)] if args.save_postings else []),
-              *(["--lists", args.lists] if args.lists else []), "--role", args.role]
+              *(["--lists", args.lists] if args.lists else []), "--role", args.role,
+              "--profile-shape", args.profile_shape]
     children = [await asyncio.create_subprocess_exec(
         sys.executable, __file__, *passed, "--shard", f"{i}/{n}", "--out", str(args.out / f"shard-{i}"),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, limit=2 ** 24) for i in range(n)]

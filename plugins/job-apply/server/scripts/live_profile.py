@@ -4,9 +4,10 @@ values without starting a run. Nothing in it is anyone's."""
 
 from __future__ import annotations
 
+import copy
 import re
 import secrets
-from typing import Any
+from typing import Any, Mapping
 
 # A fresh address each run, on example.com (which takes no mail): Oracle's sites stop sending
 # codes to an address after a day of runs ("Too Many Attempts. Try Again Later.").
@@ -45,3 +46,45 @@ FAKE_PROFILE: dict[str, Any] = {
     # accepted, so the check sees past it; one that can be declined still is: the owner asked, Oct 13)
     "settings": {"submit_mode": "dry_run", "browser_channel": "chromium", "headless": True, "accept_cookies": True},
 }
+
+# --profile-shape (live_smoke.py): "plain" applies with FAKE_PROFILE (its role's background in), "awkward" with the
+# same profile written as a person might write it by hand (awkward below). Sundays' awkward check (live-nightly.yml)
+# runs it beside the plain pipeline check, and nightly_summary.py --compare-shapes says where it got less far.
+PROFILE_SHAPES = ("plain", "awkward")
+AWKWARD_SCHOOL = "Arizona State University"  # (the plain profile's own school: no new real name in the repo)
+AWKWARD_PHONE = "602-555-0143"  # (555-01xx: no one's number)
+
+
+def awkward(profile: Mapping[str, Any] = FAKE_PROFILE) -> dict[str, Any]:
+    """The profile in an awkward shape (the design of Oct 18, A7), its jobs' titles, employers and starts and the
+    rest as they were:
+      - its current job held with no end date at all (`current: true`, which the desk reads as still held), not
+        "end: present";
+      - two entries at one school, both coursework: `degree: ""` (coursework is never a degree, and the desk must
+        never claim one for it), the role's major as the classes;
+      - a GED as the one credential finished (`education.highest_degree: GED`, `degrees_earned: [{level: ged}]`): no
+        diploma, no bachelor's;
+      - a second phone (`personal.alternate_phone`): the profile's own number stays `phone`, the one the desk fills;
+        no rule reads the second, so an "Alternate phone" box stays the person's.
+    Nothing in it is anyone's."""
+    out: dict[str, Any] = copy.deepcopy(dict(profile))
+    jobs = [dict(job) for job in out.get("work_history") or []]
+    if jobs:
+        jobs[0] = {**{k: v for k, v in jobs[0].items() if k != "end"}, "current": True}
+    out["work_history"] = jobs
+    schools = out.get("education_history") or [{}]
+    major = str(schools[0].get("major") or "General Studies")
+    out["education_history"] = [  # (most recent first, as the template has them)
+        {"school": AWKWARD_SCHOOL, "degree": "", "major": major, "start": 2018, "end": 2019},
+        {"school": AWKWARD_SCHOOL, "degree": "", "major": major, "start": 2015, "end": 2016},
+    ]
+    out["education"] = {"highest_degree": "GED", "degrees_earned": [{"level": "ged"}]}
+    out["personal"] = {**(out.get("personal") or {}), "alternate_phone": AWKWARD_PHONE}
+    return out
+
+
+def shaped(profile: Mapping[str, Any], shape: str) -> dict[str, Any]:
+    """The profile in one of PROFILE_SHAPES."""
+    if shape not in PROFILE_SHAPES:
+        raise ValueError(f"no profile shape named {shape!r}; shapes: {', '.join(PROFILE_SHAPES)}")
+    return awkward(profile) if shape == "awkward" else copy.deepcopy(dict(profile))

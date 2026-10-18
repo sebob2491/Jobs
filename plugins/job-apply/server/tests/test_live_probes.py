@@ -857,8 +857,9 @@ def test_what_a_run_does_is_decided_by_its_fresh_job(tmp_path, event, schedule, 
     output, summary = tmp_path / "output", tmp_path / "summary"
     env = {**{k: v for k, v in os.environ.items() if k in ("PATH", "SYSTEMROOT", "TEMP", "TMP")},
            "EVENT": event, "SCHEDULE": schedule, "CHECKS": checks, "WEEKLY": step["env"]["WEEKLY"], "REPO": "o/r",
-           "GH_TOKEN": "", "GITHUB_OUTPUT": str(output), "GITHUB_STEP_SUMMARY": str(summary)}
+           "GH_TOKEN": "", "GITHUB_OUTPUT": str(output), "GITHUB_STEP_SUMMARY": str(summary),
+           "DAY": "1"}  # (a Monday: Sundays' awkward check is test_live_shapes.py's)
     out = subprocess.run(["bash", "-e", "-c", step["run"]], env=env, capture_output=True, text=True, timeout=60)
     assert out.returncode == 0, out.stderr
     said = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").split())
-    assert said == {"go": go, "probes": probes}, said
+    assert said == {"go": go, "probes": probes, "awkward": "false"}, said

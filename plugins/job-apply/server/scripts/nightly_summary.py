@@ -29,6 +29,11 @@ whole body or a run's logs.
         # couldn't be checked this week (the site's or the person's), each under its own heading, then each reset
         # tenant's passes, step by step, and each tailored-resume employer's verdict; with --companies, those runs'
         # steps too
+    uv run python scripts/nightly_summary.py --compare-shapes PLAIN AWKWARD
+        # Sundays' awkward-profile check (a shape-awkward artifact: live_smoke.py --profile-shape awkward) against the
+        # plain pipeline check of the same run (its live-pipeline artifact), zips or folders: the employers where the
+        # awkward profile got less far (the plain one reached the review page, it didn't), and the values audit's
+        # warnings (live_audit.py) that only the awkward profile's review pages drew
 
 The issue ("Nightly live check", #54) is read over GitHub's public API, no sign-in needed; `--issue-file`
 reads a saved copy instead. The trend issue ("Nightly live trends", label live-trends: the last 60 runs) is
@@ -40,9 +45,11 @@ GitHub tools' artifact link, fetched with curl), then `--artifacts` reads them h
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import re
 import sys
+import tempfile
 import urllib.request
 import zipfile
 from collections import Counter
@@ -726,6 +733,82 @@ def timing(recs: list[dict[str, Any]], slowest: int = 5, earlier: list[dict[str,
     return out
 
 
+# --- Sundays' awkward profile against the plain one (the design of Oct 18, A7) ---------------------------------------
+
+def _as_folder(where: Path, stack: contextlib.ExitStack) -> Path:
+    """A run's artifact as a folder: a zip unpacked into a temporary one (the values audit reads its saved pages)."""
+    if where.is_file() and where.suffix == ".zip":
+        folder = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="shape-")))
+        with zipfile.ZipFile(where) as z:
+            z.extractall(folder)  # (zipfile keeps every name inside the folder)
+        return folder
+    return where
+
+
+def at_review(rec: dict[str, Any]) -> bool:
+    """The employer's last round reached the review page (as live_audit.review_pages and live_smoke.stopped_short)."""
+    rounds = rec.get("rounds") or []
+    return bool(rounds) and rounds[-1].get("status") == "ready"
+
+
+def stopped_at(rec: dict[str, Any]) -> str:
+    """Where an employer's run ended, in a few words: its last round's status, need and reason, or its crash."""
+    if rec.get("crash"):
+        return f"crash: {str(rec['crash'])[:160]}"
+    rounds = rec.get("rounds") or []
+    if not rounds:
+        return str(rec.get("note") or "no rounds")[:160]
+    last = rounds[-1]
+    said = " ".join(str(last[k]) for k in ("status", "need") if last.get(k))
+    reason = " ".join(str(last.get("reason") or "").split())[:160]
+    return f"{said}: {reason}" if reason else said
+
+
+def _values_warned(recs: dict[str, dict[str, Any]], folder: Path) -> dict[str, list[str]]:
+    """Each employer's values-audit warnings (live_audit.page_findings, against the profile its record noted), without
+    the employer's name in front."""
+    out: dict[str, list[str]] = {}
+    for name, rec, page in live_audit.review_pages(recs, folder):
+        text = live_audit.page_text(page.read_text(encoding="utf-8", errors="replace"))
+        out[name] = [said[len(name) + 2:] for said in live_audit.page_findings(name, text, rec["profile"])]
+    return out
+
+
+def compare_shapes(plain: Path, awkward: Path) -> list[str] | None:
+    """The awkward-profile check against the plain one of the same run (two live_smoke.py --pipeline artifacts, zips
+    or folders): how many employers each took to the review page; the employers where the awkward profile got less
+    far (the plain one reached the review page, it didn't), or wasn't checked; the ones where it got further; and the
+    values audit's warnings only the awkward profile drew at an employer (one the plain profile drew there too is
+    the site's or the tenant's, not the shape's). None when either holds no employer's record."""
+    with contextlib.ExitStack() as stack:
+        plain_dir, awkward_dir = _as_folder(plain, stack), _as_folder(awkward, stack)
+        plains = {str(r.get("company")): r for r in records(plain_dir)}
+        awkwards = {str(r.get("company")): r for r in records(awkward_dir)}
+        if not plains or not awkwards:
+            return None
+        plain_warned, awkward_warned = _values_warned(plains, plain_dir), _values_warned(awkwards, awkward_dir)
+    reached = {name for name, rec in plains.items() if at_review(rec)}
+    reached_awkward = {name for name, rec in awkwards.items() if at_review(rec)}
+    less = sorted(n for n in reached if n in awkwards and n not in reached_awkward)
+    unchecked = sorted(n for n in plains if n not in awkwards)
+    further = sorted(n for n in reached_awkward if n in plains and n not in reached)
+    only = {name: [w for w in warned if w not in plain_warned.get(name, [])]
+            for name, warned in sorted(awkward_warned.items())}
+    only = {name: warned for name, warned in only.items() if warned}
+    out = [f"shapes: the plain profile reached the review page at {len(reached)} of {len(plains)} employers, the "
+           f"awkward one at {len(reached_awkward)} of {len(awkwards)}"]
+    out.append(f"less far with the awkward profile: {len(less)}")
+    out += [f"  {name}: plain at the review page; awkward {stopped_at(awkwards[name])}" for name in less]
+    if unchecked:
+        out.append(f"not checked with the awkward profile: {len(unchecked)}: {', '.join(unchecked)}")
+    if further:
+        out.append(f"further with the awkward profile: {len(further)}")
+        out += [f"  {name}: awkward at the review page; plain {stopped_at(plains[name])}" for name in further]
+    out.append(f"values audit warned only for the awkward profile: {sum(len(w) for w in only.values())}")
+    out += [f"  {name}: {said}" for name, warned in only.items() for said in warned]
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--issue-file", help="a saved copy of the issue (its API JSON), instead of fetching it")
@@ -759,6 +842,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--unfinished", default="", help="with --digest: the checks that didn't finish (space-separated)")
     ap.add_argument("--logs", type=Path, nargs="*", default=[], help="with --digest: the checks' run.log files")
     ap.add_argument("--run-url", default="", help="with --digest: the run's address")
+    ap.add_argument("--compare-shapes", type=Path, nargs=2, metavar=("PLAIN", "AWKWARD"),
+                    help="the plain pipeline check's artifact and Sundays' awkward-profile check's (zips or folders): "
+                    "where the awkward profile got less far, and the values audit's warnings only it drew")
     args = ap.parse_args(argv)
     for stream in (sys.stdout, sys.stderr):  # (Windows' console is cp1252: a pay's "≈" and "–" are replaced, not fatal)
         reconfigure = getattr(stream, "reconfigure", None)
@@ -772,6 +858,17 @@ def main(argv: list[str] | None = None) -> int:
                            unfinished=args.unfinished, logs=[text(p) for p in args.logs], probes_dir=args.probes,
                            run_url=args.run_url)
         print(said, end="")
+        return 0
+    if args.compare_shapes:
+        try:
+            lines = compare_shapes(*args.compare_shapes)
+        except (OSError, ValueError, zipfile.BadZipFile) as e:
+            print(f"the shapes' results can't be read: {e}", file=sys.stderr)
+            return 1
+        if lines is None:
+            print("nothing to compare: an artifact holds no employer's record (did its check run?)", file=sys.stderr)
+            return 1
+        print("\n".join(lines))
         return 0
     if args.probes:
         try:
