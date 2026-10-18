@@ -90,6 +90,90 @@ _JWT = re.compile(r"\beyJ[\w-]{4,}\.[\w-]{4,}")
 # toll-free lines, the 555 numbers made up for tests and a form's 000 placeholder; an employer's published HR line
 _NOBODYS_AREA = {"800", "888", "877", "866", "855", "844", "833", "000"}
 _PUBLIC_LINES = {"510-572-4477"}  # Lam Research's HR support, on its captured pages
+# Ten digits with no separator, or one after the area code, after a word that says they're a phone's (fixtures.
+# _PHONE_SAID: the review of Oct 18)
+_PHONE_SAID = re.compile(r"\b(?:phone|mobile|cell|telephone|tel|fax|call|text|sms|whatsapp)\b"
+                         r"(?:\W{1,3}(?:number|no|us|me|at|on|is)\b)*(?:\s*\([^()]{0,30}\))?\W{1,4}?"
+                         r"(?:\+?1[\s.-]?)?(\d{3})[\s.-]?(\d{3})\d{4}(?!\d)", re.I)
+# A box with a value on a captured page: the scrubber empties every box but a choice's or a button's (fixtures.
+# clean_html), so one that's kept its value skipped the scrubber (the review of Oct 18). Only on the captured pages
+# (live/): the mock sites' pages are written by hand, some with their boxes filled on purpose, with the tests' fake
+# profile (conftest.PROFILE)
+_INPUT = re.compile(r"<input\b[^>]*>", re.I)
+_ATTR = re.compile(r"""([\w:-]+)\s*=\s*("[^"]*"|'[^']*'|[^\s"'>]+)""")
+_VALUE_KEPT = {"radio", "checkbox", "submit", "button", "image", "reset"}
+# Someone greeted by name ("Welcome, Jordan", "Welcome Back, Jordan", "Signed in as Jordan Quill", "HELLO JORDAN",
+# "Welcome, J. Quill"): the scrubber takes out only the profile's. The words after the greeting, any case
+_GREETING = re.compile(r"\b(welcome(?:\s+back)?|hi|hey|hello|good\s+(?:morning|afternoon|evening)|signed\s+in\s+as"
+                       r"|logged\s+in\s+as)\b((?:[\s,!:]+[^\W\d_][\w'\u2019.@-]*){1,6})", re.I)
+# Words between a greeting and a name, or that greet no one: fillers ("Welcome Back, Jordan", "Welcome Candidate
+# Jordan", "Hello Again, Jordan"), the scrubber's stand-in, and whom a page greets that's no one ("Hello World" in a UI
+# library's strings on Ebara's page, "Hey there", "Hi Team", "Welcome New Hires", "Welcome, Hiring Manager")
+_NOBODY = {"back", "again", "candidate", "candidates", "applicant", "applicants", "user", "users", "dear", "mr", "mrs",
+           "ms", "dr", "redacted", "world", "there", "everyone", "everybody", "all", "aboard", "home", "guest", "guests",
+           "friend", "friends", "folks", "team", "new", "hire", "hires", "veteran", "veterans", "student", "students",
+           "graduate", "graduates", "grads", "hiring", "manager", "managers", "recruiter", "recruiters", "member",
+           "members", "visitor", "visitors", "employee", "employees", "partner", "partners", "job", "jobs", "seeker",
+           "seekers", "talent", "alumni", "intern", "interns", "military", "community"}
+# Words that begin a phrase that isn't a name ("Welcome to Acme Careers", "Welcome Students and Graduates"): what follows
+# them is no one's, until a comma ("Welcome to the team, Jordan")
+_PHRASE = {"to", "the", "and", "our", "your", "you", "in", "on", "at", "from", "for", "of", "with"}
+_FAKE_NAME = {"sam", "rivera"}  # the tests' fake profile (conftest.PROFILE), on a mock site's page
+
+
+def _greeted(greeting: str, words: str) -> str:
+    """The name a greeting's words give, else "": past its fillers and those that greet no one (_NOBODY), and outside a
+    phrase (_PHRASE) until a comma ends it, a word written as a name or in capitals, the tests' fake profile's aside;
+    after "Signed in as", the next such word, whatever its case ("jordan.quill"). A word of prose begins a phrase too,
+    and a sentence's end ends the greeting ("Welcome text region. Use up and down" on Edwards' page)."""
+    signed_in = greeting.lower().split()[-1] == "as"
+    phrase = False
+    for comma, word in re.findall(r"(,)|([^\W\d_][\w'\u2019.@-]*)", words):
+        if comma:
+            phrase = False
+            continue
+        low = word.rstrip(".'\u2019").lower()
+        if low in _NOBODY or low in _FAKE_NAME:
+            continue
+        if low in _PHRASE:
+            phrase = True
+            continue
+        if not phrase and (signed_in or word[0].isupper()):
+            return word
+        if signed_in or len(low) > 1 and word.endswith("."):  # (not an initial's point: "J. Quill")
+            return ""
+        phrase = True  # (a word of prose, not a name: "Welcome text region")
+    return ""
+
+
+def _personal_data(text: str, shown: str, live: bool, allowed: set[str]) -> list[str]:
+    """What the gate finds in one fixture's text (`live`: a captured page, whose boxes the scrubber emptied)."""
+    problems = []
+    for m in _EMAIL.finditer(text):
+        domain = m.group(1).lower()
+        root = ".".join(domain.split(".")[-2:])
+        if domain in PUBLIC_MAIL or root in PUBLIC_MAIL:
+            problems.append(f"{shown}: an address at {domain}")
+        elif domain not in allowed and root not in allowed:
+            problems.append(f"{shown}: an address at {domain}, neither a listed employer's nor a job system's")
+    problems += [f"{shown}: {value!r}" for value in PLANTED if value.lower() in text.lower()]
+    for m in _PHONE.finditer(text):
+        area, exchange = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+        if exchange != "555" and area not in _NOBODYS_AREA \
+                and re.sub(r"^(?:tel:\s*)?\+?1[-. ]?", "", m.group(0), flags=re.I) not in _PUBLIC_LINES:
+            problems.append(f"{shown}: a phone number {m.group(0)!r}")
+    problems += [f"{shown}: a phone number {m.group(0)!r}" for m in _PHONE_SAID.finditer(text)
+                 if m.group(2) != "555" and m.group(1) not in _NOBODYS_AREA]
+    problems += [f"{shown}: an SSN's shape {v!r}" for v in _SSN.findall(text)]
+    problems += [f"{shown}: a token {v[:12]!r}…" for v in _JWT.findall(text)]
+    problems += [f"{shown}: someone greeted by name {m.group(0).strip()!r}" for m in _GREETING.finditer(text)
+                 if _greeted(m.group(1), m.group(2))]
+    if live:
+        for m in _INPUT.finditer(text):
+            attrs = {k.lower(): v.strip("\"'") for k, v in _ATTR.findall(m.group(0)[len("<input"):])}
+            if attrs.get("type", "text").lower() not in _VALUE_KEPT and attrs.get("value", "").strip():
+                problems.append(f"{shown}: a box that kept its value {m.group(0)[:120]!r}")
+    return problems
 
 
 def _employer_domains() -> set[str]:
@@ -111,30 +195,56 @@ def test_captured_pages_hold_no_personal_data():
     can't know: no address at a public mail provider or at a domain that isn't a listed employer's or a job
     system's (an employer's own accommodation inbox is fine), and none of the fake profile's or the test
     identity's details (the whole-program review of Oct 15 asked for it); and nobody's phone (one with separators or a
-    click-to-call link's digits), SSN-shaped number or token (the reviews of Oct 15 and 0.3.189)."""
+    click-to-call link's digits), SSN-shaped number or token (the reviews of Oct 15 and 0.3.189); nor ten bare digits
+    after a phone word, anyone greeted by name, or a captured page's box that kept its value (the review of Oct 18)."""
     allowed = _employer_domains() | JOB_SYSTEMS | {"example.com", "example.org", "example.net"}
     problems = []
     for path in sorted(FIXTURES.rglob("*")):
         if not path.is_file() or path.suffix not in (".html", ".json", ".txt", ".md", ".yaml"):
             continue
-        text = path.read_text(encoding="utf-8", errors="replace")
-        shown = path.relative_to(SERVER).as_posix()
-        for m in _EMAIL.finditer(text):
-            domain = m.group(1).lower()
-            root = ".".join(domain.split(".")[-2:])
-            if domain in PUBLIC_MAIL or root in PUBLIC_MAIL:
-                problems.append(f"{shown}: an address at {domain}")
-            elif domain not in allowed and root not in allowed:
-                problems.append(f"{shown}: an address at {domain}, neither a listed employer's nor a job system's")
-        problems += [f"{shown}: {value!r}" for value in PLANTED if value.lower() in text.lower()]
-        for m in _PHONE.finditer(text):
-            area, exchange = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
-            if exchange != "555" and area not in _NOBODYS_AREA \
-                    and re.sub(r"^(?:tel:\s*)?\+?1[-. ]?", "", m.group(0), flags=re.I) not in _PUBLIC_LINES:
-                problems.append(f"{shown}: a phone number {m.group(0)!r}")
-        problems += [f"{shown}: an SSN's shape {v!r}" for v in _SSN.findall(text)]
-        problems += [f"{shown}: a token {v[:12]!r}…" for v in _JWT.findall(text)]
+        problems += _personal_data(path.read_text(encoding="utf-8", errors="replace"), path.relative_to(SERVER).as_posix(),
+                                   path.relative_to(FIXTURES).parts[0] == "live", allowed)
     assert not problems, "personal data in the fixtures:\n" + "\n".join(sorted(set(problems)))
+
+
+def test_each_rule_of_the_fixture_gate_finds_what_its_for():
+    """A rule whose pattern never matches would pass every fixture (the review of Oct 18): each finds a planted string
+    (every value made up), and lets the page's own words be."""
+    found = {
+        # (an address and a phone written in two parts: whole, test_no_personal_data would find them in this file)
+        "an address at gmail.com": "write to someone@gmail.com", "neither a listed": "write to a@b-staffing" ".org",
+        "'McTestface'": "Sam McTestface", "a phone number '(602) 431-": "call (602) 431" "-0188",
+        "a phone number 'Phone: 6024310188'": "Phone: 6024310188",
+        "a phone number 'Mobile: +1 6024310188'": "Mobile: +1 6024310188",
+        "a phone number 'Phone (optional) 602-4310188'": "Phone (optional) 602-4310188",
+        "an SSN's shape": "SSN 123-45-6789", "a token": "eyJhbGciOi.eyJzdWIiOi",
+        "greeted by name 'Welcome, Jordan'": "<p>Welcome, Jordan</p>",
+        "greeted by name 'Welcome Back, Jordan'": "<p>Welcome Back, Jordan</p>",
+        "greeted by name 'Welcome Back Jordan Quill'": "<p>Welcome Back Jordan Quill</p>",
+        "greeted by name 'Welcome Candidate Jordan'": "<p>Welcome Candidate Jordan</p>",
+        "greeted by name 'Hello Again, Jordan Quill'": "<p>Hello Again, Jordan Quill</p>",
+        "greeted by name 'Hey Jordan'": "<p>Hey Jordan</p>", "greeted by name 'Good morning, Jordan'": "<p>Good morning, Jordan</p>",
+        "greeted by name 'HELLO JORDAN'": "<p>HELLO JORDAN</p>", "greeted by name 'Welcome, J. Quill'": "<p>Welcome, J. Quill</p>",
+        "greeted by name 'Signed in as Jordan'": "<p>Signed in as Jordan</p>",
+        "greeted by name 'Hey there, Jordan'": "<p>Hey there, Jordan</p>",
+        "greeted by name 'Hi Team Jordan'": "<p>Hi Team Jordan</p>",
+        "greeted by name 'Welcome to the team, Jordan'": "<p>Welcome to the team, Jordan</p>",
+        "greeted by name 'Signed in as jordan.quill'": "<p>Signed in as jordan.quill</p>",
+        "kept its value '<input id=a value=Jordan>'": "<input id=a value=Jordan>",
+        "kept its value '<input type=\"hidden\" value=\"tok\">'": '<input type="hidden" value="tok">',
+        "kept its value '<input type=\"password\" value=\"pw\">'": '<input type="password" value="pw">',
+        "kept its value '<input type=\"number\" value=\"42\">'": '<input type="number" value="42">',
+    }
+    for said, text in found.items():
+        problems = _personal_data(text, "x.html", True, {"example.com"})
+        assert any(said in p for p in problems), (said, problems)
+    for text in ("Welcome Back</h1>", "Hello World", "Welcome to Acme Careers", "Welcome, REDACTED", "hi there",
+                 "Welcome New Hires", "Welcome Veterans", "Welcome Students and Graduates", "Welcome, Hiring Manager",
+                 "Signed in as REDACTED", "Hey there, how are you?", "Welcome text region. Use up and down",
+                 "Welcome, Sam Rivera", "Phone: 6025550188", "Requisition 6024310188", '<input type="radio" value="Yes">',
+                 '<input type="submit" value="Apply">', '<input type="checkbox" value="on">', "<input value=''>"):
+        assert _personal_data(text, "x.html", True, {"example.com"}) == [], text
+    assert _personal_data("<input id=a value=Sam>", "x.html", False, {"example.com"}) == []  # (a mock site's page)
 
 
 def test_every_fixture_is_used():

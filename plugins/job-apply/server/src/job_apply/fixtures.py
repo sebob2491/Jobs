@@ -104,7 +104,7 @@ def _edge(c: str, ahead: bool, humps: bool, inside: bool = False) -> str:
 def _pattern(secret: str, inside: bool = False) -> str:
     """A value as a pattern that finds it as a whole word only (never "Ash" in "washing", nor a
     ZIP code in a longer number), and written another way too: a phone number with any
-    separators ("(480) 555-0142", "+1 480.555.0142", "020 7946 0958"); words with any spacing,
+    separators ("(480) 555-0142", "+1 480.555.0142", "480/555/0142", "020 7946 0958"); words with any spacing,
     dots, dashes or underscores between them, or none ("742 W. Evergreen Ter.", "Jane_Doe",
     "janedoe"). Several words may run on at the end, as an address written out does
     ("742 W Evergreen Terrace"). `inside`: for the name of something (`_RUN`), where a surname
@@ -114,7 +114,7 @@ def _pattern(secret: str, inside: bool = False) -> str:
     turns too: "JDoeResume"), since in a longer word it's that word's, not the person's: not "Tom" in
     "custom_field", nor "Ted" in "status=accepted". A longer one goes wherever it is ("samrivera87")."""
     if secret.isdigit() and len(secret) >= 7:  # its country code (or the US one), or a 0 before it, may be left off
-        apart = r"[\s.\-()]*"
+        apart = r"[\s.\-()/]*"  # (and "480/555/0142": the review of Oct 18)
         return (rf"(?<!\d)(?:\+?{apart.join(secret[:-10] or '1')}[\s.\-]*|0[\s.\-]*)?{apart.join(secret[-10:])}"
                 r"(?!\d)")
     words = [w.rstrip(".,") for w in secret.split()] if len(secret.split()) > 1 else [secret]
@@ -156,14 +156,37 @@ def redact(text: str, secrets: list[str]) -> str:
 # third party's email and phone, an SSN's or a birth date's shape, a candidate id, a token all survived the scrubber,
 # which knew only the profile's own strings): each taken out wherever it's written, words or attributes
 _EMAIL = re.compile(r"\b[\w.%+-]+@(?!example\.(?:com|org|net)\b)[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}\b", re.I)
-_PHONE = re.compile(r"(?<![\w-])(?:\+?1[-. ]?)?\(?\d{3}\)?[-. ]\d{3}[-. ]\d{4}(?![\w-])")
+# (and one with no separator after its area code, "(602)5550188": the review of Oct 18)
+_PHONE = re.compile(r"(?<![\w-])(?:\+?1[-. ]?)?(?:\(?\d{3}\)?[-. ]\d{3}[-. ]|\(\d{3}\)\d{3}[-. ]?)\d{4}(?![\w-])")
+# Ten digits with no separator, or one only after the area code, after a word that says they're a phone's ("Phone:
+# 6025550188", "Mobile: +1 6025550188", "Phone (optional) 602-5550188", "call us at +16025550188"): elsewhere they may
+# be a requisition's or an order's number
+_PHONE_SAID = re.compile(r"\b((?:phone|mobile|cell|telephone|tel|fax|call|text|sms|whatsapp)\b"
+                         r"(?:\W{1,3}(?:number|no|us|me|at|on|is)\b)*(?:\s*\([^()]{0,30}\))?\W{1,4}?)"
+                         r"(?:\+?1[\s.-]?)?\d{3}[\s.-]?\d{7}(?!\d)", re.I)
 _SSN = re.compile(r"(?<![\w-])\d{3}-\d{2}-\d{4}(?![\w-])")
-_BIRTH_DATE = re.compile(r"\b((?:date of birth|birth ?date|d\.?o\.?b\.?)\W{0,3})[\d/.-]{6,10}", re.I)
+_MONTH = (r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|"
+          r"oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?")
+# A birth date in digits, or with its month's name ("Born 14 March 1990", "Birthday: March 14, 1990": the review of
+# Oct 18)
+_BIRTH_DATE = re.compile(r"\b((?:date of birth|birth ?date|birthday|born(?: on)?|d\.?o\.?b\.?)\W{0,3})"
+                         r"(?:[\d/.-]{6,10}|\d{1,2}(?:st|nd|rd|th)?\s+(?:of\s+)?" + _MONTH + r",?\s+\d{4}"
+                         r"|" + _MONTH + r"\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4})(?!\d)", re.I)
 _CANDIDATE_ID = re.compile(r"\b((?:candidate|applicant|application|user|profile|person) ?(?:id|number|no\.?|#)\W{0,3})"
                            r"(?=[\w-]*\d)[\w-]{4,}", re.I)  # (one with a digit in it: never the next label's words)
+# A license's, a passport's, an EIN's or a card's number after its label ("Driver's License #: D1234567", "Driver
+# License: AZ D12345678", "Card number: 4111 1111 1111 1111": the review of Oct 18), as _CANDIDATE_ID: its words with a
+# digit in them, groups and all (and a state's code before a license's). A card only as a credit or debit card or
+# with its number's word: never "card-header-v2"
+_LABELLED_ID = re.compile(r"\b((?:(?:driver[’']?s?\s+)?licen[cs]e|passport|(?-i:EIN)|employer identification|"
+                          r"(?:credit|debit)\s+card)\b(?:\s*(?:(?:id|number|no)\b\.?|#))?\W{0,3}"
+                          r"|\bcard\s*(?:(?:number|no)\b\.?|#)\W{0,3})"
+                          r"(?:(?-i:[A-Z]{2})\s+)?(?=[\w-]*\d)[\w-]{4,}(?:[ ](?=[\w-]*\d)[\w-]+)*", re.I)
+# An IBAN after its label, its groups with letters too ("IBAN: GB82 WEST 1234 5698 7654 32")
+_IBAN = re.compile(r"\b(IBAN(?:\s*(?:number|no\.?|#))?\W{0,3})[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{1,4}){2,8}\b")
 _JWT = re.compile(r"\beyJ[\w-]{4,}\.[\w-]{4,}(?:\.[\w-]*)?")
 # a click-to-call link's number, written with no separators ("tel:+16025550147": the review of 0.3.189)
-_TEL = re.compile(r"\b(tel:)\s*\+?\d[\d().\s-]{6,}\d", re.I)
+_TEL = re.compile(r"\b(tel:\s*)\+?\d[\d().\s-]{6,}\d", re.I)  # (a "Tel: " label keeps its space)
 _LONG_HEX = re.compile(r"\b[0-9a-f]{32,}\b", re.I)
 
 
@@ -175,8 +198,11 @@ def scrub_others(text: str) -> str:
     text = _SSN.sub("000-00-0000", text)
     text = _TEL.sub(r"\g<1>5555550100", text)
     text = _PHONE.sub("555-555-0100", text)
+    text = _PHONE_SAID.sub(r"\g<1>5555550100", text)
     text = _BIRTH_DATE.sub(lambda m: m.group(1) + "01/01/2000", text)
     text = _CANDIDATE_ID.sub(lambda m: m.group(1) + REDACTED, text)
+    text = _LABELLED_ID.sub(lambda m: m.group(1) + REDACTED, text)
+    text = _IBAN.sub(lambda m: m.group(1) + REDACTED, text)
     return _LONG_HEX.sub(REDACTED, text)
 
 

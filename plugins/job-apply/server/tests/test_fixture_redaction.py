@@ -276,3 +276,57 @@ def test_the_expectations_are_scrubbed_like_their_page(tmp_path):
         assert leaked not in written, leaked
     for field in json.loads(written)["fields"]:
         assert f">{field['label']}<" in page, field["label"]
+
+
+def test_the_shapes_the_review_of_oct_18_found_surviving_are_taken_out(tmp_path):
+    """The review of Oct 18 planted more on a page: a third party's phone as ten bare digits after a phone word and with
+    no separator after its area code, the person's own phone written with slashes, birth dates with the month's name,
+    and a license's, a passport's, an EIN's, an IBAN's and a card's numbers after their labels. All stayed, in the page
+    and in its .expect.json; none does now. (Every value made up.)"""
+    planted = {
+        "bare phone": "Phone: 6025550188", "call us": "call us at +16025550177", "no gap": "(602)5550166",
+        "own phone": "480/555/0142", "born": "Born 14 March 1990", "birthday": "Birthday: March 14, 1990",
+        "born on": "born on 3rd of Sept. 1985", "license": "Driver's License #: D12345678",
+        "passport": "Passport number: X98765432", "ein": "EIN: 12-3456789",
+        "iban": "IBAN: DE89 3704 0044 0532 0130 00", "card": "Card number: 4111 1111 1111 1111",
+    }
+    values = {"bare phone": "6025550188", "call us": "6025550177", "no gap": "5550166", "own phone": "480/555/0142",
+              "born": "14 March 1990", "birthday": "March 14, 1990", "born on": "Sept. 1985", "license": "D12345678",
+              "passport": "X98765432", "ein": "3456789", "iban": "3704 0044", "card": "1111 1111"}
+    prof = Profile({"personal": {"first_name": "Jordan", "last_name": "Quill", "phone": "480-555-0142"}})
+    snap = tmp_path / "snap"
+    snap.mkdir()
+    (snap / "page.html").write_text("<html><body>" + "".join(
+        f'<label for="f{i}">{what}</label><input id="f{i}"><p title="{text}">{text}</p>'
+        for i, (what, text) in enumerate(planted.items())) + "</body></html>", encoding="utf-8")
+    (snap / "snapshot.json").write_text(json.dumps({
+        "url": "https://x.example/apply", "frames": [{"file": "page.html", "url": "https://x.example/apply"}],
+        "fields": [{"label": f"{what} ({text})", "kind": "text"} for what, text in planted.items()]}), encoding="utf-8")
+    convert(snap, "shapes", tmp_path / "out", prof)
+    page = (tmp_path / "out" / "shapes.html").read_text(encoding="utf-8")
+    written = (tmp_path / "out" / "shapes.expect.json").read_text(encoding="utf-8")
+    for what, value in values.items():
+        assert value not in page and value not in written, (what, value)
+    # (the labels stay, and what isn't anyone's: a requisition's ten digits, a word that only starts like a label)
+    for kept in ("Phone: ", "Driver's License #: ", "IBAN: ", "Card number: ", "Born "):
+        assert kept in page and kept in written, kept
+    kept = clean_html("<p>Requisition 6025550188. Licensed in 2019. Cardinal 12345. Born to lead.</p>", [])
+    assert "Requisition 6025550188. Licensed in 2019. Cardinal 12345. Born to lead." in kept
+
+
+def test_the_shapes_the_second_look_of_oct_18_found_are_taken_out_and_a_pages_own_words_kept():
+    """The review of the scrubber's new shapes (Oct 18) found more that stayed: a phone after its word with a country
+    code apart or one separator, or a parenthetical between them; an IBAN with a group of letters; a driver's license
+    after its state's code. And words that weren't anyone's that went: a card's class names ("card-header-v2"), and a
+    "Tel: " label's space. (Every value made up.)"""
+    planted = {"Mobile: +1 6025550181": "6025550181", "Phone: +1-6025550182": "6025550182",
+               "Phone: 602-5550183": "5550183", "Phone (optional) 6025550184": "6025550184",
+               "IBAN: GB82 WEST 1234 5698 7654 32": "WEST 1234", "Driver License: AZ D12345678": "D12345678"}
+    out = clean_html("<html><body>" + "".join(f"<p>{text}</p>" for text in planted) + "</body></html>", [])
+    for text, value in planted.items():
+        assert value not in out, (text, out)
+    assert "Phone (optional) " in out and "Driver License: " in out and "IBAN: " in out
+    kept = clean_html('<div class="card-header-v2 ui-card-1dp css-1fra0yr" data-x="card-header-v2">'
+                      "<p>Tel: 602.555.0188</p><p>Card 2 of 3: report card-1dp</p></div>", [])
+    assert 'class="card-header-v2 ui-card-1dp css-1fra0yr"' in kept and 'data-x="card-header-v2"' in kept
+    assert "card-1dp" in kept and "<p>Tel: 5555550100</p>" in kept

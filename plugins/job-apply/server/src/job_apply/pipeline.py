@@ -748,7 +748,8 @@ class WentIn:
     person, the account made, and the optional questions left empty. Never a password, an emailed code or a security
     question's answer (_kept_out), and bounded (WENT_IN_ANSWERS, WENT_IN_CHARS, WENT_IN_LINES). Plain text alone, so
     Run.public() stays JSON's."""
-    answers: dict[str, dict[str, str]] = field(default_factory=dict)  # by place: page, section, label, value, kind
+    # by place: page, section, label, value, kind ("answer", "choice": one of a list's own, "file")
+    answers: dict[str, dict[str, str]] = field(default_factory=dict)
     left: dict[str, dict[str, str]] = field(default_factory=dict)  # optional questions left empty, by place
     agreed: list[str] = field(default_factory=list)  # notices, terms and attestations agreed to for the person
     accounts: list[str] = field(default_factory=list)  # accounts made
@@ -1984,6 +1985,21 @@ class Applier:
             pass
         return {v for v in hidden if " ".join(v.split()).casefold() not in _DESK_WORDS}
 
+    @staticmethod
+    def _report_hidden(run: Run) -> set[str]:
+        """What a problem report or a note on this run keeps out on top of the profile's details (report.report_strings
+        has those, as a report says them): what's this run's alone, should a page's error the desk quotes echo it. The
+        desk's secrets, the digest of the password it signed in with, the person's answers for this application and
+        what was typed into the form (4 characters or more; not a choice a list offered: "Mobile Phone"), and an account
+        form's security answers and the codes the inbox gave for this job (3 or more: report.build takes them out as
+        whole words). Never the profile's own words, which a report also says as a page's ("Workday", a job's title)."""
+        hidden = {v for v in set(_secret_values()) | _texts(run.once) | {run.sign_in_key}
+                  | {str(e.get("value") or "") for e in list(run.went_in.answers.values()) if e.get("kind") == "answer"}
+                  if len(v.strip()) >= 4}
+        hidden |= {v for v in _texts(run.account_answers)
+                   | {mail[1] for mail, job_id in list(_MAIL_TAKEN.items()) if job_id == run.job_id} if len(v.strip()) >= 3}
+        return {v for v in hidden if " ".join(v.split()).casefold() not in _DESK_WORDS}
+
     # ------------------------------------------------------------- worker
     async def _worker(self) -> None:
         while True:
@@ -2955,7 +2971,7 @@ class Applier:
         taking it, the job still pauses and the queue goes on."""
         try:
             job = self.srv.tracker().get(run.job_id, with_description=False) or {"id": run.job_id}
-            report.take_note(job, run)
+            report.take_note(job, run, hide=self._report_hidden(run))  # (what's this run's alone, kept out)
         except Exception:
             logging.getLogger(__name__).warning("couldn't take a note on job %s's stop", run.job_id, exc_info=True)
 
@@ -7879,6 +7895,10 @@ def _page_boxes(pages: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
     return list(boxes.values())
 
 
+# The kinds of box whose answer is one of the page's own choices (a WentIn answer's kind "choice")
+_CHOSEN = {"select", "radio_group", "checkbox_group", "checkbox", "listbox"}
+
+
 def _went_value(box: dict[str, Any], value: Any, rule: str) -> tuple[str, str]:
     """An answer as the panel shows it: ("file", its file's name) for a document put up, else ("answer", the words),
     a tick said in words, a long text's start alone."""
@@ -7945,6 +7965,9 @@ def _went_in(run: Run, filled: list[dict[str, Any]], *pages: dict[str, Any], sho
             kind, said = _went_value(after[fid], back, "")
         if not said:
             continue
+        if kind == "answer" and (str(box.get("kind") or "") in _CHOSEN or said in {
+                o for o in box.get("options") or [] if isinstance(o, str)}):
+            kind = "choice"  # (one of a list's own choices: nothing typed, and no report keeps it out: _report_hidden)
         named = _box_said(box)
         if kind == "file":  # (said as the document it is: an upload's own words can be "Accepted file format: .pdf")
             named["label"] = _DOCUMENTS.get(rule) or named["label"]

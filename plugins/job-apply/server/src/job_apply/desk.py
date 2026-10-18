@@ -538,7 +538,9 @@ class Desk:
                 anonymous = False  # (the page's box for a report that doesn't say which job it was)
                 with contextlib.suppress(ValueError):
                     anonymous = (await self._body(request)).get("anonymous") is True
-                return JSONResponse(await asyncio.to_thread(report.build, job, a.runs.get(job_id), anonymous=anonymous))
+                run = a.runs.get(job_id)  # (and what the desk's history keeps out of a line on it, the report too)
+                hide = await asyncio.to_thread(Applier._report_hidden, run) if run is not None else set()
+                return JSONResponse(await asyncio.to_thread(report.build, job, run, anonymous=anonymous, hide=hide))
             else:
                 return JSONResponse({"error": f"unknown action {action!r}"}, status_code=404)
         except (KeyError, ValueError) as e:

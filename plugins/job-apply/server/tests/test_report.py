@@ -516,3 +516,162 @@ def test_a_note_says_which_job_system_the_job_stopped_on(job_apply_home):
     r.url = "https://careers.acme-semi.example/apply"
     assert "at an iCIMS employer" in report.note({"id": 13, "ats": "icims"}, r, PERSON)
     assert "at an employer with its own careers site" in report.note({"id": 13, "ats": "company_site"}, r, PERSON)
+
+
+def _quoting_run(job_id: int) -> Run:
+    """A run whose page echoed an answer the person gave on a card ("Nights") in its errors, and whose log has the
+    code the inbox gave for it (482913): the desk's history keeps both out, and a report (Applier._report_hidden)."""
+    return Run(job_id, "Field Service Engineer", "Example Fab", status="needs_you", need="stuck",
+               reason="review page shows errors: Shift: Nights isn't open for this job",
+               log=["typed the code 482913 the inbox gave", "the review page shows errors"],
+               once={"Shift": "Nights"},
+               page_info={"url": "https://example.com/apply/review", "title": "Review",
+                          "errors": ["Shift: Nights isn't open for this job"]})
+
+
+def test_a_report_and_a_note_hide_what_the_desk_history_hides(srv, job_apply_home, monkeypatch):
+    """A page's error the desk quotes (its reason, the page's errors) can echo what the person typed on a card, and a log
+    line the code the inbox gave: the history keeps them out of its line, and a report and a note (filed in public) did
+    not (the review of Oct 18). The desk's Report, Claude's report_problem and the note the desk takes all hide them."""
+    import time
+
+    import httpx
+
+    from job_apply import desk as desk_module
+    from job_apply import pipeline
+    from job_apply.pipeline import Applier
+
+    job = srv.add_job(url="https://example.com/jobs/fse", title="Field Service Engineer", company="Example Fab")["job"]
+    monkeypatch.setitem(pipeline._MAIL_TAKEN, ("noreply@example.com", "482913", time.time()), job["id"])
+    r = _quoting_run(job["id"])
+    hide = Applier._report_hidden(r)
+    assert {"Nights", "482913"} <= hide
+
+    def hidden(text: str) -> None:
+        assert "Nights" not in text and "482913" not in text, text
+        assert "review page shows errors" in text, text  # (the desk's own words stay)
+
+    built = report.build(job, r, PERSON, hide=hide)
+    hidden(built["preview"])
+    hidden(parse_qs(urlsplit(built["issue_url"]).query)["body"][0])
+    hidden(report.note(job, r, PERSON, hide=hide))
+
+    # (and so do the callers: the desk's Report, Claude's report_problem, the note the desk takes on a stop)
+    d = desk_module.get_desk(srv)
+    d.applier.start = lambda: None
+    d.applier.runs[job["id"]] = r
+
+    async def go():
+        await d.start(port=0, open_browser=False)
+        try:
+            async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{d.port}", timeout=20, trust_env=False) as c:
+                said = await c.post(f"/api/job/{job['id']}/report", headers={"x-desk-token": d.token}, json={})
+                return said.json()
+        finally:
+            await d.stop()
+    try:
+        for out in (run(go()), run(srv.report_problem(job["id"]))):
+            hidden(out["preview"])
+            hidden(parse_qs(urlsplit(out["issue_url"]).query)["body"][0])
+        d.applier._take_note(r)
+        [taken] = (job_apply_home / "notes").glob("*.md")
+        hidden(taken.read_text(encoding="utf-8"))
+    finally:
+        desk_module._desk = None
+
+
+def _reported(srv, job_apply_home, job, r) -> tuple[str, str]:
+    """Claude's report_problem on the desk's run `r`, and the note the desk takes on its stop: their texts."""
+    from job_apply import desk as desk_module
+
+    d = desk_module.get_desk(srv)
+    d.applier.runs[job["id"]] = r
+    try:
+        out = run(srv.report_problem(job["id"]))
+        d.applier._take_note(r)
+    finally:
+        desk_module._desk = None
+    [taken] = (job_apply_home / "notes").glob("*.md")
+    return out["preview"] + "\n" + parse_qs(urlsplit(out["issue_url"]).query)["body"][0], taken.read_text(encoding="utf-8")
+
+
+def test_a_report_keeps_the_profiles_everyday_words_the_page_says_too(srv, job_apply_home):
+    """The review of Oct 18: given every word of the profile to keep out (as the history keeps out of its reason), a
+    report took out what the profile shares with the page, the template's own: "REDACTED at Example Fab" for a job
+    titled as the profile's wanted titles, "https://www.REDACTED.com/…", "REDACTED Phone", "the REDACTED sign-in page".
+    The profile's details are report_strings' to take out; the run's own are what's this run's alone, never a list's
+    own choice that went in, nor anything in an address or in the job's own lines."""
+    import yaml
+
+    from job_apply.pipeline import WentIn
+
+    path = job_apply_home / "profile.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data["personal"]["phone_type"] = "Mobile"
+    data["preferences"].update(how_did_you_hear="LinkedIn", titles=["Field Service Engineer"])
+    data["work_history"][0]["description"] = "Kept Workday and SAP records."
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    job = srv.add_job(url="https://www.linkedin.com/jobs/view/4012345678", title="Field Service Engineer",
+                      company="Example Fab")["job"]
+    went = WentIn(answers={"a": {"page": "Apply", "label": "Phone Type", "value": "Mobile Phone", "kind": "choice"},
+                           "b": {"page": "Apply", "label": "Source", "value": "LinkedIn", "kind": "choice"}})
+    r = Run(job["id"], "Field Service Engineer", "Example Fab", status="needs_you", need="stuck",
+            reason="review page shows errors: Mobile Phone is required", went_in=went,
+            log=["opened https://www.linkedin.com/jobs/view/4012345678", "on the Workday sign-in page"],
+            page_info={"url": "https://example.wd1.myworkdayjobs.com/x", "title": "Apply",
+                       "fields": [{"label": "Mobile Phone", "kind": "text", "required": True, "empty": False}]})
+    text, taken = _reported(srv, job_apply_home, job, r)
+    for kept in ("**Job:** Field Service Engineer at Example Fab", "https://www.linkedin.com/jobs/view/4012345678",
+                 "Mobile Phone is required", "- Mobile Phone (text, required, filled)", "the Workday sign-in page"):
+        assert kept in text, kept
+    assert "## stuck: Field Service Engineer, at" in taken and "Mobile Phone is required" in taken
+    assert "the Workday sign-in page" in taken and "REDACTED" not in taken
+
+
+def test_a_report_hides_the_runs_own_answers_however_a_page_echoes_them(srv, job_apply_home, monkeypatch):
+    """The review of Oct 18: a phone typed on a card ("602-555-0177") came back in a page's error written another way,
+    a long answer cut short by the page's error, and an account form's 3-letter answer and a 3-letter code (the history
+    hides 4 or more): all reached a report and a note. None does now, and the desk's own words stay."""
+    import time
+
+    from job_apply import pipeline
+
+    long = "I maintained 300mm etch tools across two fabs and cut unplanned downtime by a third over four years."
+    job = srv.add_job(url="https://example.com/jobs/fse", title="Technician", company="Example Fab")["job"]
+    monkeypatch.setitem(pipeline._MAIL_TAKEN, ("noreply@example.com", "Q7Z", time.time()), job["id"])
+    r = Run(job["id"], "Technician", "Example Fab", status="needs_you", need="stuck",
+            reason="review page shows errors: Phone (602) 555-0177 isn't a mobile number",
+            once={"Phone": "602-555-0177", "Why this job?": long}, account_answers={"First pet": "Rex"},
+            log=["the page said 6025550177 isn't valid", "typed the code Q7Z the inbox gave",
+                 "the security answer Rex was refused"],
+            page_info={"url": "https://example.com/apply", "title": "Apply",
+                       "errors": [f"{long[:50]}… exceeds 100 characters", "602.555.0177 isn't valid"]})
+    for text in _reported(srv, job_apply_home, job, r):
+        for value in ("555-0177", "5550177", "555.0177", "300mm etch", "across two fabs", "Q7Z", "Rex"):
+            assert value not in text, (value, text)
+        assert "review page shows errors" in text and "exceeds 100 characters" in text, text
+
+
+def test_a_report_hides_the_runs_own_in_an_addresss_path_but_never_its_host_nor_a_dates_digits(
+        srv, job_apply_home, monkeypatch):
+    """The second look at the review's fixes (Oct 18): an address was left whole unless it was all one value, so a code
+    in a verify link and an email typed into a form, in a profile page's path, stayed; and an answer with a few
+    numbers in it ("Worked 2019-2023 at a fab") was hidden by its digits run together, "2019-2023" anywhere. In an
+    address, a value goes as a whole word of its path or query, never from its host; a number's digits only for a
+    value that's mostly a number."""
+    import time
+
+    from job_apply import pipeline
+
+    job = srv.add_job(url="https://example.com/jobs/fse", title="Technician", company="Example Fab")["job"]
+    monkeypatch.setitem(pipeline._MAIL_TAKEN, ("noreply@example.com", "482913", time.time()), job["id"])
+    r = Run(job["id"], "Technician", "Example Fab", status="needs_you", need="stuck", reason="stopped on the profile",
+            once={"Email": "jq.applies@example.org", "Experience": "Worked 2019-2023 at a fab", "Site": "fabnights"},
+            log=["opened https://fabnights.example/verify/482913?code=482913",
+                 "opened https://fabnights.example/profile/jq.applies@example.org/edit",
+                 "the page shows dates 2019-2023 shown"])
+    text = _reported(srv, job_apply_home, job, r)[0]
+    for value in ("482913", "jq.applies"):
+        assert value not in text, (value, text)
+    assert "https://fabnights.example/verify/REDACTED" in text and "https://fabnights.example/profile/REDACTED/edit" in text
+    assert "dates 2019-2023 shown" in text, text
