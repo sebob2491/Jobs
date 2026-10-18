@@ -243,7 +243,7 @@ Each employer has its own account on its job site. In the desk's **Site password
 card, save one password for a job system: Workday (15 of the semiconductor employers and 27 of the
 Phoenix list's), SuccessFactors
 (Edwards, Qorvo, Amkor), iCIMS (Daifuku), ApplicantStack (SCREEN), UKG Pro (Nikon
-Precision) or Infor (Benchmark). The desk then creates your account at each of that system's
+Precision), Infor (Benchmark) or Taleo (Kforce). The desk then creates your account at each of that system's
 employers (your email, the password, and your name and country from the profile; it ticks
 their terms, never a newsletter, and a consent to be considered for other open positions only
 where the site won't make the account without it, then presses the button; the form's security
@@ -372,7 +372,7 @@ Everything personal stays on your machine in `~/.job-apply/`. Set
 |---|---|
 | `profile.yaml` | Your answers. Edit it any time ([template](plugins/job-apply/templates/profile.example.yaml)). |
 | `resume.pdf` | Default resume |
-| `secrets.yaml` | Optional career-site passwords, such as `workday_password`. Save one from the Job Desk, or write the file yourself and run `chmod 600` on it. A password named for a job system goes only onto that system's sites; any other only onto the site it's named for (`acme_password` on an address containing `acme`). |
+| `secrets.yaml` | Optional career-site passwords, such as `workday_password`. Save one from the Job Desk, or write the file yourself and run `chmod 600` on it. A password named for a job system goes only onto that system's sites; any other only onto that site's own domain (`acme_password` on acme.com) or its tenant on a shared job system (acme.wd5.myworkdayjobs.com), never an address that merely contains the name. |
 | `tracker.db` | Application tracker (SQLite). `export_jobs_csv` writes a spreadsheet. |
 | `answers.yaml` | Answers you gave in the Job Desk, reused on later applications. Edit or delete entries freely. |
 | `companies.yaml` | Optional: which of the plugin's employer lists to search (`lists:`) and employers of your own, in place of the default list. |
@@ -426,7 +426,7 @@ plugins/job-apply/
 | `search_area` | Read or change what and where Find jobs looks: the job titles, the places (a city and state each) and the plugin's employer lists, as the desk's What and where window does |
 | `common_questions` | List the questions most applications ask that the profile doesn't answer (desired pay, start date, shifts...) and save the person's answers, as the desk's Common questions card does |
 | `doctor` | Check this computer's setup (Python, uv, the plugin's version, the browser, the profile and resume) and say what to fix; the same as the `job-apply-doctor` command |
-| `search_company_jobs` | Search employers' own job boards (Workday, Greenhouse, Lever, Eightfold, SmartRecruiters, Oracle, and ASML's site) by keyword and location; sites that refuse direct requests are read through a background browser tab |
+| `search_company_jobs` | Search employers' own job boards by keyword and location: Workday, Greenhouse, Lever, Eightfold, SmartRecruiters, Oracle, ApplicantStack, Taleo, Talemetry, iCIMS Jibe, Jobvite, Cornerstone, Phenom, amazon.jobs and Phoenix Children's own site. ASML's site, iCIMS portals, Paycom and UKG Pro boards, SuccessFactors' newer search (Edwards) and older career sites (Amkor) and Infor CloudSuite boards (Benchmark) are read through a background browser tab |
 | `ingest_job`, `add_job` | Save a posting. Parses Workday, Greenhouse, Lever and SmartRecruiters APIs, schema.org JobPosting data, or page text. |
 | `list_jobs`, `get_job`, `update_job`, `export_jobs_csv` | Application tracker |
 | `open_application`, `click`, `tabs`, `close_browser` | Navigate the browser, and close it. `click` refuses final submit buttons, and a cookie banner unless `accept_cookies` is on. |
