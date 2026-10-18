@@ -20,8 +20,10 @@ whole body or a run's logs.
         # the pages a run stopped on, already scrubbed (its fixtures/ folders), into tests/fixtures/live:
         # tests/test_live_fixtures.py then checks every night's stops offline
     uv run python scripts/nightly_summary.py --probes DIR_OR_ZIP [--companies "KLA"]
-        # the weekly probes' results (a live-probes artifact: scripts/live_probes.py): each reset tenant's passes,
-        # step by step, and each tailored-resume employer's verdict; with --companies, those runs' steps too
+        # the weekly probes' results (a live-probes artifact: scripts/live_probes.py): the desk's failures and what
+        # couldn't be checked this week (the site's or the person's), each under its own heading, then each reset
+        # tenant's passes, step by step, and each tailored-resume employer's verdict; with --companies, those runs'
+        # steps too
 
 The issue ("Nightly live check", #54) is read over GitHub's public API, no sign-in needed; `--issue-file`
 reads a saved copy instead. The trend issue ("Nightly live trends", label live-trends: the last 60 runs) is

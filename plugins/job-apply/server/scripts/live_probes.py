@@ -20,11 +20,20 @@ Oct 18), as the test identity (live_identity.py; TEST_IDENTITY.md), which never 
   drops a clearly marked tailored test resume (TAILORED_NAME, from the run's fake profile only) into the job's
   folder; the review page must show it, not the profile's (live_identity.RESUME_NAME).
 
+Each probe ends "pass", "fail" or "unchecked" (couldn't check this week). Only a desk failure is "fail": the site
+refused the saved password and the desk didn't ask for a reset, read the email, set the password or sign in after it,
+with nothing of the site's in the way; the review page showing the profile's resume (or none) instead of the tailored
+one; and, always, a pass 2 that didn't restore the real password, whatever stopped it, as the tenant may be left on
+the derived one. What the site or the person stops a run with (a bot check, a CAPTCHA, a security question, a site's
+error page, no posting found: the live check's own outcome words, live_compare.pipeline_outcome's) is "unchecked",
+and so is anything else that ends a run short of what a probe looks at.
+
 The runs go one after another (one inbox), in the live-nightly workflow's "probes" check (its concurrency group is
 the nightly's). Everything printed and written has the test identity's email and passwords masked, the derived one
 too. Writes probes.json and report.md in --out, beside each run's own folder (reset-<employer>-<pass>,
 tailored-<employer>), and prints a LIVE_WEEKLY line of JSON a probe (nightly_summary.py --probes reads them).
-Exit 0 when every probe passed, 1 when one didn't, 2 when nothing could run.
+Exit 1 when a probe failed (the desk's), else 0 (one that couldn't check is said, and isn't a failure); 2 when
+nothing could run.
 """
 
 from __future__ import annotations
@@ -44,6 +53,7 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import live_compare  # noqa: E402  (scripts/live_compare.py, beside this one: the live check's outcome words)
 import live_identity  # noqa: E402  (scripts/live_identity.py, beside this one)
 
 SMOKE = Path(__file__).with_name("live_smoke.py")
@@ -60,13 +70,13 @@ RESET_TENANTS: tuple[dict[str, str], ...] = (
                                                  "try every night, its mail from Workday's own senders"},
 )
 # Employers whose review page shows the file the application took: Greenhouse's (the form itself, a fresh upload
-# every application) and Workday's ("Resume/CV <file> successfully uploaded", where the test identity's account keeps
-# the resume its last application took: whether a tailored one replaces it is part of what's checked)
+# every application). NXP Semiconductors' Workday (nxp.wd3, the test identity's account: "Resume/CV <file>
+# successfully uploaded") comes back with the desk fix it waits on: a resume a Workday account kept from its last
+# application is replaced when the job has a tailored one (the form reader reads the kept file as the box's value,
+# and autofill leaves a filled box alone, so the review page shows the profile's resume there)
 TAILORED_EMPLOYERS: tuple[dict[str, str], ...] = (
     {"name": "ASM (ASM America)", "why": "Greenhouse: no account, a fresh upload every application, and its review "
                                          "page is the filled form, the attached file's name on it"},
-    {"name": "NXP Semiconductors", "why": "Workday (nxp.wd3): the test identity's account, whose review page lists "
-                                          "the resume; it keeps the one its last application took"},
 )
 PROBES = ("reset", "tailored")
 
@@ -139,12 +149,17 @@ _ACCOUNT_PRESSED = re.compile(r"^pressed \u201c[^\u201d]+\u201d to (?:create|fin
 # a step of the application itself, past the sign-in
 _APPLICATION = re.compile(r"^(?:filled \d+ (?:field|answer)|clicked \u201c|reached the review page|ticked \u201c|"
                           r"picked \u201c|chose \u201c|left \d+ |answered )")
-_REVIEW = {"ready", "needs_you your_submit"}  # as far as a run goes: the person's own Submit (or Apply) is next
+_REVIEW = live_compare.REACHED  # as far as a run goes ("ready", "needs_you your_submit"): the person's own Submit is next
 _SIGN_IN_NEEDS = {"sign_in", "email_code", "bot_check"}
-# where the person stops it, by the desk's rules: never worked around
-_STOPPED = (("a bot check", re.compile(r"bot check|checking that you're a person", re.I)),  # ("... (a bot check or CAPTCHA)")
-            ("a CAPTCHA", re.compile(r"captcha|picture code", re.I)),
-            ("a security question", re.compile(r"security questions?", re.I)))
+# What the site or the person stops a run with, never the desk's to get past: the live check's outcomes that are the
+# site's alone (no posting found, a site down for maintenance, a bot check), and a stop whose reason (or, for a CAPTCHA
+# or a security question met on the way, a log line) says it's the site's or the person's
+_THE_SITES = {"no postings", live_compare.SITE_DOWN, "needs_you bot_check"}
+_THE_PERSONS = re.compile(r"captcha|picture code|security questions?|bot check|checking that you're a person", re.I)
+_SITE_ERROR = re.compile(r"something went wrong|web server's error page|site's own trouble|turned the desk's browser "
+                         r"away|down for maintenance|didn't finish loading|\b5\d\d (?:bad gateway|service unavailable|"
+                         r"gateway time-?out|internal server error)\b", re.I)
+_MET = re.compile(r"captcha|picture code|security questions?", re.I)
 # a site's words refusing a password it had before (a password history rule)
 _REUSED = re.compile(r"\bprevious(?:ly)?\b|\bre-?use|\bused (?:before|recently)\b|\bhistory\b|\brecent passwords?\b|"
                      r"\bsame as (?:your )?(?:old|current|previous)\b", re.I)
@@ -167,21 +182,39 @@ def ended(rec: Mapping[str, Any] | None) -> str:
     return f"{last.get('status') or ''} {last.get('need') or ''}".strip()
 
 
-def stopped_by(rec: Mapping[str, Any] | None) -> str:
-    """A CAPTCHA, a security question or a bot check the run met on the way (the person's: the desk never touches
-    one), by its last words and its log, or ""."""
+def outcome_words(rec: Mapping[str, Any] | None) -> str:
+    """Where a run ended, in the live check's own words (live_compare.pipeline_outcome: "needs_you bot_check · <title>
+    · <the desk's reason>", "no postings · ...", "crash · ...")."""
+    if not rec:
+        return "no record (the run didn't finish)"
+    result = live_compare.pipeline_outcome(dict(rec))
+    return live_compare._join(result.outcome, result.detail)
+
+
+def blocked_by(rec: Mapping[str, Any] | None) -> str:
+    """What of the site's or the person's stopped this run, in the live check's own words (outcome_words), or "":
+    no posting found, a site down, a bot check; a stop whose reason is a CAPTCHA, a security question or a site's error
+    page ("Something went wrong", a 5xx); or a CAPTCHA or a security question the desk met on the way and turned from
+    (a reset's picture code: it went back to make an account instead), short of the review page."""
+    if not rec or rec.get("crash"):
+        return ""
+    outcome = live_compare.pipeline_outcome(dict(rec)).outcome
+    if outcome in _REVIEW:
+        return ""
     last = _last_round(rec)
-    said = " ".join([str(last.get("reason") or ""), *[str(x) for x in last.get("log") or []]])
-    for what, words in _STOPPED:
-        if words.search(said):
-            return what
-    return "a bot check" if last.get("need") == "bot_check" else ""
+    reason = str(last.get("reason") or "")
+    if outcome in _THE_SITES or outcome.startswith("needs_you") and (_THE_PERSONS.search(reason)
+                                                                     or _SITE_ERROR.search(reason)):
+        return outcome_words(rec)
+    met = next((str(line) for line in last.get("log") or [] if _MET.search(str(line))), "")
+    return f"{outcome_words(rec)} (on the way: {met[:200]})" if met else ""
 
 
 def reset_steps(rec: Mapping[str, Any] | None) -> dict[str, Any]:
     """One reset pass from its run's record (live_smoke.py's LIVE_PIPELINE record): each of STEPS true or false, from
-    the desk's own log lines, and "how_far" ("review page", "application" or ""), "stopped" (stopped_by),
-    "account_pressed" (a Create Account pressed on the way), "ended" and "said" (its last words)."""
+    the desk's own log lines, and "how_far" ("review page", "application" or ""), "pressed" (a sign-in sent with the
+    saved password), "account_pressed" (a Create Account pressed on the way), "blocked" (blocked_by), "outcome"
+    (outcome_words), "ended" and "said" (its last words)."""
     last = _last_round(rec)
     log = [str(x) for x in last.get("log") or []]
     reason = str(last.get("reason") or "")
@@ -197,12 +230,12 @@ def reset_steps(rec: Mapping[str, Any] | None) -> dict[str, Any]:
     out_of_sign_in = not crashed and bool(last) and (status in _REVIEW or last.get("status") == "needs_you"
                                                      and last.get("need") not in _SIGN_IN_NEEDS)
     signed_in = since is not None and (stepped or out_of_sign_in)
-    how_far = "review page" if status in _REVIEW and signed_in else "application" if signed_in and stepped else ""
+    how_far = "review page" if status in _REVIEW and signed_in else "application" if signed_in else ""
     return {"refused": refused, "reset_asked": any(_ASKED.search(line) for line in log),
             "email_read": any(_EMAIL_READ.search(line) for line in log), "password_set": at is not None,
             "signed_in": signed_in, "reached_application": bool(how_far), "how_far": how_far,
-            "stopped": stopped_by(rec), "account_pressed": any(_ACCOUNT_PRESSED.search(line) for line in log),
-            "crashed": crashed, "ended": ended(rec),
+            "pressed": pressed is not None, "account_pressed": any(_ACCOUNT_PRESSED.search(line) for line in log),
+            "blocked": blocked_by(rec), "outcome": outcome_words(rec), "crashed": crashed, "ended": ended(rec),
             "said": str((rec or {}).get("crash") or reason or (rec or {}).get("note") or "")[:300]}
 
 
@@ -214,49 +247,79 @@ def pass_two_needed(first: Mapping[str, Any]) -> bool:
                 and not first["account_pressed"] and not first["crashed"])
 
 
+def may_have_changed(first: Mapping[str, Any]) -> bool:
+    """Whether the site may be on the derived password after pass 1: it opened a reset's link, set a password, pressed
+    a Create Account or broke part way, or a sign-in with the derived password wasn't refused (the site took it, or
+    something stopped the run before it said)."""
+    return bool(first["email_read"] or first["password_set"] or first["account_pressed"] or first["crashed"]
+                or first["pressed"] and not first["refused"])
+
+
 def left_on(first: Mapping[str, Any], second: Mapping[str, Any] | None) -> str:
-    """The password a tenant is left on after the probe: "real" (as the nightly found it) or "derived?" (maybe the
-    derived one: pass 2 didn't set the real one back nor sign in with it)."""
-    if second is None:
-        return "real" if not pass_two_needed(first) else "derived?"
-    if second["password_set"] or second["signed_in"] and not second["refused"]:
+    """The password a tenant is left on after the probe: "real" (pass 2 set it back or signed in with it, or pass 1
+    proved it never changed), "as found" (this run changed nothing: pass 1 never got to send the derived password,
+    and pass 2 couldn't say) or "derived?" (maybe the derived one)."""
+    if second is not None and (second["password_set"] or second["signed_in"] and not second["refused"]):
         return "real"
-    return "derived?"
+    if not pass_two_needed(first):
+        return "real"
+    return "derived?" if may_have_changed(first) else "as found"
+
+
+def pass_status(steps: Mapping[str, Any]) -> tuple[str, str]:
+    """One pass: ("pass", "") with every step; ("fail", why) where the site refused the saved password and the desk
+    went no further, nothing of the site's or the person's in the way; else ("unchecked", why): what of the site's or
+    the person's stopped it (the live check's words), or that it never got to a reset (the site took the password, or
+    the run ended before the sign-in)."""
+    if all(steps[k] for k in STEPS):
+        return "pass", ""
+    if steps["blocked"]:
+        return "unchecked", steps["blocked"]
+    if steps["refused"]:
+        missing = next(STEP_WORDS[k] for k in STEPS[1:] if not steps[k])
+        return "fail", (f"the site refused the saved password, and the desk didn't get to \u201c{missing}\u201d, with "
+                        f"nothing of the site's in the way: {steps['outcome']}")
+    if steps["signed_in"]:
+        return "unchecked", "the site took the saved password, so there was nothing to reset"
+    return "unchecked", f"it ended before the site refused the saved password: {steps['outcome']}"
 
 
 def reset_result(tenant: Mapping[str, str], first_rec: Mapping[str, Any] | None,
                  second_rec: Mapping[str, Any] | None, second_ran: bool) -> dict[str, Any]:
-    """A tenant's reset probe: its passes' steps, whether it passed (every step of both passes), where the site's
-    password is left, and the notes and warning to say."""
+    """A tenant's reset probe: its passes' steps and statuses, its own status ("fail" if a pass failed, or always when
+    pass 2 didn't restore the real password where pass 1 may have changed it; "pass" with both passes whole; else
+    "unchecked"), where the site's password is left, and the notes and warning to say."""
     first = reset_steps(first_rec)
     second = reset_steps(second_rec) if second_ran else None
     name = tenant["name"]
     notes: list[str] = []
-    if not first["refused"] and first["signed_in"]:
-        notes.append("pass 1: the site took the derived password, so it was on it already (an earlier probe's pass 2 "
-                     "didn't finish) and nothing was reset; pass 2 sets the real one back")
+    first_status = pass_status(first)
+    second_status = pass_status(second) if second is not None else ("not run", "")
+    if first_status[0] == "unchecked" and not first["refused"] and first["signed_in"]:
+        first_status = ("unchecked", "the site took the derived password: it was on it already (an earlier probe's "
+                                     "pass 2 didn't finish), so nothing was reset; pass 2 sets the real one back")
     if second is not None and not second["refused"] and second["signed_in"] and first["password_set"]:
-        notes.append("pass 2: the site took the real password although pass 1 set the derived one")
+        second_status = ("fail", "pass 1 said it set the derived password, yet the site took the real one in pass 2")
     if second is None:
         notes.append("pass 2 not run: pass 1 never opened a reset's link, so the site's password was never changed"
                      if not pass_two_needed(first) else "pass 2 didn't run (the probe was stopped before it)")
-    for n, steps in ((1, first), (2, second)):
-        if steps is not None and steps["stopped"]:
-            notes.append(f"pass {n} stopped on {steps['stopped']}, which is the person's (never worked around): "
-                         f"\u201c{steps['said'][:200]}\u201d")
     left = left_on(first, second)
     warning = ""
-    if left != "real":
+    if left == "derived?":
         warning = (f"Pass 2 failed at {name}: the test identity's Workday account there may be left on the derived "
                    "password. The nightly's own reset will repair it: the site refuses the real saved password, and "
                    "the desk resets it to that through the site's \u201cForgot password\u201d email.")
         if second is not None and _REUSED.search(second["said"]):
             warning += (" But the site's words say it won't take a password it had before, so that reset may be "
                         "refused the same way: look at it before the next nightly.")
-    passes = [{"pass": 1, "saved": "derived", "ran": True, **first},
-              {"pass": 2, "saved": "real", "ran": second is not None, **(second or {})}]
-    ok = second is not None and all(first[k] for k in STEPS) and all(second[k] for k in STEPS)
-    return {"probe": "reset", "employer": name, "why": tenant.get("why", ""), "ok": ok, "left_on": left,
+    elif left == "as found":
+        notes.append("this run never sent the derived password, so it changed nothing there")
+    passes = [{"pass": 1, "saved": "derived", "ran": True, **first, "status": first_status[0], "status_why": first_status[1]},
+              {"pass": 2, "saved": "real", "ran": second is not None, **(second or {}), "status": second_status[0],
+               "status_why": second_status[1]}]
+    statuses = {first_status[0], second_status[0]}
+    status = ("fail" if warning or "fail" in statuses else "pass" if statuses == {"pass"} else "unchecked")
+    return {"probe": "reset", "employer": name, "why": tenant.get("why", ""), "status": status, "left_on": left,
             "warning": warning, "notes": notes, "passes": passes}
 
 
@@ -327,20 +390,24 @@ def tailored_check(text: str, tailored: str = TAILORED_NAME, profiles: str = liv
 
 def tailored_result(employer: Mapping[str, str], rec: Mapping[str, Any] | None, review_text: str) -> dict[str, Any]:
     """An employer's tailored-resume probe, from its run's record (with live_smoke.py's "tailored": the file dropped,
-    or why not) and the words of the page it ended on."""
+    which file the desk's chooser takes, or why there's none) and the words of the page it ended on. "fail" where the
+    desk's chooser takes another file or the review page shows the profile's resume (or none) in place of the
+    tailored one; "unchecked" where the run never got the file made or never reached the review page (in the live
+    check's own words, blocked_by's where it's the site's or the person's)."""
     made = (rec or {}).get("tailored") or {}
     out: dict[str, Any] = {"probe": "tailored", "employer": employer["name"], "why": employer.get("why", ""),
                            "file": made.get("file") or TAILORED_NAME, "ended": ended(rec)}
+    if made.get("error") and "picked" in made:  # (made, and the desk's own chooser would take another file)
+        return {**out, "status": "fail", "verdict": "fail", "shown": [], "detail": made["error"]}
     if not made or made.get("error"):
-        why = made.get("error") or "the run never got to make it (no posting, or it broke before)"
-        return {**out, "ok": False, "verdict": "fail", "shown": [], "detail": f"no tailored resume in the job's "
-                f"folder: {why}"}
+        why = made.get("error") or f"the run never got to make it: {outcome_words(rec)}"
+        return {**out, "status": "unchecked", "verdict": "unchecked", "shown": [],
+                "detail": f"no tailored resume in the job's folder ({why})"}
     check = tailored_check(review_text, out["file"])
     if ended(rec) not in _REVIEW:
-        stop = stopped_by(rec)
-        return {**out, "ok": False, "verdict": "fail", "shown": check["shown"],
-                "detail": f"didn't reach the review page (ended: {ended(rec)})" + (f", stopped on {stop}" if stop else "")}
-    return {**out, "ok": check["verdict"] == "pass", **check}
+        return {**out, "status": "unchecked", "verdict": "unchecked", "shown": check["shown"],
+                "detail": f"didn't reach the review page: {blocked_by(rec) or outcome_words(rec)}"}
+    return {**out, "status": check["verdict"], **check}
 
 
 # --- the runs -----------------------------------------------------------------------------------------------------
@@ -479,33 +546,67 @@ def collect(out: Path, probes: Iterable[str], companies: str = "") -> dict[str, 
             folder = out / folder_of("tailored", employer["name"])
             results["tailored"].append(tailored_result(employer, read_record(folder, employer["name"]),
                                                        review_text(folder, employer["name"])))
+    results["failed"], results["unchecked"] = failed(results), unchecked(results)
     return results
 
 
+def failed(results: Mapping[str, Any]) -> list[str]:
+    """The desk's failures, one line each: what fails the run."""
+    out = []
+    for r in results.get("reset") or []:
+        if r["status"] == "fail":
+            out.append(f"{r['employer']}: {r['warning']}" if r["warning"] else "; ".join(
+                f"{r['employer']}, pass {p['pass']}: {p['status_why']}" for p in r["passes"] if p["status"] == "fail"))
+    out += [f"{r['employer']}, tailored resume: {r['detail']}" for r in results.get("tailored") or []
+            if r["status"] == "fail"]
+    return out
+
+
+def unchecked(results: Mapping[str, Any]) -> list[str]:
+    """What couldn't be checked this week, one line each (the site's or the person's, in the live check's words):
+    said, and no failure."""
+    out = [f"{r['employer']}, pass {p['pass']}: {p['status_why']}" for r in results.get("reset") or []
+           for p in r["passes"] if p["status"] == "unchecked"]
+    out += [f"{r['employer']}, tailored resume: {r['detail']}" for r in results.get("tailored") or []
+            if r["status"] == "unchecked"]
+    return out
+
+
 # --- the report -----------------------------------------------------------------------------------------------------
+
+STATUS_WORDS = {"pass": "pass", "fail": "FAIL", "unchecked": "couldn't check this week", "not run": "not run"}
+LEFT_WORDS = {"real": "the real password", "as found": "as it was (this run never changed it)",
+              "derived?": "maybe the derived password"}
+FAILED_HEADING = "Failed (the desk's: these fail the run)"
+UNCHECKED_HEADING = "Couldn't check this week (the site's or the person's: not a failure)"
+
 
 def _yes(value: Any) -> str:
     return "yes" if value else "no"
 
 
 def summary_lines(results: Mapping[str, Any]) -> list[str]:
-    """The probes' results in a few plain lines (nightly_summary.py --probes prints them)."""
+    """The probes' results in a few plain lines (nightly_summary.py --probes prints them): the failures and what
+    couldn't be checked, each under its own heading, then each probe."""
     out = []
+    for heading, said in ((FAILED_HEADING, results.get("failed") or []),
+                          (UNCHECKED_HEADING, results.get("unchecked") or [])):
+        out.append(f"{heading}: {len(said)}")
+        out += [f"  - {line}" for line in said]
     for r in results.get("reset") or []:
-        out.append(f"reset {r['employer']}: {'pass' if r['ok'] else 'FAIL'} (site left on the "
-                   f"{'real' if r['left_on'] == 'real' else 'derived (maybe)'} password)")
+        out.append(f"reset {r['employer']}: {STATUS_WORDS[r['status']]} (site left on {LEFT_WORDS[r['left_on']]})")
         for p in r["passes"]:
             if not p["ran"]:
                 out.append(f"  pass {p['pass']} ({p['saved']} password): not run")
                 continue
             steps = ", ".join(f"{STEP_WORDS[k]} {_yes(p[k])}" for k in STEPS)
-            out.append(f"  pass {p['pass']} ({p['saved']} password): {steps}"
+            out.append(f"  pass {p['pass']} ({p['saved']} password): {STATUS_WORDS[p['status']]}: {steps}"
                        + (f" ({p['how_far']})" if p.get("how_far") else "") + f"; ended {p['ended']}")
         out += [f"  note: {n}" for n in r["notes"]]
         if r["warning"]:
             out.append(f"  WARNING: {r['warning']}")
     for r in results.get("tailored") or []:
-        out.append(f"tailored {r['employer']}: {'pass' if r['ok'] else 'FAIL'}: {r['detail']}"
+        out.append(f"tailored {r['employer']}: {STATUS_WORDS[r['status']]}: {r['detail']}"
                    + (f"; the page's files: {', '.join(r['shown'])}" if r.get("shown") else "") + f"; ended {r['ended']}")
     return out
 
@@ -515,28 +616,34 @@ def _cell(value: Any) -> str:
 
 
 def report_markdown(results: Mapping[str, Any]) -> str:
-    """The run's step summary: a table a probe."""
+    """The run's step summary: the failures and what couldn't be checked, each under its own heading, then a table a
+    probe."""
     lines = [f"## Weekly probes ({results.get('at', '')})", ""]
+    for heading, said in ((FAILED_HEADING, results.get("failed") or []),
+                          (UNCHECKED_HEADING, results.get("unchecked") or [])):
+        lines += [f"### {heading}: {len(said)}", ""]
+        lines += [f"- {'**' + _cell(line) + '**' if heading == FAILED_HEADING else _cell(line)}" for line in said]
+        lines += [""] if said else []
     if results.get("reset"):
         lines += ["### Password reset (Workday, the test identity's account)", "",
                   "Pass 1 saves a password derived from the real one, which the site refuses: the desk resets the site to "
                   "it. Pass 2 saves the real one: the desk resets it back.", "",
-                  "| Tenant | Pass | Saved | " + " | ".join(STEP_WORDS[k].capitalize() for k in STEPS) + " | Ended |",
-                  "|---|---|---|" + "---|" * len(STEPS) + "---|"]
+                  "| Tenant | Pass | Saved | " + " | ".join(STEP_WORDS[k].capitalize() for k in STEPS) + " | Ended | Result |",
+                  "|---|---|---|" + "---|" * len(STEPS) + "---|---|"]
         for r in results["reset"]:
             for p in r["passes"]:
                 if not p["ran"]:
                     lines.append(f"| {_cell(r['employer'])} | {p['pass']} | {p['saved']} | "
-                                 + " | ".join("–" for _ in STEPS) + " | not run |")
+                                 + " | ".join("–" for _ in STEPS) + " | not run | – |")
                     continue
                 cells = [_yes(p[k]) + (f" ({p['how_far']})" if k == "reached_application" and p.get("how_far") else "")
                          for k in STEPS]
                 lines.append(f"| {_cell(r['employer'])} | {p['pass']} | {p['saved']} | " + " | ".join(cells)
-                             + f" | {_cell(p['ended'])} |")
+                             + f" | {_cell(p['ended'])} | {STATUS_WORDS[p['status']]} |")
         lines.append("")
         for r in results["reset"]:
-            lines.append(f"- **{_cell(r['employer'])}: {'pass' if r['ok'] else 'FAIL'}**" + "".join(
-                f"; {_cell(n)}" for n in r["notes"]))
+            lines.append(f"- **{_cell(r['employer'])}: {STATUS_WORDS[r['status']]}**, site left on "
+                         f"{LEFT_WORDS[r['left_on']]}" + "".join(f"; {_cell(n)}" for n in r["notes"]))
             if r["warning"]:
                 lines.append(f"  - **{_cell(r['warning'])}**")
         lines.append("")
@@ -546,7 +653,7 @@ def report_markdown(results: Mapping[str, Any]) -> str:
                   "| Employer | Files the review page shows | Result | Detail |", "|---|---|---|---|"]
         for r in results["tailored"]:
             lines.append(f"| {_cell(r['employer'])} | {_cell(', '.join(r.get('shown') or []) or 'none')} | "
-                         f"{'pass' if r['ok'] else 'FAIL'} | {_cell(r['detail'])} |")
+                         f"{STATUS_WORDS[r['status']]} | {_cell(r['detail'])} |")
         lines.append("")
     if not results.get("reset") and not results.get("tailored"):
         lines.append("No probe ran (none matched --companies).")
@@ -619,8 +726,8 @@ def main(argv: list[str] | None = None) -> int:
     results = collect(args.out, probes, args.companies)
     write_report(args.out, results, mask)
     print("\n" + "\n".join(summary_lines(results)), flush=True)
-    every = [*results["reset"], *results["tailored"]]
-    return 0 if every and all(r["ok"] for r in every) else 1
+    # (a desk failure fails the run; what couldn't be checked this week is said above, and doesn't)
+    return 1 if results["failed"] else 0
 
 
 if __name__ == "__main__":

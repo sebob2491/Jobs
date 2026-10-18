@@ -34,7 +34,9 @@ name: live-nightly
 # resets it back) and a tailored resume in the job's folder (does the review page show it, not the profile's?). They
 # run here, in this workflow's concurrency group, so never beside another run on the test inbox or its accounts, and
 # after this run's checks when a manual run asks for both. Their results: the run's summary and its live-probes
-# artifact (scripts/nightly_summary.py --probes reads it); a probe that didn't pass fails the run.
+# artifact (scripts/nightly_summary.py --probes reads it). Only a desk failure fails the run (a pass 2 that didn't
+# restore the real password always does); a probe the site or the person stopped (a bot check, a CAPTCHA, a site's
+# error page, no posting) is said under "Couldn't check this week", and the run stays green.
 
 on:
   # GitHub starts this schedule hours late (5 to 10, Oct 2026), so a routine dispatches the run at 3:17 AM in Arizona
@@ -461,9 +463,10 @@ jobs:
           name: live-probes
           path: plugins/job-apply/server/live-probes
           retention-days: 14
-      - name: Fail if a probe didn't pass
-        # (GitHub mails the repository's owner about a failed scheduled run)
+      - name: Fail on a desk failure
+        # (live_probes.py exits 1 for a desk failure and 2 when it couldn't start; what the site or the person stopped is
+        # "couldn't check this week", exit 0. GitHub mails the repository's owner about a failed scheduled run)
         if: steps.run.outcome == 'failure'
         run: |
-          echo "::error::A weekly probe didn't pass (or couldn't run): see the run's summary"
+          echo "::error::A weekly probe found a desk failure (or couldn't start): see the run's summary"
           exit 1
