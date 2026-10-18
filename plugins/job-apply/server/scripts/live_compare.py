@@ -26,13 +26,14 @@ The outcomes:
   finance   (... --role finance): the same, for finance jobs, as a finance applicant.
   accounts  (live_smoke.py --pipeline --test-identity --everywhere): the same, as the test identity, a clearly
             fake applicant with an inbox of its own whose accounts are made and signed in to, at
-            every employer on both lists (--everywhere: the owner's call, Oct 11). Only once
+            every employer with a search on the lists in live_identity.LIST_ROLES, each with its list's role
+            (--everywhere: the owner's call, Oct 11). Only once
             the repository has the test identity's secrets (scripts/TEST_IDENTITY.md): until then
             the nightly leaves it out, and it isn't compared.
   search    (live_smoke.py without --pipeline): whether the employer's search ran without an
             error: "works" or "error"; "no search" for an employer without a search block (its
-            careers page is only opened). How many openings it found changes daily, so it's in
-            the detail, never compared.
+            careers page is only opened; its list entry's `no_search:` why first in the detail). How many
+            openings it found changes daily, so it's in the detail, never compared.
 
 The comment also opens with "Bot checks up" when the employers stopped by a bot check or a CAPTCHA are
 5 or more and twice the last run's (one cause behind many changes), and ends with the employers still
@@ -147,7 +148,9 @@ def search_outcome(rec: dict[str, Any]) -> Result:
     if "search_config" not in rec:  # no search block: the run only opened its careers page
         problem = (rec.get("crash") or (rec.get("browser") or {}).get("error")
                    or (rec.get("page") or {}).get("navigation_error"))
-        return Result("no search", f"careers page: {problem}" if problem else "careers page opened")
+        # (its list entry's why, `no_search:`, first: the reason it's never applied at)
+        return Result("no search", _join(rec.get("no_search") and _short(rec["no_search"], 70),
+                                         f"careers page: {problem}" if problem else "careers page opened"))
     searches = [s for s in (rec.get("search_az"), rec.get("search_any")) if isinstance(s, dict)]
     errors = [s["error"] for s in searches if s.get("error")]
     # one wording (or one later page) failing while the others answer is a bad night for the

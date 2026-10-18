@@ -225,17 +225,50 @@ def test_its_employers_are_a_few_per_job_system_from_the_plugins_lists(job_apply
 
 def test_everywhere_is_every_employer_on_the_lists_with_its_role_and_system():
     """--everywhere (the owner's call, Oct 11: "lets have practice runs make one"): the test identity at every
-    employer with a search on the semiconductor list (technician jobs) and the Phoenix list (HR jobs), once each,
-    with its search's system."""
+    employer with a search on the lists in LIST_ROLES (the semiconductor list for technician jobs, the Phoenix list
+    for HR jobs, the Las Vegas list for IT jobs: the design of Oct 18, A3), once each, with its search's system."""
     employers = li.everywhere_employers()
     names = [e["name"] for e in employers]
-    assert len(names) == len(set(names)) and len(names) > 80, len(names)
-    assert set(li.LIST_ROLES) == {e["list"] for e in employers}
+    assert len(names) == len(set(names)) and len(names) > 120, len(names)
+    assert li.LIST_ROLES == {"semiconductor-az": "technician", "phoenix-metro": "hr", "las-vegas": "it"}
+    assert set(li.LIST_ROLES) == {e["list"] for e in employers} == set(search.employer_lists())  # (every list)
     by = {e["name"]: e for e in employers}
     assert (by["KLA"]["role"], by["KLA"]["system"]) == ("technician", "workday")
     assert by["Axon"]["role"] == "hr" and by["Lam Research"]["system"] == "eightfold"
+    assert (by["MGM Resorts"]["list"], by["MGM Resorts"]["role"], by["MGM Resorts"]["system"]) == \
+        ("las-vegas", "it", "workday")
+    assert by["Switch"]["role"] == "it" and by["Allegiant Air"]["system"] == "lever"
+    assert by["Southwest Gas"]["list"] == "phoenix-metro"  # (on two lists: once, as the first list's)
     assert "TSMC Arizona" not in by  # (no search: it's searched by hand)
     assert all(e["why"] and e["system"] for e in employers)
+    # every employer on the lists is applied at, or said with why it isn't: none left out without a word
+    skipped = {e["name"]: e for e in li.skipped_employers()}
+    listed = {c["name"] for name in li.LIST_ROLES
+              for c in yaml.safe_load(search.employer_lists()[name].read_text(encoding="utf-8"))["companies"]}
+    assert set(by) | set(skipped) == listed and not set(by) & set(skipped)
+    assert {"TSMC Arizona", "Maricopa Community Colleges", "City of Phoenix", "ADP", "American Airlines",
+            "Clark County", "Zappos"} <= set(skipped)
+    assert all(e["why"] != li.NO_REASON for e in skipped.values()), skipped  # (each list entry says why)
+    assert skipped["TSMC Arizona"]["list"] == "semiconductor-az" and "Cloudflare" in skipped["TSMC Arizona"]["why"]
+
+
+def test_an_employer_with_no_search_is_said_with_its_why_or_that_it_gives_none(tmp_path):
+    """skipped_employers: an entry with no search block is reported with its list and its `no_search:` why, or
+    NO_REASON when it gives none; never one another list searches, nor one twice."""
+    lists = {}
+    for name, companies in (("semiconductor-az", [{"name": "Example Fab", "search": {"workday": "https://e.example"}},
+                                                  {"name": "Example Gate", "no_search": "  a bot\n check  "}]),
+                            ("phoenix-metro", [{"name": "Example Fab"}, {"name": "Example Quiet"},
+                                               {"name": "Example Gate", "no_search": "again"}]),
+                            ("las-vegas", [{"name": "Example Casino", "search": {}}])):
+        lists[name] = tmp_path / f"{name}.yaml"
+        lists[name].write_text(yaml.safe_dump({"companies": companies}), encoding="utf-8")
+    assert li.skipped_employers(lists) == [
+        {"name": "Example Gate", "list": "semiconductor-az", "why": "a bot check"},
+        {"name": "Example Quiet", "list": "phoenix-metro", "why": li.NO_REASON},
+        {"name": "Example Casino", "list": "las-vegas", "why": li.NO_REASON},  # (an empty search is none)
+    ]
+    assert [e["name"] for e in li.everywhere_employers(lists)] == ["Example Fab"]
 
 
 def test_its_groups_keep_a_code_sending_systems_employers_together():
@@ -257,16 +290,55 @@ def test_its_groups_keep_a_code_sending_systems_employers_together():
     assert by_name(employers)["ASML"] == "workday"  # (asml.com's own search; its Apply opens Workday)
 
 
-def test_three_machines_of_four_groups_run_every_group_once():
-    """The nightly's accounts check runs on three machines at once, four groups each (--machine M/3,
-    --parallel 4): machine M's group i is arrange's group M + 3i, so every group runs once, on one machine, and
-    a code-sending system's employers stay in one group there."""
+WORKFLOW = Path(__file__).resolve().parents[4] / ".github" / "workflows" / "live-nightly.yml"
+
+
+def _matrix():
+    return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"]["check"]["strategy"]["matrix"]["include"]
+
+
+def test_the_nightlys_machines_run_every_group_once_with_one_inbox_a_system():
+    """The nightly's accounts check runs on N machines at once, P groups each (--machine M/N, --parallel P): machine
+    M's group i is arrange's group M + N*i (live_smoke.py's --shard), so every employer on the lists runs once, on
+    one machine, and a code-sending system's employers stay in one group there (one inbox). Four machines since the
+    Las Vegas list (the design of Oct 18, A3); the matrix stays under GitHub's 20 jobs at once."""
+    rows = [r for r in _matrix() if r["check"] == "accounts"]
+    machines, parallel = set(), set()
+    for row in rows:
+        args = row["args"].split()
+        assert {"--pipeline", "--test-identity", "--everywhere"} <= set(args), args
+        machines.add(args[args.index("--machine") + 1])
+        parallel.add(int(args[args.index("--parallel") + 1]))
+    n = len(rows)
+    assert n == 4 and machines == {f"{m}/{n}" for m in range(n)} and len(parallel) == 1, (machines, parallel)
+    assert len({r["slot"] for r in rows}) == n
+    assert len(_matrix()) <= 20
+    p = parallel.pop()
     employers = li.everywhere_employers()
-    groups = li.arrange(employers, 12)
-    taken = sorted(m + i * 3 for m in range(3) for i in range(4))
-    assert taken == list(range(12))
-    assert sorted(n for g in groups for n in g) == sorted(e["name"] for e in employers)
-    assert max(len(g) for g in groups) <= 9, [len(g) for g in groups]  # (about a third of the time 4 groups take)
+    groups = li.arrange(employers, p * n)
+    ran = [name for m in range(n) for i in range(p) for name in groups[m + n * i]]
+    assert sorted(ran) == sorted(e["name"] for e in employers)  # (each once)
+    where = {name: i for i, g in enumerate(groups) for name in g}
+    for system in {e["system"] for e in employers} - li.LINKED_SYSTEMS:
+        assert len({where[e["name"]] for e in employers if e["system"] == system}) == 1, system
+    # no group longer than its biggest code-sending system, or a little over an even share
+    biggest = max(Counter(e["system"] for e in employers if e["system"] not in li.LINKED_SYSTEMS).values())
+    assert max(len(g) for g in groups) <= max(biggest, len(employers) // (p * n) + 2), [len(g) for g in groups]
+
+
+def test_the_search_check_covers_the_lists_the_accounts_check_does():
+    """The search check's --lists are LIST_ROLES' lists; no check looks for finance jobs (paused: the owner's call,
+    Oct 10), and none applies at the Las Vegas list as anything but IT."""
+    rows = {r.get("slot") or r["check"]: r for r in _matrix()}
+    args = rows["search"]["args"].split()
+    assert set(args[args.index("--lists") + 1].split(",")) == set(li.LIST_ROLES)
+    assert "finance" not in rows and "finance" not in li.LIST_ROLES.values()
+    for row in rows.values():
+        said = row["args"].split()
+        if "--role" in said:
+            assert said[said.index("--role") + 1] != "finance", row
+        if "--pipeline" in said and "--lists" in said and "las-vegas" in said[said.index("--lists") + 1]:
+            assert said[said.index("--role") + 1] == "it", row
 
 
 def by_name(employers):
@@ -318,6 +390,25 @@ def test_live_smoke_sets_up_the_test_identity_and_never_says_its_secrets(tmp_pat
     for key, value in {**ENV, "JOB_APPLY_NEVER_SUBMIT": "1", li.IDENTITY_SWITCH: "1"}.items():
         monkeypatch.setenv(key, value)
     assert config.Profile.load(home / "profile.yaml").settings.may_manage_accounts
+
+
+def test_live_smoke_everywhere_says_each_employer_it_cant_apply_at(tmp_path):
+    """--everywhere on its first machine says each employer on its lists with no search, with its list and why, on a
+    LIVE_SKIPPED line (once a run: never on another machine, nor in each group), and its home's lists are all three."""
+    code, said = _smoke(tmp_path, ENV, "--pipeline", "--test-identity", "--everywhere", "--machine", "0/4",
+                        "--companies", "no-such-employer")
+    assert code == 0, said
+    lines = [json.loads(x[len("LIVE_SKIPPED "):]) for x in said.splitlines() if x.startswith("LIVE_SKIPPED ")]
+    assert lines == [{"company": e["name"], "list": e["list"], "why": e["why"]} for e in li.skipped_employers()]
+    by = {x["company"]: x for x in lines}
+    assert {"TSMC Arizona", "City of Phoenix", "ADP", "Clark County"} <= set(by)
+    assert by["Clark County"]["list"] == "las-vegas" and "NEOGOV" in by["Clark County"]["why"]
+    home = next(h for h in tmp_path.glob("job-apply-live-*") if (h / "companies.yaml").exists())
+    assert yaml.safe_load((home / "companies.yaml").read_text(encoding="utf-8")) == {"lists": sorted(li.LIST_ROLES)}
+    (tmp_path / "1").mkdir()
+    code, said = _smoke(tmp_path / "1", ENV, "--pipeline", "--test-identity", "--everywhere", "--machine", "1/4",
+                        "--companies", "no-such-employer")
+    assert code == 0 and "LIVE_SKIPPED" not in said, said
 
 
 # --- the inbox report: why the desk missed an emailed code -----------------------------

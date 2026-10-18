@@ -59,6 +59,24 @@ def test_where_it_stands_tables_say_where_each_employer_stops_and_what_the_perso
         assert ns.why("needs_you stuck", f"HR Generalist · {said}")[0] == where
 
 
+def test_where_it_stands_has_the_accounts_checks_other_lists_employers_too():
+    """An employer only the accounts check applies at (a list no practice-run check covers: the Las Vegas IT list's,
+    the design of Oct 18, A3) is in a table of its own, so no employer the nightly checks is missing from them."""
+    state = {"pipeline": {"KLA": "needs_you sign_in"}, "hr": {"Axon": "ready"},
+             "accounts": {"KLA": "ready", "Example Casino": "ready", "Example Data Center": "needs_you bot_check"}}
+    current = {"pipeline": {"KLA": lc.Result("needs_you sign_in", WORKDAY)}, "hr": {"Axon": lc.Result("ready", READY)},
+               "accounts": {"KLA": lc.Result("ready", READY), "Example Casino": lc.Result("ready", READY),
+                            "Example Data Center": lc.Result("needs_you bot_check", BOT)}}
+    text = lc.render_body(state, current, checked_at="2026-10-18 19:06 UTC", run_url="https://example.com/run/1")
+    md = ns.tables(lc.read_state(text), ns.details(text))
+    assert "### Other employers (with a test account only)" in md
+    other = md.split("### Other employers")[1]
+    assert "| Example Casino | Review page | Save its password; it reaches the review page |" in other
+    assert "| Example Data Center | Bot check | Solve it; the desk carries on |" in other
+    assert "KLA" not in other and "Axon" not in other  # (in their own lists' tables)
+    assert "### Other employers" not in ns.tables(lc.read_state(body()), ns.details(body()))  # (none: no table)
+
+
 def test_a_runs_saved_results_say_each_employers_rounds_and_where_it_stopped(tmp_path):
     rec = {"company": "Onto Innovation", "posting": {"title": "Field Service Engineer"},
            "rounds": [{"status": "needs_you", "need": "stuck", "reason": "The page didn't move on",

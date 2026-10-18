@@ -406,7 +406,8 @@ def handled_drift(now: list[str], listed: list[str], flipping: Iterable[str] = (
 
 def tables(state: dict[str, dict[str, str]], detail: dict[str, dict[str, str]]) -> str:
     """Markdown tables of where each employer stops: the chip list's (with the test account's column) and the
-    Phoenix HR list's, as Where It Stands shows them."""
+    Phoenix HR list's, as Where It Stands shows them, then the accounts check's employers neither has (another list's,
+    checked with the test account only)."""
     accounts = state.get("accounts") or {}
 
     def account(name: str) -> str:
@@ -430,6 +431,14 @@ def tables(state: dict[str, dict[str, str]], detail: dict[str, dict[str, str]]) 
         for name in sorted(state[check], key=str.lower):
             where = why(state[check][name], (detail.get(check) or {}).get(name, ""))[0]
             out.append(f"| {name.replace('|', '/')} | {where} | {account(name)} | {doing(name, check)} |")
+        out.append("")
+    # the accounts check's other employers (a list no practice-run check covers: live_identity.LIST_ROLES' others, the
+    # Las Vegas IT list's), so every employer it checks is in a table
+    others = sorted((n for n in accounts if not any(n in (state.get(c) or {}) for c in ("pipeline", "hr"))), key=str.lower)
+    if others:
+        out += ["### Other employers (with a test account only)", "", "| Employer | With a test account | What you do |",
+                "|---|---|---|"]
+        out += [f"| {name.replace('|', '/')} | {account(name)} | {doing(name, 'accounts')} |" for name in others]
         out.append("")
     return "\n".join(out)
 

@@ -116,7 +116,10 @@ import live_probes  # noqa: E402  (scripts/live_probes.py: the weekly probes' de
 
 QUERY_AZ = "field service | customer service engineer | customer engineer | equipment technician"  # in Arizona
 QUERY_ANY = "engineer | technician"  # fallback so every company still gets a browser check
-# --role: the kind of job a run looks for, and the fake applicant's background to match
+STATE = "AZ"  # where the first search looks (the run's role's "state": its list's area), before QUERY_ANY anywhere
+# --role: the kind of job a run looks for, and the fake applicant's background to match. "query_az" is searched in
+# the role's "state" (Arizona unless it says); a role may give the applicant an "address" and "preferences" of its
+# own, for a list in another area (made up, or a public building's, as live_profile's: nothing in them is anyone's)
 ROLES: dict[str, dict[str, Any]] = {
     "technician": {"query_az": QUERY_AZ, "query_any": QUERY_ANY},
     "hr": {
@@ -140,6 +143,26 @@ ROLES: dict[str, dict[str, Any]] = {
                                "major": "Finance", "start": 2016, "end": 2020}],
         "education": {"highest_degree": "Bachelor's Degree",
                       "degrees_earned": [{"level": "high_school"}, {"level": "bachelor", "field": "Finance"}]},
+    },
+    # IT jobs, the Las Vegas list's (live_identity.LIST_ROLES): help desk, then systems administration, in Nevada
+    "it": {
+        "state": "NV",
+        "query_az": "help desk | it support | desktop support | systems administrator",  # (four: the most searched)
+        "query_any": "help desk | systems administrator",
+        # Las Vegas' City Hall: a real street (as live_profile's Chandler one), so address lookups can find it
+        "address": {"line1": "495 S Main St", "city": "Las Vegas", "state": "NV", "postal_code": "89101",
+                    "country": "United States"},
+        "preferences": {"locations": ["Las Vegas, NV", "Henderson, NV", "North Las Vegas, NV"]},
+        "work_history": [{"title": "Systems Administrator", "company": "Example Data Center", "location": "Las Vegas, NV",
+                          "start": "2022-06", "end": "present",
+                          "description": "Ran Windows and Linux servers, backups and patching for a colocation site."},
+                         {"title": "Help Desk Technician", "company": "Example Resorts", "location": "Las Vegas, NV",
+                          "start": "2019-08", "end": "2022-05",
+                          "description": "Answered staff tickets, imaged laptops and reset accounts in Active Directory."}],
+        "education_history": [{"school": "Arizona State University", "degree": "Bachelor of Science",
+                               "major": "Information Technology", "start": 2015, "end": 2019}],
+        "education": {"highest_degree": "Bachelor's Degree",
+                      "degrees_earned": [{"level": "high_school"}, {"level": "bachelor", "field": "Information Technology"}]},
     },
 }
 
@@ -169,13 +192,17 @@ _mask: Callable[[str], str] = _no_mask  # with it, masks its email and passwords
 def use_role(name: str, email: str | None = None) -> None:
     """Search for this role's jobs, as an applicant with its background (this run's home only).
     `email`: the broad check's address at one employer (live_identity.broad_email), for its own."""
-    global QUERY_AZ, QUERY_ANY, ROLE, INBOX_IN_PROFILE
+    global QUERY_AZ, QUERY_ANY, ROLE, INBOX_IN_PROFILE, STATE
     ROLE = name
     INBOX_IN_PROFILE = bool(email) and not TEST_IDENTITY
     role = ROLES[name]
-    QUERY_AZ, QUERY_ANY = role["query_az"], role["query_any"]
+    QUERY_AZ, QUERY_ANY, STATE = role["query_az"], role["query_any"], role.get("state", "AZ")
     profile: dict[str, Any] = {**FAKE_PROFILE,
                                **{k: role[k] for k in ("work_history", "education_history", "education") if k in role}}
+    if "address" in role:  # (a list in another area: the applicant lives there)
+        profile["personal"] = {**profile["personal"], "address": role["address"]}
+    if "preferences" in role:
+        profile["preferences"] = {**profile["preferences"], **role["preferences"]}
     profile = live_profile.shaped(profile, SHAPE)  # (the role's background, in the run's shape)
     if TEST_IDENTITY:  # its name and inbox (with --plus, `email` is the employer: the inbox's "+employer" address)
         inbox = live_identity.credentials(os.environ)[0]
@@ -286,6 +313,16 @@ def start_test_identity(announce: bool = True, everywhere: bool = False, derived
               + (" Workday's saved password this run is the one derived from its site password (the weekly reset "
                  "probe's first pass)." if away else ""), flush=True)
     return employers
+
+
+def say_skipped() -> list[dict[str, str]]:
+    """--everywhere: a LIVE_SKIPPED line for each employer on its lists it can't apply at (no search block), with its
+    list and why (live_identity.skipped_employers), so the run's log says each one rather than leaving it out without
+    a word. Its first machine's alone (--machine 0/N), once: not each group's."""
+    skipped = live_identity.skipped_employers()
+    for e in skipped:
+        print("LIVE_SKIPPED " + json.dumps({"company": e["name"], "list": e["list"], "why": e["why"]}), flush=True)
+    return skipped
 
 
 def mask_broad_email() -> None:
@@ -531,7 +568,7 @@ async def check_company(company: dict[str, Any], out: Path, fixtures: bool, rec:
     """Fills in rec as it goes, so whatever was found survives a crash."""
     rec["search_config"] = company.get("search")
     # The MCP tool, so the Eightfold browser fallback and tracker marking run too.
-    az = await server.search_company_jobs(QUERY_AZ, companies=[company["name"]], location="AZ", limit_per_company=5)
+    az = await server.search_company_jobs(QUERY_AZ, companies=[company["name"]], location=STATE, limit_per_company=5)
     rec["search_az"] = search_brief(az, company["name"])
     found = az
     if not az["results"]:
@@ -1083,6 +1120,8 @@ async def check_sitecore(company: dict[str, Any]) -> dict[str, Any]:
 async def check_careers_page(company: dict[str, Any], rec: dict[str, Any]) -> None:
     """Companies without a search API: can the browser read their careers page at all?"""
     rec.update(careers_url=company.get("careers_url"), ats=company.get("ats"))
+    if company.get("no_search"):  # (its list entry's why: the compare's detail says it)
+        rec["no_search"] = " ".join(str(company["no_search"]).split())
     opened = await server.open_application(url=company["careers_url"])
     if "error" in opened:
         rec["browser"] = {"error": opened["error"]}
@@ -1131,9 +1170,10 @@ async def main() -> int:
                     help="with --test-identity: its inbox's own \"+employer\" address at each employer, to see which "
                          "sites take one (a probe: Gmail delivers them all to the one inbox)")
     ap.add_argument("--everywhere", action="store_true",
-                    help="with --test-identity: at every employer on the semiconductor-az (technician jobs) and "
-                         "phoenix-metro (HR jobs) lists, not only test_identity_employers.yaml's (the owner's call, "
-                         "Oct 11)")
+                    help="with --test-identity: at every employer with a search on the lists in "
+                         "live_identity.LIST_ROLES, each with its list's role (semiconductor-az: technician jobs, "
+                         "phoenix-metro: HR, las-vegas: IT), not only test_identity_employers.yaml's (the owner's call, "
+                         "Oct 11); the ones with no search are said on LIVE_SKIPPED lines")
     ap.add_argument("--machine", default="",
                     help="with --test-identity: M/N, this machine's share of the run on N machines at once (0-based): "
                          "its groups are the M-th of every N of live_identity.arrange's, so a code-sending system's "
@@ -1200,6 +1240,8 @@ async def main() -> int:
     if args.test_identity:
         EMPLOYERS[:] = start_test_identity(announce=not args.shard, everywhere=args.everywhere,
                                            derived=args.derived_password)
+        if args.everywhere and not args.shard and args.machine.split("/")[0] in ("", "0"):  # (once a run)
+            say_skipped()
         global PLUS, SECURITY_ANSWERS
         PLUS = args.plus
         SECURITY_ANSWERS = args.security_answers
@@ -2288,7 +2330,7 @@ def agreed_words(agreed: list[dict[str, Any]], seen: set[tuple[str, str, str]] |
 async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any], fixtures: bool = False) -> None:
     from job_apply.pipeline import Applier, placed_key, question_key
 
-    found = await server.search_company_jobs(QUERY_AZ, companies=[company["name"]], location="AZ", limit_per_company=5)
+    found = await server.search_company_jobs(QUERY_AZ, companies=[company["name"]], location=STATE, limit_per_company=5)
     if not found["results"]:
         found = await server.search_company_jobs(QUERY_ANY, companies=[company["name"]], location=None,
                                                  limit_per_company=3)

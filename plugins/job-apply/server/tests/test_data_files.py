@@ -262,6 +262,9 @@ def test_every_employer_list_loads_with_known_values():
             assert c["confidence"] in {"high", "medium", "low"}, (name, c)
             for kind in c.get("search") or {}:
                 assert kind in set(SEARCHERS) | BROWSER_SEARCHES, (name, c["name"], kind)
+            # a search, or why there's none (`no_search:`, which the live check reports): never neither, never both
+            why = c.get("no_search")
+            assert bool(c.get("search")) != (isinstance(why, str) and bool(why.strip())), (name, c["name"])
     template = yaml.safe_load((config.PLUGIN_ROOT / "templates" / "companies.example.yaml").read_text(encoding="utf-8"))
     assert set(template["lists"]) <= set(lists) and template["companies"] == []
 

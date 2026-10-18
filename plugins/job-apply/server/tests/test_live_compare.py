@@ -175,6 +175,10 @@ def test_search_outcome_without_a_search_block():
     assert lc.search_outcome(opened) == Result("no search", "careers page opened")
     failed = {**opened, "page": {"navigation_error": "net::ERR_TIMED_OUT"}}
     assert lc.search_outcome(failed) == Result("no search", "careers page: net::ERR_TIMED_OUT")
+    # its list entry's why (`no_search:`, which live_smoke.py notes) said first: a skip is never left unexplained
+    why = {**opened, "no_search": "PeopleSoft Talent Acquisition, not a system the plugin searches"}
+    assert lc.search_outcome(why) == Result(
+        "no search", "PeopleSoft Talent Acquisition, not a system the plugin searches · careers page opened")
 
 
 def test_results_read_the_run_log():

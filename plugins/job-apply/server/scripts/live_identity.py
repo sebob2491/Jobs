@@ -261,8 +261,9 @@ def drop_images(folder: Path) -> int:
     return gone
 
 
-# --everywhere: each list's employers with the role their jobs are looked for in (finance is paused)
-LIST_ROLES = {"semiconductor-az": "technician", "phoenix-metro": "hr"}
+# --everywhere: each list's employers with the role their jobs are looked for in (finance is paused; the Las Vegas
+# list is IT jobs only). The nightly's accounts and search checks cover these lists, and no others
+LIST_ROLES = {"semiconductor-az": "technician", "phoenix-metro": "hr", "las-vegas": "it"}
 # Job systems whose emailed link names the employer's own site, so the desk tells one employer's mail from
 # another's (pipeline.own_link): their employers may wait on mail at the same time. Every other system's
 # employers wait one after another (one inbox; a code from the same sender is anyone's)
@@ -290,6 +291,31 @@ def everywhere_employers(lists: Mapping[str, Path] | None = None) -> list[dict[s
             out.append({"name": c["name"], "list": name, "role": role, "system": SYSTEM_OF_SEARCH.get(str(next(iter(c["search"]))),
                                                                           str(next(iter(c["search"])))),
                         "why": "every employer on the lists (the owner's call, Oct 11)"})
+    return out
+
+
+NO_REASON = "no search block, and its entry says no why (no_search:)"
+
+
+def skipped_employers(lists: Mapping[str, Path] | None = None) -> list[dict[str, str]]:
+    """The employers on LIST_ROLES' lists that --everywhere can't apply at: those with no search block (the pipeline
+    starts from a posting its search found), each with its list and why (its entry's `no_search:`, or NO_REASON when
+    it gives none), in the lists' order, each once and never one another list searches. The live check says each of
+    them (live_smoke.py's LIVE_SKIPPED lines), so none is left out without a word."""
+    from job_apply import search
+
+    paths = lists if lists is not None else search.employer_lists()
+    searched = {e["name"] for e in everywhere_employers(paths)}
+    out: list[dict[str, str]] = []
+    for name in LIST_ROLES:
+        data = yaml.safe_load(paths[name].read_text(encoding="utf-8")) or {}
+        for c in data.get("companies") or []:
+            if not isinstance(c, dict) or not c.get("name") or isinstance(c.get("search"), dict) and c["search"]:
+                continue
+            if c["name"] in searched or any(s["name"] == c["name"] for s in out):
+                continue
+            why = " ".join(str(c.get("no_search") or "").split())
+            out.append({"name": c["name"], "list": name, "why": why or NO_REASON})
     return out
 
 
