@@ -1,13 +1,13 @@
-# Applicant tracking system (ATS) notes
+# Job system notes (applicant tracking systems)
 
 `open_application`, `click` and `inspect_form` report an `ats` value detected from
 the page URL. Use this file for the parts of each flow that `autofill` can't do.
 
-## Sign-ins and accounts (all ATSs)
+## Sign-ins and accounts (all job systems)
 
 - First check whether the persistent browser is already signed in. Sign-ins are
   saved in `~/.job-apply/browser` between sessions.
-- **Signing in:** ask the user to sign in in the browser window, then continue.
+- **Signing in:** ask the user to sign in in the desk's browser window, then continue.
   Alternatively, if they stored a password in `~/.job-apply/secrets.yaml` (for
   example `workday_password: ...`), fill the email with `fill_form` and the
   password with `fill_secret(field_id, "workday_password")`.
@@ -87,7 +87,7 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   unless the user has said otherwise.
 - **Apply** (without "Easy") opens the company site in a new tab. The tools switch
   to the new tab automatically, and `tabs()` lists the open tabs. That application
-  then follows the rules for its own ATS.
+  then follows the rules for its own job system.
 - Never page through search results or profiles automatically. If the user wants
   LinkedIn jobs, they search themselves and paste the links.
 
@@ -97,7 +97,7 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   (`get_resume` from the Indeed connector shows it). Click **Continue** to move
   between steps. The final button, **Submit your application**, is for the user
   to click.
-- **Apply on company site** goes to the employer's ATS in a new tab.
+- **Apply on company site** goes to the employer's job system in a new tab.
 
 ## Eightfold (`*.eightfold.ai`, `careers.lamresearch.com`): Lam Research, Micron, Infineon
 
@@ -162,7 +162,7 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   It covers **Apply Now** and the email step, so no fields appear until it's gone.
   Never press it unless the profile says `settings.accept_cookies: true` (then `click`
   accepts a banner with no way to decline, as the Job Desk does); otherwise `click` refuses
-  it: ask the user to choose in the browser window, then carry on.
+  it: ask the user to choose in the desk's browser window, then carry on.
 
 ## Greenhouse (`greenhouse.io`) and Lever (`lever.co`): ASM
 
@@ -186,7 +186,7 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
 ## CAPTCHAs
 
 - Some sites put up a CAPTCHA mid-application: Daifuku's iCIMS shows hCaptcha's picture
-  puzzle after its email step. The user solves it in the browser; never try to solve one.
+  puzzle after its email step. The user solves it in the desk's browser window; never try to solve one.
   The Job Desk notices the challenge, waits, and carries on once the page moves on.
 
 ## iCIMS (`*.icims.com`): Daifuku America
@@ -205,7 +205,7 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
   account per employer. A posting's button is **Quick Apply**.
 - Its cookie banner offers only **Accept Cookies**. `click` refuses it unless the profile
   says `settings.accept_cookies: true`: leave it, and if it gets in the way, ask the user
-  to choose in the browser window.
+  to choose in the desk's browser window.
 
 ## UKG Pro / UltiPro (`recruiting*.ultipro.com`): Nikon Precision
 
@@ -234,5 +234,5 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
 ## ASML (`asml.com/en/careers`)
 
 - Postings are on asml.com. **Apply** may lead to Workday (`asml.wd3.myworkdayjobs.com`)
-  or another system, so read `ats` from the page that opens and follow that ATS's
+  or another system, so read `ats` from the page that opens and follow that job system's
   notes. Many US field roles ask export-control (US person) questions.

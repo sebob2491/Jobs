@@ -10,13 +10,13 @@
 :root {
   --bg: #f6f7f9; --surface: #ffffff; --text: #1b1f24; --muted: #5d6673; --line: #e2e6ea;
   --accent: #1f6feb; --accent-text: #ffffff; --good: #1a7f37; --good-bg: #e7f5ec; --warn: #9a6700; --warn-bg: #fff4d6;
-  --bad: #cf222e; --bad-bg: #ffebe9; --info-bg: #eef4ff; --chip: #eef0f3; --shadow: 0 1px 2px rgba(0,0,0,.06);
+  --bad: #cf222e; --bad-bg: #ffebe9; --info-bg: #eef4ff; --info-text: #0b57d0; --chip: #eef0f3; --shadow: 0 1px 2px rgba(0,0,0,.06);
   --body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #0f1216; --surface: #171b21; --text: #e6e9ee; --muted: #9aa4b2; --line: #2a313a;
     --accent: #4c8dff; --good: #4ac26b; --good-bg: #13291b; --warn: #d4a72c; --warn-bg: #2c2410;
-    --bad: #ff7b72; --bad-bg: #3a1716; --info-bg: #15223a; --chip: #232a33; --shadow: none; }
+    --bad: #ff7b72; --bad-bg: #3a1716; --info-bg: #15223a; --info-text: #4c8dff; --chip: #232a33; --shadow: none; }
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -31,7 +31,7 @@ h1 { font-size: 18px; margin: 0; }
 .pill.good { background: var(--good-bg); color: var(--good); }
 .pill.warn { background: var(--warn-bg); color: var(--warn); }
 .pill.bad { background: var(--bad-bg); color: var(--bad); }
-.pill.info { background: var(--info-bg); color: var(--accent); }
+.pill.info { background: var(--info-bg); color: var(--info-text); }
 button { font: inherit; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--text); padding: 7px 12px; cursor: pointer; }
 button:hover { border-color: var(--muted); }
 button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
@@ -77,7 +77,10 @@ section.card { background: var(--surface); border: 1px solid var(--line); border
   padding: 8px 14px; border-radius: 8px; background: var(--text); color: var(--bg); font-size: 14px; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
 .toast:empty { display: none; }
 .toast button.link { color: inherit; font-weight: 600; text-decoration: underline; margin-left: 8px; }
-.notice { margin: 0 0 16px; padding: 10px 14px; border-radius: 10px; background: var(--warn-bg); color: var(--text); grid-column: 1 / -1; }
+/* a notice: blue, information (a tip, an update); red, a problem ("Problem: ..."). Yellow is only .waiting's: what
+   waits for you now */
+.notice { margin: 0 0 16px; padding: 10px 14px; border-radius: 10px; background: var(--info-bg); color: var(--text); grid-column: 1 / -1; }
+.notice.bad { background: var(--bad-bg); border: 1px solid var(--bad); }
 .notice code { font-size: 13px; }
 .notice.tip { display: flex; align-items: flex-start; gap: 12px; }
 .notice.tip > span { flex: 1; }
@@ -117,7 +120,7 @@ button.score:hover { outline: 1px solid var(--muted); }
 #safety-body .where { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
 #ni .actions { margin-top: 12px; }
 .score.s4 { background: var(--good-bg); color: var(--good); }
-.score.s3 { background: var(--info-bg); color: var(--accent); }
+.score.s3 { background: var(--info-bg); color: var(--info-text); }
 .score.s2 { background: var(--warn-bg); color: var(--warn); }
 .score.s1 { color: var(--muted); }
 .title { font-weight: 600; color: var(--text); text-decoration: none; overflow-wrap: anywhere; }
@@ -129,7 +132,7 @@ button.score:hover { outline: 1px solid var(--muted); }
 .chip.plus { background: var(--good-bg); color: var(--good); }
 .chip.minus { background: var(--warn-bg); color: var(--warn); }
 .chip.stop { background: var(--bad-bg); color: var(--bad); }
-.chip.new { background: var(--info-bg); color: var(--accent); font-weight: 600; }
+.chip.new { background: var(--info-bg); color: var(--info-text); font-weight: 600; }
 .chip.handled { background: var(--good-bg); color: var(--good); font-weight: 600; }
 .handled-switch { font-size: 13px; display: flex; align-items: center; gap: 6px; }
 .empty { padding: 28px 16px; text-align: center; color: var(--muted); }
@@ -239,7 +242,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
       <span class="hint" id="apply-hint"></span>
       <label><input type="checkbox" id="auto"> Submit for me when nothing needs me</label>
       <span class="hint" id="auto-hint"></span>
-      <span class="at-once" role="group" aria-label="Jobs at once" title="How many applications the desk fills at the same time, each in its own tab of the browser window. Never two at one employer's site, and one at a time signs in, makes an account or waits on an emailed code. While a sign-in or code needs you, no other job starts and no other tab comes to the front.">Jobs at once
+      <span class="at-once" role="group" aria-label="Jobs at once" title="How many applications the desk fills at the same time, each in its own tab of the desk's browser window. Never two at one employer's site, and one at a time signs in, makes an account or waits on an emailed code. While a sign-in or code needs you, no other job starts and no other tab comes to the front.">Jobs at once
         <button data-at-once="1" aria-pressed="false">1</button><button data-at-once="2" aria-pressed="false">2</button><button data-at-once="3" aria-pressed="false">3</button></span>
       <label><input type="checkbox" id="tailor"> Tailor my resume for each job</label>
       <span class="hint" id="tailor-hint"></span>
@@ -255,7 +258,8 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
       <div class="counts" id="idle-counts"></div>
     </section>
     <section class="card" aria-labelledby="needs-h">
-      <div class="card-head"><h2 id="needs-h">Needs you</h2><span class="pill" id="needs-count">0</span></div>
+      <div class="card-head"><h2 id="needs-h">Needs you</h2><span class="pill" id="needs-count"
+        title="Every job stopped for you. Among the openings the bar over the list shows, they're its Bot checks and Questions and sign-ins, the stopped ones among its Stuck, and the ones among its Ready that wait on a Submit or a check of yours">0</span></div>
       <div id="needs"></div>
     </section>
     <section class="card" aria-labelledby="work-h">
@@ -263,7 +267,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
       <div id="work"></div>
     </section>
     <section class="card" aria-labelledby="done-h">
-      <div class="card-head"><h2 id="done-h">Ready and done</h2></div>
+      <div class="card-head"><h2 id="done-h">Ready and done</h2><span class="pill info" id="done-count" title="Filled to the review page: press Submit on each" hidden></span></div>
       <div id="done"></div>
       <div class="counts" id="counts"></div>
     </section>
@@ -399,7 +403,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
   </div>
 </dialog>
 <footer>
-  The desk fills applications in the automation browser window and stops at each review page.
+  The desk fills applications in the desk's browser window and stops at each review page.
   It only submits when you press Submit, or when "Submit for me" is on. LinkedIn and Indeed are always submitted by you.
   Answers you give here are saved in <code>~/.job-apply/answers.yaml</code> unless you untick "remember".
   <span id="plugin-version"></span>
@@ -616,13 +620,24 @@ const STATUS = {
   ready_to_submit: ["Ready to submit", "info"], in_progress: ["Started", ""], saved: ["Saved", ""],
 };
 const RUN = {
-  queued: ["Queued", "info"], running: ["Working…", "info"], needs_you: ["Needs you", "warn"],
+  queued: ["Queued", "info"], running: ["Working…", "info"],  // (needs_you: its need's own word, needPill)
   ready: ["Ready to submit", "info"], submitted: ["Submitted", "good"], failed: ["Didn't finish", "bad"], skipped: ["Skipped", ""],
 };
 const DONE = new Set(["applied", "interviewing", "offer", "rejected", "withdrawn", "skipped"]);
 
 // A job stopped on a bot check or CAPTCHA (the person's to solve: the desk never does) says so, in its row and its card
 const stopMark = (r) => r.status !== "needs_you" ? "" : r.need === "bot_check" ? "Bot check" : r.captcha || r.need === "captcha" ? "CAPTCHA" : "";
+// And every stopped job says what it waits on, one word per state, the same in its row, its card and the bar over the
+// openings (the side card's "Needs you" counts them all; among the openings the bar shows, they're its Bot checks and
+// Questions and sign-ins, the stopped ones among its Stuck, and the ones among its Ready waiting on a Submit or a check
+// of the person's). Stuck is red, as Didn't finish is; the others wait for you (yellow)
+const NEED_PILL = {
+  questions: "Questions", sign_in: "Sign in", email_code: "Emailed code", stuck: "Stuck", submit_failed: "Stuck",
+  your_submit: "Your Submit", check_submit: "Check if it went in", tailor: "Waiting for a resume", restarted: "Restarted",
+  maybe_duplicate: "Already begun?",
+};
+const needPill = (r) => stopMark(r) ? [stopMark(r), "warn"]
+  : [NEED_PILL[r.need] || "Waiting for you", STUCK_NEEDS.has(r.need) ? "bad" : "warn"];
 
 // The bar's groups, in its order: where each opening stands; and two more, New (first saved since your last visit, of
 // any of the others) and Not interested (the ones you hid: in no other group, Any's either)
@@ -632,7 +647,7 @@ const STOPS = [
   ["new", "Not started", "Not being filled: not tried yet, or started before the desk restarted"],
   ["working", "Working", "Being filled now, or waiting in the queue"],
   ["bot", "Bot checks", "Stopped at a bot check: yours to solve (the desk never does)"],
-  ["you", "Needs you", "Stopped for you: a question, a sign-in, an emailed code"],
+  ["you", "Questions and sign-ins", "Stopped for you: a question, a sign-in, an emailed code"],
   ["stuck", "Stuck", "The desk couldn't get past something: these are the ones to tell Claude about"],
   ["ready", "Ready", "Filled to the review page"],
   ["done", "Done", "Submitted, applied, skipped or closed"],
@@ -658,7 +673,7 @@ const inStop = (r) => stopFilter === "unwanted" ? !!r.not_interested : !r.not_in
 
 function statusPill(row) {
   const r = row.run;
-  const [text, cls] = r ? (stopMark(r) ? [stopMark(r), "warn"] : RUN[r.status] || [r.status, ""]) : STATUS[row.status] || ["", ""];
+  const [text, cls] = r ? (r.status === "needs_you" ? needPill(r) : RUN[r.status] || [r.status, ""]) : STATUS[row.status] || ["", ""];
   return text ? `<span class="pill ${cls}">${esc(text)}</span>` : "";
 }
 
@@ -687,7 +702,7 @@ function renderStops(all) {
   if (bar.dataset.html !== buttons) { bar.innerHTML = buttons; bar.dataset.html = buttons; }  // (focus kept)
   const checks = botChecks().length;
   const html = stopFilter === "bot" && checks
-    ? `<span>${checks} to solve: the round brings each one up in the browser window, and each job carries on by itself after.</span>
+    ? `<span>${checks} to solve: the round brings each one up in the desk's browser window, and each job carries on by itself after.</span>
        ${botRound ? "" : `<button class="primary" data-act="bot-round">Solve them</button>`}`
     : stopFilter === "stuck" && count.stuck
     ? `<span>The desk couldn't get past these. ${state.notes ? "It took a note on each: Notes files them together for Claude to fix." : "Each one's card has Report a problem, for Claude to fix."}</span>
@@ -771,7 +786,7 @@ function renderSafety(s) {
     parent.appendChild(el);
     return el;
   };
-  if (s.problem) add(body, "p", `Your profile can't be read (${s.problem}): the desk fills no application until it's fixed. These are the settings' defaults.`, "notice");
+  if (s.problem) add(body, "p", `Problem: your profile can't be read (${s.problem}): the desk fills no application until it's fixed. These are the settings' defaults.`, "notice bad");
   const ul = add(body, "ul");
   for (const l of s.lines || []) {
     const li = add(ul, "li");
@@ -933,19 +948,22 @@ function question(jobId, q, i, repeated = false) {
 }
 
 function jobButtons(r, which) {
-  const b = (act, text, cls = "") => `<button class="${cls}" data-job="${r.job_id}" data-job-act="${act}">${text}</button>`;
+  const b = (act, text, cls = "", tip = "") => `<button class="${cls}" data-job="${r.job_id}" data-job-act="${act}"${tip
+    ? ` title="${esc(tip)}"` : ""}>${text}</button>`;
   const out = [];
   if (which.includes("show")) out.push(b("show", "Show me"));
   if (which.includes("fill")) out.push(b("fill", "Fill these in", "primary"));
   if (which.includes("apply_anyway")) out.push(b("apply_anyway", "Apply anyway", "primary"));
   if (which.includes("submit")) out.push(b("submit", "Submit", "primary"));
-  if (which.includes("applied")) out.push(b("applied", "I submitted it", "primary"));
+  // (one label wherever it is: the person sent it on the site, their own press)
+  if (which.includes("applied")) out.push(b("applied", "I submitted it myself", "primary"));
   if (which.includes("resume")) out.push(b("resume", "Resume"));
   if (which.includes("usual_resume")) out.push(b("usual_resume", "Use my usual resume"));
-  if (which.includes("later")) out.push(b("later", "Later"));
+  if (which.includes("later")) out.push(b("later", "Later", "",
+    "Let the other jobs go on; this one waits in its tab until you finish it there"));
   if (which.includes("skip")) out.push(b("skip", "Skip job"));
   // sent on the site itself, whatever the card waited on (issue #112, note 31): it counts as applied
-  if (which.includes("already")) out.push(b("applied", "I submitted it already", "link"));
+  if (which.includes("already")) out.push(b("applied", "I submitted it myself", "link"));
   if (which.includes("unskip")) out.push(b("unskip", "Undo", "primary"));
   out.push(b("report", "Report a problem", "link"));
   return `<div class="actions">${out.join("")}</div>`;
@@ -1035,7 +1053,8 @@ function renderSide() {
   $("needs-count").textContent = needs.length;
   $("needs-count").className = "pill " + (needs.length ? "warn" : "");
   const needEntries = needs.map((r) => {
-    const mark = stopMark(r) ? ` <span class="pill warn">${stopMark(r)}</span>` : "";
+    const [said, cls] = needPill(r);
+    const mark = ` <span class="pill ${cls}">${esc(said)}</span>`;
     const head = `<h3>${esc(r.title)} <span class="small">· ${esc(r.company)}</span>${mark}</h3><p>${esc(r.reason)}</p>`;
     let body;
     const qs = r.questions || [];
@@ -1044,7 +1063,7 @@ function renderSide() {
     // questions (with Resume, for answers typed into the page itself), or a missing file plus questions
     // (and Later on a sign-in holding the queue: an account form's security questions, put on its card)
     // left by a restart of the desk, with no tab to show: Resume fills it again up to its review page (never sending
-    // it); one whose Submit may have gone in says so, with I submitted it first, and one begun has I submitted it already
+    // it); one whose Submit may have gone in says so, with I submitted it myself first, and one begun has it last
     if (r.left_at_restart) body = jobButtons(r, r.need === "check_submit" ? ["applied", "resume", "skip"] : ["resume", "skip", "already"]);
     else if (form || r.need === "questions") body = form + jobButtons(r, ["fill", "show", "resume",
       ...(r.blocking && r.need === "sign_in" ? ["later"] : []), "skip", "already"]);
@@ -1052,7 +1071,7 @@ function renderSide() {
     // password reset by hand (the desk then presses its sign-in once more)
     else if (["sign_in", "bot_check", "email_code"].includes(r.need))
       body = jobButtons(r, ["show", ...(r.blocking ? (r.need === "sign_in" ? ["resume", "later"] : ["later"]) : ["resume"]), "skip", "already"]);
-    // (or the site's own Submit, pressed after ticking it: "I submitted it")
+    // (or the site's own Submit, pressed after ticking it: "I submitted it myself")
     else if (r.need === "captcha") body = jobButtons(r, ["show", "submit", "applied", "skip"]);
     else if (r.need === "your_submit" || r.need === "check_submit") body = jobButtons(r, ["show", "applied", "skip"]);
     else if (r.need === "submit_failed") body = jobButtons(r, ["show", "submit", "applied", "skip"]);
@@ -1075,7 +1094,12 @@ function renderSide() {
   if (!workEntries.length) workEntries.push({key: "idle", html: `<div class="empty">Idle.</div>`});
   patch($("work"), workEntries);
 
-  const done = runs.filter((r) => ["ready", "submitted", "failed", "skipped"].includes(r.status));
+  // the ones with a Submit to press first, then the ones that didn't finish (Resume), then the ones sent or skipped
+  const DONE_ORDER = {ready: 0, failed: 1, submitted: 2, skipped: 2};
+  const done = runs.filter((r) => r.status in DONE_ORDER).sort((a, b) => DONE_ORDER[a.status] - DONE_ORDER[b.status]);
+  const ready = done.filter((r) => r.status === "ready").length;
+  $("done-count").hidden = !ready;
+  $("done-count").textContent = `${ready} to submit`;
   const doneEntries = done.map((r) => {
     const buttons = r.status === "ready" ? jobButtons(r, ["show", "submit", "skip", "already"])
       : r.status === "failed" ? jobButtons(r, ["show", "resume", "skip", "already"])
@@ -1117,6 +1141,23 @@ function renderBank() {
   patch($("bank-given"), given.map(bankQuestion));
 }
 
+// a problem the desk says in a sentence of its own ("The desk couldn't read your email: ..."): "Problem: the desk ..."
+const problemSaid = (html) => "Problem: " + String(html).replace(/^(The|Your|A|This) /, (w) => w.toLowerCase());
+
+// A search's error in words: the program's own text (an HTTP status, a timeout) goes in the tooltip
+function searchWords(e, otherwise = "its job list couldn't be read") {
+  const t = String(e || "");
+  if (/^its searches took over/.test(t)) return t;  // (the desk's words already)
+  // (search.py's "(2 of 4 searches failed; the others' results are listed)" and "(... the earlier ones' results are
+  // listed)", server.py's browser searches' "(2 of 4 searches failed)", said only when some found openings)
+  const listed = /(results are listed|\d+ of \d+ searches failed)\)$/.test(t) ? " (the others' results are listed)" : "";
+  if (/bot check/i.test(t)) return "the site showed a bot check" + listed;
+  if (/maintenance/i.test(t)) return "the site is down for maintenance" + listed;
+  if (/HTTP (403|429)\b/.test(t)) return "the site turned the search away" + listed;
+  if (/HTTP 5\d\d\b|Timeout|ConnectError|RemoteProtocolError|didn't answer/i.test(t)) return "the site didn't answer" + listed;
+  return otherwise + listed;
+}
+
 function renderHeader() {
   const p = state.profile, s = state.settings;
   $("who").textContent = p.name ? `for ${p.name}` : "";
@@ -1134,7 +1175,6 @@ function renderHeader() {
   const fresh = (state.listings || []).filter((r) => isNew(r) && (r.added || (r.fit && r.fit.recommended))).length;
   $("searched").textContent = sr.status === "running"
     ? (sr.auto ? "Searching by itself (the openings were over 12 hours old), started " : "Searching, started ") + ago(sr.started)
-    : sr.status === "failed" ? "Search failed: " + (sr.error || "")
     : [sr.stopped && sr.stopped > (sr.at || 0) ? "Search stopped" : "",
        sr.at ? "Searched " + ago(sr.at) + (fresh ? ` · ${fresh} new` : "") : ""].filter(Boolean).join(" · ");
   const autoSearch = $("auto-search");
@@ -1172,13 +1212,13 @@ function renderHeader() {
   const notes = [];
   const waiting = allRuns().find((r) => r.blocking);
   // what to do is in its Needs you card; here, only which job the queue is waiting on
-  if (waiting) notes.push({cls: "waiting", html: `<strong>Waiting for you in the browser window:</strong>
+  if (waiting) notes.push({cls: "waiting", html: `<strong>Waiting for you in the desk's browser window:</strong>
     <span>${esc(waiting.title)} (${esc(waiting.company)}). The other jobs wait until it's done, or until nothing happens in it for 5 minutes; what to do is under Needs you.</span>
     <button data-job="${waiting.job_id}" data-job-act="show">Show me</button>`});
   // Bot checks wait in their tabs while the queue goes on: one banner, and a round that takes the person to each
   const checks = botChecks();
   if (checks.length) notes.push({cls: "waiting", html: `<strong>${checks.length} bot check${checks.length === 1 ? "" : "s"} to solve.</strong>
-    <span>${botRound ? "Solve the one in the browser window; the next comes up by itself (Next leaves this one for later). No other job starts meanwhile." : "The other jobs carry on meanwhile. Solve them in one go when you're ready; each job carries on by itself after."}</span>
+    <span>${botRound ? "Solve the one in the desk's browser window; the next comes up by itself (Next leaves this one for later). No other job starts meanwhile." : "The other jobs carry on meanwhile. Solve them in one go when you're ready; each job carries on by itself after."}</span>
     ${botRound ? `<button data-act="bot-next">Next</button> <button data-act="bot-stop">Stop</button>` : `<button class="primary" data-act="bot-round">Solve them</button>`}
     ${alertsOn() || !("Notification" in window) ? "" : `<button class="link" data-act="alerts">Alert me when one comes up</button>`}`});
   // Applications filled to the person's Submit: one banner, and a round that brings each review page up in turn
@@ -1186,14 +1226,14 @@ function renderHeader() {
   const shownJob = reviewRound ? toSend.find((r) => r.job_id === reviewShown) : null;
   if (!botRound && !s.troubleshoot && (toSend.length || reviewRound)) notes.push({cls: "waiting", html: reviewRound && shownJob
     ? `<strong>Reviewing ${esc(shownJob.title)} (${esc(shownJob.company)}).</strong>
-       <span>${shownJob.need === "captcha" && shownJob.status !== "ready" ? "Tick its CAPTCHA in the browser window and check the page, then send it, or leave it for later." : shownJob.status === "ready" ? "Check the page in the browser window, then send it, or leave it for later." : "This site's Submit is yours: check the page in the browser window, press it there, then press I submitted it here."} ${toSend.length - 1} more after this one. No other job starts meanwhile.</span>
+       <span>${shownJob.need === "captcha" && shownJob.status !== "ready" ? "Tick its CAPTCHA in the desk's browser window and check the page, then send it, or leave it for later." : shownJob.status === "ready" ? "Check the page in the desk's browser window, then send it, or leave it for later." : shownJob.need === "check_submit" ? "Its Submit was pressed and no confirmation showed, so it may have gone in: check the page in the desk's browser window, or your email, first. If it went in, press I submitted it myself here; if not, leave it for later and see its card under Needs you." : "This site's Submit is yours: check the page in the desk's browser window, press it there, then press I submitted it myself here."} ${toSend.length - 1} more after this one. No other job starts meanwhile.</span>
        ${sendable(shownJob) ? `<button class="primary" data-act="review-submit" data-review="${shownJob.job_id}">Submit this one</button>` : ""}
-       <button class="${sendable(shownJob) ? "" : "primary"}" data-act="review-applied" data-review="${shownJob.job_id}">${sendable(shownJob) ? "I submitted it already" : "I submitted it"}</button>
+       <button class="${sendable(shownJob) ? "" : "primary"}" data-act="review-applied" data-review="${shownJob.job_id}">I submitted it myself</button>
        <button data-act="review-next">Next</button> <button data-act="review-stop">Stop</button>`
-    : `<strong>${toSend.length} application${toSend.length === 1 ? "" : "s"} ready for your Submit${toSend.some((r) => r.need === "captcha" && r.status !== "ready") ? ` (${toSend.filter((r) => r.need === "captcha" && r.status !== "ready").length} with a CAPTCHA to tick first)` : ""}.</strong>
-       <span>Go through them one by one: each review page comes up in the browser window to check before you send it.</span>
+    : `<strong>${roundSaid(toSend)}.</strong>
+       <span>Go through them one by one: each review page comes up in the desk's browser window to check${toSend.some((r) => r.need !== "check_submit") ? " before you send it" : ""}.</span>
        <button class="primary" data-act="review-round">Review them</button>`});
-  if (s.troubleshoot) notes.push({cls: "waiting", html: `<strong>Troubleshooting is on: no application is submitted.</strong>
+  if (s.troubleshoot) notes.push({cls: "notice info", html: `<strong>Troubleshooting is on: no application is submitted.</strong>
     <span>Find jobs searches every list's employers, and only the openings where the desk doesn't go all the way yet show. The desk still makes accounts and fills each step, which the sites keep. Turn it off (under Openings) to apply for real.</span>`});
   const needing = allRuns().filter((r) => r.status === "needs_you").length;
   document.title = needing ? `(${needing}) Needs you · Job Desk` : "Job Desk";
@@ -1201,32 +1241,36 @@ function renderHeader() {
   // kept here, if it isn't (another desk keeps it, or the folder allows no lock)
   if (state.restored) notes.push({cls: "waiting", html: `<strong>${esc(state.restored)}</strong>
     <button class="primary" data-act="resume">Resume queue</button>`});
-  if (state.queue_note) notes.push({cls: "notice", html: esc(state.queue_note)});
+  if (state.queue_note) notes.push(state.queue_note_problem ? {cls: "notice bad", html: problemSaid(esc(state.queue_note))}
+    : {cls: "notice info", html: esc(state.queue_note)});
   if (state.tailoring) notes.push({cls: "waiting", html: `<strong>${state.tailoring} job${state.tailoring === 1 ? "" : "s"} waiting for a tailored resume.</strong>
     <span>In Claude Code, say \u201ctailor my resumes\u201d. Each job carries on as soon as its resume is ready.</span>`});
-  if (p.missing && p.missing.length) notes.push({cls: "notice", html: `Your profile still needs: ${esc(inWords(p.missing.map(profileField)))}. Run <code>/job-apply:setup</code> in Claude Code, or edit <code>${esc(p.path)}</code>.`});
-  if (p.gaps && p.gaps.length) notes.push({cls: "notice", tip: "gaps:" + p.gaps.join(","), html: `Fewer stops: your profile could also hold ${esc(inWords(p.gaps.map(profileField)))}.`});
+  if (p.missing && p.missing.length) notes.push({cls: "notice bad", html: `Problem: your profile still needs: ${esc(inWords(p.missing.map(profileField)))}. Run <code>/job-apply:setup</code> in Claude Code, or edit <code>${esc(p.path)}</code>.`});
+  if (p.gaps && p.gaps.length) notes.push({cls: "notice info", tip: "gaps:" + p.gaps.join(","), html: `Fewer stops: your profile could also hold ${esc(inWords(p.gaps.map(profileField)))}.`});
   // on by default since 0.3.67: said until the profile says either way
-  if (s.manage_accounts && !s.manage_accounts_chosen) notes.push({cls: "notice", tip: "accounts", html: `The desk now handles your job-site
+  if (s.manage_accounts && !s.manage_accounts_chosen) notes.push({cls: "notice info", tip: "accounts", html: `The desk now handles your job-site
     accounts: with a password saved below, it creates the account at each employer (agreeing to its terms for you) and, when
     a site turns your saved password down, resets it to that one through the site's "Forgot password" email. To keep doing
     these yourself, add <code>manage_accounts: false</code> under <code>settings:</code> in <code>${esc(p.path)}</code>;
     <code>manage_accounts: true</code> keeps them and hides this note.`});
   const up = state.update;
-  if (up) notes.push({cls: "notice", html: `job-apply ${esc(up.latest)} is out (you have ${esc(up.current)}). Between runs, `
+  if (up) notes.push({cls: "notice info", html: `job-apply ${esc(up.latest)} is out (you have ${esc(up.current)}). Between runs, `
     + `in a terminal (PowerShell on Windows) run ${up.commands.map((c) => `<code>${esc(c)}</code>`).join(", then ")}, then `
     + `restart the Claude app.`});
-  if (state.profile_problem) notes.push({cls: "notice", html: `Your profile can't be read: ${esc(state.profile_problem)} Fix it and the desk picks it up again by itself.`});
-  if (state.mail_problem) notes.push({cls: "notice", html: esc(state.mail_problem)});
-  if (state.answers_problem) notes.push({cls: "notice", html: `Your saved answers aren't being used: ${esc(state.answers_problem)}.`});
-  if (state.tracker_problem && state.tracker_damaged) notes.push({cls: "notice", html: `Your list of jobs can't be read `
+  // problems: red, each said "Problem: ..." (yellow is only for what waits for you now)
+  if (sr.status === "failed") notes.push({cls: "notice bad", html: `Problem: the search failed: <span title="${esc(sr.error || "")}">`
+    + `${esc(searchWords(sr.error, "something went wrong in it"))}</span>. Press Find jobs to try again.`});
+  if (state.profile_problem) notes.push({cls: "notice bad", html: `Problem: your profile can't be read: ${esc(state.profile_problem)} Fix it and the desk picks it up again by itself.`});
+  if (state.mail_problem) notes.push({cls: "notice bad", html: problemSaid(esc(state.mail_problem))});
+  if (state.answers_problem) notes.push({cls: "notice bad", html: `Problem: your saved answers aren't being used: ${esc(state.answers_problem)}.`});
+  if (state.tracker_problem && state.tracker_damaged) notes.push({cls: "notice bad", html: `Problem: your list of jobs can't be read `
     + `(${esc(state.tracker_problem)}). Close the desk, move <code>${esc(state.tracker_path)}</code> (and a `
     + `<code>tracker.db-journal</code> beside it, if there is one) somewhere else for safekeeping, and open the desk `
     + `again: it starts a new list. Your job folders, profile and passwords stay as they are.`});
-  else if (state.tracker_problem) notes.push({cls: "notice", html: `Your list of jobs can't be opened right now `
+  else if (state.tracker_problem) notes.push({cls: "notice bad", html: `Problem: your list of jobs can't be opened right now `
     + `(${esc(state.tracker_problem)}): it may be in use. The desk tries again by itself.`});
-  for (const w of state.settings_warnings || []) notes.push({cls: "notice", html: `A line in your profile's settings does nothing: ${esc(w)}`});
-  if (!token) notes.push({cls: "notice", html: "This page needs the address the desk printed (it carries a key). Open it from Claude with “open the job desk”."});
+  for (const w of state.settings_warnings || []) notes.push({cls: "notice bad", html: `Problem: a line in your profile's settings does nothing: ${esc(w)}`});
+  if (!token) notes.push({cls: "notice bad", html: "Problem: this page needs the address the desk printed (it carries a key). Open it from Claude with “open the job desk”."});
   const closed = dismissed();
   patch($("notices"), notes.filter((n) => !closed.has(n.tip)).map((n) => ({key: n.cls + ":" + n.html, html: n.tip
     ? `<p class="${n.cls} tip"><span>${n.html}</span><button class="link close" data-act="dismiss" data-tip="${esc(n.tip)}" title="Close this tip" aria-label="Close this tip">✕</button></p>`
@@ -1234,7 +1278,7 @@ function renderHeader() {
   const skipped = sr.browser_only || [], errs = Object.entries(sr.errors || {});
   const sites = skipped.length || errs.length ? `<details><summary>Not searched automatically (${skipped.length + errs.length})</summary>
     ${skipped.map((b) => `<div>${esc(b.company)}: ${link(b.careers_url, "search their site")}</div>`).join("")}
-    ${errs.map(([c, e]) => `<div>${esc(c)}: ${esc(e)}</div>`).join("")}</details>` : "";
+    ${errs.map(([c, e]) => `<div>${esc(c)}: <span title="${esc(e)}">${esc(searchWords(e))}</span></div>`).join("")}</details>` : "";
   if ($("skipped-sites").dataset.html !== sites) {  // redrawn only when it changes: an opened list stays open
     $("skipped-sites").innerHTML = sites;
     $("skipped-sites").dataset.html = sites;
@@ -1263,8 +1307,19 @@ function botStep() {
   api(`/api/job/${next.job_id}/round`, {}).catch(() => { botPassed.add(next.job_id); botStep(); renderHeader(); });
 }
 
+// What the review round holds, in words: the applications ready for the person's Submit (a CAPTCHA to tick first, on
+// some), and the ones whose Submit was pressed with no confirmation, to check whether they went in (never to send again)
+function roundSaid(toSend) {
+  const checks = toSend.filter((r) => r.need === "check_submit").length, sends = toSend.length - checks;
+  const ticks = toSend.filter((r) => r.need === "captcha" && r.status !== "ready").length;
+  const plural = (n) => `application${n === 1 ? "" : "s"}`;
+  return [sends ? `${sends} ${plural(sends)} ready for your Submit${ticks ? ` (${ticks} with a CAPTCHA to tick first)` : ""}` : "",
+          checks ? `${checks} ${sends ? "" : `${plural(checks)} `}to check whether ${checks === 1 ? "it" : "they"} went in` : ""]
+    .filter(Boolean).join(", and ");
+}
+
 // The applications filled to the person's Submit, oldest first; and the round that brings each review page up in turn
-// (the person checks it and presses Submit, or the site's own button and "I submitted it"; Next leaves one for later)
+// (the person checks it and presses Submit, or the site's own button and "I submitted it myself"; Next leaves one for later)
 let reviewRound = false, reviewShown = null;
 const reviewPassed = new Set();
 // (a CAPTCHA before its Submit: the person ticks it, then sends it with the desk's Submit, as a ready one)
@@ -1358,7 +1413,7 @@ function renderArea() {
   const titles = areaTitles(area), places = area.places || [];
   const short = (xs, none) => !xs.length ? none : xs.length === 1 ? xs[0] : `${xs[0]} +${xs.length - 1}`;
   const btn = $("area-btn");
-  btn.textContent = `Search: ${short(titles, "jobs")} · ${short(places, (area.states || []).join(", ") || "your state")}`;
+  btn.textContent = `What and where: ${short(titles, "jobs")} · ${short(places, (area.states || []).join(", ") || "your state")}`;
   btn.title = `Find jobs looks for ${titles.join(", ") || "the plugin's equipment roles"}`
     + ` in ${places.join("; ") || "your home state"}. Press to change what and where it searches.`;
   // (the window's draft is drawn when it opens and on the person's own changes, never by the page's refresh, which
@@ -1444,8 +1499,8 @@ async function load() {
     }
   } catch (e) {
     $("notices").innerHTML = e.status === 403
-      ? `<p class="notice">This page's key is missing or out of date (the desk was restarted). Open the address the desk printed, or ask Claude to \u201copen the job desk\u201d.</p>`
-      : `<p class="notice">Can't reach the desk (${esc(e.message)}). Is Claude Code (or job-apply-desk) still running?</p>`;
+      ? `<p class="notice bad">Problem: this page's key is missing or out of date (the desk was restarted). Open the address the desk printed, or ask Claude to \u201copen the job desk\u201d.</p>`
+      : `<p class="notice bad">Problem: the desk can't be reached (${esc(e.message)}). Is Claude Code (or job-apply-desk) still running?</p>`;
   }
 }
 

@@ -269,7 +269,8 @@ class MenusMixin:
                     await loc.fill("")
                     shown = await self._open_ticks(page, field["id"], loc, search)
                     if pick not in shown:
-                        raise ValueError(f"{pick!r} left its list when it opened again; tick it in the browser")
+                        raise ValueError(f"{pick!r} left its list when it opened again; tick it in "
+                                         "the desk's browser window")
             if pick is None:
                 if search:
                     await self._clear_search(page, loc)  # (its typed words aren't an answer)
@@ -287,7 +288,7 @@ class MenusMixin:
                     return f"selected {pick}"
         finally:
             await self._close_menus(page)  # (its menu stays open after a tick)
-        raise ValueError(f"Ticked {pick!r} but the list doesn't have it ticked; tick it in the browser")
+        raise ValueError(f"Ticked {pick!r} but the list doesn't have it ticked; tick it in the desk's browser window")
 
     async def _open_ticks(self, page: Page, field_id: str, loc: Locator, search: bool) -> list[str]:
         """Open a multiselect's list (a search box's on the Down key: a click only puts the cursor in it) and read
@@ -305,7 +306,7 @@ class MenusMixin:
                 await loc.press("ArrowDown")
             shown = await self._field_options(page, field_id, loc, browser.LIST_REOPEN_WAIT)
             if not shown:
-                raise ValueError("its list of choices didn't open; tick it in the browser")
+                raise ValueError("its list of choices didn't open; tick it in the desk's browser window")
         return shown
 
     async def _row_ticked(self, page: Page, field_id: str, text: str) -> bool:

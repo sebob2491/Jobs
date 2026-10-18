@@ -54,7 +54,7 @@ The goal is a short, deduplicated list of real openings saved to the tracker
      default list, and with the `phoenix-metro` list four more (a system it can't
      search, such as PeopleSoft's City of Phoenix site, or a site that refuses automated browsers, such as
      ADP's and Maricopa Community Colleges' Cloudflare checks). Nothing tries to get around those. Don't open
-     them in the automation browser: give the user their careers links, a short list, to
+     them in the desk's browser window: give the user their careers links, a short list, to
      search in their own browser, or look for their postings on Indeed.
    - `ingest_job(url)` each posting worth saving. It stores the full description.
    Look at the first page or two of results only, at a normal pace. This is one
@@ -77,7 +77,7 @@ The goal is a short, deduplicated list of real openings saved to the tracker
    the user doesn't have (and don't accept equivalent experience) go below the ranked
    list, each with its reason, as the Job Desk shows them under **All**: the user decides.
 
-6. **Report.** Give a table with id, company, title, location, ATS and a one-line fit
+6. **Report.** Give a table with id, company, title, location, job system and a one-line fit
    note, then ask which ones to apply to. The `apply` skill takes it from there.
 
 7. **Each morning.** Offer once: "each morning: search, then whats_new". After a search

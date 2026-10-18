@@ -4,13 +4,13 @@
 company careers site) and Claude does the rest:
 
 1. **Reads the posting.** It pulls the title, company, location, description,
-   and the applicant tracking system (ATS) that runs the application.
+   and the job system (Workday, say) that runs the application.
 2. **Checks fit** against your profile and flags hard blockers, such as an
    export-control or citizenship requirement, a degree, or the amount of travel.
-3. **Opens the application in a real Chrome window** on your machine, which you
-   can watch, and fills it in from your profile. That covers contact details,
-   address, work authorization, sponsorship, voluntary EEO answers, the resume
-   upload, and answers you've saved before.
+3. **Opens the application in a real browser window** on your machine (the desk's
+   browser window), which you can watch, and fills it in from your profile. That
+   covers contact details, address, work authorization, sponsorship, voluntary EEO
+   answers, the resume upload, and answers you've saved before.
 4. **Asks you** about anything your profile doesn't answer. It drafts free-text
    answers from your resume for you to approve.
 5. **Stops at the review page** and submits when you say so.
@@ -89,8 +89,8 @@ says what to do about anything that isn't right. It changes nothing.
 
 | Where the application is | What Claude does |
 |---|---|
-| Company sites (Workday, Greenhouse, Lever, Eightfold, SuccessFactors, …) | Fills everything and shows you the review page. You say "submit" and Claude submits. You can opt in to **auto** mode for chosen ATSs, and then Claude submits complete applications without asking. |
-| **LinkedIn Easy Apply** and **Indeed Apply** | Fills everything, then **you click Submit** in the browser. Both sites' terms prohibit automated submission, and they restrict accounts that do it, so the plugin never presses that button. |
+| Company sites (Workday, Greenhouse, Lever, Eightfold, SuccessFactors, …) | Fills everything and shows you the review page. You say "submit" and Claude submits. You can opt in to **auto** mode for chosen job systems, and then Claude submits complete applications without asking. |
+| **LinkedIn Easy Apply** and **Indeed Apply** | Fills everything, then **you click Submit** in the desk's browser window. Both sites' terms prohibit automated submission, and they restrict accounts that do it, so the plugin never presses that button. |
 
 Claude never invents experience, credentials or work-authorization answers.
 Anything that isn't in your profile or resume is a question for you. CAPTCHAs and
@@ -127,7 +127,7 @@ Restart Claude Code and run:
 Setup asks for your resume, fills in `~/.job-apply/profile.yaml`, and asks the
 questions a resume can't answer: work authorization, sponsorship, US-person
 status, relocation, travel, shifts, salary and EEO preferences. It then opens the
-browser so you can sign in to LinkedIn and Indeed once. The sign-ins persist.
+desk's browser window so you can sign in to LinkedIn and Indeed once. The sign-ins persist.
 
 ## Use
 
@@ -158,6 +158,15 @@ What have I applied to this month?   ·   Mark the Lam job as interviewing   · 
 
 opens a page on your computer (served by the plugin on `127.0.0.1`):
 
+> **Your first application**
+> 1. Press **Find jobs**.
+> 2. Tick the openings you want (or press **Select recommended**).
+> 3. Press **Apply to selected**: the desk fills each one in the desk's browser window.
+> 4. Answer what it asks under **Needs you**.
+> 5. Check each review page and press **Submit**: nothing is sent before you do (unless you turn on **Submit for me**).
+>
+> Once: save a password for each job system under **Site passwords**, and the desk makes your accounts.
+
 1. **Find jobs** searches every employer's career site for your target titles in
    your area. Each opening gets a fit score, with the reasons and concerns under it:
    "title matches", "posted this week", "requires a Bachelor's (you have a high
@@ -183,7 +192,7 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
    degree you don't have (unless it says "or equivalent experience"), and ones the
    desk couldn't open to check, or whose posting puts the job in another state.
    They're under **All**, with the reason, so you can still tick them yourself.
-   The desk works through them in the browser window, two at a time, each in its own
+   The desk works through them in the desk's browser window, two at a time, each in its own
    tab (**Jobs at once**, beside Submit for me, sets 1, 2 or 3), the ones most likely to
    go all the way first: employers where the plugin's live check reached the review page,
    then job systems it usually gets through, then the rest, and last LinkedIn's and Indeed's
@@ -200,7 +209,7 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
      fills the same question, worded the same way. An answer about one employer
      ("Why do you want to work here?", "Have you worked for us before?") isn't reused
      for another.
-   - A dialog open over a form. You answer it in the browser and press **Resume**, and the
+   - A dialog open over a form. You answer it in the desk's browser window and press **Resume**, and the
      desk fills the form in behind it. It agrees for you to an employer's notice about AI
      screening of your application (Eightfold's employers show one as your resume goes up)
      and to its privacy notice and terms of use (a privacy agreement's "I Accept", a terms
@@ -211,11 +220,11 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
      log. To answer those yourself, set `accept_notices: false` under `settings:` in your
      profile. Practice mode never agrees to them.
    - Sign-ins, bot checks, CAPTCHAs and emailed codes. You deal with those in the
-     browser window, and the desk carries on by itself (with a site's password and your
+     desk's browser window, and the desk carries on by itself (with a site's password and your
      email app password saved in **Site passwords**, below, it does the sign-ins and the
      codes itself). A link a site emails you to
      confirm your address opens in your usual browser, so reload that job's tab in the
-     desk's window once you've opened it. The other jobs wait while you work in that
+     desk's browser window once you've opened it. The other jobs wait while you work in that
      tab: none starts (those already under way go on in their own tabs), and no other tab
      comes to the front. If nothing happens in it for 5 minutes, they go ahead without it, so you can
      leave a batch running and come back. Finish each waiting job in its tab later, and
@@ -294,7 +303,7 @@ gone in, its tab stays open for you to see the confirmation while it's among the
 that did; older ones are closed, so a long queue doesn't leave dozens of tabs open. A job
 waiting on you, or that failed, keeps its tab. Jobs already marked applied are never queued
 again. If Submit doesn't bring up a confirmation, the job
-waits in **Needs you** with **I submitted it** rather than being counted as sent, and
+waits in **Needs you** with **I submitted it myself** rather than being counted as sent, and
 **Submit for me** never presses that job's Submit again (even after a restart): picked
 again, it stops at the review page for you. A job-alerts or newsletter box with its own
 Submit (in a site's footer, say) is never taken for the application's.
@@ -305,7 +314,7 @@ a notice at the top says how many, and how many of them Submit for me will send 
 they're filled (it applies only if it's still on), and nothing starts until you press
 **Resume queue**. A job it had begun isn't queued again by itself, as you may have sent it
 on the site: its card says the desk restarted before the application was finished, with
-**I submitted it already**, **Resume** (filled again up to its review page, never sent) and
+**I submitted it myself**, **Resume** (filled again up to its review page, never sent) and
 **Skip job**. A Submit you pressed before the restart wasn't sent, and that
 card says so. A job whose Submit was being pressed, or showed no confirmation, may have
 gone in: its card asks you to check. A desk page you left open has to be opened again (ask
@@ -358,7 +367,7 @@ Without Claude Code, run `uv run --project <plugin>/server job-apply-desk`.
 
 **Bot checks.** The desk never tries to get around Cloudflare, CAPTCHAs or other bot
 checks: no disguised browser, no CAPTCHA-solving services. When a site shows one, it
-pauses that job and brings its tab to the front for you. The automation browser keeps
+pauses that job and brings its tab to the front for you. The desk's browser window keeps
 its own profile, so once you've passed a site's check, that site usually lets it
 through for a while. TSMC's careers site turns automated browsers away entirely, so
 apply there in your everyday browser, or through the same posting on Indeed.
@@ -380,20 +389,20 @@ Everything personal stays on your machine in `~/.job-apply/`. Set
 | `openings_found.json`, `whats_new.json` | When each opening was first found (for **New** and `whats_new`), and when `whats_new` was last called |
 | `desk-queue.json` | The Job Desk's queue, kept for a restart: each job's number and where it was, never your answers |
 | `runs.jsonl` | The Job Desk's history: a line each time it's done with a job for now (when, how long, how it ended and why), with your answers, codes and passwords kept out as far as the desk can tell. The newest 4000 lines or so are kept. |
-| `browser/` | The automation browser's profile, which keeps your sign-ins |
+| `browser/` | The desk's browser's profile, which keeps your sign-ins |
 | `applications/<id>-<company>-<title>/` | Tailored resume and cover letter, screenshots, submission record, `debug/` snapshots |
 
 Settings in `profile.yaml`:
 
 | Setting | Default | Effect |
 |---|---|---|
-| `submit_mode` | `review` | Set to `auto` to let Claude submit complete applications without asking, for the ATSs in `auto_submit_ats`. `dry_run` fills everything and never submits, which is good for a first practice run. |
+| `submit_mode` | `review` | Set to `auto` to let Claude submit complete applications without asking, for the job systems in `auto_submit_ats`. `dry_run` fills everything and never submits, which is good for a first practice run. |
 | `email_codes` | `false` | Claude may read the sign-in codes and verification links that career sites email you (needs the Gmail connector) |
 | `email_tracking` | `false` | Claude may search your email for replies to your applications (needs the Gmail connector) |
 | `accept_notices` | `true` | The Job Desk agrees for you to an employer's notice about AI screening of your application and to its privacy notice and terms of use (never a newsletter, job alerts or a talent community, texts or automated calls, a legal waiver, or the terms of your employment), and picks an application's attestation that its information is true (or your consent to its background check), noting each in the job's log. Never in practice mode. `false` leaves them to you. |
 | `accept_cookies` | `false` | The Job Desk declines cookie banners. One with no way to decline (TI's "Agree and Proceed") waits for you, unless this is `true`: then the desk accepts it for you. |
 | `manage_accounts` | `true` | The Job Desk creates your account at a job system with the password you saved on the desk for it (ticking the site's terms, never a newsletter), resets a password the site refuses through its "Forgot password" email, and presses "Resend Account Verification" for an account never verified. A form's security questions are asked on the desk's card and never remembered; a picture code stays yours. Never in practice mode. `false`: the desk fills in Create Account for you to finish. |
-| `jobs_at_once` | `2` | How many applications the Job Desk fills at the same time (1 to 3), each in its own tab of its browser window. Never two at one employer's site or job-system tenant; one at a time signs in, makes an account, resets a password or waits on an emailed code; while a sign-in or code needs you, no other job starts and no other tab comes to the front. `1` fills them one after another. The desk's **Jobs at once** buttons change it there (kept in `desk.json` until this setting changes). |
+| `jobs_at_once` | `2` | How many applications the Job Desk fills at the same time (1 to 3), each in its own tab of the desk's browser window. Never two at one employer's site or job-system tenant; one at a time signs in, makes an account, resets a password or waits on an emailed code; while a sign-in or code needs you, no other job starts and no other tab comes to the front. `1` fills them one after another. The desk's **Jobs at once** buttons change it there (kept in `desk.json` until this setting changes). |
 | `follow_up_days` | `10` | The days an application you sent in waits with no reply (not even a "we received it" email) before the Job Desk's My applications marks it **Follow up?** (1 to 90). |
 | `auto_submit_ats` | `[]` | With `submit_mode: auto`, the job systems Claude may submit on without asking (`workday`, `greenhouse`, `lever`, `eightfold`, `successfactors`). The Job Desk has its own switch, **Submit for me**. |
 | `browser_channel` | `chrome` | The browser the desk drives: `chrome`, `msedge`, or `chromium` (Playwright's bundled browser). `headless: true` hides its window. |
@@ -593,7 +602,7 @@ Install it like job-apply: `/plugin install dev-kit@sebob-jobs` in Claude Code, 
   site can still change between runs: expect Claude to sometimes fall back to
   `inspect_form` and `screenshot` and work field by field. The debug snapshots and the
   desk's problem reports exist to turn those cases into fixes quickly.
-- Many company ATSs (Workday, SuccessFactors) need an account per employer. The Job Desk
+- Many company job systems (Workday, SuccessFactors) need an account per employer. The Job Desk
   creates them with a password you save on it (`manage_accounts`, on unless you turn it
   off) and reads the emailed codes and links with an email app password saved there (or,
   with Claude, `email_codes`); without those, the account and the code are yours. Bot

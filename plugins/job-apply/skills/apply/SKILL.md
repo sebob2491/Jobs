@@ -20,13 +20,13 @@ below.
   - `after_user_confirms` (default): show the review page (`screenshot`), sum up the
     key answers, and call `submit_application(job_id, user_confirmed=true)` only
     after the user says to submit *this* application.
-  - `auto`: the user opted in for this ATS in `settings.auto_submit_ats`. Submit
+  - `auto`: the user opted in for this job system (Workday, say) in `settings.auto_submit_ats`. Submit
     without asking only if every required field is filled and you wrote no free-text
     answer the user hasn't approved. Otherwise ask.
   - `user_clicks_submit` (LinkedIn and Indeed): their terms prohibit automated
     submission, and they restrict accounts that break the rule. Fill everything,
     call `submit_application` (it marks the job `ready_to_submit` and does not click),
-    then ask the user to click Submit in the browser. When they say it went
+    then ask the user to click Submit in the desk's browser window. When they say it went
     through, call `update_job(job_id, status="applied")`.
   - `dry_run` (practice mode, `settings.submit_mode: dry_run`): fill everything,
     then stop. `submit_application` and `click` both refuse to send anything. Tell
@@ -38,12 +38,12 @@ below.
   blank"). `inspect_form` already hides the ones it recognises. If one still
   shows up, leave it empty.
 - CAPTCHAs, sign-ins and passwords belong to the user. Ask them to handle these in
-  the browser window, or use `fill_secret` with a secret they stored themselves.
+  the desk's browser window, or use `fill_secret` with a secret they stored themselves.
   Never type a password with `fill_form`.
 - **Email verification codes and links.** If `settings.email_codes` is true and the
   Gmail connector is available, you may fetch the code yourself. Search with
   `search_threads` for `newer_than:1h (code OR verify OR verification OR "one-time")`
-  plus the company or ATS name, and read only the newest matching message. Use it only
+  plus the company or job system's name, and read only the newest matching message. Use it only
   when it's from that job's site or its job system, and a link only when it goes back to
   that site. Type the code with `fill_form`, or open a verification link with
   `open_application(job_id=<this job>, url=<the link>)`: without the job_id the tools
@@ -83,7 +83,7 @@ below.
 
 5. **Open the form.** Run `open_application(job_id)`, then click through to the form:
    "Apply", "Easy Apply", "Apply now", "Apply Manually", "Autofill with Resume".
-   ATS-specific steps are in [references/ats-notes.md](references/ats-notes.md). If
+   Each job system's own steps are in [references/ats-notes.md](references/ats-notes.md). If
    the site asks the user to sign in or create an account, see that file.
 
 6. **Fill loop, one page at a time:**
@@ -118,8 +118,8 @@ below.
   as `debug_snapshot`. For other odd behavior, such as a missed label, a button that
   does nothing or a page the tools can't read, call `debug_snapshot(note="...")`
   yourself. Then finish the field another way: `click` the option, or ask the user
-  to set it in the browser.
-- The first time you use an ATS, go slowly. Run `screenshot` after `autofill` and
+  to set it in the desk's browser window.
+- The first time you use a job system, go slowly. Run `screenshot` after `autofill` and
   check that what's on screen matches what the tool reported.
 - At the end, list the snapshot folders for the user. If they're working on the
   plugin, offer to turn each one into a regression test with
@@ -132,7 +132,7 @@ below.
 
 ## Several jobs at once
 
-Ingest all of them first, then show one table: id, company, title, location, ATS,
+Ingest all of them first, then show one table: id, company, title, location, job system,
 fit notes. Collect every question you can answer up front (salary, start date,
 relocation) in a single message. Then work through the applications one at a time,
 and give a short status line after each. End with `list_jobs` so the user sees the

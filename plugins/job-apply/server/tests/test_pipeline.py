@@ -1405,7 +1405,7 @@ def test_a_notice_over_the_form_is_the_persons_and_the_form_is_filled_after_it(s
 
     r, (status, need, reason, before), after = run(go())
     assert (status, need) == ("needs_you", "stuck") and f"“{NOTICE}”" in reason, reason
-    assert "press its button in the browser window, then press Resume" in reason and "accept_notices: true" in reason
+    assert "press its button in the desk's browser window, then press Resume" in reason and "accept_notices: true" in reason
     assert before == {"uploads": 0, "agreed": 0, "first": "", "country": "", "terms": ""}  # nothing done behind it
     assert (r.status, r.need) == ("needs_you", "questions"), (r.status, r.reason, r.log)
     assert [q["label"][:20] for q in r.questions] == ["Terms and Conditions"], r.questions
@@ -1553,7 +1553,7 @@ def test_a_profile_dialog_that_stays_open_is_the_persons(srv, monkeypatch):
     r, shown = profile_run(srv, "?stays")
     assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
     assert r.reason.startswith(f"I pressed “Enter information” in the {PROFILE_DIALOG} on Example Corp's site, and it "
-                               "stayed open. Look at it in the browser window, then press Resume."), r.reason
+                               "stayed open. Look at it in the desk's browser window, then press Resume."), r.reason
     assert (shown["started"], shown["uploads"], shown["pressed"], shown["first"]) == ("enter", 0, "enter", ""), shown
 
 
@@ -1641,7 +1641,7 @@ def test_a_box_that_wouldnt_fill_is_said_as_that_not_asked(srv, monkeypatch):
     r = run(go())
     assert (r.status, r.need, r.questions) == ("needs_you", "stuck", []), (r.status, r.reason, r.questions)
     assert r.reason.startswith("I couldn't fill “Country of Residence” (the page didn't respond in time). "
-                               "Fill it in the browser window, then press Resume"), r.reason
+                               "Fill it in the desk's browser window, then press Resume"), r.reason
     assert "TimeoutError" not in r.reason and "question" not in r.reason
 
 
@@ -7432,7 +7432,7 @@ def test_a_submit_on_a_page_already_past_its_submit_takes_the_sites_word(srv, mo
     """Issue #112, note 31: the person pressed Submit on the site, then on the desk, which found no Submit button
     ("No submit button on this page. Continue through the steps first."); the job ended up skipped and the
     application never counted. A page that says it went (Workday's "Application Submitted", a job page's "You
-    applied for this job on") marks it applied; any other is the person's to say, with "I submitted it already"
+    applied for this job on") marks it applied; any other is the person's to say, with "I submitted it myself"
     on its card. Nothing is pressed either way."""
     job = srv.add_job(url=fixture_url("site/posting.html"), title="FSE", company="Example Fab")["job"]
     srv.tracker().update(job["id"], status="ready_to_submit")
@@ -7453,7 +7453,7 @@ def test_a_submit_on_a_page_already_past_its_submit_takes_the_sites_word(srv, mo
         assert r.status == "submitted" and r.reason.startswith("Submitted:"), (r.status, r.reason)
         assert status == "applied"
     else:
-        assert (r.status, r.need) == ("needs_you", "stuck") and "I submitted it already" in r.reason, (r.status, r.reason)
+        assert (r.status, r.need) == ("needs_you", "stuck") and "I submitted it myself" in r.reason, (r.status, r.reason)
         assert status != "applied"
 
 
@@ -8462,7 +8462,7 @@ def test_a_browser_closed_while_its_job_runs_is_said_so_and_opened_again_on_resu
             await applier.stop()
 
     r, said = run(go())
-    assert said == "The automation browser was closed. Press Resume to start this application again.", said
+    assert said == "The desk's browser window was closed. Press Resume to start this application again.", said
     assert r.need == "questions" and r.page is not closed[0] and closed[0].is_closed(), (r.reason, r.log)
 
 
@@ -9432,7 +9432,7 @@ def test_a_web_servers_error_page_that_answered_submit_is_never_to_be_reloaded(s
 
     r = run(go())
     assert r.need == "stuck" and "web server's error page (502 Bad Gateway) after Submit was pressed" in r.reason, r.reason
-    assert "Don't reload it" in r.reason and "reload the page in the browser window" not in r.reason, r.reason
+    assert "Don't reload it" in r.reason and "reload the page in the desk's browser window" not in r.reason, r.reason
     assert not any("reloaded" in line for line in r.log), r.log
 
 
@@ -10137,7 +10137,7 @@ def test_a_degree_list_with_nothing_for_classes_leaves_the_pick_to_the_person(sr
               "options": WORKDAY_DEGREES}
     said, rest = applier._entry_gaps(r, site, [degree])
     assert f"The Degree list for {school} in Education 2 has no choice for classes without a degree" in said, said
-    assert "choose in the browser" in said and "Some college" not in said, said
+    assert "choose in the desk's browser window" in said and "Some college" not in said, said
     assert rest == []
 
     # a list that has such a choice: the profile can say it
@@ -12259,7 +12259,7 @@ def test_a_box_the_errors_name_is_gone_back_to_once_and_only_to_be_asked(srv, mo
         assert went_back, r.log
     else:
         assert r.need == "stuck" and r.reason == ("The page didn't move on: Available Start Date is required. Fix it in "
-                                                  "the browser, then press Resume."), (r.reason, r.log)
+                                                  "the desk's browser window, then press Resume."), (r.reason, r.log)
         assert went_back == (case != "readonly"), r.log
 
 
