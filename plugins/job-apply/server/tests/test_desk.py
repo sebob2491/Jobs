@@ -1658,11 +1658,11 @@ def test_the_system_chips_show_only_the_jobs_on_the_systems_pressed(srv, job_app
     assert json.loads((job_apply_home / "desk.json").read_text(encoding="utf-8"))["systems"] == []
 
 
-def test_a_posting_that_wont_sponsor_a_visa_says_so_on_its_card(srv, job_apply_home):
-    """The design of Oct 18, F7: a posting that says plainly it won't sponsor a work visa shows it on its card, among
-    its other requirement facts ("won't sponsor a work visa"), for a person whose profile says nothing of needing one;
-    for one who needs sponsorship it's the score's own concern instead (said once), and a posting that doesn't say it
-    shows neither."""
+def test_a_posting_that_wont_sponsor_a_visa_says_so_only_to_a_person_who_needs_sponsorship(srv, job_apply_home):
+    """The design of Oct 18, F7 (and the coordinator's call): a posting that says plainly it won't sponsor a work visa
+    says so on its card ("won't sponsor a work visa") only for a person whose profile says they need sponsorship
+    (work_authorization.requires_sponsorship: true); for anyone else it's noise, and only the row's data keeps it. Where
+    the score's own concern says it already, it's said once; a posting that doesn't say it shows neither."""
     desk = Desk(srv)
     blocked = {**_fit(30, facts={"level": "", "read": True, "no_sponsorship": True}), "blocked": True,
                "concerns": ["says it won't sponsor a work visa (your profile says you need sponsorship)"]}
@@ -1671,24 +1671,40 @@ def test_a_posting_that_wont_sponsor_a_visa_says_so_on_its_card(srv, job_apply_h
                      _facts_opening("Plain Technician", 80, level="", read=True, no_sponsorship=False)]
     desk.applier.start = lambda: None
     desk.search.update(status="done", at=time.time())
+    rows = {r["title"]: r for r in desk.state()["listings"]}
+    assert rows["Visa Technician"]["fit"]["facts"]["no_sponsorship"] is True  # (kept in the row's data either way)
+    assert desk.state()["profile"]["requires_sponsorship"] is False
+
+    def needs_sponsorship(needs: bool) -> None:
+        path = job_apply_home / "profile.yaml"
+        profile = yaml.safe_load(path.read_text(encoding="utf-8"))
+        profile["work_authorization"] = {**(profile.get("work_authorization") or {}), "requires_sponsorship": needs}
+        path.write_text(yaml.safe_dump(profile), encoding="utf-8")
 
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
-                await page.click("[data-filter='all']")
-                await page.wait_for_selector("text=Needs Technician")
 
                 def chips(title):
                     return page.locator("li.row", has_text=title).locator(".chips")
 
+                async def shown():
+                    await page.goto(desk.url)
+                    await page.click("[data-filter='all']")
+                    await page.wait_for_selector("text=Needs Technician")
+                    return {t: (await chips(t).inner_text()).count("won't sponsor a work visa")
+                            for t in ("Visa Technician", "Needs Technician", "Plain Technician")}
+
+                # a person who doesn't need sponsorship (or doesn't say): only the score's own concern, where it's made
+                needs_sponsorship(False)
+                assert await shown() == {"Visa Technician": 0, "Needs Technician": 1, "Plain Technician": 0}
+                # one who does: on the card, once
+                needs_sponsorship(True)
+                assert await shown() == {"Visa Technician": 1, "Needs Technician": 1, "Plain Technician": 0}
                 said = chips("Visa Technician").locator(".chip", has_text="won't sponsor a work visa")
-                assert await said.count() == 1
                 assert "requires_sponsorship" in await said.get_attribute("title")
-                assert (await chips("Needs Technician").inner_text()).count("won't sponsor a work visa") == 1
-                assert "sponsor" not in await chips("Plain Technician").inner_text()
                 await browser.close()
         finally:
             await desk.stop()

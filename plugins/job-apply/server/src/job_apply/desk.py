@@ -1120,7 +1120,9 @@ class Desk:
             "profile": {"name": prof.full_name, "missing": prof.missing_required(), "gaps": prof.profile_gaps(),
                         "titles": prof.get("preferences.titles") or [], "path": str(config.profile_path()),
                         # the highest degree it says the person has (for the filter row's "My degree is enough")
-                        "degree": applicant_degree(prof)},
+                        "degree": applicant_degree(prof),
+                        # whether it says they need a work visa sponsored (for a card's "won't sponsor a work visa")
+                        "requires_sponsorship": prof.get("work_authorization.requires_sponsorship") is True},
             "settings": {"submit_mode": settings.submit_mode, "dry_run": settings.dry_run,
                          "manage_accounts": settings.may_manage_accounts,
                          "manage_accounts_chosen": settings.manage_accounts_chosen,

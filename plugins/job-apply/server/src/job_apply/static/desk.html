@@ -1027,7 +1027,7 @@ function renderRows() {
       ...(maybeClearance(fit) ? [`<span class="chip" title="Read from the posting's text: No clearance needed never hides this job for it">may need a security clearance</span>`] : []),
       // and a degree read so: "asks a Bachelor's, read from the text" (the degree chip never hides it for that)
       ...(maybeDegree(fit) ? [`<span class="chip" title="Read from the posting's text, not a labelled Education line: the degree chip never hides this job for it">${esc(maybeDegree(fit))}</span>`] : []),
-      ...(noSponsorship(fit) ? [`<span class="chip" title="The posting says so in plain words. It counts against a job only when your profile says you need sponsorship (work_authorization.requires_sponsorship).">won't sponsor a work visa</span>`] : []),
+      ...(noSponsorship(fit) ? [`<span class="chip" title="The posting says so in plain words, and your profile says you need sponsorship (work_authorization.requires_sponsorship).">won't sponsor a work visa</span>`] : []),
     ].join("");
     const checked = selected.has(r.url) && !done ? "checked" : "";
     // skipped (here or before the desk restarted): Undo puts it back
@@ -1780,9 +1780,10 @@ const chipFacts = {requirements: (r) => (r.fit && r.fit.facts) || {}};
 const maybeDegree = (fit) => { const f = fit.facts || {};
   if (!f.degree || f.degree === "high_school" || f.degree_sure || (fit.concerns || []).some((c) => /degree|bachelor|master|associate|doctorate/i.test(c))) return "";
   return `asks ${DEGREE_NAME[f.degree] || "a degree"}${f.degree_or_equivalent ? " or equivalent experience" : ""}, read from the text`; };
-// a posting that says plainly it won't sponsor a work visa (recommend.no_sponsorship_said): a concern for a person who
-// needs one (the score's own), else shown as what it says
-const noSponsorship = (fit) => !!(fit.facts && fit.facts.no_sponsorship) && !(fit.concerns || []).some((c) => /sponsor/i.test(c));
+// a posting that says plainly it won't sponsor a work visa (recommend.no_sponsorship_said), shown only to a person whose
+// profile says they need sponsorship (for anyone else it's noise), and not twice (the score's own concern says it)
+const noSponsorship = (fit) => !!(state.profile && state.profile.requires_sponsorship)
+  && !!(fit.facts && fit.facts.no_sponsorship) && !(fit.concerns || []).some((c) => /sponsor/i.test(c));
 const maybeClearance = (fit) => { const f = fit.facts || {};
   return (f.clearance || f.clearance_later) && !f.clearance_sure && !(fit.concerns || []).some((c) => /clearance/i.test(c)); };
 const fitsChips = (r, s) => Object.keys(CHIP_TESTS).every((name) => {
