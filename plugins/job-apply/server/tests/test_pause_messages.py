@@ -28,6 +28,25 @@ def _words(node: ast.AST) -> str:
     return "{}"
 
 
+def _variants(node: ast.AST, most: int = 64) -> list[str]:
+    """Each message a reason can be, its computed parts as "{}": a conditional's two sides apart, so a stop that says
+    what to do on one side only fails (the review of T10: _words read both as one message, which the side with an
+    action carried)."""
+    if isinstance(node, ast.Constant):
+        return [node.value if isinstance(node.value, str) else "{}"]
+    if isinstance(node, ast.IfExp):
+        return (_variants(node.body, most) + _variants(node.orelse, most))[:most]
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return [a + b for a in _variants(node.left, most) for b in _variants(node.right, most)][:most]
+    if isinstance(node, ast.JoinedStr):
+        out = [""]
+        for v in node.values:
+            parts = [v.value] if isinstance(v, ast.Constant) and isinstance(v.value, str) else ["{}"]
+            out = [a + b for a in out for b in parts]
+        return out
+    return ["{}"]
+
+
 def _ends_without_action(message: str) -> bool:
     """A message whose last two sentences say nothing for the person to do. One mostly built elsewhere, or ending in a
     part built elsewhere ("...: {}"), has its action there."""
@@ -64,7 +83,7 @@ class _Source:
         if isinstance(node, ast.Await):
             return self.said(node.value, path, depth + 1)
         if not path and isinstance(node, _SAID):
-            return [_words(node)]
+            return _variants(node)
         if path and isinstance(node, ast.Tuple):
             return self.said(node.elts[path[0]], path[1:], depth + 1)
         if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) \
@@ -171,7 +190,7 @@ class A:
             and getattr(n.func, "attr", "") == "_pause"]
     asked = "This may be a job you applied to. Apply anyway, or Skip?"
     assert sorted(said, key=str) == sorted([[asked], [asked], ["The site is slow."],
-                                            ["The page didn't move on. | The site said no."],
+                                            ["The page didn't move on.", "The site said no."],
                                             ["I deleted the old file. Upload the new one, then press Resume."],
                                             None], key=str)
 
@@ -319,6 +338,18 @@ def test_a_stop_the_desk_caused_is_coded_as_the_desks():
             if fragment in said:
                 found.setdefault(fragment, set()).update(code)
     assert found == EXPECTED_CODES
+
+
+def test_each_side_of_a_conditional_stop_is_read_as_its_own_message():
+    """A stop whose reason is `X if c else Y`: each side is a message of its own, so one side that gives the person
+    nothing to do fails, however the other reads (the review of T10's plant: read as one message, it passed)."""
+    said = _variants(ast.parse('"The site lost the file again and again. Nothing more was said about it by the site '
+                               'this time." if run.draft else f"I deleted the {what}" + " (old). Upload the new one, '
+                               'then press Resume."', mode="eval").body)
+    assert said == ["The site lost the file again and again. Nothing more was said about it by the site this time.",
+                    "I deleted the {} (old). Upload the new one, then press Resume."]
+    assert [_ends_without_action(m) for m in said] == [True, False]
+    assert _variants(ast.parse('"a" + ("b" if x else "c") + f"d{e}"', mode="eval").body) == ["abd{}", "acd{}"]
 
 
 def test_the_code_audit_reads_only_literals():

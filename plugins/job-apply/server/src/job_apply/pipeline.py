@@ -848,6 +848,8 @@ class WentIn:
                 "left": [dict(e) for e in self.left.values()], "full": self.full}
 
 
+LAST_ACTION_KEPT = 300  # characters of a last action's target kept (Run.did): scrubbed, then cut, where it's said
+
 # Why a job stopped for the person, as a word that stays put when the words said to them change (the review of Oct 18:
 # the nightly sorted its stops by their messages' words, and a message reworded moved an employer between "look at"
 # and "expected"). Every Applier._pause names one (tests/test_pause_messages.py reads each call); it's the run's
@@ -887,7 +889,8 @@ class Run:
     need: str = ""
     reason: str = ""
     code: str = ""  # its stop's (STOP_CODES), while it needs the person: set with need and reason by Applier._pause
-    # the desk's last press, typing, pick or upload on its pages, {"at", "what", "target"} (Run.did: a record only)
+    # the desk's last press, typing, pick or upload on its pages in this pass, {"at", "what", "target"} (Run.did: a
+    # record only)
     last_action: dict[str, Any] | None = None
     questions: list[dict[str, Any]] = field(default_factory=list)
     log: list[str] = field(default_factory=list)
@@ -1091,7 +1094,10 @@ class Run:
         decide anything, and nothing here can fail the step it's written before or after.
         `what`: "pressed", "typed", "picked" or "uploaded"; "" for a box's, by its kind (`data`: the page it's on).
         `target`: the button or the box (its words or its label), several (the last of them: where a fill ended), or
-        its name written out. Only ever its words or label: never what was typed (a fill's value isn't read)."""
+        its name written out. Only ever its words or label: never what was typed (a fill's value isn't read), and never
+        the label of a box the "What went in" panel keeps out (_kept_out, _guarded: a security question's, which says the
+        question chosen; a password's or an emailed code's), said only as what kind of box it was. Kept to
+        LAST_ACTION_KEPT characters: a report or a stop's record scrubs it, then cuts it shorter."""
         try:
             last = target[-1] if isinstance(target, (list, tuple)) and target else target
             if isinstance(last, dict):
@@ -1102,9 +1108,13 @@ class Run:
                                 else "picked" if kind in _CHOICE_KINDS else "typed")
                 said = (last.get("text") or last.get("label")) if what == "pressed" else \
                     (last.get("label") or box.get("label") or last.get("text"))
+                whole = {**box, **{k: v for k, v in last.items() if k != "value"}}
+                if what != "pressed" and (_kept_out(whole, "", set())
+                                          or str(whole.get("id")) in _guarded(({**(data or {})},) if data else ())):
+                    said = "a password box" if kind == "password" else "a box whose words are kept out of view"
             else:
                 said = last if isinstance(last, str) else ""
-            said = " ".join(final_text(str(said or "")).split())[:120]
+            said = " ".join(final_text(str(said or "")).split())[:LAST_ACTION_KEPT]
             if said and what in ("pressed", "typed", "picked", "uploaded"):
                 self.last_action = {"at": round(time.time(), 3), "what": what, "target": said}
         except Exception:  # (a record: never the step's trouble)
@@ -2278,6 +2288,7 @@ class Applier:
         cut = False  # (and its pass cut short by that, not ended by itself)
         began, at_once = time.time(), self.at_once()  # (for the pass's line in the desk's history)
         run.pass_steps = set()
+        run.last_action = None  # (a new pass: a stop's record never names what an earlier one did)
         ended_as: tuple[str, str, str, str] | None = None  # (how its pages ended, before its stop's page was saved)
         try:
             with self.srv.browser.desk_view(run.job_id):
@@ -3089,7 +3100,9 @@ class Applier:
             await self.srv.browser.snapshot(debug / f"{stamp}-{STOP}", note=f"stopped: {run.need}")
             for old in sorted(debug.glob(f"*-{STOP}"))[:-report.PAGES]:
                 shutil.rmtree(old, ignore_errors=True)
-            report.write_stop(debug / f"{stamp}-{STOP}", run, self._report_hidden(run))  # (stop.json: a record only)
+            # (stop.json: a record only, written off the event loop)
+            await asyncio.to_thread(report.write_stop, debug / f"{stamp}-{STOP}", report.stop_facts(run),
+                                    self._report_hidden(run))
         except Exception:
             logging.getLogger(__name__).warning("couldn't save the page job %s stopped on", run.job_id, exc_info=True)
 

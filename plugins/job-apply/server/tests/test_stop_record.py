@@ -154,6 +154,101 @@ def test_a_report_says_the_last_action_by_its_label_with_the_runs_answers_taken_
 
 def test_a_stop_record_that_cant_be_written_is_not_the_stops_trouble(tmp_path):
     """No page saved (the folder empty, or gone): no stop.json, and nothing raised."""
-    assert report.write_stop(tmp_path / "gone", Run(1)) is None
-    assert report.write_stop(tmp_path, Run(1)) is None
+    assert report.write_stop(tmp_path / "gone", report.stop_facts(Run(1))) is None
+    assert report.write_stop(tmp_path, report.stop_facts(Run(1))) is None
     assert not (tmp_path / report.STOP_RECORD).exists()
+
+
+def _saved_stop(folder: Path, html: str, errors: list[str]) -> Path:
+    folder.mkdir()
+    (folder / "page.html").write_text(html, encoding="utf-8")
+    (folder / "snapshot.json").write_text(json.dumps({"url": "https://jobs.example.com/apply", "errors": errors,
+                                                      "fields": [], "frames": [{"file": "page.html"}]}),
+                                          encoding="utf-8")
+    return folder
+
+
+def test_a_big_pages_stop_record_scrubs_only_the_words_around_its_error(tmp_path, monkeypatch):
+    """The review of T10: the record was made by parsing and scrubbing the whole page on the desk's event loop (7.5 s
+    on a 2.6 MB page). The page's words are read quickly, only the STOP_WINDOW characters either side of the first
+    error are scrubbed, and the profile's details there are taken out all the same (the cut made after)."""
+    filler = "".join(f"<div class='row'><span>Requisition {n}</span> <a href='#'>Details</a></div>\n"
+                     for n in range(30000))
+    error = "Phone Number is not valid"
+    html = (f"<html><head><style>.row{{color:red}}</style></head><body>{filler}<p>Call sam.rivera@example.com at "
+            f"480-555-0123 about it.</p><div role='alert'>{error}</div>{filler}</body></html>")
+    assert len(html) > 2_500_000
+    folder = _saved_stop(tmp_path / "stop", html, [error])
+    lengths: list[int] = []
+    hiding = report._hiding
+
+    def measured(scrub, hide):
+        said = hiding(scrub, hide)
+        return lambda text: lengths.append(len(str(text or ""))) or said(text)
+
+    monkeypatch.setattr(report, "_hiding", measured)
+    began = time.perf_counter()
+    out = report.write_stop(folder, {"code": "step_not_saved", "need": "stuck", "reason": "The page didn't move on.",
+                                     "last_action": {"at": 1.0, "what": "pressed", "target": "Next"}})
+    took = time.perf_counter() - began
+    record = json.loads(out.read_text(encoding="utf-8"))
+    assert error in record["text"] and len(record["text"]) <= report.STOP_TEXT, record["text"]
+    assert "sam.rivera" not in record["text"] and "480-555-0123" not in record["text"] and "REDACTED" in record["text"]
+    assert max(lengths) <= 2 * report.STOP_WINDOW + len(error), max(lengths)  # (never the page whole)
+    assert took < 1.0, took
+
+
+def test_a_stop_records_text_is_empty_when_its_error_isnt_in_the_pages_words(tmp_path):
+    """An error the page's words don't hold (read from an attribute, say): no text, never the page's first words."""
+    folder = _saved_stop(tmp_path / "stop", "<html><body><p>Welcome to our careers site.</p></body></html>",
+                         ["Something the page doesn't say"])
+    record = json.loads(report.write_stop(folder, report.stop_facts(Run(1))).read_text(encoding="utf-8"))
+    assert record["text"] == "" and record["errors"] == ["Something the page doesn't say"]
+
+
+def test_a_long_target_is_scrubbed_before_its_cut(tmp_path):
+    """The review of T10: a target cut to 120 characters before it was scrubbed left a fragment of a profile value
+    across the cut ("sam.rivera@exa") that no scrubbing could match. It's kept longer, scrubbed, then cut."""
+    r = Run(1)
+    r.did("typed", {"id": "f1", "label": "x" * 110 + " sam.rivera@example.com is the email we have on file"})
+    said = report.last_action_said(r.last_action, report._scrubber(report.report_strings(pipeline.config.Profile.load())))
+    assert "rive" not in said and "@exa" not in said and "REDACTED" in said, said  # (no fragment of it either)
+    folder = _saved_stop(tmp_path / "stop", "<html><body><p>Hello</p></body></html>", [])
+    record = json.loads(report.write_stop(folder, report.stop_facts(r)).read_text(encoding="utf-8"))
+    target = record["last_action"]["target"]
+    assert "rive" not in target and "@exa" not in target and len(target) <= report.LAST_ACTION_SAID, target
+
+
+def test_a_security_questions_box_is_never_named_as_the_last_action():
+    """The review of T10: a security question's label says which question the person chose, and a password's or an
+    emailed code's box is kept out of the "What went in" panel; the last action names only what kind of box it was."""
+    page = {"headings": ["Security questions"], "fields": [
+        {"id": "q1", "label": "Security question 1: What was the name of your first pet?", "kind": "text"},
+        {"id": "q2", "label": "Question 1 Answer", "kind": "text"},
+        {"id": "pw", "label": "Create Password", "kind": "password"}]}
+    r = Run(1)
+    for box, said in (({"id": "q1"}, "a box whose words are kept out of view"),
+                      ({"id": "q2"}, "a box whose words are kept out of view"),
+                      ({"id": "pw"}, "a password box")):
+        r.did("typed", [box], page)
+        assert r.last_action["target"] == said, (box, r.last_action)
+    r.did("typed", {"id": "e", "label": "Email Address", "kind": "text"}, {"fields": []})
+    assert r.last_action["target"] == "Email Address"
+
+
+def test_a_new_pass_starts_with_no_last_action(srv, monkeypatch):
+    """The review of T10: a stop's record named an action from an earlier pass (before a Resume) as this stop's. Each
+    pass starts with none."""
+    job = srv.add_job(url="https://jobs.example.com/apply/1", title="Technician", company="Example Fab")["job"]
+    applier = Applier(srv)
+    r = Run(job["id"], "Technician", "Example Fab", status="running")
+    r.last_action = {"at": 1.0, "what": "pressed", "target": "Next"}
+    seen = []
+
+    async def submit(run_):
+        seen.append(run_.last_action)
+        run_.status = "ready"
+
+    monkeypatch.setattr(applier, "_submit", submit)
+    run(applier._run_task("submit", r))
+    assert seen == [None]

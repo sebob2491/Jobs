@@ -11,15 +11,18 @@ question, account-and-application and job-search reads), with the answer rules' 
 button, a notice over the page: agreed to with settings.accept_notices, or the person's, and what it holds that's never
 agreed to). A value is never shown: a box's answer is said by its rule's name ("<phone>").
 
-A debug folder (a job's debug/<time>, or one a stop saved: debug/<time>-stop) is first scrubbed into a page of its own,
-as a test fixture is (job_apply.fixtures.convert: scripts out, the profile's details taken out), so what's replayed is
-what the saved HTML shows, without what a site draws with its scripts. The answers are the live check's test applicant's
-(fixtures.REPLAY_PROFILE) unless a profile is named.
+Whatever is named, what's opened is a copy scrubbed first, as a test fixture is (job_apply.fixtures.clean_html: scripts
+out, nothing that loads from the network, the person's details taken out: the desk's own profile's and any named one's);
+a debug folder (a job's debug/<time>, or one a stop saved: debug/<time>-stop) is made into one with its frames
+(fixtures.convert). And the browser runs no script, and has a proxy that isn't there for anything it would send before a
+request is refused. So what's replayed is what the saved HTML shows, without what a site draws with its scripts. The
+answers are the live check's test applicant's (fixtures.REPLAY_PROFILE) unless a profile is named.
 """
 
 from __future__ import annotations
 
 import contextlib
+import glob
 import json
 import os
 import re
@@ -29,13 +32,15 @@ from typing import Any
 from urllib.parse import urlsplit
 from urllib.request import url2pathname
 
-from playwright.async_api import Browser, Route, WebSocketRoute, async_playwright
+from playwright.async_api import Browser, ProxySettings, Route, WebSocketRoute, async_playwright
 
 from . import config, fixtures
 from .browser import BrowserSession
 
 LOCAL_SCHEMES = ("data", "blob", "about")  # (and the saved page's own files: OfflineSession._only_local)
 REPLAY_APPLICANT = "the live check's test applicant"
+# Where the replay's browser sends what it would send to the network: nowhere (a port nothing listens on, here)
+NO_PROXY: ProxySettings = {"server": "http://127.0.0.1:9"}
 
 
 class OfflineSession(BrowserSession):
@@ -59,9 +64,11 @@ class OfflineSession(BrowserSession):
         else:
             self._pw = await async_playwright().start()
             browser = self._browser = await self._pw.chromium.launch(
-                headless=True, executable_path=os.environ.get("JOB_APPLY_CHROMIUM_PATH") or None)
+                headless=True, executable_path=os.environ.get("JOB_APPLY_CHROMIUM_PATH") or None, proxy=NO_PROXY)
+        # (no script runs, and whatever the browser opens before a request is routed (a frame's connection) goes to a
+        # proxy that isn't there: the review of T10 found a frame's address connected to, and a script's WebRTC)
         ctx = await browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block",
-                                        accept_downloads=False)
+                                        accept_downloads=False, java_script_enabled=False, proxy=NO_PROXY)
         await ctx.route("**/*", self._only_local)
         await ctx.route_web_socket(re.compile(r".*"), self._no_socket)
         ctx.set_default_timeout(15000)
@@ -125,22 +132,48 @@ class _Reader:
         return await self.browser.visible_text(max_chars)
 
 
-def _page_of(path: Path, work: Path, scrub_with: config.Profile | None) -> tuple[Path, str]:
-    """The page to open for `path` (a fixture's .html as it is; a debug folder scrubbed into `work` first, as a
-    fixture is), and the address it was saved from (the fixture's expect.json's, the snapshot's: without its query)."""
-    if path.is_dir():
-        if not (path / "snapshot.json").is_file():
-            raise ValueError(f"{path.name} isn't a saved page's folder (it has no snapshot.json)")
-        fixtures.convert(path, "replay", work, scrub_with)
+def _page_of(path: Path, work: Path, secrets: list[str]) -> tuple[Path, str]:
+    """The page to open for `path`, always a copy scrubbed into `work` (scripts out, nothing of the network, `secrets`
+    taken out: fixtures.clean_html): a debug folder's (or the page.html in one) as a fixture is made from it
+    (fixtures.convert, its frames mapped to their files), else the .html with the frames saved beside it under its
+    name (a fixture's "<name>.frame-1.html"). And the address it was saved from (the fixture's expect.json's, the
+    snapshot's: without its query)."""
+    folder = path if path.is_dir() else path.parent if path.name == "page.html" else None
+    if folder is not None and (folder / "snapshot.json").is_file():
+        fixtures.convert(folder, "replay", work, secrets=secrets)
         page, expect = work / "replay.html", work / "replay.expect.json"
+    elif path.is_dir():
+        raise ValueError(f"{path.name} isn't a saved page's folder (it has no snapshot.json)")
     elif path.is_file() and path.suffix.lower() in (".html", ".htm"):
-        page, expect = path, path.with_name(f"{path.stem}.expect.json")
+        work.mkdir(parents=True, exist_ok=True)
+        expect = path.with_name(f"{path.stem}.expect.json")
+        for source in [path, *sorted(path.parent.glob(f"{glob.escape(path.stem)}.frame-*.htm*"))]:
+            raw = source.read_text(encoding="utf-8", errors="replace")
+            # (a test fixture, its expect.json beside it, was cleaned as it was made: only the details taken out, as
+            # cleaning it again reads otherwise (its answered radios, its links); any other page is cleaned first)
+            said = fixtures.redact(raw, secrets) if expect.is_file() else fixtures.clean_html(raw, secrets)
+            (work / source.name).write_text(said, encoding="utf-8")
+        page = work / path.name
     else:
         raise ValueError(f"{path.name} isn't a saved page (a debug folder, or a fixture's .html)")
     if not page.is_file():
         raise ValueError(f"{path.name} has no page saved in it")
     address = json.loads(expect.read_text(encoding="utf-8")).get("source_url") if expect.is_file() else ""
-    return page, str(address or "")
+    return page, fixtures.redact(str(address or ""), secrets)
+
+
+def _secrets(profile: config.Profile | None) -> list[str]:
+    """What a replay takes out of the page before it's opened: the person's details as the desk's own profile has
+    them, and the named profile's too (never only the named one's: the review of T10 found a debug folder replayed
+    with another profile printing the person's own name)."""
+    found: set[str] = set()
+    for prof in (None, profile):
+        try:
+            found |= set(fixtures.personal_strings(prof if prof is not None else config.Profile.load()))
+        except (OSError, ValueError):  # (the desk's own profile unreadable: the named one's still)
+            continue
+    return sorted(found, key=len, reverse=True)
+
 
 
 def _box_plans(data: dict[str, Any], prof: config.Profile) -> list[dict[str, Any]]:
@@ -221,12 +254,13 @@ async def replay(path: Path, profile: Path | None = None, browser: Browser | Non
     `profile`: a profile file to answer from (else the live check's test applicant). `browser`: one running already to
     open it in (else the bundled Chromium is started for it)."""
     path = Path(path)
+    if profile is not None and not Path(profile).is_file():
+        raise FileNotFoundError(f"there's no profile file at {Path(profile).name}")
     with tempfile.TemporaryDirectory(prefix="job-apply-replay-") as tmp:
         work = Path(tmp)
         prof = config.Profile.load(Path(profile)) if profile else fixtures.replay_profile(work / "applicant")
-        # (a debug folder is scrubbed of the person's own details, the desk's profile's, whoever is answered for)
-        own = None if profile is None else prof
-        page, address = _page_of(path, work / "page", own)
+        # (the page is scrubbed of the person's own details, the desk's profile's, and the named one's: _secrets)
+        page, address = _page_of(path, work / "page", _secrets(prof if profile else None))
         session = OfflineSession(browser)
         session.folder = page.parent.resolve()
         try:

@@ -519,12 +519,27 @@ def main(argv: list[str] | None = None) -> int:
     if reconfigure:  # a path the console can't show mustn't stop the report
         reconfigure(errors="replace")
     if args.replay is not None:
+        from playwright.async_api import Error as PlaywrightError
+
         from . import replay
 
+        if args.profile is not None and not args.profile.is_file():
+            print(private(f"There's no profile file at {args.profile.expanduser().resolve()}: name the profile.yaml to "
+                          "answer from (yours is in your job-apply folder), or leave --profile out."), file=sys.stderr)
+            return 2
         try:
             result = asyncio.run(replay.replay(args.replay, args.profile))
         except (OSError, ValueError) as e:
-            print(f"Couldn't replay {args.replay.name}: {e}", file=sys.stderr)
+            print(private(f"Couldn't replay {args.replay}: {e}"), file=sys.stderr)
+            return 1
+        except PlaywrightError as e:
+            said = str(e).splitlines()[0] if str(e) else type(e).__name__
+            get = (f'run `uv run --project "{in_shell(config.PLUGIN_ROOT / "server")}" playwright install chromium` in '
+                   "a terminal, then try again")
+            print(private(f"The replay needs the plugin's own Chromium, and it isn't installed: {get}."
+                          if _NOT_INSTALLED.search(str(e)) else
+                          f"The plugin's own Chromium wouldn't open {args.replay.name} ({said[:300]}). If it isn't "
+                          f"installed, {get}."), file=sys.stderr)
             return 1
         print(json.dumps(result, indent=2, ensure_ascii=False) if args.json else replay.text(result))
         return 0
