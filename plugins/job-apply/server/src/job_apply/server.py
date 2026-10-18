@@ -920,8 +920,10 @@ async def autofill(job_id: int | None = None, overwrite: bool = False, redo: lis
     filled, failed = [], []
     for r in results:
         src = by_id.get(r["id"], {})
+        # (a file the fill sent itself, "uploaded <name>": never one it found the page showing already)
         entry = {"id": r["id"], "label": src.get("label"), "value": src.get("value"), "from": src.get("rule"),
-                 **({"refreshed": True} if src.get("refreshed") else {})}
+                 **({"refreshed": True} if src.get("refreshed") else {}),
+                 **({"uploaded": True} if r["ok"] and str(r.get("result") or "").startswith("uploaded ") else {})}
         if r["ok"]:
             filled.append(entry)
         else:

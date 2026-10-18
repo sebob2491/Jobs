@@ -855,8 +855,8 @@ class Run:
     start_reloaded: bool = False  # reloaded once for a posting page with no way on (the State of Arizona's, run 63)
     reuploaded: bool = False  # a resume the page showed but never kept: its Delete tried, to upload it again (EMD's, once a job)
     # the documents ("resume", "cover_letter") settled for this job: a file kept from before replaced with the one
-    # tailored for the job, or tried, or the desk's own put in (_replace_kept). Once a job, so a page that draws the old
-    # file's name again isn't deleted from again and again
+    # tailored for the job, or tried, or left as the person's, or the desk's own put in (_replace_kept). Once a job, so a
+    # page that draws the old file's name again isn't deleted from again and again
     kept_replaced: set[str] = field(default_factory=set)
     opened_fresh: bool = False  # this pass opened the job in a new tab (its page the posting's own, by its address)
     account_in: bool = False  # an account made for this job, and signed in to (Run.account_made said)
@@ -3485,7 +3485,7 @@ class Applier:
                 # a resume kept from before in its box (Workday's), where this job has one tailored for it: deleted, for
                 # the fill to put the tailored one in its place; or, once the page is filled, the person's (paused)
                 replacing = await self._replace_kept(run, data)
-                result = await self._autofill(run, data, filled_ids)
+                result = await self._autofill(run, data, filled_ids, {str(b["id"]) for b in replacing[0]})
                 if result["filled"]:
                     self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
                 filled_ids |= {str(f["id"]) for f in result["filled"] if f.get("id")}
@@ -4308,77 +4308,92 @@ class Applier:
         """A resume (or cover letter) box that shows a file kept from before, where this job has one tailored for it
         (autofill.kept_documents: Workday keeps an account's last resume in My Experience's "Resume/CV" upload, and the
         desk left it there, so the employer got the old resume: NXP's, the weekly probe of Oct 2026). The kept file is
-        deleted with the page's own Delete for it (browser.delete_kept_upload), and the fill that follows puts the
-        tailored one in the box it emptied (_replaced_in says so). Once a job for each document (Run.kept_replaced), so
-        a page that draws the old name again is never deleted from again and again. A file that won't delete, or a box
-        where which file is the old one isn't sure, keeps what it shows, so the fill never uploads beside it (the
-        employer would get two): the person's, said on a card once the page is filled. Returns the boxes emptied for
-        their tailored file, and that card's words ("" for none)."""
+        deleted with its own Delete in Workday's list (browser.delete_kept_upload), and the fill that follows puts the
+        tailored one in the box it emptied (_replaced_in says so). Only in Workday's list: another site's list of stored
+        files may be the person's own file library, where a Delete takes the file off their account, so a file kept
+        there stays as it is, as before. Once a job for each document (Run.kept_replaced), so a page that draws the old
+        name again is never deleted from again and again. Never once the person has had the application in their hands
+        (their Resume, after a stop or a restart of the desk, or a Submit pressed before): a file there may be their own
+        choice, and it stays, said in the log. A file that won't delete, or a box where which file is the old one isn't
+        sure, keeps what it shows, so the fill never uploads beside it (the employer would get two): the person's, said
+        on a card once the page is filled, one box at a time (one after it is neither pressed nor settled, so the next
+        pass says it). Returns the boxes emptied for their tailored file, and that card's words ("" for none)."""
         job = self.srv.tracker().get(run.job_id, with_description=False) or {}
         emptied: list[dict[str, Any]] = []
-        stuck = ""
         for box in kept_documents(data.get("fields") or [], config.Profile.load(), job):
             if box["kind"] in run.kept_replaced:
+                continue  # (settled for the job: replaced or tried, left as the person's, or the desk's own put in)
+            # (the desk's own upload, whatever its name; not in Workday's list; or the box gone: as it is)
+            if await self.srv.browser.kept_upload_state(box["id"]):
                 continue
-            tailored = Path(box["tailored"]).name
-            if await self.srv.browser.kept_upload_state(box["id"], tailored, box["shown"]):
-                continue  # (the desk's own upload, or the tailored file on the page already: nothing kept to replace)
+            what, tailored, old = _DOCUMENT_SAID[box["kind"]], Path(box["tailored"]).name, ", ".join(box["shown"])
+            upload = f"“{_short(box['where'])}” upload"
             run.kept_replaced.add(box["kind"])
-            # A box that shows only that a file is there ("uploaded": a "Successfully uploaded" with no name) can't say
-            # what it holds. It's replaced all the same, once a job: the desk's own upload of the tailored file would
-            # show its name, or was settled when it went in (_replaced_in), so what's there is another file; at worst
-            # it's the tailored one sent again. Never where which file is the old one isn't sure (several, or a box
+            if run.hands_on or run.pressed_before:
+                # (a restart's job goes on only by the person's Resume: hands_on. Never said of the tailored file's name)
+                if not any(s.lower() == tailored.lower() for s in box["shown"]):
+                    self._log(run, f"left the {what} in its {upload} as it is" + (f" ({old})" if old else "") + ", not "
+                              "the one tailored for this job: you've had this application in your hands, so what's in "
+                              "it is yours")
+                continue
+            # A box that shows only that a file is there ("uploaded": Workday's item with no name) can't say what it
+            # holds. It's replaced all the same, once a job: the desk's own upload of the tailored file is its own
+            # (KEPT_STATE_JS's "mine", or settled when it went in: _replaced_in), so what's there is another; at worst
+            # it's the tailored one sent again. So is a file of the tailored one's name (every tailored resume has the
+            # same name: autofill.kept_documents). Never where which file is the old one isn't sure (several, or a box
             # for a resume and a cover letter both): the person's
-            name = box["shown"][0] if box["shown"] else ""
-            deleted = "" if box["unsure"] else await self.srv.browser.delete_kept_upload(box["id"], name)
-            if deleted in ("deleted", "gone"):  # ("gone": its name still on the page; the fill reads the box again)
+            deleted = "" if box["unsure"] else await self.srv.browser.delete_kept_upload(
+                box["id"], box["shown"][0] if box["shown"] else "")
+            if deleted == "deleted":
                 emptied.append(box)
                 continue
-            if stuck:
-                continue  # (one card at a time: another box's is said once the person is past this one)
-            what = _DOCUMENT_SAID[box["kind"]]
-            upload = f"The “{_short(box['where'])}” upload on {_site(run, data)}"
-            old = ", ".join(box["shown"])
+            upload = f"The {upload} on {_site(run, data)}"
             put = f"upload {tailored} (in this job's folder), then press Resume."
             if box["unsure"]:
                 held = (f"files kept from before ({old})" if len(box["shown"]) > 1 else
                         f"a file kept from before ({old})" if old else "a file kept from before")
-                stuck = (f"{upload} still has {held}, and I can't tell "
-                         + ("which is" if len(box["shown"]) > 1 else "whether it's") + f" your old {what}, to put the "
-                         f"one tailored for this job in its place. In the browser window, delete your old {what} there "
-                         f"with its Delete, {put}")
-            else:
-                stuck = (f"{upload} still has the {what} kept from before" + (f" ({old})" if old else "") + ", and I "
-                         f"couldn't delete it to put in the one tailored for this job ({tailored}): uploaded beside it, "
-                         f"the employer would get two {what}s. In the browser window, delete the old file with its "
-                         f"Delete, {put}")
-        return emptied, stuck
+                return emptied, (f"{upload} still has {held}, and I can't tell "
+                                 + ("which is" if len(box["shown"]) > 1 else "whether it's") + f" your old {what}, to "
+                                 f"put the one tailored for this job in its place. In the browser window, delete your old "
+                                 f"{what} there with its Delete, {put}")
+            return emptied, (f"{upload} still has the {what} kept from before" + (f" ({old})" if old else "") + ", and I "
+                             f"couldn't delete it to put in the one tailored for this job ({tailored}): uploaded beside "
+                             f"it, the employer would get two {what}s. In the browser window, delete the old file with "
+                             f"its Delete, {put}")
+        return emptied, ""
 
-    async def _replaced_in(self, run: Run, data: dict[str, Any], kept: tuple[list[dict[str, Any]], str],
+    async def _replaced_in(self, run: Run, data: dict[str, Any], replacing: tuple[list[dict[str, Any]], str],
                            result: dict[str, Any]) -> bool:
         """After the fill: a document the desk put in itself is settled for the job (a box showing it later is the
         desk's own, whatever name the site gives it: never deleted as one kept from before). Each box emptied of a file
-        kept from before (_replace_kept) is said once its tailored file went in; where it didn't, the box is the
-        person's to put it in, said on a card, as is a kept file that wouldn't go (False: paused)."""
-        emptied, stuck = kept
-        for f in result.get("filled") or []:
+        kept from before (_replace_kept) is said replaced once the fill sent its tailored file itself (never one the
+        fill found the page showing already). On a saved draft, that's a change to its answers whether they were being
+        re-checked or not: Submit for me leaves it for the person to check (_draft_changes). Where the tailored file
+        didn't go, the box is the person's to put it in, said on a card, as is a kept file that wouldn't go (False:
+        paused)."""
+        emptied, stuck = replacing
+        filled = result.get("filled") or []
+        for f in filled:
             if (kind := _DOCUMENT_KINDS.get(str(f.get("from") or ""))) is not None:
                 run.kept_replaced.add(kind)
+        boxes = {str(f.get("id")): f for f in data.get("fields") or [] if isinstance(f, dict)}
         for box in emptied:
-            what, tailored = _DOCUMENT_SAID[box["kind"]], Path(box["tailored"]).name
-            if any(f.get("from") == f"documents.{box['kind']}"
-                   and Path(str(f.get("value") or "")).name.lower() == tailored.lower()
-                   for f in result.get("filled") or []):
+            what, tailored, old = _DOCUMENT_SAID[box["kind"]], Path(box["tailored"]).name, ", ".join(box["shown"])
+            sent = next((f for f in filled if f.get("uploaded") and f.get("from") == f"documents.{box['kind']}"
+                         and Path(str(f.get("value") or "")).name.lower() == tailored.lower()), None)
+            if sent is not None:
                 self._log(run, f"replaced the {what} kept from before with the one tailored for this job")
+                if run.draft:
+                    self._draft_changes(run, [(boxes.get(str(box["id"])) or {"id": box["id"], "label": box["where"]},
+                                               old or "uploaded", sent.get("value"))], data)
             elif not stuck:
-                old = ", ".join(box["shown"])
                 stuck = (f"I deleted the {what} {_site(run, data)} kept from before" + (f" ({old})" if old else "")
                          + f" to put in the one tailored for this job, and it didn't go in. In the browser window, "
                          f"upload {tailored} (in this job's folder) into its “{_short(box['where'])}” "
                          "upload, then press Resume.")
         if not stuck:
             return True
-        _went_in(run, result.get("filled") or [], data)  # (what this fill put in, on the job's "What went in" panel)
+        _went_in(run, filled, data)  # (what this fill put in, on the job's "What went in" panel)
         await self._bring_forward(run)
         self._pause(run, "stuck", stuck)
         return False
@@ -4543,7 +4558,8 @@ class Applier:
             self._log(run, f"{len(failed)} of your answers didn't go in")
         return failed
 
-    async def _autofill(self, run: Run, data: dict[str, Any], own: set[str] | None = None) -> dict[str, Any]:
+    async def _autofill(self, run: Run, data: dict[str, Any], own: set[str] | None = None,
+                        replacing: set[str] | None = None) -> dict[str, Any]:
         """The profile's answers into the page's empty boxes (srv.autofill). On a saved draft's pages (Run.draft: gone in
         through the site's "Continue Application", issue #112, note 38), once a page and only until the job first pauses
         after going in (from then on the person may be at work in its tab: a Resume, a tab the queue carried on with by
@@ -4559,13 +4575,14 @@ class Applier:
         def replaced(filled: list[dict[str, Any]]) -> list[tuple[dict[str, Any], Any, Any]]:
             # what else went into a box the draft had filled, and changed it (the third review: a preset country set
             # right, a list on its first choice answered again): the draft's answers changed all the same. Never a box
-            # this pass filled itself (filled_ids: its "before" is the desk's own fill)
+            # this pass filled itself (filled_ids: its "before" is the desk's own fill), nor one whose file kept from
+            # before the desk replaced (`replacing`: said by _replaced_in, whether the draft is re-checked or not)
             out = []
             for f in filled:
                 box = before.get(str(f.get("id"))) or {}
                 old = box.get("value")
-                if f.get("refreshed") or str(f.get("id")) in (own or set()) or is_empty_value(old) or unset_choice(box) \
-                        or norm(old) == norm(f.get("value")):
+                if f.get("refreshed") or str(f.get("id")) in (own or set()) | (replacing or set()) \
+                        or is_empty_value(old) or unset_choice(box) or norm(old) == norm(f.get("value")):
                     continue
                 out.append((box, old, f.get("value")))
             return out
@@ -4609,7 +4626,10 @@ class Applier:
         if changed:
             self._log(run, f"re-checked the saved draft's answers on {where}: {len(changed)} field(s) showed another "
                       f"answer than your profile's, so I put your profile's in: {named(changed)}")
-        elif not refused:
+        elif not refused and (not replacing or any(not is_empty_value(f.get("value")) for fid, f in before.items()
+                                                   if fid not in replacing)):
+            # (never of a box whose kept file the desk replaces: that's said on its own. With no other box showing an
+            # answer, there's nothing to say here)
             self._log(run, f"re-checked the saved draft's answers on {where}: they match your profile")
         if refused:
             self._log(run, f"re-checked the saved draft's answers on {where}: {len(refused)} field(s) wouldn't take "

@@ -2978,75 +2978,97 @@ def test_a_resume_the_page_shows_but_never_kept_is_said_not_typed_around(srv, mo
     assert not any("required box(es) again" in line for line in r.log), r.log
 
 
-def kept_resume_run(srv, query="", tailored="Sam_Rivera_Resume.pdf"):
+def kept_resume_run(srv, query="", tailored="Sam_Rivera_Resume.pdf", letter=None, before=None, resume=False,
+                    auto_submit=False, between=None):
     """A job on the Workday-like My Experience page whose "Resume/CV" upload keeps the account's last resume
-    (2024-resume.pdf), with a resume tailored for it in its folder (`tailored`: its name, or None): the run, and what
-    the page counted (the kept file's Deletes that went, the files sent into the box, the kept cover letter's
-    Deletes)."""
+    (2024-resume.pdf), with a resume tailored for it in its folder (`tailored`: its name, or None) and a cover letter
+    (`letter`). `before`: the job's run as it was (Run's fields), and `resume`: gone on with by the person's Resume
+    rather than queued; `between`: what the person does once it stops (a coroutine on the run), before it's looked at
+    again. The run, and what the page counted (KEPT_COUNTED)."""
     job = srv.add_job(url=fixture_url("site/workday-kept-resume.html") + query, title="Equipment Technician",
                       company="Example Fab")["job"]
-    if tailored:
-        folder = Path(srv.tracker().get(job["id"])["folder"])
-        folder.mkdir(parents=True, exist_ok=True)
-        (folder / tailored).write_bytes(b"%PDF-1.4\n")
+    folder = Path(srv.tracker().get(job["id"])["folder"])
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in (tailored, letter):
+        if name:
+            (folder / name).write_bytes(b"%PDF-1.4\n")
     applier = Applier(srv)
+    applier.auto_submit = auto_submit
+    if before is not None:
+        applier.runs[job["id"]] = Run(job["id"], "Equipment Technician", "Example Fab", **before)
 
     async def go():
         applier.start()
         try:
-            r = applier.enqueue(job["id"])
+            r = applier.resume(job["id"]) if resume else applier.enqueue(job["id"], submit=auto_submit)
             await until(lambda: r.status not in ("queued", "running"), about=state(r))
-            counted = await r.page.evaluate("() => [sessionStorage.getItem('deletes'), "
-                                            "JSON.parse(sessionStorage.getItem('uploads') || '[]'), "
-                                            "sessionStorage.getItem('coverDeletes')]")
-            return r, counted
+            if between is not None:
+                await between(applier, r)
+                await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate(KEPT_COUNTED)
         finally:
             await applier.stop()
 
     return run(go())
 
 
+# What the page counted: the kept file's Deletes pressed and gone, the files sent into the resume's box, and the same of
+# the cover letter's; and the Deletes of what's never to be pressed
+KEPT_COUNTED = ("() => Object.fromEntries(['presses', 'deletes', 'uploads', 'coverDeletes', 'plainDeletes', "
+                "'letterPresses', 'letterDeletes', 'letterUploads']"
+                ".map((k) => [k, JSON.parse(sessionStorage.getItem(k) || 'null')]))")
 REPLACED = "replaced the resume kept from before with the one tailored for this job"
 
 
 @pytest.mark.parametrize("query,tailored", [("", "Sam_Rivera_Resume.pdf"), ("?redraw", "Sam_Rivera_Resume.pdf"),
-                                            ("?unnamed", "Sam_Rivera_Resume.pdf"), ("", "resume.pdf")])
+                                            ("?unnamed", "Sam_Rivera_Resume.pdf"), ("", "resume.pdf"),
+                                            ("?kept=Sam_Rivera_Resume.pdf", "Sam_Rivera_Resume.pdf"),
+                                            ("?toast", "Sam_Rivera_Resume.pdf")])
 def test_a_resume_kept_from_before_gives_way_to_the_one_tailored_for_the_job(srv, monkeypatch, query, tailored):
     """NXP's Workday (the weekly probe, Oct 2026): an account that applied there before finds its last resume kept in
     My Experience's "Resume/CV" upload. The desk read the box as filled and left it, so the employer got the old resume,
     not the one tailored for the job. The kept file is deleted with its own Delete and the tailored one uploaded, said
     in the log; once a job, so a page that draws the old name again (?redraw: saved and drawn again) isn't deleted
     from again. A row that shows no name (?unnamed) can't say what it holds: replaced all the same, once. A tailored
-    resume.pdf is no file the page shows already for being inside the kept file's name (2024-resume.pdf)."""
+    resume.pdf is no file the page shows already for being inside the kept file's name (2024-resume.pdf). The review of
+    0.3.209: a kept file of the tailored one's own name (every tailored resume is <First>_<Last>_Resume.pdf, so the last
+    application's at the same employer has it) is replaced as any other; and a Delete that leaves a note naming the
+    file (?toast) has deleted it, its item gone."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
-    r, (deletes, uploads, _) = kept_resume_run(srv, query, tailored)
+    r, counted = kept_resume_run(srv, query, tailored)
     assert "review.html" in r.url, (r.url, r.reason, r.log)
-    assert (deletes, uploads) == ("1", [tailored]), (deletes, uploads, r.log)
+    assert (counted["deletes"], counted["uploads"]) == (1, [tailored]), (counted, r.log)
     assert r.log.count(REPLACED) == 1, r.log
     # (?redraw: the page, drawn again with the old name, was gone through again)
     assert r.log.count("clicked “Save and Continue”") == (2 if query == "?redraw" else 1), r.log
 
 
-def test_a_resume_kept_from_before_stays_with_none_tailored_for_the_job(srv, monkeypatch):
+@pytest.mark.parametrize("query,tailored", [("", None), ("?plain", "Sam_Rivera_Resume.pdf")])
+def test_a_resume_kept_from_before_stays_with_none_tailored_for_the_job(srv, monkeypatch, query, tailored):
     """With no resume tailored for the job, a resume the site kept from before stays as it is (as the profile's
-    would): nothing deleted, nothing uploaded beside it."""
+    would): nothing deleted, nothing uploaded beside it. So does one outside Workday's list of files (?plain, the review
+    of 0.3.209: another site's list of stored files may be the person's own file library, where a Delete takes the file
+    off their account), tailored resume or not, and nothing is said of it."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
-    r, (deletes, uploads, _) = kept_resume_run(srv, tailored=None)
+    r, counted = kept_resume_run(srv, query, tailored)
     assert "review.html" in r.url, (r.url, r.reason, r.log)
-    assert (deletes, uploads) == (None, []), (deletes, uploads, r.log)
-    assert REPLACED not in r.log, r.log
+    assert (counted["presses"], counted["deletes"], counted["plainDeletes"], counted["uploads"]) == (None,) * 4, \
+        (counted, r.log)
+    assert not any("kept from before" in line for line in r.log), r.log
 
 
-@pytest.mark.parametrize("query", ["?stuck", "?cover", "?submit"])
+@pytest.mark.parametrize("query", ["?stuck", "?cover", "?submit", "?rerender"])
 def test_a_resume_kept_from_before_that_wont_go_is_the_persons(srv, monkeypatch, query):
     """The kept resume's Delete asks first (?stuck: turned down), or the box keeps a cover letter beside it (?cover:
-    which is the old resume isn't sure), or its Delete would send the form (?submit): the tailored resume is never
-    uploaded beside the old one (the employer would get two). The person's, on a card saying what to do; nothing
+    which is the old resume isn't sure), or its Delete would send the form (?submit), or draws the list again with the
+    file still in it (?rerender, the review of 0.3.209: its Delete gone isn't the file gone): the tailored resume is
+    never uploaded beside the old one (the employer would get two). The person's, on a card saying what to do; nothing
     deleted, nothing sent."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
-    r, (deletes, uploads, cover) = kept_resume_run(srv, query)
+    r, counted = kept_resume_run(srv, query)
     assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
-    assert (deletes, uploads, cover) == (None, [], None), (deletes, uploads, cover, r.log)
+    assert (counted["deletes"], counted["uploads"], counted["coverDeletes"]) == (None,) * 3, (counted, r.log)
+    assert counted["presses"] == (1 if query in ("?stuck", "?rerender") else None), counted
     assert run(r.page.evaluate("() => window.sent")) is False
     assert "Sam_Rivera_Resume.pdf" in r.reason and "then press Resume" in r.reason, r.reason
     if query == "?cover":
@@ -3056,6 +3078,91 @@ def test_a_resume_kept_from_before_that_wont_go_is_the_persons(srv, monkeypatch,
         assert "still has the resume kept from before (2024-resume.pdf), and I couldn't delete it" in r.reason \
             and "two resumes" in r.reason, r.reason
     assert REPLACED not in r.log, r.log
+
+
+def test_a_tailored_resume_the_fill_didnt_send_is_never_said_replaced(srv, monkeypatch):
+    """The review of 0.3.209: the kept file deleted, the fill found the tailored file's name on the page (a note naming
+    the deleted Old_Sam_Rivera_Resume.pdf holds Sam_Rivera_Resume.pdf) and sent nothing, yet the log said "replaced".
+    Only a file the fill sent itself is: here, the box is the person's to put it in, on a card."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    r, counted = kept_resume_run(srv, "?toast&kept=Old_Sam_Rivera_Resume.pdf")
+    assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
+    assert (counted["deletes"], counted["uploads"]) == (1, None), (counted, r.log)
+    assert "I deleted the resume Example Fab's site kept from before (Old_Sam_Rivera_Resume.pdf) to put in the one " \
+        "tailored for this job, and it didn't go in" in r.reason, r.reason
+    assert REPLACED not in r.log, r.log
+
+
+@pytest.mark.parametrize("how", ["resume", "restart", "pressed before"])
+def test_a_file_in_an_application_the_person_has_had_is_theirs(srv, monkeypatch, how):
+    """The review of 0.3.209: once the person has had the application in their hands (their Resume after a stop, or
+    after a restart of the desk, whose job goes on only by it; or a Submit pressed before), a file in its upload may be
+    one they put there themselves (My_Own_Pick_final.pdf). It's never deleted, nor anything uploaded beside it: left as
+    it is, and said."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    before = {"resume": {"status": "needs_you", "need": "stuck"},
+              "restart": {"status": "needs_you", "need": "restarted", "left_at_restart": True, "started": True},
+              "pressed before": {"pressed_before": True}}[how]
+    r, counted = kept_resume_run(srv, "?kept=My_Own_Pick_final.pdf", before=before, resume=how != "pressed before")
+    assert "review.html" in r.url, (r.url, r.reason, r.log)
+    assert (counted["presses"], counted["deletes"], counted["uploads"]) == (None,) * 3, (counted, r.log)
+    assert r.log.count("left the resume in its “Resume/CV” upload as it is (My_Own_Pick_final.pdf), not the one "
+                       "tailored for this job: you've had this application in your hands, so what's in it is yours") \
+        == 1, r.log
+    assert REPLACED not in r.log, r.log
+
+
+@pytest.mark.parametrize("checked", [True, False])
+def test_a_drafts_resume_replaced_holds_submit_for_me(srv, monkeypatch, checked):
+    """The review of 0.3.209: a saved draft's resume replaced with the tailored one is a change to its answers, whether
+    they were being re-checked (`checked`) or not (a stop where the person may have changed its boxes, the queue gone on
+    by itself): Submit for me leaves it on its review page for the person to check, and the job's "What went in" says
+    what changed. The re-check says nothing of the box replaced ("they match your profile" of a page whose only answer
+    the desk replaced)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    r, counted = kept_resume_run(srv, before={"draft": True, "draft_off": not checked}, auto_submit=True)
+    assert (r.status, counted["deletes"], counted["uploads"]) == ("ready", 1, ["Sam_Rivera_Resume.pdf"]), \
+        (r.status, r.reason, counted, r.log)
+    assert REPLACED in r.log and r.draft_changed, r.log
+    assert "Submit for me left it for you" in r.reason, r.reason
+    assert any("2024-resume.pdf" in line for line in r.public()["went_in"]["changed"]), r.public()["went_in"]
+    assert not any("they match your profile" in line for line in r.log), r.log
+
+
+def test_a_cover_letter_kept_from_before_gives_way_to_the_one_tailored_for_the_job(srv, monkeypatch):
+    """The review of 0.3.209, end to end: the job's folder holds a resume and a cover letter tailored for it, and
+    My Experience keeps a file from before in each upload: each is deleted with its own Delete and the tailored one
+    sent into its own box."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    r, counted = kept_resume_run(srv, "?letter", letter="Sam_Rivera_Cover_Letter.pdf")
+    assert "review.html" in r.url, (r.url, r.reason, r.log)
+    assert ({k: counted[k] for k in ("deletes", "uploads", "letterDeletes", "letterUploads")}
+            == {"deletes": 1, "uploads": ["Sam_Rivera_Resume.pdf"], "letterDeletes": 1,
+                "letterUploads": ["Sam_Rivera_Cover_Letter.pdf"]}), (counted, r.log)
+    assert REPLACED in r.log, r.log
+    assert "replaced the cover letter kept from before with the one tailored for this job" in r.log, r.log
+
+
+def test_a_second_kept_file_that_wont_go_is_said_once_the_first_is_past(srv, monkeypatch):
+    """The review of 0.3.209: two kept files whose Deletes won't go (a resume's and a cover letter's, each asking
+    first). The card says the resume's; the cover letter's Delete is neither pressed nor its box settled, so the next
+    pass says it: after the person's Resume, it's theirs (left as it is, and said)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    seen = {}
+
+    async def on_resume(applier, r):
+        seen.update(need=r.need, reason=r.reason, settled=set(r.kept_replaced),
+                    letter=await r.page.evaluate("() => sessionStorage.getItem('letterPresses')"))
+        applier.resume(r.job_id)
+
+    r, counted = kept_resume_run(srv, "?letter&stuck&letterstuck", letter="Sam_Rivera_Cover_Letter.pdf",
+                                 between=on_resume)
+    assert seen["need"] == "stuck" and "still has the resume kept from before" in seen["reason"], seen
+    assert (seen["letter"], seen["settled"]) == (None, {"resume"}), seen
+    assert "review.html" in r.url, (r.url, r.reason, r.log)
+    assert "left the cover letter in its “Cover Letter” upload as it is (2024-cover-letter.pdf), not the one tailored " \
+        "for this job: you've had this application in your hands, so what's in it is yours" in r.log, r.log
+    assert (counted["letterPresses"], counted["letterUploads"], counted["uploads"]) == (None,) * 3, counted
 
 
 def test_a_box_the_page_says_is_wrong_showing_what_it_wrote_itself_takes_the_profiles_answer(srv, monkeypatch):

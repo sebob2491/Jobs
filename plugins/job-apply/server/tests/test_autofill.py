@@ -663,9 +663,14 @@ def test_a_file_kept_from_before_gives_way_only_to_one_tailored_for_the_job(tmp_
     (folder / "Sam_Rivera_Cover_Letter.pdf").write_bytes(b"%PDF-1.4\n")
     assert [(k["id"], k["kind"], k["tailored"]) for k in autofill.kept_documents([box, cover], prof(), job)] == [
         ("r", "resume", resume), ("c", "cover_letter", str(folder / "Sam_Rivera_Cover_Letter.pdf"))]
-    # the tailored file there already (as the site writes its name), or nothing there: nothing to replace
-    for shown in ("sam_rivera_resume.pdf", "resume-2025.pdf, Sam_Rivera_Resume.pdf", "", None):
+    # nothing there: nothing to replace
+    for shown in ("", None):
         assert autofill.kept_documents([{**box, "value": shown}], prof(), job) == [], shown
+    # a file of the tailored one's name is no sign it's that one (the review of 0.3.209): every tailored resume is named
+    # <First>_<Last>_Resume.pdf, so the last application's at the same employer has it too. Whether the desk put it there
+    # is the desk's to say (Applier._replace_kept)
+    [kept] = autofill.kept_documents([{**box, "value": "Sam_Rivera_Resume.pdf"}], prof(), job)
+    assert (kept["shown"], kept["unsure"]) == (["Sam_Rivera_Resume.pdf"], False)
     # a box that shows only that a file is there: replaced; several files, or a box for a resume and a cover letter
     # both: which is the old resume isn't sure
     [kept] = autofill.kept_documents([{**box, "value": "uploaded"}], prof(), job)

@@ -39,7 +39,7 @@ from .ats import detect_ats
 from .autofill import choose_option, choose_place, date_form, is_empty_value, norm, polarity
 from .formjs import (ADD_UNWATCH_JS, ADD_WATCH_JS, ADDED_BLOCKS_JS, CHALLENGE_JS, CLICK_CHOICE_JS, COVERED_JS,
                      DAY_CELL_JS, ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, FIELD_OPTIONS_JS, PEEK_JS,
-                     KEPT_DELETE_JS, KEPT_PRESSED_SHOWN_JS, KEPT_STATE_JS,
+                     KEPT_DELETE_JS, KEPT_ROWS_JS, KEPT_STATE_JS,
                      LOST_BOXES_JS, MARK_OPTIONS_JS, NOTICE_OVER_JS, OPEN_MENU_JS, OPEN_PICKERS_JS, OUTSIDE_CLICK_JS,
                      QUIET_JS, SHOWN_VALUE_JS,
                      UNKEPT_DELETE_JS, UNKEPT_FORGET_JS, UNKEPT_PRESSED_SHOWN_JS, UNKEPT_SHOWN_JS, UPLOAD_NOT_KEPT_JS,
@@ -1390,32 +1390,31 @@ class BrowserSession:
                     return "gone"
         return "pressed"
 
-    async def kept_upload_state(self, box_id: str, tailored: str, shown: list[str] | None = None) -> str:
-        """An upload box showing a file (`shown`: the names it shows), before the file tailored for this job goes in place
-        of one kept from before (Applier._replace_kept): "mine" where the desk sent a file into it itself, "there" where
-        the page shows the tailored file's name already (the fill wouldn't send it again), "" otherwise or with the box
-        gone (KEPT_STATE_JS)."""
+    async def kept_upload_state(self, box_id: str) -> str:
+        """An upload box showing a file, before the file tailored for this job goes in place of one kept from before
+        (Applier._replace_kept): "mine" where the desk sent a file into it itself, "other" where what it shows isn't in
+        Workday's list of files (never touched), "" otherwise; "gone" with the box gone (KEPT_STATE_JS)."""
         async with self._lock:
             page = await self.page()
             with contextlib.suppress(PlaywrightError, PlaywrightTimeout, KeyError):
-                return str(await self._locator(page, box_id).evaluate(KEPT_STATE_JS, [tailored, shown or []],
-                                                                      timeout=3000) or "")
-            return ""
+                return str(await self._locator(page, box_id).evaluate(KEPT_STATE_JS, timeout=3000) or "")
+            return "gone"
 
     async def delete_kept_upload(self, box_id: str, name: str) -> str:
         """Press the Delete of a file an upload box shows as kept from before (Workday keeps an account's last resume in
-        its "Resume/CV" upload), for the file tailored for this job to go in its place: only the page's own control for
-        that file (KEPT_DELETE_JS), past the same check as every press the desk makes. `name`: the file's name as the
-        box shows it, "" where it shows only that a file is there. "deleted" when the page then shows the file no more
-        (its name gone from the page; with no name, its Delete gone), "gone" when its Delete went but its name is still
-        on the page (a note of it, say: the box is read again to know), "pressed" when the Delete is still there (a site
-        that asks first, turned down), "" when there was no such Delete to press."""
+        its "Resume/CV" upload), for the file tailored for this job to go in its place: only that file's own Delete in
+        Workday's list (KEPT_DELETE_JS), past the same check as every press the desk makes. `name`: the file's name as
+        the box shows it, "" where it shows only that a file is there. "deleted" once the list shows that file in fewer
+        items than before (KEPT_ROWS_JS: never by its Delete alone going, as a list drawn again does, nor by its name gone
+        from the page), "pressed" when it doesn't (a site that asks first, turned down), "" when there was no such
+        Delete to press."""
         async with self._lock:
             page = await self.page()
             try:
                 frame = self._frame_for(page, box_id)
                 if not await self._locator(page, box_id).evaluate(KEPT_DELETE_JS, name, timeout=3000):
                     return ""
+                before = int(await frame.evaluate(KEPT_ROWS_JS, name))
                 button = frame.locator('[data-ja-kept-delete="1"]').first
                 self._check_clickable(await button.evaluate(ELEMENT_INFO_JS, timeout=3000), page.url)
                 await button.click(timeout=5000)
@@ -1425,12 +1424,8 @@ class BrowserSession:
             await asyncio.sleep(0.5)
             async with self._lock:
                 with contextlib.suppress(PlaywrightError):
-                    if not await (frame.evaluate(UNKEPT_SHOWN_JS, name) if name else frame.evaluate(KEPT_PRESSED_SHOWN_JS)):
+                    if int(await frame.evaluate(KEPT_ROWS_JS, name)) < before:
                         return "deleted"
-        async with self._lock:
-            with contextlib.suppress(PlaywrightError):
-                if not await frame.evaluate(KEPT_PRESSED_SHOWN_JS):
-                    return "gone"
         return "pressed"
 
     async def upload_state(self, name: str) -> str:
