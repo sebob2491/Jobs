@@ -83,12 +83,14 @@ class MenusMixin:
 
     async def _read_listbox_options(self, page: Page, field: dict) -> list[str]:
         loc = self._locator(page, field["id"])
-        wait = 2000 if field["kind"] == "listbox" else 900  # search pickers often show nothing until typed into
+        # (search pickers often show nothing until typed into)
+        wait = browser.LIST_OPEN_WAIT if field["kind"] == "listbox" else browser.COMBO_OPEN_WAIT
         try:
             await self._open(page, field["id"], loc)
             # (a list's choices can take seconds after it opens on its placeholder alone: Boeing's Workday veteran list,
             # run 56, still "Select One" after two; _field_options stops waiting as soon as they come)
-            options = await self._field_options(page, field["id"], loc, wait, 5000 if field["kind"] == "listbox" else 0)
+            options = await self._field_options(page, field["id"], loc, wait,
+                                                 browser.LIST_PLACEHOLDER_WAIT if field["kind"] == "listbox" else 0)
         except (PlaywrightError, PlaywrightTimeout):
             options = []
         finally:
@@ -199,17 +201,17 @@ class MenusMixin:
             return await self._tick_in_multiselect(page, loc, field, value)
         for attempt in range(2):
             await self._open(page, field["id"], loc)
-            options = await self._field_options(page, field["id"], loc, 2500)
+            options = await self._field_options(page, field["id"], loc, browser.PICK_OPEN_WAIT)
             if not options:  # its menu didn't open (Onto's Phone Device Type, once): close up and try again
                 await self._close_menus(page)
                 await self._open(page, field["id"], loc)
-                options = await self._field_options(page, field["id"], loc, 3000)
+                options = await self._field_options(page, field["id"], loc, browser.LIST_REOPEN_WAIT)
             choice = choose_option(value, options, names=names)
             if choice is None and not field.get("pick_only"):
                 # Long lists are virtualized; typing jumps to the entry.
                 await page.keyboard.type(str(value), delay=40)
                 await page.wait_for_timeout(400)
-                options = await self._field_options(page, field["id"], loc, 1500)
+                options = await self._field_options(page, field["id"], loc, browser.LIST_JUMP_WAIT)
                 choice = choose_option(value, options, names=names)
             if choice is None:
                 await page.keyboard.press("Escape")
@@ -220,7 +222,7 @@ class MenusMixin:
             except ValueError:
                 # a choice that opened a list of its own (Workday's "How Did You Hear About Us?": "<employer>
                 # website ›" > "<employer> website", live test 2, issue #112, note 15): picked inside it
-                inner = await self._new_options(page, field["id"], loc, options, 1500)
+                inner = await self._new_options(page, field["id"], loc, options, browser.LIST_NEW_WAIT)
                 entry = browser._inner_choice(value, choice, inner, names) if inner and inner != options else None
                 if entry is not None:
                     await self._click_option(page, field["id"], entry)
@@ -256,7 +258,8 @@ class MenusMixin:
             if search and (pick is None or (norm(pick) != norm(want) and len(shown) >= browser._SEARCH_PAGE)):
                 await loc.fill("")
                 await loc.press_sequentially(browser._search_words(want), delay=30)
-                found = await self._new_options(page, field["id"], loc, shown, 2500)  # (a filter that waits a moment)
+                # (a filter that waits a moment)
+                found = await self._new_options(page, field["id"], loc, shown, browser.LIST_FILTER_WAIT)
                 # the narrowed list judges better than the first page: its exact one, else its nearest
                 better = next((o for o in found if norm(o) == norm(want)), None) \
                     or (choose_option(want, found, names=names) if found else None)
@@ -290,17 +293,17 @@ class MenusMixin:
         """Open a multiselect's list (a search box's on the Down key: a click only puts the cursor in it) and read
         its choices; once more from closed if it showed none."""
         await self._open(page, field_id, loc)
-        shown = await self._field_options(page, field_id, loc, 2500)
+        shown = await self._field_options(page, field_id, loc, browser.PICK_OPEN_WAIT)
         if not shown and search and not await loc.input_value():
             await loc.press("ArrowDown")
-            shown = await self._field_options(page, field_id, loc, 3000)
+            shown = await self._field_options(page, field_id, loc, browser.LIST_REOPEN_WAIT)
         if not shown:
             # its menu didn't open (the click closed one already open): closed, and opened once more
             await self._close_menus(page)
             await self._open(page, field_id, loc)
             if search:
                 await loc.press("ArrowDown")
-            shown = await self._field_options(page, field_id, loc, 3000)
+            shown = await self._field_options(page, field_id, loc, browser.LIST_REOPEN_WAIT)
             if not shown:
                 raise ValueError("its list of choices didn't open; tick it in the browser")
         return shown
@@ -381,7 +384,8 @@ class MenusMixin:
         # of "Arizona", in the question below the State).
         pick_only = bool(field.get("pick_only"))
         # (a self-identification list shows every choice on opening, a moment later on some sites)
-        options = await self._field_options(page, field["id"], loc, 2500 if pick_only else 900)
+        options = await self._field_options(page, field["id"], loc,
+                                             browser.PICK_OPEN_WAIT if pick_only else browser.COMBO_OPEN_WAIT)
 
         def no_choice(listed: list[str]) -> bool:  # (nothing, or its placeholder alone: "No Selection")
             return not any(not is_empty_value(o) for o in listed)
@@ -391,7 +395,7 @@ class MenusMixin:
             # (Freeport-McMoRan's Ethnicity, Edwards Vacuum's Protected Veteran, Rogers' Gender and Ethnicity: the
             # desk read no choices and asked the person, 20 runs): a list open and still empty, or on its placeholder
             # alone, is waited on
-            waited = 2500
+            waited = browser.PICK_OPEN_WAIT  # (waited already, as the list was read)
             while no_choice(listed) and waited < browser.PICK_LIST_WAIT and (listed or await self._list_loading(loc)):
                 await page.wait_for_timeout(500)
                 waited += 500
@@ -405,7 +409,7 @@ class MenusMixin:
                 # opened a second time, they stay; its box owns the list, so its absence read as still loading and was
                 # waited on in vain): opened once more, and read as the first time. (A site still fetching, its list
                 # not drawn yet, takes the second click as the first: run 111's, the fixture's &nolist)
-                options = await self._field_options(page, field["id"], loc, 2500)
+                options = await self._field_options(page, field["id"], loc, browser.PICK_OPEN_WAIT)
             options = await choices_come(options)
         choice = (browser._choose(text, options, field, exact_only=len(options) > browser.SHORT_MENU and not pick_only)
                   if options else None)
@@ -417,7 +421,7 @@ class MenusMixin:
             # "Career Website" > "Hitachi Digital Career Site (…)", run 112: a search for the entry found nothing on
             # the site, and the person's answer never went in): the group picked, then the entry
             await self._click_option(page, field["id"], top)
-            inner = await self._new_options(page, field["id"], loc, options, 1500)
+            inner = await self._new_options(page, field["id"], loc, options, browser.LIST_NEW_WAIT)
             if inner and inner != options:
                 entry = choose_option(text, inner, exact_only=True)
                 if entry is not None:
@@ -441,18 +445,18 @@ class MenusMixin:
             opened = options
             await loc.fill("")
             await loc.press_sequentially(query, delay=30)
-            options = await self._field_options(page, field["id"], loc, 2500)
+            options = await self._field_options(page, field["id"], loc, browser.LIST_FILTER_WAIT)
             if options and options == opened and not await loc.evaluate(browser.WORKDAY_PROMPT_JS):
                 # still the list from before the search (Oracle's ZIP lists "00000, …" on opening):
                 # its results come a moment later
-                options = await self._results_for(page, field["id"], loc, query, 3000) or options
+                options = await self._results_for(page, field["id"], loc, query, browser.LIST_SEARCH_WAIT) or options
             # Search-style pickers (Workday) list results after Enter: nothing listed yet, or
             # (Workday's 2026 prompts) the categories it opened with, untouched by typing.
             # Inside a <form>, Enter could submit the whole form, so it's never pressed there.
             unsearched = not options or (options == opened and await loc.evaluate(browser.WORKDAY_PROMPT_JS))
             if unsearched and not await loc.evaluate("el => !!el.form"):
                 await loc.press("Enter")
-                options = await self._new_options(page, field["id"], loc, options, 2500)
+                options = await self._new_options(page, field["id"], loc, options, browser.LIST_FILTER_WAIT)
             choice = browser._choose(text, options, field)
         if choice is None:
             if options:
@@ -485,7 +489,7 @@ class MenusMixin:
         try:
             await self._confirm_choice(page, loc, choice)
         except ValueError:
-            inner = await self._new_options(page, field["id"], loc, options, 1500)
+            inner = await self._new_options(page, field["id"], loc, options, browser.LIST_NEW_WAIT)
             entry = browser._inner_choice(text, choice, inner, names) if inner and inner != options else None
             if entry is not None:  # the answer is in the group it opened (Onto's "ONTO Website" > "ONTO Website")
                 await self._click_option(page, field["id"], entry)

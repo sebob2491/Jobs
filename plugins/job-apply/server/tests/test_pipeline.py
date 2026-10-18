@@ -3023,6 +3023,9 @@ def test_boxes_the_pages_errors_say_are_empty_though_filled_are_typed_again(srv,
 
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "STEP_SAVE_WAIT", 1)
+    # (the page's resume parse lands 0.4 s after Address 1 is typed: the production wait after filling, 0.5 s, sees it
+    # land before Save and continue is pressed, as UKG's did)
+    monkeypatch.setattr(browser_module, "LOST_FILL_WAIT", 0.5)
     job = srv.add_job(url=fixture_url("site/ukg-prefill.html") + query, title="Field Service Engineer",
                       company="Example Fab")["job"]
     desk = Desk(srv)

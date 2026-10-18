@@ -1,10 +1,11 @@
 """The suite's own collection hook (conftest.py): a part of the suite (JOB_APPLY_TEST_SHARD) and, asked to, the slow
-tests first (JOB_APPLY_SLOW_FIRST). Stand-in tests and config, no browser."""
+tests first (JOB_APPLY_SLOW_FIRST), and its shortened waits (FAST_WAITS). Stand-in tests and config, no browser."""
+import importlib
 from types import SimpleNamespace
 
 import pytest
 
-from conftest import pytest_collection_modifyitems, slow_first
+from conftest import FAST_WAITS, pytest_collection_modifyitems, slow_first
 
 
 class StandIn:
@@ -74,3 +75,17 @@ def test_slow_first_keeps_every_test_and_each_groups_order():
 
 def test_the_slow_marker_is_registered(pytestconfig):
     assert any(line.startswith("slow:") for line in pytestconfig.getini("markers"))
+
+
+@pytest.mark.real_waits  # (the modules' own values, to compare with)
+def test_every_shortened_wait_is_one_its_module_has_and_only_shortened():
+    """conftest's FAST_WAITS sets each name on its module: each is a wait its module has (a wait renamed in the code
+    is said here by name, not as every test's setup error), a number, and only ever shorter in the tests than it is
+    for the person (a fast value that grew past the code's would slow the tests, or hide a wait cut in the code)."""
+    for module, waits in FAST_WAITS.items():
+        mod = importlib.import_module(f"job_apply.{module}")
+        for name, fast in waits.items():
+            assert hasattr(mod, name), f"{module}.{name} is in FAST_WAITS but not in {module}.py"
+            real = getattr(mod, name)
+            assert isinstance(real, (int, float)) and isinstance(fast, (int, float)), (module, name, real)
+            assert 0 < fast < real, (module, name, fast, real)

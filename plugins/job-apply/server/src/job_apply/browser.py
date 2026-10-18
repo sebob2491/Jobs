@@ -95,6 +95,17 @@ _SECRET_BOX = re.compile(r'\sdata-ja-secret\b', re.I)
 # "expanded", costs the wait once per such field per fill (under the lock); one found closed after the first read is
 # opened once more first, and its wait begins then (about 12.5 s in all)
 PICK_LIST_WAIT = 10000
+# ms a box's list is given to show its choices (browser_menus.py's reader stops waiting as soon as one comes; these are
+# the most it waits on a list that shows nothing):
+LIST_OPEN_WAIT = 2000  # a listbox's choices when the form is read
+COMBO_OPEN_WAIT = 900  # a search picker's on opening (often nothing until typed into)
+LIST_PLACEHOLDER_WAIT = 5000  # a listbox on its placeholder alone when the form is read (Boeing's veteran list, run 56)
+PICK_OPEN_WAIT = 2500  # a list opened to pick from (a pick-only list's, a multiselect's)
+LIST_REOPEN_WAIT = 3000  # a list opened once more after it showed nothing
+LIST_JUMP_WAIT = 1500  # a long list after typing to jump to the answer in it
+LIST_FILTER_WAIT = 2500  # a list narrowed by the words typed into its box, or searched with Enter
+LIST_SEARCH_WAIT = 3000  # a search's results, where the list still shows what it opened with (Oracle's ZIP)
+LIST_NEW_WAIT = 1500  # the entries a choice opens as a group of its own (Workday's "How Did You Hear About Us?")
 # s a frame's form read (EXTRACT_JS) is waited on: a page whose script has hung answers never
 READ_TIMEOUT = 20
 # Months a date picker's calendar is moved on (or back) at most to reach the day to pick: two years

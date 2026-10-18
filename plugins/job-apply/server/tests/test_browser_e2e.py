@@ -201,7 +201,7 @@ def test_a_workday_groups_own_list_drawn_over_the_lists_below_is_read_as_its_own
         "Newspaper"
 
 
-def test_self_identification_dropdowns_are_picked_from_their_lists_never_typed_into(srv, job_apply_home):
+def test_self_identification_dropdowns_are_picked_from_their_lists_never_typed_into(srv, job_apply_home, monkeypatch):
     """Reported in use (Oct 2026): the desk typed self-identification answers into dropdowns,
     which didn't work. In the live check, onsemi's Oracle Gender lists only Female and Male, and
     because Oracle's lists are searched, "Decline to self-identify" was typed in, found nothing,
@@ -212,6 +212,8 @@ def test_self_identification_dropdowns_are_picked_from_their_lists_never_typed_i
     profile's answer, and nothing is typed."""
     import yaml
 
+    # (the VEVRAA list's entries come 1.2 s after each opening: a pick-only list's production wait for them)
+    monkeypatch.setattr(browser_module, "PICK_OPEN_WAIT", 2500)
     data = yaml.safe_load((job_apply_home / "profile.yaml").read_text(encoding="utf-8"))
     data["eeo"]["disability"] = "No"  # (gender "Decline to self-identify", veteran "I don't wish to answer")
     (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
@@ -454,11 +456,12 @@ def test_saved_blocks_drawn_late_are_counted_before_any_is_added(srv):
     assert (work["clicks"], work["after"], work["wanted"]) == (0, 2, 2), work
 
 
-def test_a_list_that_opens_on_its_placeholder_alone_is_read_once_its_choices_come(srv):
+def test_a_list_that_opens_on_its_placeholder_alone_is_read_once_its_choices_come(srv, monkeypatch):
     """BCBS of Arizona's and KLA's Workday (run 53, Oct 13): the Degree list opened on "Select One" alone, its choices
     a moment later; the desk read that as the whole list and stopped: "The Degree list has no choice for your Bachelor
     of Science". A list showing only its placeholder is read again until its choices come (or the wait ends)."""
     # (and Boeing's veteran list, run 56: still "Select One" alone after two seconds, its choices there on the next pass)
+    monkeypatch.setattr(browser_module, "LIST_PLACEHOLDER_WAIT", 5000)  # (the production wait: 3.2 s is within it)
     for late in (700, 3200):
         job = srv.add_job(url=fixture_url("workday_experience.html") + f"?degrees={late}", title="FSE",
                           company="Example Litho")["job"]
@@ -1429,11 +1432,12 @@ def test_a_maps_own_controls_are_not_the_pages_buttons(srv):
 
 
 @pytest.mark.parametrize("overlap", [0, 1, 3, 8])
-def test_a_menu_left_over_the_next_field_isnt_its_options(srv, overlap):
+def test_a_menu_left_over_the_next_field_isnt_its_options(srv, overlap, monkeypatch):
     """Micron: the availability question's menu stayed open over the next question and was
     drawn afresh when focus moved, so its options were read as the next question's. Also where
     the menu is drawn a little over its own box (a joined border, a rounding, or more: the review
     of 0.3.134's), which never makes it the next question's."""
+    monkeypatch.setattr(browser_module, "COMBO_OPEN_WAIT", 900)  # (the production wait: its menu comes 0.4 s after)
     run(srv.open_application(url=fixture_url("jsonld_posting.html")))
     page = run(srv.browser.page())
     run(page.set_content("""

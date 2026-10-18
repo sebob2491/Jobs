@@ -105,8 +105,16 @@ def browser_available() -> bool:
 FAST_WAITS = {
     "pipeline": {"LATE_BUTTONS_WAIT": 5, "SIGN_IN_SETTLE": 7, "RESET_SETTLE": 7, "STEP_SAVE_WAIT": 6, "STEP_LOAD_WAIT": 8,
                  "BLANK_PAGE_WAIT": 8, "SIGN_IN_STEP_WAIT": 8, "ACCOUNT_WAIT": 7, "ACCOUNT_STEP_WAIT": 5, "NOTICE_WAIT": 3,
-                 "NEW_TAB_WAIT": 3, "ACCOUNT_DRAW_WAIT": 3},
-    "browser": {"SETTLE_WAIT": 4, "CONFIRM_WAIT": 5, "UPLOAD_SHOWN_WAIT": 6, "FRAME_WAIT": 4},
+                 "NEW_TAB_WAIT": 3, "ACCOUNT_DRAW_WAIT": 3,
+                 # (the Applier's poll and its settles: a mock site answers at once)
+                 "POLL_SECONDS": 0.3, "ONCE_SETTLE": 0.2, "REFUSAL_SETTLE": 0.5, "INDICATOR_GONE_SETTLE": 0.5,
+                 "LEFT_SIGN_IN_SETTLE": 0.5},
+    "browser": {"SETTLE_WAIT": 4, "CONFIRM_WAIT": 5, "UPLOAD_SHOWN_WAIT": 6, "FRAME_WAIT": 4,
+                "LOST_FILL_WAIT": 0.1, "SAVED_DRAW_WAIT": 500, "BLOCK_DRAW_WAIT": 1500,
+                # (the menu reader's, in ms: a mock's list shows its choices at once, or the test sets its own wait)
+                "LIST_OPEN_WAIT": 600, "COMBO_OPEN_WAIT": 300, "LIST_PLACEHOLDER_WAIT": 1200, "PICK_OPEN_WAIT": 600,
+                "LIST_REOPEN_WAIT": 900, "LIST_JUMP_WAIT": 500, "LIST_FILTER_WAIT": 800, "LIST_SEARCH_WAIT": 900,
+                "LIST_NEW_WAIT": 500},
 }
 
 
