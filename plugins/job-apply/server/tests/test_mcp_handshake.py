@@ -108,3 +108,31 @@ def test_a_fake_server_that_answers_right_passes(tmp_path):
     names = sorted(hs.expected_tools(SERVER_PY))
     path = mcp_json(tmp_path, sys.executable, [str(fake), "right", json.dumps(names), VERSION])
     assert hs.main(["--mcp-json", str(path), "--timeout", "10"]) == 0
+
+
+def test_what_the_claude_cli_says_is_shown_on_a_console_that_cant_show_it(tmp_path):
+    """Windows' CI console is cp1252, and `claude plugin marketplace add` says "✔ Successfully added…": printing it
+    stopped the check with a UnicodeEncodeError before the plugin was installed (the first Windows run). Shown with
+    what the console can't show replaced, and the check goes on (here to a stand-in CLI's refused install)."""
+    import os
+    import subprocess
+
+    fake = tmp_path / "fake_claude.py"
+    fake.write_text("import sys\nif sys.argv[1:3] == ['plugin', 'marketplace']:\n"
+                    "    sys.stdout.buffer.write('\\u2714 Successfully added\\n'.encode('utf-8'))\n    sys.exit(0)\n"
+                    "sys.stderr.write('refused')\nsys.exit(3)\n", encoding="utf-8")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    if sys.platform == "win32":
+        (bin_dir / "claude.cmd").write_text(f'@"{sys.executable}" "{fake}" %*\r\n', encoding="utf-8")
+    else:
+        stub = bin_dir / "claude"
+        stub.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{fake}" "$@"\n', encoding="utf-8")
+        stub.chmod(0o755)
+    env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}", "PYTHONIOENCODING": "cp1252"}
+    said = subprocess.run([sys.executable, str(SCRIPTS / "mcp_handshake.py"), "--install"], capture_output=True,
+                          env=env, timeout=120)
+    err = said.stderr.decode("utf-8", "replace")
+    assert said.returncode == 1 and "UnicodeEncodeError" not in err, err
+    assert "FAILED: claude plugin install" in err and "refused" in err, err
+    assert "Successfully added" in said.stdout.decode("cp1252", "replace")
