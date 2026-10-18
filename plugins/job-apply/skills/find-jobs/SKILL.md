@@ -94,7 +94,11 @@ The goal is a short, deduplicated list of real openings saved to the tracker
    the posting doesn't say), job system and a one-line fit note, then ask which ones to
    apply to. The Job Desk shows the same pay on each opening, sorts by fit, pay or newest,
    and has "Pay at least $__/yr" and "Posted: 7 / 14 / 30 days" filters that never hide an
-   opening that doesn't say. The `apply` skill takes it from there.
+   opening that doesn't say. Its Requirements chips (No clearance needed, No degree required
+   or My degree is enough, Day shift, Travel ≤ 25%, Entry level, Not senior) hide an opening
+   only when its title, or its posting once read, says it doesn't fit: a posting not read yet,
+   or a shift or travel only mentioned in passing, never hides one. The `apply` skill takes
+   it from there.
 
 7. **Each morning.** Offer once: "each morning: search, then whats_new". After a search
    (this skill's, or the Job Desk's Find jobs), `whats_new()` lists the openings first

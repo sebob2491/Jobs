@@ -40,7 +40,7 @@ from .pipeline import (DESK_PASSWORDS, QUEUE_NO_LOCK, Applier, _may_accept_notic
                        _test_identity, placed_key, question_key)
 from .ats import JOB_BOARDS, detect_ats, job_board
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
-from .recommend import days_since, not_interested_in, recommend, score_listing
+from .recommend import applicant_degree, days_since, not_interested_in, recommend, score_listing
 from .search import (MAX_ALTERNATIVES, alternatives, every_employer, load_companies, own_companies_path, search_area,
                      set_search_area)
 from .tracker import APPLICATION_STATUSES, NotInterested, company_key, damaged, normalize_url, standing
@@ -160,6 +160,9 @@ class Desk:
         # and below it, and "Posted" one posted more days ago than it; neither hides one that doesn't say (None: off)
         self.min_pay: int | None = None
         self.posted_within: int | None = None
+        # and its chips (CHIP_FILTERS: the requirements an opening may not ask), each hiding an opening only for a fact
+        # it says and that fails it ([]: none pressed)
+        self.chips: dict[str, list[str]] = {name: [] for name in CHIP_FILTERS}
         # Troubleshooting (the owner, Oct 12, to get the desk going at more employers): Find jobs searches every
         # list's employers, for the profile's titles and HR ones, and the page shows only the openings where the desk
         # doesn't go all the way yet, whatever their fit. Nothing is sent meanwhile (Applier.hold_submits)
@@ -210,6 +213,7 @@ class Desk:
             self.handled_only = saved.get("handled_only") is True
             self.min_pay = _min_pay(saved.get("min_pay"))
             self.posted_within = saved.get("posted_within") if saved.get("posted_within") in POSTED_WITHIN else None
+            self.chips = {name: _chips(name, saved.get(name)) or [] for name in CHIP_FILTERS}
             self.auto_search = saved.get("auto_search") is True
             self.troubleshoot = saved.get("troubleshoot") is True and not self.handled_only
             self.applier.hold_submits = self.troubleshoot
@@ -232,6 +236,7 @@ class Desk:
                                                 "tailor_resumes": self.applier.tailor,
                                                 "handled_only": self.handled_only,
                                                 "min_pay": self.min_pay, "posted_within": self.posted_within,
+                                                **self.chips,
                                                 "troubleshoot": self.troubleshoot,
                                                 "auto_search": self.auto_search,
                                                 "jobs_at_once": self.applier.jobs_at_once,
@@ -596,6 +601,13 @@ class Desk:
             return self._bad(ValueError("min_pay should be a yearly figure in dollars, or null for any pay"))
         if "posted_within" in body and body["posted_within"] not in (None, *POSTED_WITHIN):
             return self._bad(ValueError("posted_within should be 7, 14, 30 or null for any day"))
+        for name, choices in CHIP_FILTERS.items():
+            if name in body and body[name] is not None and _chips(name, body[name]) is None:
+                return self._bad(ValueError(f"{name} should be a list of some of {', '.join(choices)} "
+                                            "(an empty list, or null, for none)"))
+        for name in CHIP_FILTERS:
+            if name in body:
+                self.chips[name] = _chips(name, body[name]) or []
         if "min_pay" in body:
             self.min_pay = _min_pay(body["min_pay"])
         if "posted_within" in body:
@@ -624,11 +636,11 @@ class Desk:
                 self._forget_openings()
         self.applier.hold_submits = self.troubleshoot
         if any(k in body for k in ("auto_submit", "tailor_resumes", "handled_only", "troubleshoot", "auto_search",
-                                   "jobs_at_once", "min_pay", "posted_within")):
+                                   "jobs_at_once", "min_pay", "posted_within", *CHIP_FILTERS)):
             self._save_settings()
         return JSONResponse({"auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor,
                              "handled_only": self.handled_only, "troubleshoot": self.troubleshoot,
-                             "min_pay": self.min_pay, "posted_within": self.posted_within,
+                             "min_pay": self.min_pay, "posted_within": self.posted_within, **self.chips,
                              "auto_search": self.auto_search, "jobs_at_once": self.applier.at_once()})
 
     def _forget_openings(self) -> None:
@@ -1095,13 +1107,15 @@ class Desk:
                                "url": job.get("url"), "status": job.get("status"), "run": run})
         return {
             "profile": {"name": prof.full_name, "missing": prof.missing_required(), "gaps": prof.profile_gaps(),
-                        "titles": prof.get("preferences.titles") or [], "path": str(config.profile_path())},
+                        "titles": prof.get("preferences.titles") or [], "path": str(config.profile_path()),
+                        # the highest degree it says the person has (for the filter row's "My degree is enough")
+                        "degree": applicant_degree(prof)},
             "settings": {"submit_mode": settings.submit_mode, "dry_run": settings.dry_run,
                          "manage_accounts": settings.may_manage_accounts,
                          "manage_accounts_chosen": settings.manage_accounts_chosen,
                          "auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor,
                          "handled_only": self.handled_only, "troubleshoot": self.troubleshoot,
-                         "min_pay": self.min_pay, "posted_within": self.posted_within,
+                         "min_pay": self.min_pay, "posted_within": self.posted_within, **self.chips,
                          "auto_search": self.auto_search, "jobs_at_once": self.applier.at_once(),
                          "follow_up_days": settings.follow_up_days},
             "tailoring": len(self.applier.tailoring()),
@@ -1469,6 +1483,22 @@ def likely_order(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
 PAY_KEYS = pay.FIELDS
 POSTED_WITHIN = (7, 14, 30)  # the page's "Posted" choices, in days (none: any day)
 MIN_PAY_MOST = pay.MIN_PAY_MOST  # a "Pay at least" over this is a typo
+# The filter row's chips, by the setting each is kept as (desk.json, /api/settings), with what each may hold: the
+# requirements an opening may not ask (posting_facts: no clearance, no degree above the person's, a day shift, travel
+# of 25% or less, an entry-level or not a senior title)
+CHIP_FILTERS: dict[str, tuple[str, ...]] = {
+    "requirements": ("no_clearance", "degree", "day_shift", "travel_25", "entry_level", "not_senior"),
+}
+
+
+def _chips(name: str, value: Any) -> list[str] | None:
+    """A chip setting as saved or sent: a list of its choices (CHIP_FILTERS), each once, in their order; [] for none
+    (None, or an empty list); None when it isn't one."""
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(v, str) and v in CHIP_FILTERS[name] for v in value):
+        return None
+    return [c for c in CHIP_FILTERS[name] if c in value]
 
 
 def _min_pay(value: Any) -> int | None:

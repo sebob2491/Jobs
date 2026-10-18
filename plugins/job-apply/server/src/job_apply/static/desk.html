@@ -242,6 +242,8 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
       <label class="group" title="Hides an opening whose posting gives its pay on its pay line (or in its own data) and the most it pays is below this (hourly pay counted as 2,080 hours a year). One that doesn't list its pay, or whose pay is only read from its text (≈), always stays.">Pay at least $<input type="text" id="min-pay" inputmode="numeric" placeholder="any" aria-label="Pay at least, dollars a year" autocomplete="off">/yr</label>
       <span class="group" role="group" aria-label="Posted within" title="Hides an opening posted longer ago. One whose site gives no date always stays.">Posted
         <button data-posted="" aria-pressed="true">Any</button><button data-posted="7" aria-pressed="false">7 days</button><button data-posted="14" aria-pressed="false">14 days</button><button data-posted="30" aria-pressed="false">30 days</button></span>
+      <span class="group" role="group" aria-label="Requirements" title="Each pressed one hides a job whose posting or title says it doesn't fit. A job that doesn't say, or whose posting isn't read yet, always stays.">Requirements
+        <button data-chip="requirements" data-value="no_clearance" aria-pressed="false" title="Hides a job whose posting asks for a security clearance, held now or to be obtained. One whose posting isn't read yet always stays.">No clearance needed</button><button data-chip="requirements" data-value="degree" aria-pressed="false" id="degree-chip" title="Hides a job whose posting requires a degree, with no equivalent experience taken instead. One whose posting isn't read yet always stays.">No degree required</button><button data-chip="requirements" data-value="day_shift" aria-pressed="false" title="Hides a job whose posting's Shift or Schedule line says nights, evenings, swing, rotating, or a 2nd or 3rd shift. One that only mentions a shift in its text, or doesn't say, always stays.">Day shift</button><button data-chip="requirements" data-value="travel_25" aria-pressed="false" title="Hides a job whose posting says it travels more than 25% of the time. One that doesn't say, or isn't read yet, always stays.">Travel ≤ 25%</button><button data-chip="requirements" data-value="entry_level" aria-pressed="false" title="Hides a job whose title says senior, lead, staff, principal, manager, supervisor or director, or level II and up. One whose title doesn't say always stays.">Entry level</button><button data-chip="requirements" data-value="not_senior" aria-pressed="false" title="Hides a job whose title says senior, lead, staff, principal, manager, supervisor or director, or level III and up. One whose title doesn't say always stays.">Not senior</button></span>
     </div>
     <div class="stops openings-only" id="stops" role="group" aria-label="Show the jobs by where they stand" hidden></div>
     <div class="stop-hint openings-only" id="stop-hint" hidden></div>
@@ -928,8 +930,10 @@ function renderRows() {
     const msg = stopFilter !== "any" && listed.some(shown) ? "None here right now. Press Any to see them all."
       : state.search.status === "running" ? "Searching employers' career sites…"
       : onlyHandled && listed.length ? "Nothing here from the employers where the desk goes all the way. Turn off that switch to see the rest."
-      : (state.settings.min_pay || state.settings.posted_within) && listed.length
+      : (state.settings.min_pay || state.settings.posted_within) && !chipsOn() && listed.length
         ? "Nothing here at that pay or posting date. Empty Pay at least, or press Posted: Any, to see the rest."
+      : (state.settings.min_pay || state.settings.posted_within || chipsOn()) && listed.length
+        ? "Nothing here with the filters above. Empty Pay at least, press Posted: Any, or press a pressed filter again to see the rest."
       : troubleshooting ? "Nothing here yet from the employers where the desk doesn't go all the way. Press Find jobs: troubleshooting searches every list's employers."
       : (state.listings || []).length ? "Nothing recommended. Switch to All to see every opening."
       : "Press Find jobs to search every employer's career site for openings that fit your profile.";
@@ -1228,6 +1232,15 @@ function renderHeader() {
   if (document.activeElement !== minPay) minPay.value = s.min_pay ? Number(s.min_pay).toLocaleString("en-US") : "";
   document.querySelectorAll("[data-posted]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.posted === String(s.posted_within || ""))));
   document.querySelectorAll("[data-sort]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.sort === sortBy)));
+  document.querySelectorAll("[data-chip]").forEach((b) => b.setAttribute("aria-pressed", String((s[b.dataset.chip] || []).includes(b.dataset.value))));
+  // "No degree required", or for a person whose profile names a degree above high school, "My degree is enough"
+  const mine = state.profile && state.profile.degree;
+  const degreeChip = $("degree-chip");
+  const above = (DEGREE_LEVEL[mine] || 0) > 1;
+  degreeChip.textContent = above ? "My degree is enough" : "No degree required";
+  degreeChip.title = above
+    ? `Hides a job whose posting requires a degree above yours (${DEGREE_NAME[mine]}), with no equivalent experience taken instead. One whose posting isn't read yet always stays.`
+    : "Hides a job whose posting requires a degree, with no equivalent experience taken instead. One whose posting isn't read yet always stays.";
   const troubleshootOn = $("troubleshoot");
   if (document.activeElement !== troubleshootOn) troubleshootOn.checked = !!s.troubleshoot;
   $("plugin-version").textContent = state.version ? `job-apply ${state.version}` : "";
@@ -1566,8 +1579,27 @@ function selectable(url) {
 function shown(r) {
   const s = state.settings || {};
   return (s.handled_only ? kept(r) : s.troubleshoot ? keptElse(r) : true)
-    && (theirs(r) || (paysEnough(r, s.min_pay) && postedWithin(r, s.posted_within)));
+    && (theirs(r) || (paysEnough(r, s.min_pay) && postedWithin(r, s.posted_within) && fitsChips(r, s)));
 }
+// The filter row's chips (desk.CHIP_FILTERS), each a test an opening fails only for a fact it says (sure) that doesn't
+// fit: its title's level, or its posting's requirements once read (recommend.posting_facts). Nothing said, it stays
+const DEGREE_LEVEL = {high_school: 1, associate: 2, bachelor: 3, master: 4, doctorate: 5};
+const DEGREE_NAME = {associate: "an Associate's", bachelor: "a Bachelor's", master: "a Master's", doctorate: "a doctorate"};
+const CHIP_TESTS = {
+  requirements: {
+    no_clearance: (f) => !f.clearance && !f.clearance_later,
+    degree: (f) => !f.degree || f.degree === "high_school" || !!f.degree_or_equivalent
+      || (DEGREE_LEVEL[f.degree] || 0) <= (DEGREE_LEVEL[state.profile && state.profile.degree] || 1),
+    day_shift: (f) => !(f.shift_sure && f.shift === "other"),
+    travel_25: (f) => !(f.travel_sure && f.travel != null && f.travel > 25),
+    entry_level: (f) => f.level !== "senior" && f.level !== "mid",
+    not_senior: (f) => f.level !== "senior",
+  },
+};
+const chipFacts = {requirements: (r) => (r.fit && r.fit.facts) || {}};
+const fitsChips = (r, s) => Object.keys(CHIP_TESTS).every((name) =>
+  (s[name] || []).every((v) => !CHIP_TESTS[name][v] || CHIP_TESTS[name][v](chipFacts[name](r), s[name])));
+const chipsOn = () => Object.keys(CHIP_TESTS).some((name) => ((state.settings || {})[name] || []).length > 0);
 // (only a pay said on its pay line, or in the posting's own data, is "sure": one read from the text never hides a job)
 const paysEnough = (r, floor) => !floor || !r.pay || !r.pay.sure || r.pay.top == null || r.pay.top >= floor;
 const postedWithin = (r, days) => !days || r.posted_days == null || r.posted_days <= days;
@@ -1668,6 +1700,19 @@ document.addEventListener("click", (e) => {
     state.settings.posted_within = days;  // (shown at once; kept in desk.json)
     renderRows();
     act(() => api("/api/settings", {posted_within: days}));
+    return;
+  }
+  if (t.dataset.chip) {
+    // a filter chip pressed or let go: the others in its group as they were
+    if (!state) return;
+    const name = t.dataset.chip;
+    const on = new Set(state.settings[name] || []);
+    if (on.has(t.dataset.value)) on.delete(t.dataset.value); else on.add(t.dataset.value);
+    const chosen = [...document.querySelectorAll(`[data-chip="${name}"]`)].map((b) => b.dataset.value).filter((v) => on.has(v));
+    state.settings[name] = chosen;  // (shown at once; kept in desk.json)
+    t.setAttribute("aria-pressed", String(on.has(t.dataset.value)));
+    renderRows();
+    act(() => api("/api/settings", {[name]: chosen}));
     return;
   }
   if (t.dataset.appGroup) {

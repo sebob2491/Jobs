@@ -178,6 +178,9 @@ class Fit:
     concerns: list[str] = field(default_factory=list)
     blocked: bool = False  # a hard requirement the profile says isn't met
     held: bool = False  # not preselected until checked: its posting unread, or it's outside the area
+    # what the title and the posting say of the job, for the desk's filter row (posting_facts): its level always, its
+    # requirements once the posting is read. A filter hides an opening only for a fact said here that fails it
+    facts: dict[str, Any] = field(default_factory=dict)
     # how the score adds up, part by part, its start among them ({"why": "posted this week", "points": 10}): they sum to
     # the score (the Job Desk shows them by each opening's score)
     parts: list[dict[str, Any]] = field(default_factory=list)
@@ -449,9 +452,98 @@ def requirements(text: str) -> dict[str, Any]:
     return out
 
 
+def title_rank(title: str) -> str:
+    """A job's level as its title says it, by the rules score_listing scores it by: "intern", "senior" (senior, lead,
+    staff, principal, manager, supervisor, director..., or level III and up), "entry" (entry level, junior, graduate,
+    apprentice, trainee, or level I), "mid" (level II), or "" when the title doesn't say."""
+    n = norm(title)
+    level = title_level(title)
+    if _INTERN.search(n):
+        return "intern"
+    if _SENIOR.search(n) or (level is not None and level >= 3):
+        return "senior"
+    if _JUNIOR.search(n) or level == 1:
+        return "entry"
+    return "mid" if level == 2 else ""
+
+
+# A posting's own label for its shift ("Shift: 1st Shift (United States of America)", "Shift: Nights", "Schedule:
+# Days/Nights"): a line of its own, the label first
+_SHIFT_LINE = re.compile(r"(?im)^[ \t*•-]*(?:work\s+)?(?:shift|shifts|shift\s+schedule|schedule|work\s+schedule|"
+                         r"hours|work\s+hours)[ \t]*:[ \t]*(.{1,120})$")
+_DAY_WORDS = re.compile(r"(?i)\b(?:days?|daytime|mornings?|1st|first)\b")
+_OTHER_WORDS = re.compile(r"(?i)\b(?:nights?|overnights?|evenings?|swing|graveyard|noc|2nd|3rd|second|third|rotating|"
+                          r"rotation|rotational)\b")
+# a shift in the posting's sentences: "this is a night shift position", "day shift"
+_DAY_SHIFT = re.compile(r"(?i)\b(?:day|1st|first)[ -]shifts?\b")
+_OTHER_SHIFT = re.compile(r"(?i)\b(?:night|overnight|evening|swing|graveyard|2nd|3rd|second|third|rotating)[ -]shifts?\b")
+# travel said as the job's, a share of its time: "up to 25% travel", "Travel: 0-25%", "travel up to 50% of the time";
+# not "travel reimbursement", nor "401(k) with 100% match" after the word travel (requirements' wider reading takes it)
+_NOT_TRAVEL = r"(?!\s*(?:reimburs|expenses?|allowance|stipends?|pay\b|time\s+pay|bonus|policy|insurance|benefits?))"
+_TRAVEL_SAID = re.compile(
+    rf"(?i)(?:(\d{{1,3}})\s*%?\s*(?:-|to)\s*)?(\d{{1,3}})\s*%\s*(?:of\s+(?:the\s+|your\s+)?time\s+)?"
+    rf"(?:(?:domestic|international|overnight|business|regional|local|and|or|/)\s*)*travel(?:ing|ling)?\b{_NOT_TRAVEL}|"
+    rf"\btravel(?:ing|ling)?(?:\s+(?:required|requirements?|expectations?|percentage|percent|is\s+required))?"
+    rf"\s*(?::|-|–|is|of|requires?)?\s*(?:up\s+to|approximately|approx\.?|about|around|roughly|less\s+than|under|"
+    rf"<|~)?\s*(?:(\d{{1,3}})\s*%?\s*(?:-|to)\s*)?(\d{{1,3}})\s*%")
+
+
+def _prepared(text: str) -> str:
+    """A posting's text as requirements() reads it: plain apostrophes and hyphens, without the application's questions."""
+    text = re.sub(r"[‐-―]", "-", (text or "").replace("’", "'").replace("‘", "'"))
+    return text.split(f"\n{QUESTIONS_HEADING}\n")[0]
+
+
+def shift_said(text: str) -> tuple[str, bool]:
+    """A posting's shift: ("day", sure), ("other", sure) for nights, evenings, swing, rotating or a 2nd or 3rd shift,
+    ("mixed", sure) when it names both, or ("", False) when it doesn't say. `sure` only from a line the posting labels
+    its shift or schedule on; one read from its sentences is shown, and never hides a job (it may be a "no night
+    shifts")."""
+    text = _prepared(text)
+
+    def kind(words: str, day: re.Pattern[str], other: re.Pattern[str]) -> str:
+        d, o = bool(day.search(words)), bool(other.search(words))
+        return "mixed" if d and o else "day" if d else "other" if o else ""
+
+    for line in _SHIFT_LINE.findall(text):
+        said = kind(line, _DAY_WORDS, _OTHER_WORDS)
+        if said:
+            return said, True
+    return kind(text, _DAY_SHIFT, _OTHER_SHIFT), False
+
+
+def travel_said(text: str) -> int | None:
+    """The most travel a posting says the job asks, as a share of its time ("up to 25% travel", "Travel: 0-25%": 25),
+    or None when it doesn't say it so."""
+    found = [int(m.group(2) or m.group(4)) for m in _TRAVEL_SAID.finditer(_prepared(text))]
+    found = [n for n in found if 0 <= n <= 100]
+    return max(found) if found else None
+
+
+def posting_facts(title: str, req: dict[str, Any] | None = None, text: str = "") -> dict[str, Any]:
+    """What an opening says of itself, for the desk's filter row (the design of Oct 18, F5): its `level` from its title
+    (title_rank) always; once its posting is read (`req`, requirements() of its `text`), `read`, its required degree
+    (`degree`, None when none is asked; `degree_or_equivalent` when experience is taken instead), whether it asks a
+    security clearance held now (`clearance`) or one to be got (`clearance_later`), its travel (`travel`, a share of
+    its time; `travel_sure` when said as the job's travel, not only near the word: requirements' wider reading) and its
+    shift (`shift`: day, other, mixed or ""; `shift_sure` from its own shift line). A filter hides an opening only for
+    a fact said and sure that fails it; an unread posting says none of these, and stays."""
+    out: dict[str, Any] = {"level": title_rank(title)}
+    if req is None:
+        return out
+    travel = travel_said(text)
+    shift, shift_sure = shift_said(text)
+    out.update({"read": True, "degree": req["degree"], "degree_or_equivalent": req["degree_or_equivalent"],
+                "clearance": req["clearance"], "clearance_later": req["clearance_later"],
+                "travel": travel if travel is not None else req["travel"], "travel_sure": travel is not None,
+                "shift": shift, "shift_sure": shift_sure})
+    return out
+
+
 def score_listing(listing: dict[str, Any], prof: Profile, description: str = "",
                   today: date | None = None) -> Fit:
     fit = Fit()
+    fit.facts = posting_facts(listing.get("title") or "")
     fit.parts.append({"why": "start", "points": fit.score})
     title = listing.get("title") or ""
     n = norm(title)
@@ -522,7 +614,9 @@ def score_listing(listing: dict[str, Any], prof: Profile, description: str = "",
         fit.reasons.append(said)
 
     if description:
-        _score_requirements(fit, requirements(description), prof, years)
+        req = requirements(description)
+        _score_requirements(fit, req, prof, years)
+        fit.facts = posting_facts(title, req, description)
     kept = max(0, min(100, fit.score))
     if kept != fit.score:  # (said among the parts too: they sum to the score)
         fit.add(kept - fit.score, "kept within 0 to 100")
