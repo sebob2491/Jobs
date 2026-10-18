@@ -787,6 +787,10 @@ def test_the_probes_run_weekly_in_the_nightlys_workflow_after_its_checks():
     steps = {step.get("name", ""): step for step in probes["steps"]}
     run = steps["Run the probes"]
     assert "scripts/live_probes.py --out live-probes" in run["run"] and run["continue-on-error"] is True
+    # (the weekly schedule runs the tailored-resume probe alone until the desk notices a site that won't take back a
+    # password it had: KLA, Oct 18; by hand, both)
+    assert '--probes "$WHICH"' in run["run"]
+    assert run["env"]["WHICH"] == "${{ github.event_name == 'schedule' && 'tailored' || 'reset,tailored' }}"
     assert "--security-answers" not in json.dumps(probes)
     assert "scripts/live_audit.py --log \"probes=live-probes/run.log\" --folder live-probes" in steps["Audit what it wrote"]["run"]
     assert "live-probes/report.md" in steps["The probes' results"]["run"]

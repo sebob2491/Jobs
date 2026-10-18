@@ -115,6 +115,8 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   as the test identity: the password reset at two Workday tenants (pass 1 saves a password derived from the real one,
   which the site refuses and the desk resets it to; pass 2 resets it back) and a tailored resume in the job's folder
   (the review page must show it). Read them with `nightly_summary.py --probes <zip or folder>`.
+  - Sundays run the tailored-resume probe alone until the desk notices a site that won't take back a password
+    it had (KLA's pass 2, Oct 18: the test identity's KLA account may be left on the derived password).
 - Never wait on the nightly's schedule: GitHub starts it hours late. After each release, run the live-nightly
   workflow by hand with no inputs (a full run, about 15 minutes; it's compared and written to the issue).
   The workflow queues runs, never two at once (one inbox). A routine dispatches the daily run instead of the
