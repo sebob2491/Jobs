@@ -360,6 +360,16 @@ def check_home() -> Check:
 
 
 
+
+def _read_only_uri(path: Path) -> str:
+    """A read-only SQLite URI for a file. A UNC path (\\\\server\\share) is written with four slashes, which SQLite
+    takes; Python 3.12+ writes it with two, which SQLite refuses for its server name. A Windows drive path comes as
+    three (///C:/...) and stays as it is (the Windows check of 0.3.210: two more made it five)."""
+    url = pathname2url(str(path.absolute()))
+    if url.startswith("//") and not url.startswith("///"):
+        url = "//" + url
+    return "file:" + url + "?mode=ro"
+
 def check_tracker() -> Check | None:
     """The list of jobs (tracker.db), read only: one that isn't a database any more leaves the desk without its jobs
     (the review of Oct 18). None before the desk has made one."""
@@ -368,10 +378,7 @@ def check_tracker() -> Check | None:
         return None
     # (a URI the way SQLite takes it, without resolve(): on Windows that turns a mapped drive into a UNC path, which as
     # a file:// address SQLite refuses for its server name)
-    url = pathname2url(str(path.absolute()))
-    if url.startswith("//") and not url.startswith("////"):  # (a UNC path, as Python 3.12+ writes it: four slashes)
-        url = "//" + url
-    uri = "file:" + url + "?mode=ro"
+    uri = _read_only_uri(path)
     refused = False
     try:
         conn = sqlite3.connect(uri, uri=True, timeout=5)

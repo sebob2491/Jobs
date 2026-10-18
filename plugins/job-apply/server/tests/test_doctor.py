@@ -413,3 +413,17 @@ def test_a_list_of_jobs_in_use_is_advice_not_a_problem_to_move(fine, loop, job_a
         writer.rollback()
         writer.close()
     assert c.status == doctor.ADVICE and "move" not in c.fix.lower(), (c.status, c.say, c.fix)
+
+
+
+@pytest.mark.parametrize("written, uri", [
+    ("///C:/Users/Sam/job-apply/tracker.db", "file:///C:/Users/Sam/job-apply/tracker.db?mode=ro"),  # a drive path
+    ("//server/share/job-apply/tracker.db", "file:////server/share/job-apply/tracker.db?mode=ro"),  # UNC, 3.12+
+    ("////server/share/job-apply/tracker.db", "file:////server/share/job-apply/tracker.db?mode=ro"),  # UNC, 3.10
+    ("/home/sam/job-apply/tracker.db", "file:/home/sam/job-apply/tracker.db?mode=ro"),  # POSIX
+])
+def test_the_read_only_address_of_the_list_of_jobs_is_one_sqlite_takes(monkeypatch, written, uri):
+    """The Windows check of 0.3.210: a drive path, which Windows' pathname2url writes ///C:/..., was taken for a UNC
+    path and given two more slashes, so the doctor couldn't open any tracker.db on Windows."""
+    monkeypatch.setattr(doctor, "pathname2url", lambda p: written)
+    assert doctor._read_only_uri(Path("tracker.db")) == uri
