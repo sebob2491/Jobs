@@ -594,6 +594,87 @@ def test_the_tracker_opening_with_nothing_new_writes_nothing(job_apply_home, mon
     t.close()
 
 
+# The jobs table as 0.3.82 made it, without the column a later release might add (here applied_at), and none of the
+# tables added since (aliases, merged, maybe_same, not_interested)
+_OLD_JOBS = """
+CREATE TABLE jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    url TEXT NOT NULL UNIQUE,
+    apply_url TEXT DEFAULT '',
+    title TEXT DEFAULT '',
+    company TEXT DEFAULT '',
+    location TEXT DEFAULT '',
+    ats TEXT DEFAULT '',
+    source TEXT DEFAULT '',
+    external_id TEXT DEFAULT '',
+    salary TEXT DEFAULT '',
+    employment_type TEXT DEFAULT '',
+    posted_at TEXT DEFAULT '',
+    description TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'saved',
+    notes TEXT DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE emails (
+    thread_id TEXT PRIMARY KEY,
+    job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    category TEXT NOT NULL,
+    summary TEXT DEFAULT '',
+    received_at TEXT DEFAULT '',
+    logged_at TEXT NOT NULL
+);
+CREATE TABLE events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    at TEXT NOT NULL,
+    status TEXT DEFAULT '',
+    note TEXT DEFAULT ''
+);
+"""
+
+
+def test_a_tracker_from_an_older_release_is_brought_up_to_date_and_takes_every_write(job_apply_home, monkeypatch):
+    """The review of Oct 18: CREATE TABLE IF NOT EXISTS never adds a column, so a tracker.db missing one a release
+    added opened and read, then failed its first write (KeyError: 'applied_at'). It's brought up to the schema once,
+    and a file already there is only read."""
+    import sqlite3
+
+    from job_apply import config, tracker
+
+    path = config.db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    old = sqlite3.connect(path)
+    old.executescript(_OLD_JOBS)
+    old.execute("INSERT INTO jobs (url, title, company, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                ("https://careers.example.com/job/1", "Equipment Technician", "Example Fab", "2026-10-01T00:00:00+00:00",
+                 "2026-10-01T00:00:00+00:00"))
+    old.commit()
+    old.close()
+
+    t = Tracker()
+    t.update(1, status="applied", note="sent")
+    got = t.get(1)
+    assert got["status"] == "applied" and got["applied_at"] and got["title"] == "Equipment Technician"
+    assert t.conn.execute("PRAGMA user_version").fetchone()[0] == tracker.SCHEMA_VERSION
+    t.close()
+
+    said: list[str] = []
+    real = sqlite3.connect
+
+    def connect(*args, **kwargs):
+        conn = real(*args, **kwargs)
+        conn.set_trace_callback(said.append)
+        return conn
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    t = Tracker()
+    assert t.get(1)["status"] == "applied"
+    assert [s for s in said if s.lstrip().split()[0].upper() in ("ALTER", "INSERT", "UPDATE", "DELETE", "REPLACE")
+            or "user_version =" in s] == []
+    t.close()
+
+
 def test_a_repost_or_a_job_board_copy_begun_or_done_is_kept_apart_and_asked_about(job_apply_home):
     """The review of 0.3.206 (HIGH and MEDIUM): an Indeed job saved weeks ago took in the employer's repost (and one
     rejected months ago had the desk refuse it); one filled on Indeed for the person's own Submit took the employer's

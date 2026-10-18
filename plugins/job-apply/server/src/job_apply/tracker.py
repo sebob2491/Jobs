@@ -14,7 +14,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any, NamedTuple
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -456,6 +456,12 @@ def _locked(method):
 # seconds a write waits for another process's to finish before it gives up
 DB_TIMEOUT = 15
 
+# The schema's version, kept in the file's user_version (Tracker._migrate). A release that adds a column needs nothing
+# more (_migrate adds what _SCHEMA has and the file lacks); one that must change rows too adds a step here and raises
+# SCHEMA_VERSION to it. Version 1 is the schema of 0.3.210, when versions began.
+SCHEMA_VERSION = 1
+MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = []
+
 
 class Tracker:
     def __init__(self, path: Path | None = None):
@@ -470,9 +476,40 @@ class Tracker:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.executescript(_SCHEMA)
+        self._migrate()
         self._renormalize()
         self._merge_copies()
         self._gather_folders()
+
+    def _migrate(self) -> None:
+        """Bring a tracker.db from an older release up to this one's schema. CREATE TABLE IF NOT EXISTS makes a table
+        that's missing but never adds a column to one that's there, so a column added in a release is added here
+        (with its default; a NOT NULL one without a default gets ''), then each step of MIGRATIONS past the file's
+        user_version runs, once. A file already at SCHEMA_VERSION is only read (the review of Oct 18: a jobs table
+        without applied_at opened and read, then failed its first write)."""
+        if self.conn.execute("PRAGMA user_version").fetchone()[0] >= SCHEMA_VERSION:
+            return
+        with self._lock, self.conn:
+            want = sqlite3.connect(":memory:")
+            try:
+                want.executescript(_SCHEMA)
+                tables = [r[0] for r in want.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
+                for table in tables:
+                    have = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+                    for _, name, kind, notnull, default, _ in want.execute(f"PRAGMA table_info({table})"):
+                        if name in have:
+                            continue
+                        if default is None and notnull:
+                            default = "''"
+                        extra = f" DEFAULT {default}" if default is not None else ""
+                        self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}{extra}")
+            finally:
+                want.close()
+            version = self.conn.execute("PRAGMA user_version").fetchone()[0]
+            for step, migrate in MIGRATIONS:
+                if step > version:
+                    migrate(self.conn)
+            self.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
     def _renormalize(self) -> None:
         """Bring addresses saved before normalize_url knew a variant up to date. Two rows

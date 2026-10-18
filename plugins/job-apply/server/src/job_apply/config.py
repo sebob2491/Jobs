@@ -537,6 +537,10 @@ def read_secrets(path: Path) -> dict[str, str]:
 SITE_PASSWORD = re.compile(r"^[a-z][a-z0-9]{1,30}_password$")  # e.g. workday_password
 
 
+# The longest site password the desk keeps (a real one is far shorter; the file is read on every poll)
+PASSWORD_MAX = 256
+
+
 def save_site_password(name: str, value: str) -> None:
     """Store a career-site password the person typed into the Job Desk. Only its own
     entry in secrets.yaml changes; the rest of the file, comments included, stays as
@@ -545,6 +549,8 @@ def save_site_password(name: str, value: str) -> None:
         raise ValueError(f"not a site password name: {name!r}")
     if not value or not value.strip() or "\n" in value or "\r" in value:
         raise ValueError("the password is empty or has a line break")
+    if len(value) > PASSWORD_MAX:
+        raise ValueError(f"the password is longer than {PASSWORD_MAX} characters")
     ensure_home()
     path = secrets_path()
     old = path.read_text(encoding="utf-8-sig").split("\n") if path.exists() else []
@@ -561,11 +567,11 @@ def save_site_password(name: str, value: str) -> None:
     # always in double quotes, which YAML escapes everything awkward in (U+2028, a leading
     # no-break space, quotes, backslashes), and which read_secrets reads back exactly
     entry = f"{name}: " + yaml.safe_dump(value, default_style='"', allow_unicode=True, width=10**6).strip()
-    # O_BINARY: os.open makes a text-mode file on Windows, which turned the "\r\n" written there
-    # into "\r\r\n" (a blank line after each); the "w" below still writes Windows' own line ends
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write("\n".join([*kept, entry]) + "\n")
+    # All or nothing, through a temporary file the person alone can read (mkstemp makes it 0600, and binary on Windows,
+    # so the text-mode write below puts Windows' own line ends once): the file was truncated before it was written,
+    # so a failure in between (a full disk, an exit, an antivirus hold) emptied every saved password, the review of
+    # Oct 18
+    write_text_atomic(path, "\n".join([*kept, entry]) + "\n")
     path.chmod(0o600)
 
 

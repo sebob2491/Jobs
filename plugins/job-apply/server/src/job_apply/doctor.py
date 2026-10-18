@@ -18,6 +18,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
@@ -356,6 +357,27 @@ def check_home() -> Check:
                  f"Run the one-step installer, or {SAY_SETUP}: setup makes it.")
 
 
+
+def check_tracker() -> Check | None:
+    """The list of jobs (tracker.db), read only: one that isn't a database any more leaves the desk without its jobs
+    (the review of Oct 18). None before the desk has made one."""
+    path = config.db_path()
+    if not path.exists():
+        return None
+    try:
+        conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=5)
+        try:
+            said = conn.execute("PRAGMA quick_check").fetchone()[0]
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        said = str(e)
+    if said == "ok":
+        return Check("tracker", OK, "Your list of jobs reads")
+    return Check("tracker", PROBLEM, f"Your list of jobs ({path}) can't be read: {said.splitlines()[0][:200]}",
+                 "Close the Job Desk, move tracker.db somewhere else for safekeeping, and open the desk again: it "
+                 "starts a new list. Your job folders, profile and passwords stay as they are.")
+
 def check_profile() -> tuple[config.Profile | None, list[Check]]:
     """The profile as setup_status reads it (config.Profile): its required answers, and, once
     those are in, what it could also hold. Only which answers are missing is said, never one."""
@@ -433,6 +455,9 @@ async def run(launch: bool = False) -> Report:
     prof, profile_checks = check_profile()
     checks.append(await check_browser(prof.settings if prof else config.Settings.from_dict(None), launch))
     checks.append(check_home())
+    tracked = check_tracker()
+    if tracked:
+        checks.append(tracked)
     checks.extend(profile_checks)
     checks.append(check_resume(prof))
     return Report(checks)

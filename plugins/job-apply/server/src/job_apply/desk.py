@@ -20,6 +20,7 @@ import os
 import re
 import secrets
 import socket
+import sqlite3
 import time
 import webbrowser
 from collections import Counter
@@ -983,8 +984,17 @@ class Desk:
             prof, profile_problem = config.Profile.load(), None
         except Exception as e:  # a typo in profile.yaml: said on the page, which keeps working
             prof, profile_problem = config.Profile({}), _first_line(e)
+        try:
+            return self._state(prof, profile_problem, self.srv.tracker(), None)
+        except sqlite3.Error as e:
+            # a tracker.db that isn't a database any more (or one another program holds past the wait): said on the
+            # page, which keeps working without the jobs it holds, instead of failing every poll and staying blank
+            # (the review of Oct 18)
+            return self._state(prof, profile_problem, _NoJobs(), _first_line(e))
+
+    def _state(self, prof: config.Profile, profile_problem: str | None, t: Any,
+               tracker_problem: str | None) -> dict[str, Any]:
         settings = prof.settings
-        t = self.srv.tracker()
         runs = {jid: r.public() for jid, r in self.applier.runs.items()}
         rows, seen = [], set()
         handled = config.handled_employers()  # (where the desk goes all the way, in the live check)
@@ -1076,6 +1086,10 @@ class Desk:
             "password_systems": password_systems(),
             "mail_problem": self.applier.mail_problem,
             "profile_problem": profile_problem,
+            # a settings line that does nothing (a typo, a value it can't read), said where the person looks
+            "settings_warnings": list(settings.warnings),
+            "tracker_problem": tracker_problem,
+            "tracker_path": str(config.db_path()),
             "version": config.plugin_version(),
             "update": self.updates.notice(),
             "answers_problem": config.answers_problem(),
@@ -1323,6 +1337,34 @@ def _first_line(e: BaseException) -> str:
 def _also_on(urls: list[str]) -> list[dict[str, str]]:
     """A job's other addresses, for its row's "Also on Indeed": each with the job board it's on."""
     return [{"site": JOB_BOARDS.get(job_board(u) or "", "another site"), "url": u} for u in dict.fromkeys(urls)]
+
+
+class _NoJobs:
+    """The tracker's stand-in while tracker.db can't be read (Desk.state): no jobs, no marks."""
+
+    def find_by_url(self, url: str) -> None:
+        return None
+
+    def same_posting(self, items: list[dict[str, Any]]) -> list[None]:
+        return [None] * len(items)
+
+    def aliases(self) -> dict[int, list[str]]:
+        return {}
+
+    def not_interested_marks(self, listings: Any) -> NotInterested:
+        return NotInterested([])
+
+    def list(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return []
+
+    def last_heard(self) -> dict[int, Any]:
+        return {}
+
+    def get(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+    def counts(self) -> dict[str, int]:
+        return {}
 
 
 def unwanted_employers(marks: NotInterested) -> dict[str, str]:

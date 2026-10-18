@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import threading
 import time
 from datetime import datetime
@@ -17,8 +18,10 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse, urlsplit, urlunsplit
 
+import httpx
 from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from playwright.async_api import Error as PlaywrightError
 
 from . import config
 from .ats import ATS_NAMES, detect_ats, greenhouse_form_url, shared_system, workday_parts
@@ -26,7 +29,7 @@ from .autofill import common_questions as bank_questions
 from .autofill import (is_eeo_rule, is_empty_value, is_how_heard, is_name_rule, is_school_rule, place_words,
                        plan_autofill, profile_entries, resolve_field)
 from .browser import BrowserSession, BrowserUnavailable, SiteDown, SubmitBlocked
-from .mailbox import site_domain
+from .mailbox import MailboxError, site_domain
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .render import KINDS, render_pdf, to_html
 from .search import (ICIMS_FRAME, companies_path, eightfold_page_url, employer_lists, every_employer,
@@ -49,11 +52,19 @@ Rules: never invent facts about the applicant; answers must come from the profil
 user. LinkedIn and Indeed applications are always submitted by the user clicking the
 button themselves. Passwords go through fill_secret, never fill_form."""
 
-mcp = MCPServer("job-apply", instructions=INSTRUCTIONS, version="0.3.0")
+# the plugin's own version (plugin.json), what /mcp shows; pyproject's isn't the release's (the review of Oct 18)
+mcp = MCPServer("job-apply", instructions=INSTRUCTIONS, version=config.plugin_version() or "0")
 
 # Failures Claude should read, not just "Error executing tool": a job id that isn't there,
-# a typo in profile.yaml, a browser that won't start.
-_ANTICIPATED = (ValueError, KeyError, FileNotFoundError, PermissionError, BrowserUnavailable, SubmitBlocked, FetchError)
+# a typo in profile.yaml, a browser that won't start. And, since the review of Oct 18, the
+# database's (locked by another session, or not a database any more), the browser's (a tab
+# the person closed, a page that timed out), the mailbox's, a site that's down, a file that
+# can't be written (OSError, PermissionError and FileNotFoundError among them), the desk
+# failing to start: mcp turns anything else into a bare "Error executing tool <name>".
+_ANTICIPATED = (ValueError, KeyError, OSError, RuntimeError, sqlite3.Error, PlaywrightError, httpx.HTTPError,
+                MailboxError, SiteDown, BrowserUnavailable, SubmitBlocked, FetchError)
+# The most of a failure's words Claude is handed: its first line (Playwright adds its call log after it)
+_SAID_MAX = 300
 
 
 def _desk_driving() -> str | None:
@@ -90,7 +101,9 @@ def tool(drives: Callable[[dict[str, Any]], bool] | bool = False, **options: Any
     Desk uses while it fills an application; Claude's call waits its turn rather than
     typing or clicking in the desk's tab mid-step."""
     def message(e: Exception) -> str:
-        return str(e.args[0]) if isinstance(e, KeyError) and e.args else str(e)
+        said = str(e.args[0]) if isinstance(e, KeyError) and e.args else str(e)
+        first = said.strip().split("\n", 1)[0].strip() or type(e).__name__
+        return first if len(first) <= _SAID_MAX else first[:_SAID_MAX - 1] + "…"
 
     def check(kwargs: dict[str, Any]) -> None:
         if drives is True or (callable(drives) and drives(kwargs)):
