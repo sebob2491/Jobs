@@ -544,20 +544,24 @@ _CITIZEN_ASKED = re.compile(rf"\bare\s+you\s+a\s+(?:{_US_WRITTEN}[\s-]*)?citizen
 _SAME_QUESTION = re.compile(rf"\s*,?\s*or\s+(?:not|(?:an?\s+)?(?:{_US_WRITTEN}\s+)?national)\b", re.I)
 # ...and the answers it takes, written after it: "Are you a US citizen: Yes/No", "..., yes or no?"
 _YES_NO_TAIL = re.compile(r"\s*[:,\-\u2013]?\s*\(?\s*yes\s*(?:/|or)\s*no\b\)?", re.I)
-# ...and a following "If not" or "If no" that asks something: "If not, do you have authorization to work in the US?",
-# "If no, which country?", "If not, please list your citizenship"
-_IF_NOT_ASKS = re.compile(r"\bif\s+(?:not|no)\b[\s,]*(?:(?:do|are|can|will|would|have|did|were)\s+you\b|"
-                          r"please\b|which\b|what\b)", re.I)
+# ...and, after it, anything that asks more: a second question ("? If you are not a US citizen, do you have
+# authorization to work in the US?", "? Do you hold an active security clearance?"), or a sentence that opens on "if",
+# "otherwise", a question word or a request ("If not, list your visa type.", "Non-citizens: do you hold..."). Only a
+# sentence that says something asks no more ("This position requires US citizenship.", "Note: we cannot sponsor visas.")
+_ASKS_ON = re.compile(r"^\W*(?:if|unless|otherwise|else|non[- ]?citizens?|do|does|did|are|is|was|were|can|could|will|"
+                      r"would|have|has|which|what|when|where|who|how|please|list|provide|indicate|specify|enter|select|"
+                      r"choose|state)\b", re.I)
 # (as the normalized rules read it: "or ..." or "by ..." after "citizen", but "or not" and "or (a U.S.) national")
 _CITIZEN_GOES_ON = r"(?! (?:by\b|or\b(?! (?:not|(?:an? )?(?:u ?s )?national)\b)))"
 
 
 def _asks_more_than_citizenship(raw_label: str) -> bool:
     """Whether "Are you a U.S. citizen" goes on to ask more than citizenship. Only the end, a "?" or "*", a note in
-    brackets ("(Yes/No)"), a sentence that only says something ("This position requires US citizenship."), "or not" or
-    "or (a U.S.) national" ask no more. "...and able to obtain a security clearance", "...who can work on-site" or a
-    following "If not, do you have authorization to work in the US?" ask what citizenship alone doesn't say (the
-    reviews of Oct 18)."""
+    brackets ("(Yes/No)"), the answers it takes ("Yes/No"), "or not", "or (a U.S.) national", and after it a sentence
+    that only says something ("This position requires US citizenship.") ask no more. "...and able to obtain a security
+    clearance", "...who can work on-site", or after it a second question or a sentence opening on "if", "otherwise", a
+    question word or a request (_ASKS_ON: "If not, do you have authorization to work in the US?", "Do you hold an
+    active security clearance?") ask what citizenship alone doesn't say (the reviews of Oct 18)."""
     m = _CITIZEN_ASKED.search(clean_label(raw_label))
     if m is None:
         return False
@@ -566,7 +570,10 @@ def _asks_more_than_citizenship(raw_label: str) -> bool:
     rest = rest[same.end():] if same else rest
     told = _YES_NO_TAIL.match(rest)
     rest = rest[told.end():] if told else rest
-    return not re.match(r"\s*(?:[?*!.;(]|$)", rest) or bool(_IF_NOT_ASKS.search(rest))
+    if not re.match(r"\s*(?:[?*!.;(]|$)", rest):
+        return True
+    after = re.sub(r"^(?:\s*(?:\([^)]*\)|[?*!.;]))+", "", rest).strip()  # (the question's own end, and its notes)
+    return "?" in after or bool(_ASKS_ON.match(after))
 
 
 def _us_citizen(prof: Profile, job: dict) -> Any:
@@ -2129,18 +2136,18 @@ _OTHER_SIGNING = re.compile(r"\b(non ?compete|offer letter|agreements?|employed)
 # the date ("Enter the date beside your electronic signature"), as written: never the name. One that only mentions a
 # date keeps it ("type your full name, the date is recorded automatically", "enter your full name, not the date")
 _SIGNING_DATE_NAMED = re.compile(r"\b(signature (and )?dates?|date signed|date of signature)\b")
-_DATE_TO_ENTER = re.compile(r"\b(enter|type|write|provide|fill in|put)\s+(in\s+)?(the\s+|today[’']?s\s+|a\s+)?"
-                            r"dates?\b", re.I)
+_DATE_TO_ENTER = re.compile(r"\b(enter|type|write|provide|fill in|put)\s+(in\s+)?(the\s+|a\s+)?(today[’']?s\s+|"
+                            r"current\s+)?dates?\b", re.I)
 # A sponsorship question about another person's need ("...required for your spouse or dependents?", "...for any family
 # member?"), or about the employer's policy with no need of the person's in it ("Is sponsorship available for
 # candidates who need it?", "Does Acme offer sponsorship?"): not the person's own. "Will you require the company to
 # provide sponsorship?" is theirs
-_THEIR_FAMILY_SPONSORSHIP = re.compile(r"\bfor (your |his |her |their |a |any )?(spouse|partner(?! (compan|organi|firm|"
+_THEIR_FAMILY_SPONSORSHIP = re.compile(r"\bfor (any of )?(your |his |her |their |a |any )?(domestic )?(spouse|partner(?! (compan|organi|firm|"
                                        r"site|location|agenc|employer|facilit))|husband|wife|dependents?|child(ren)?|"
                                        r"family( members?)?|relatives?)\b")
 _EMPLOYER_SPONSORSHIP = re.compile(r"\bsponsor\w* (is |be )?(available|offered|provided)\b|"
                                    r"\b(offer|provide)s? (any )?(visa |employment |immigration )?sponsor")
-_YOUR_NEED = re.compile(r"\byou\b.{0,40}\b(require|need)")
+_YOUR_NEED = re.compile(r"\byou\b.{0,40}\b(require|need)|\b(require|need)\w*\b.{0,60}\bfor you\b")
 
 
 def _without_notes(label: str) -> str:
@@ -2360,7 +2367,8 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
     # ("Is sponsorship required...?" too, unless it asks for an explanation: "If yes, please explain.")
     yes_no_box = ans.rule in {"authorized", "sponsorship", "no_sponsorship"} and polarity(ans.value) is not None \
         and bool(re.match(r"(are|do|will|would|can|have|is) you\b", label)
-                 or re.match(r"is (visa |employment )?sponsorship\b", label) and not _EXPLAIN.search(label))
+                 or re.match(r"is (visa |employment )?sponsorship\b", label) and not _EXPLAIN.search(label)
+                 and not re.search(r"\b(specify|which|what (type|kind))\b", label))
     # (and where a person lives, asked as a question in a text area: GCU's "In what city do you live?", the full run
     # of Oct 12)
     home_box = ans.rule in {"city", "home_state"} and bool(re.match(
