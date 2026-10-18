@@ -22,6 +22,8 @@ from bs4 import BeautifulSoup
 from .ats import (csod_parts, detect_ats, greenhouse_parts, lever_parts, linkedin_job_id, oracle_parts,
                   smartrecruiters_parts, workday_parts)
 from .autofill import US_STATES
+from .pay import fields as pay_fields
+from .pay import pay_from_ld, pay_from_posting
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -49,9 +51,20 @@ class Posting:
     source: str = ""
     parse_method: str = ""
     warnings: list[str] = field(default_factory=list)
+    # its pay (pay.py): the figures, the period they're for (hour, week, month, year) and where they came from
+    # (structured, indeed, text); `salary` stays the words as given. finalize() fills them in
+    pay_min: float | None = None
+    pay_max: float | None = None
+    pay_period: str = ""
+    pay_source: str = ""
+    # the whole text, before MAX_DESCRIPTION's cut, and the page's description: read by finalize() for the pay (often
+    # the last thing a long posting says), then let go. Never saved
+    full_text: str = field(default="", repr=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        out = asdict(self)
+        del out["full_text"]
+        return out
 
     @property
     def is_useful(self) -> bool:
@@ -62,7 +75,8 @@ class FetchError(Exception):
     pass
 
 
-def html_to_text(raw: str) -> str:
+def html_to_text(raw: str, limit: int | None = MAX_DESCRIPTION) -> str:
+    """A posting's HTML as its text, cut at `limit` characters (None: all of it, for its pay)."""
     if not raw:
         return ""
     soup = BeautifulSoup(raw, "html.parser")
@@ -83,7 +97,7 @@ def html_to_text(raw: str) -> str:
     text = re.sub(r" *\n *", "\n", text)
     text = re.sub(r"(^|\n)- *\n+(?!- )", r"\1- ", text)  # "<li>\n  Bachelor's..." keeps its bullet
     text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()[:MAX_DESCRIPTION]
+    return text.strip()[:limit]
 
 
 def _first(v: Any) -> Any:
@@ -228,25 +242,29 @@ def ukg_posting(raw_html: str, url: str) -> Posting | None:
         place = f"{city}, {state}" if city and state else (loc or {}).get("LocalizedDescription") or city or state or ""
         if place and place not in places:
             places.append(place)
+    text = html_to_text(str(d["Description"]), limit=None)
     return Posting(url=url, title=str(d.get("Title") or "").strip(), location="; ".join(places),
-                   description=html_to_text(str(d["Description"])), external_id=str(d.get("RequisitionNumber") or ""),
-                   posted_at=str(d.get("PostedDate") or ""), parse_method="ukg-page")
+                   description=text[:MAX_DESCRIPTION], external_id=str(d.get("RequisitionNumber") or ""),
+                   posted_at=str(d.get("PostedDate") or ""), parse_method="ukg-page", full_text=text)
 
 
 def posting_from_jsonld(ld: dict[str, Any], url: str) -> Posting:
     org = ld.get("hiringOrganization") or {}
     ident = ld.get("identifier") or {}
+    text = html_to_text(_unescaped(str(ld.get("description") or "")), limit=None)
     p = Posting(
         url=url,
         title=html.unescape(str(ld.get("title") or "")).strip(),
         company=(org.get("name") if isinstance(org, dict) else str(org)) or "",
         location=_location_from_ld(ld.get("jobLocation")),
-        description=html_to_text(_unescaped(str(ld.get("description") or ""))),
+        description=text[:MAX_DESCRIPTION],
+        full_text=text,
         external_id=str(ident.get("value", "")) if isinstance(ident, dict) else str(ident or ""),
         salary=_salary_from_ld(ld.get("baseSalary")),
         employment_type=", ".join(ld["employmentType"]) if isinstance(ld.get("employmentType"), list) else str(ld.get("employmentType") or ""),
         posted_at=str(ld.get("datePosted") or ""),
         parse_method="json-ld",
+        **pay_fields(pay_from_ld(ld.get("baseSalary"))),  # (its figures, not only the words _salary_from_ld prints)
     )
     if ld.get("jobLocationType") == "TELECOMMUTE" and "remote" not in p.location.lower():
         p.location = (p.location + "; Remote").strip("; ")
@@ -327,6 +345,14 @@ def microdata_date(soup: BeautifulSoup) -> str:
     return ""
 
 
+def _description_meta(soup: BeautifulSoup) -> str:
+    """The longest description a page's meta tags give (og:description, description, twitter:description)."""
+    found = [" ".join(html.unescape(str(tag.get("content") or "")).split()) for tag in soup.find_all("meta")
+             if str(tag.get("property") or tag.get("name") or "").lower() in
+             ("og:description", "description", "twitter:description")]
+    return max(found, key=len, default="")
+
+
 def parse_html(raw_html: str, url: str) -> Posting:
     soup = BeautifulSoup(raw_html, "html.parser")
     ld = find_jsonld_jobposting(soup)
@@ -339,7 +365,8 @@ def parse_html(raw_html: str, url: str) -> Posting:
         p.parse_method = "microdata"
         if len(p.description) <= 200:  # (Posting.is_useful's) a scope around little but its meta tags: the page's
             main = soup.find("main") or soup.find(attrs={"role": "main"}) or soup.body or soup  # type: ignore[call-overload]  # bs4 stubs want a name too
-            p.description = html_to_text(str(main))
+            p.full_text = html_to_text(str(main), limit=None)
+            p.description = p.full_text[:MAX_DESCRIPTION]
     elif ukg:
         p = ukg
     else:
@@ -350,7 +377,9 @@ def parse_html(raw_html: str, url: str) -> Posting:
         elif soup.title:
             title = soup.title.get_text()
         main = soup.find("main") or soup.find(attrs={"role": "main"}) or soup.body or soup  # type: ignore[call-overload]  # bs4 stubs want a name too
-        p = Posting(url=url, title=" ".join(title.split()), description=html_to_text(str(main)), parse_method="page-text")
+        text = html_to_text(str(main), limit=None)
+        p = Posting(url=url, title=" ".join(title.split()), description=text[:MAX_DESCRIPTION],
+                    parse_method="page-text", full_text=text)
         m = _SF_CLASSIC_TITLE.match(p.title)
         if m:
             p.title = m.group(1)
@@ -360,6 +389,11 @@ def parse_html(raw_html: str, url: str) -> Posting:
         p.warnings.append("No structured JobPosting data; title/company may need correcting.")
     p.apply_url = p.apply_url or _find_apply_link(soup, url)
     p.posted_at = p.posted_at or microdata_date(soup)
+    # the page's description too, for the pay: a Workday page read in the browser holds its posting there (its text
+    # is drawn by script: Onto's "Base Salary Range", Intel's "Annual Salary Range")
+    said = _description_meta(soup)
+    if said and said not in (p.full_text or p.description):
+        p.full_text = f"{p.full_text or p.description}\n\n{said}"
     p.location = p.location or (_location_from_ld(micro["jobLocation"]) if micro else "") or successfactors_place(soup)
     if not p.location and "career_job_req_id=" in url:  # SuccessFactors' older sites: only the text says
         p.location = place_in_text(p.description)
@@ -387,12 +421,14 @@ async def _fetch_workday(client: httpx.AsyncClient, url: str) -> Posting | None:
         return None
     org = (r.json().get("hiringOrganization") or {}).get("name", "")
     locs = [info.get("location")] + list(info.get("additionalLocations") or [])
+    text = html_to_text(info.get("jobDescription", ""), limit=None)
     return Posting(
         url=url,
         title=info.get("title", ""),
         company=org or parts["tenant"],
         location="; ".join(loc for loc in locs if loc),
-        description=html_to_text(info.get("jobDescription", "")),
+        description=text[:MAX_DESCRIPTION],
+        full_text=text,
         apply_url=info.get("externalUrl") or url,
         external_id=info.get("jobReqId", ""),
         employment_type=info.get("timeType", ""),
@@ -410,12 +446,14 @@ async def _fetch_greenhouse(client: httpx.AsyncClient, url: str) -> Posting | No
     # The Greenhouse-hosted page always carries the form; employer pages that embed it
     # in an iframe often don't load it until cookies are accepted.
     hosted = f"https://job-boards.greenhouse.io/{parts['board']}/jobs/{parts['job_id']}"
+    text = html_to_text(html.unescape(data.get("content", "")), limit=None)
     p = Posting(
         url=url,
         title=data.get("title", ""),
         company=data.get("company_name") or parts["board"],
         location=(data.get("location") or {}).get("name", ""),
-        description=html_to_text(html.unescape(data.get("content", ""))),
+        description=text[:MAX_DESCRIPTION],
+        full_text=text,
         apply_url=hosted,
         external_id=str(data.get("requisition_id") or data.get("id") or ""),
         posted_at=data.get("updated_at", ""),
@@ -434,17 +472,18 @@ async def _fetch_lever(client: httpx.AsyncClient, url: str) -> Posting | None:
     api = f"https://api.lever.co/v0/postings/{parts['company']}/{parts['posting_id']}"
     data = (await _get(client, api)).json()
     cats = data.get("categories") or {}
-    body = data.get("descriptionPlain") or html_to_text(data.get("description", ""))
+    body = data.get("descriptionPlain") or html_to_text(data.get("description", ""), limit=None)
     for section in data.get("lists") or []:
-        body += f"\n\n{section.get('text', '')}\n" + html_to_text(section.get("content", ""))
+        body += f"\n\n{section.get('text', '')}\n" + html_to_text(section.get("content", ""), limit=None)
     # the closing section, where citizenship, clearance and travel terms often are
-    body += "\n\n" + (data.get("additionalPlain") or html_to_text(data.get("additional") or ""))
+    body += "\n\n" + (data.get("additionalPlain") or html_to_text(data.get("additional") or "", limit=None))
     return Posting(
         url=url,
         title=data.get("text", ""),
         company=parts["company"],
         location=cats.get("location", ""),
         description=body.strip()[:MAX_DESCRIPTION],
+        full_text=body.strip(),
         apply_url=data.get("applyUrl") or url,
         external_id=parts["posting_id"],
         employment_type=cats.get("commitment", ""),
@@ -463,7 +502,7 @@ async def _fetch_smartrecruiters(client: httpx.AsyncClient, url: str) -> Posting
     for key in ("jobDescription", "qualifications", "additionalInformation", "companyDescription"):
         sec = sections.get(key) or {}
         if sec.get("text"):
-            body.append(f"{sec.get('title') or ''}\n{html_to_text(sec['text'])}".strip())
+            body.append(f"{sec.get('title') or ''}\n{html_to_text(sec['text'], limit=None)}".strip())
     loc = data.get("location") or {}
     return Posting(
         url=url,
@@ -471,6 +510,7 @@ async def _fetch_smartrecruiters(client: httpx.AsyncClient, url: str) -> Posting
         company=(data.get("company") or {}).get("name") or parts["company"],
         location=", ".join(x for x in [loc.get("city"), loc.get("region"), (loc.get("country") or "").upper()] if x),
         description="\n\n".join(body)[:MAX_DESCRIPTION],
+        full_text="\n\n".join(body),
         apply_url=data.get("applyUrl") or url,
         external_id=data.get("refNumber") or parts["posting_id"],
         employment_type=(data.get("typeOfEmployment") or {}).get("label", ""),
@@ -501,13 +541,14 @@ async def _fetch_oracle(client: httpx.AsyncClient, url: str) -> Posting | None:
     if not items:
         return None
     d = items[0]
-    body = "\n\n".join(html_to_text(d.get(k) or "") for k in
+    body = "\n\n".join(html_to_text(d.get(k) or "", limit=None) for k in
                        ("ExternalDescriptionStr", "ExternalResponsibilitiesStr", "ExternalQualificationsStr") if d.get(k))
     return Posting(
         url=url,
         title=d.get("Title") or "",
         location=d.get("PrimaryLocation") or "",
         description=body[:MAX_DESCRIPTION],
+        full_text=body,
         apply_url=url,
         external_id=str(d.get("Id") or parts["job_id"]),
         employment_type=d.get("WorkerType") or d.get("JobSchedule") or "",
@@ -560,12 +601,14 @@ async def _fetch_csod(client: httpx.AsyncClient, url: str) -> Posting | None:
     if not data.get("displayTitle"):
         return None
     places = [csod_place(p) for p in [data.get("primaryLocation"), *(data.get("additionalLocations") or [])]]
+    text = html_to_text(str(data.get("externalDescription") or ""), limit=None)
     posting = Posting(
         url=url,
         title=str(data["displayTitle"]),
         company=parts["corp"],  # (the site's own name for the employer: "linde"; its pages give no other)
         location="; ".join(dict.fromkeys(p for p in places if p)),
-        description=html_to_text(str(data.get("externalDescription") or ""))[:MAX_DESCRIPTION],
+        description=text[:MAX_DESCRIPTION],
+        full_text=text,
         apply_url=url,
         external_id=parts["requisition"],
         posted_at=str(data.get("openDate") or "")[:10],
@@ -642,4 +685,9 @@ def finalize(posting: Posting) -> Posting:
         posting.company = posting.company or rest.strip()
     if not posting.is_useful:
         posting.warnings.append("Posting text looks incomplete; confirm details with the user or read it in the browser.")
+    pay = pay_from_posting(posting)
+    if pay is not None and pay.listed:
+        for k, v in pay_fields(pay).items():
+            setattr(posting, k, v)
+    posting.full_text = ""  # (read: let go)
     return posting

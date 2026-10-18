@@ -473,6 +473,38 @@ def test_tool_marks_tracked_jobs(srv, monkeypatch):
     assert out["count"] == 1 and out["results"][0]["tracked"]["status"] == "saved"
 
 
+def test_min_pay_leaves_out_only_openings_whose_listed_pay_is_below_it(srv, monkeypatch):
+    """The design of Oct 18, F1: search_company_jobs(min_pay=) and list_jobs(min_pay=) leave out a job whose pay is
+    listed (the list's, or its job's in the tracker) and tops out below the floor; one that doesn't list it stays."""
+    import job_apply.server as server
+
+    asked = {}
+
+    async def fake(query, names, location, limit, **kw):
+        asked.update(kw)
+        return {"results": [
+            {"company": "Lever Co", "title": "FSE", "url": "https://jobs.lever.co/leverco/low", "pay_min": 18,
+             "pay_max": 20, "pay_period": "hour", "pay_source": "text"},
+            {"company": "Lever Co", "title": "FSE 2", "url": "https://jobs.lever.co/leverco/unsaid"},
+            {"company": "Lever Co", "title": "FSE 3", "url": "https://jobs.lever.co/leverco/tracked"}],
+            "errors": {}, "browser_only": []}
+
+    monkeypatch.setattr(server, "search_companies", fake)
+    srv.add_job(url="https://jobs.lever.co/leverco/tracked", title="FSE 3", company="Lever Co",
+                salary="$80,000 - $95,000 a year")
+    out = asyncio.run(server.search_company_jobs("field service", min_pay=60000, posted_within_days=14))
+    assert asked["posted_within_days"] == 14
+    assert [r["url"].rsplit("/", 1)[1] for r in out["results"]] == ["unsaid", "tracked"]
+    assert out["below_min_pay"] == 1 and out["results"][1]["pay"] == "$80k–$95k/yr" and "pay" not in out["results"][0]
+    assert len(asyncio.run(server.search_company_jobs("field service"))["results"]) == 3
+    srv.add_job(url="https://careers.example.com/job/9", title="Tech", company="Example Fab", salary="$17 an hour")
+    srv.add_job(url="https://careers.example.com/job/10", title="Tech 2", company="Example Fab")
+    jobs = srv.list_jobs(min_pay=60000)["jobs"]
+    assert sorted(j["title"] for j in jobs) == ["FSE 3", "Tech 2"]
+    assert [j.get("pay") for j in jobs if j["title"] == "FSE 3"] == ["$80k–$95k/yr"]
+    assert len(srv.list_jobs()["jobs"]) == 3
+
+
 def test_tool_falls_back_to_browser_for_eightfold(srv, monkeypatch):
     import job_apply.server as server
 
@@ -3131,3 +3163,35 @@ def test_a_successfactors_search_that_matched_nothing_lists_none_of_the_recent_j
 def test_a_successfactors_page_with_neither_openings_nor_none_is_said():
     out = run_sf(lambda request: httpx.Response(200, text=CHANGED), query="technician", location="AZ")
     assert out["errors"] == {"Qorvo": "SearchError: No job list from https://careers.qorvo.com/search/"}
+
+
+def test_posted_within_days_leaves_out_older_openings_and_keeps_those_with_no_date():
+    """The design of Oct 18, F2: search_company_jobs(posted_within_days=) leaves out an opening its site says was
+    posted longer ago; one whose site gives no date (seven systems give none), or a date it can't read, stays."""
+    from datetime import date, timedelta
+
+    from job_apply.search import Listing, keep_listings
+
+    def ago(days):
+        return (date.today() - timedelta(days=days)).isoformat()
+
+    jobs = [{"id": 1, "title": "Field Service Engineer", "location": {"name": "Phoenix, AZ"}, "updated_at": ago(3)},
+            {"id": 2, "title": "Field Service Engineer II", "location": {"name": "Phoenix, AZ"}, "updated_at": ago(20)},
+            {"id": 3, "title": "Field Service Engineer III", "location": {"name": "Phoenix, AZ"}},
+            {"id": 4, "title": "Lead Field Service Engineer", "location": {"name": "Phoenix, AZ"},
+             "updated_at": "sometime soon"}]
+
+    async def go(**kw):
+        transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"jobs": jobs}))
+        async with httpx.AsyncClient(transport=transport) as client:
+            return await search_companies("field service", location="AZ", client=client,
+                                          companies=[{"name": "GH Co", "search": {"greenhouse": "ghco"}}], **kw)
+
+    assert len(asyncio.run(go())["results"]) == 4
+    kept = asyncio.run(go(posted_within_days=7))["results"]
+    assert [r["external_id"] for r in kept] == ["1", "3", "4"]
+    assert [r["external_id"] for r in asyncio.run(go(posted_within_days=30))["results"]] == ["1", "2", "3", "4"]
+    listings = [Listing(company="", title="Technician", url=f"https://x/{n}", location="Phoenix, AZ", posted=posted)
+                for n, posted in enumerate(["Posted Today", "Posted 30+ Days Ago", "", "09/29/2000"])]
+    assert [r["url"] for r in keep_listings("X Co", listings, ["az"], 10, posted_within_days=14)] == \
+        ["https://x/0", "https://x/2"]

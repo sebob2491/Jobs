@@ -684,9 +684,9 @@ def test_a_column_a_later_release_adds_is_added_without_raising_the_schema_versi
 
     Tracker().close()  # (at SCHEMA_VERSION)
     monkeypatch.setattr(tracker, "_SCHEMA", tracker._SCHEMA.replace(
-        "    applied_at TEXT DEFAULT ''\n);", "    applied_at TEXT DEFAULT '',\n    pay_period TEXT DEFAULT ''\n);", 1))
+        "    applied_at TEXT DEFAULT ''\n);", "    applied_at TEXT DEFAULT '',\n    workplace TEXT DEFAULT ''\n);", 1))
     t = Tracker()
-    assert "pay_period" in {r[1] for r in t.conn.execute("PRAGMA table_info(jobs)")}
+    assert "workplace" in {r[1] for r in t.conn.execute("PRAGMA table_info(jobs)")}
     t.close()
 
 
@@ -869,4 +869,97 @@ def test_a_jobs_folder_is_kept_when_two_jobs_are_made_one(job_apply_home):
     assert Applier(SimpleNamespace(tracker=lambda: t))._press_recorded(t.get(first))  # (never pressed again)
     assert t.get(third) is None and not only.exists() and t.get(fourth)["status"] == "skipped"
     assert (Path(t.get(fourth)["folder"]) / "resume-tailored.docx").read_text(encoding="utf-8") == "asml"
+    t.close()
+
+
+# ------------------------------------------------------------------ pay (the design of Oct 18, F1)
+
+_PAY = ("pay_min", "pay_max", "pay_period", "pay_source")
+
+
+def _pay_of(job):
+    return tuple(job[k] for k in _PAY)
+
+
+def test_an_older_tracker_gains_the_pay_columns_and_keeps_its_jobs(job_apply_home, tmp_path):
+    """A tracker.db from before the pay listing has no pay columns: opening it adds them (with no pay for the jobs it
+    holds), a job saved since keeps its pay as figures, and the CSV export has them beside the salary's words."""
+    import csv
+    import sqlite3
+
+    path = config.db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    old = sqlite3.connect(path)
+    old.executescript(_OLD_JOBS)
+    old.execute("INSERT INTO jobs (url, title, company, salary, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                ("https://careers.example.com/job/1", "Equipment Technician", "Example Fab", "$25 an hour",
+                 "2026-10-01T00:00:00+00:00", "2026-10-01T00:00:00+00:00"))
+    old.commit()
+    old.close()
+
+    t = Tracker()
+    assert set(_PAY) <= {r[1] for r in t.conn.execute("PRAGMA table_info(jobs)")}
+    assert _pay_of(t.get(1)) == (None, None, "", "") and t.get(1)["salary"] == "$25 an hour"
+    job, _ = t.upsert({"url": "https://careers.example.com/job/2", "title": "Field Service Engineer",
+                       "company": "Example Fab", "salary": "", "pay_min": 26.0, "pay_max": 28.0, "pay_period": "hour",
+                       "pay_source": "text"})
+    assert _pay_of(job) == (26.0, 28.0, "hour", "text")
+    out = tmp_path / "jobs.csv"
+    t.export_csv(out)
+    with out.open(encoding="utf-8", newline="") as f:
+        rows = {r["url"]: r for r in csv.DictReader(f)}
+    assert {k: rows["https://careers.example.com/job/2"][k] for k in _PAY} == {
+        "pay_min": "26.0", "pay_max": "28.0", "pay_period": "hour", "pay_source": "text"}
+    t.close()
+
+
+def test_a_better_source_of_pay_replaces_the_jobs_and_a_worse_one_never_does(job_apply_home):
+    """A job's pay is kept whole (its figures, period and source together): filled in where it has none, replaced when
+    another posting of it gives pay from a better source (structured > indeed > text), and never by a worse one, nor
+    by a posting that lists none. The salary's words are only filled in where empty."""
+    t = Tracker()
+    url = "https://careers.example.com/job/7"
+    job, _ = t.upsert({"url": url, "title": "Technician", "company": "Example Fab"})
+    assert _pay_of(job) == (None, None, "", "")
+    text = {"url": url, "pay_min": 70000.0, "pay_max": 90000.0, "pay_period": "year", "pay_source": "text"}
+    assert _pay_of(t.upsert(text)[0]) == (70000.0, 90000.0, "year", "text")
+    structured = {"url": url, "salary": "USD 80000-110000 per year", "pay_min": 80000, "pay_max": 110000,
+                  "pay_period": "year", "pay_source": "structured"}
+    job, _ = t.upsert(structured)
+    assert _pay_of(job) == (80000.0, 110000.0, "year", "structured") and job["salary"] == "USD 80000-110000 per year"
+    for worse in ({**text, "pay_min": 30.0, "pay_max": 30.0, "pay_period": "hour"},
+                  {"url": url, "pay_min": 25.0, "pay_max": 25.0, "pay_period": "hour", "pay_source": "indeed"},
+                  {"url": url, "pay_min": None, "pay_max": None, "pay_period": "", "pay_source": ""}):
+        assert _pay_of(t.upsert(worse)[0]) == (80000.0, 110000.0, "year", "structured")
+    # Indeed's copy of an employer's job read from its words: Indeed's salary field is the better source
+    job, _ = t.upsert(_intels(pay_min=26, pay_max=28, pay_period="hour", pay_source="text"))
+    joined, created = t.upsert(_indeed(salary="$27 - $30 an hour", pay_min=27, pay_max=30, pay_period="hour",
+                                       pay_source="indeed"))
+    assert not created and joined["id"] == job["id"]
+    assert _pay_of(joined) == (27.0, 30.0, "hour", "indeed") and joined["salary"] == "$27 - $30 an hour"
+    t.close()
+
+
+def test_two_copies_made_one_keep_the_better_sourced_pay(job_apply_home):
+    """Jobs saved twice before (an Indeed job and the employer's posting of it) made one as the tracker opens: the one
+    kept has the pay from the better source of the two, whole, whichever of them is kept."""
+    t = Tracker()
+    board, own = _older(t, [(INDEED, "saved", "Intel Corporation", "Equipment Technician", "Chandler, AZ", "indeed"),
+                            (INTEL, "saved", "Intel", "Equipment Technician", "", "job desk")])
+    lam_board, lam = _older(t, [("https://www.indeed.com/viewjob?jk=4444444444444444", "saved", "Lam Research",
+                                 "Field Service Engineer", "Tempe, AZ", "indeed"),
+                                ("https://careers.lamresearch.com/careers/job/1", "saved", "Lam Research",
+                                 "Field Service Engineer", "Tempe, AZ", "")])
+    with t._lock:
+        for job_id, pay in ((board, (25, 25, "hour", "indeed")), (own, (80000, 110000, "year", "structured")),
+                            (lam_board, (30, 34, "hour", "indeed")), (lam, (29, None, "hour", "text"))):
+            t.conn.execute("UPDATE jobs SET pay_min = ?, pay_max = ?, pay_period = ?, pay_source = ? WHERE id = ?",
+                           (*pay, job_id))
+        t.conn.commit()
+    t.close()
+
+    t = Tracker()
+    assert _pay_of(t.find_by_url(INTEL)) == (80000.0, 110000.0, "year", "structured")
+    assert _pay_of(t.find_by_url("https://careers.lamresearch.com/careers/job/1")) == (30.0, 34.0, "hour", "indeed")
+    assert len(t.list()) == 2
     t.close()

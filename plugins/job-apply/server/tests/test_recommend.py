@@ -632,3 +632,38 @@ def test_a_score_kept_within_0_to_100_says_so_among_its_parts():
                             tech(work_authorization={"us_person": False}), NEEDS_MUCH, today=TODAY)
     assert floored.score == 0 and floored.parts[-1] == {"why": "kept within 0 to 100",
                                                          "points": -sum(p["points"] for p in floored.parts[:-1])}
+
+
+def test_pay_that_meets_the_desired_salary_adds_five_and_pay_not_listed_takes_nothing():
+    """The design of Oct 18, F1: +5 "pay meets your desired $X" only when preferences.desired_salary is set and the
+    listed pay reaches it; never a minus, for pay below it or not listed."""
+    listing = {"title": "Equipment Technician", "location": "Phoenix, AZ", "posted": "2026-10-01"}
+    paid = {**listing, "pay_min": 26, "pay_max": 28, "pay_period": "hour", "pay_source": "text"}  # (≈$58,240 at most)
+    wants = tech(preferences={**tech().get("preferences"), "desired_salary": "$55,000"})
+    plain = score_listing(listing, wants, today=TODAY)
+    met = score_listing(paid, wants, today=TODAY)
+    assert met.score == plain.score + 5 and "pay meets your desired $55,000" in met.reasons
+    assert {"why": "pay meets your desired $55,000", "points": 5} in met.parts
+    # below what's wanted, or with nothing wanted: no plus and no minus
+    high = tech(preferences={**tech().get("preferences"), "desired_salary": "90k"})
+    assert score_listing(paid, high, today=TODAY).score == score_listing(listing, high, today=TODAY).score
+    assert score_listing(paid, tech(), today=TODAY).score == score_listing(listing, tech(), today=TODAY).score
+    assert not any("pay" in p["why"] for p in score_listing(listing, wants, today=TODAY).parts)
+
+
+def test_recommend_takes_a_read_postings_pay_onto_the_opening():
+    """A read posting's pay goes on its opening (shown on the desk) and in its posting's fields, and is scored."""
+    p = tech(preferences={**tech().get("preferences"), "desired_salary": 50000})
+
+    async def search(query, location, limit):
+        return {"results": [{"company": "Example Fab", "title": "Equipment Technician", "url": "https://x/paid",
+                             "location": "Phoenix, AZ"}]}
+
+    async def fetch(url):
+        return Posting(url=url, description=LAM_FSE2, location="Phoenix, AZ", salary="$26 - $28 an hour",
+                       pay_min=26, pay_max=28, pay_period="hour", pay_source="text")
+
+    item = asyncio.run(recommend(p, search, read_postings=1, fetch=fetch, today=TODAY))["results"][0]
+    assert (item["pay_min"], item["pay_max"], item["pay_period"], item["pay_source"]) == (26, 28, "hour", "text")
+    assert item["posting"]["pay_period"] == "hour" and item["posting"]["salary"] == "$26 - $28 an hour"
+    assert "pay meets your desired $50,000" in item["fit"]["reasons"]

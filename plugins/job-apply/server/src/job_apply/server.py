@@ -24,7 +24,7 @@ from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from playwright.async_api import Error as PlaywrightError
 
-from . import config
+from . import config, pay
 from .ats import ATS_NAMES, detect_ats, greenhouse_form_url, shared_system, workday_parts
 from .autofill import common_questions as bank_questions
 from .autofill import (is_eeo_rule, is_empty_value, is_how_heard, is_name_rule, is_school_rule, place_words,
@@ -232,6 +232,9 @@ def _brief(job: dict[str, Any]) -> dict[str, Any]:
     keys = ["id", "status", "title", "company", "location", "ats", "source", "url", "apply_url", "salary", "folder"]
     out = {k: job.get(k) for k in keys}
     out["ats_name"] = ATS_NAMES.get(job.get("ats", ""), job.get("ats"))
+    said = pay.from_fields(job)
+    if said is not None:
+        out["pay"], out["pay_yearly"] = pay.shown(said), pay.yearly(said)[1] or pay.yearly(said)[0]
     return out
 
 
@@ -469,6 +472,8 @@ async def search_company_jobs(
     location: str | None = "AZ",
     limit_per_company: int = 20,
     every_list: bool = False,
+    min_pay: float | None = None,
+    posted_within_days: int | None = None,
 ) -> dict[str, Any]:
     """Search employers' own careers sites for openings through their applicant tracking
     system's public search: Workday, Greenhouse, Lever, Eightfold, SmartRecruiters, Oracle,
@@ -483,9 +488,16 @@ async def search_company_jobs(
     Results already in the tracker carry `tracked`. Companies in `browser_only` have no
     search the plugin can use, and some turn automated browsers away: give the user their
     careers_url to search in their own browser.
-    every_list: every plugin list's employers too, not only the person's (the desk's troubleshooting)."""
+    every_list: every plugin list's employers too, not only the person's (the desk's troubleshooting).
+    min_pay: dollars a year (hourly pay counts 2,080 hours): leaves out an opening whose pay is listed (by its
+    site's list, or its job in the tracker) and the most it pays is below this. Most lists don't give pay: those
+    openings stay, with no `pay` (read the posting, or ingest_job, for it). Results with pay carry `pay`.
+    posted_within_days: leaves out openings posted longer ago (7, 14, 30...); one whose site gives no date stays
+    (ApplicantStack, Talemetry, Jobvite, Avature and a few others never do). `below_min_pay` counts what min_pay left
+    out."""
     listed = every_employer() if every_list else load_companies()  # once: the person's own file may name several lists
-    out = await search_companies(query, companies, location, limit_per_company, companies=listed)
+    out = await search_companies(query, companies, location, limit_per_company, companies=listed,
+                                 posted_within_days=posted_within_days)
     # Eightfold career sites refuse scripted API calls; let a real page make the call instead.
     by_name = {c["name"]: c for c in listed}
     for name, err in list(out["errors"].items()):
@@ -498,7 +510,8 @@ async def search_company_jobs(
             out["errors"][name] = f"{err}; browser fallback: {type(e).__name__}: {str(e).splitlines()[0][:150]}"
             continue
         found = parse_eightfold(data, cfg["host"])
-        out["results"].extend(keep_listings(name, found, location_terms(location), limit_per_company, query))
+        out["results"].extend(keep_listings(name, found, location_terms(location), limit_per_company, query,
+                                            posted_within_days))
         del out["errors"][name]
     # Sites whose search only answers in the browser (ASML, iCIMS, Paycom, Amkor, Benchmark): one background tab
     # per wording, or one for the whole board when titles are matched here.
@@ -530,12 +543,24 @@ async def search_company_jobs(
         if failures:
             out["errors"][name] = failures[0] + (
                 f" ({len(failures)} of {len(wordings)} searches failed)" if found else "")
-        out["results"].extend(keep_listings(name, found, location_terms(location), limit_per_company, query))
+        out["results"].extend(keep_listings(name, found, location_terms(location), limit_per_company, query,
+                                            posted_within_days))
     t = tracker()
+    kept, below = [], 0
     for r in out["results"]:
         job = t.find_by_url(r["url"])
         if job:
             r["tracked"] = {"id": job["id"], "status": job["status"]}
+        said = pay.from_fields(r) or (pay.from_fields(job) if job else None)
+        if said is not None:
+            r["pay"] = pay.shown(said)
+        if pay.meets(said, min_pay) is False:  # (listed and below: one not listed always stays)
+            below += 1
+            continue
+        kept.append(r)
+    out["results"] = kept
+    if min_pay:
+        out["below_min_pay"] = below
     out["count"] = len(out["results"])
     return out
 
@@ -568,7 +593,8 @@ def _follow_up_days() -> int:
 
 
 @tool()
-def list_jobs(status: str | None = None, company: str | None = None, limit: int = 50) -> dict[str, Any]:
+def list_jobs(status: str | None = None, company: str | None = None, limit: int = 50,
+              min_pay: float | None = None) -> dict[str, Any]:
     """List tracked jobs, newest activity first. status is one of:
     saved, in_progress, ready_to_submit, applied, interviewing, offer, rejected, withdrawn, skipped.
 
@@ -581,9 +607,15 @@ def list_jobs(status: str | None = None, company: str | None = None, limit: int 
 
     A job the user marked Not interested on the Job Desk has `not_interested: true` and
     `not_interested_reason` (title, company, location, pay, other, or "" for none): ask
-    before applying to it."""
+    before applying to it.
+
+    A job whose pay is listed has `pay` ("$26–$28/hr (≈$54k–$58k/yr)") and `pay_yearly` (the most it pays a year).
+    min_pay (dollars a year; hourly pay counts 2,080 hours) leaves out a job whose pay is listed and below it; a job
+    that doesn't list its pay stays."""
     t = tracker()
     jobs = t.list(status=status, company=company, limit=limit)
+    if min_pay:
+        jobs = [j for j in jobs if pay.meets(pay.from_fields(j), min_pay) is not False]
     sent = any(j["status"] in APPLICATION_STATUSES for j in jobs)  # (none sent: neither the emails nor the profile read)
     heard, days = (t.last_heard(), _follow_up_days()) if sent else ({}, config.FOLLOW_UP_DAYS_DEFAULT)
     marks = t.not_interested_marks(_listed())
@@ -1225,7 +1257,8 @@ def whats_new(since: str | None = None) -> dict[str, Any]:
     first found it) and the jobs saved to the tracker another way (ingest_job, add_job), none
     begun, sent or skipped, and none the user said Not interested in on the desk; best score
     first, each with its title, company, location, score (out of 100; `recommended` from 60),
-    address and job number once saved. `summary` lists them in a few lines, and
+    address and job number once saved, its pay ("$26–$28/hr (≈$54k–$58k/yr)", "" when its posting
+    doesn't list it or isn't read yet) and `ats`. `summary` lists them in a few lines, and
     `searched_at` says when the desk last searched. It never searches by itself: for fresh
     openings, search first (the desk's Find jobs, or search_company_jobs with the find-jobs
     skill), then call this. Each morning: search, then whats_new."""
