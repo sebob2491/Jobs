@@ -392,11 +392,11 @@ def test_live_smoke_sets_up_the_test_identity_and_never_says_its_secrets(tmp_pat
     assert config.Profile.load(home / "profile.yaml").settings.may_manage_accounts
 
 
-def test_live_smoke_everywhere_says_each_employer_it_cant_apply_at(tmp_path):
+def test_live_smoke_everywhere_says_each_employer_it_cant_apply_at(tmp_path, smoke_script):
     """--everywhere on its first machine says each employer on its lists with no search, with its list and why, on a
     LIVE_SKIPPED line (once a run: never on another machine, nor in each group), and its home's lists are all three."""
-    code, said = _smoke(tmp_path, ENV, "--pipeline", "--test-identity", "--everywhere", "--machine", "0/4",
-                        "--companies", "no-such-employer")
+    code, said = smoke_script(ENV, "--pipeline", "--test-identity", "--everywhere", "--machine", "0/4",
+                              "--companies", "no-such-employer")
     assert code == 0, said
     lines = [json.loads(x[len("LIVE_SKIPPED "):]) for x in said.splitlines() if x.startswith("LIVE_SKIPPED ")]
     assert lines == [{"company": e["name"], "list": e["list"], "why": e["why"]} for e in li.skipped_employers()]
@@ -405,9 +405,8 @@ def test_live_smoke_everywhere_says_each_employer_it_cant_apply_at(tmp_path):
     assert by["Clark County"]["list"] == "las-vegas" and "NEOGOV" in by["Clark County"]["why"]
     home = next(h for h in tmp_path.glob("job-apply-live-*") if (h / "companies.yaml").exists())
     assert yaml.safe_load((home / "companies.yaml").read_text(encoding="utf-8")) == {"lists": sorted(li.LIST_ROLES)}
-    (tmp_path / "1").mkdir()
-    code, said = _smoke(tmp_path / "1", ENV, "--pipeline", "--test-identity", "--everywhere", "--machine", "1/4",
-                        "--companies", "no-such-employer")
+    code, said = smoke_script(ENV, "--pipeline", "--test-identity", "--everywhere", "--machine", "1/4",
+                              "--companies", "no-such-employer")
     assert code == 0 and "LIVE_SKIPPED" not in said, said
 
 
