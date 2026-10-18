@@ -448,8 +448,16 @@ def bots_up(previous: dict[str, dict[str, str]] | None, current: dict[str, dict[
     return (now, was) if now >= BOTS_UP_MIN and now >= BOTS_UP * was else None
 
 
-def _cell(text: Any) -> str:
-    return str(text).replace("|", "\\|")
+def slug(name: str) -> str:
+    """An employer's folder in a check's (live_smoke.py's snapshots and pipeline pages, the probes' runs)."""
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40]
+
+
+def _cell(text: Any, one_line: bool = False) -> str:
+    """A markdown table cell: a "|" in a job title would split it (and with one_line, a line break would end its
+    row: the probes' report, whose details can be an error's lines)."""
+    text = str(text).replace("|", "\\|")
+    return text.replace("\n", " ") if one_line else text
 
 
 def _code(text: Any) -> str:

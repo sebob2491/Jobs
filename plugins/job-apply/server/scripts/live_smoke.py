@@ -110,6 +110,7 @@ from job_apply.ats import detect_ats  # noqa: E402
 from job_apply.search import load_companies, sitecore_search  # noqa: E402
 
 import live_compare  # noqa: E402  (scripts/live_compare.py: a page's form as the nightly's compare keeps it)
+from live_compare import _cell, slug  # noqa: E402  (a markdown table's cell; an employer's folder in a check's)
 import live_identity  # noqa: E402  (scripts/live_identity.py, beside this one)
 import live_probes  # noqa: E402  (scripts/live_probes.py: the weekly probes' derived password and tailored resume)
 
@@ -362,10 +363,6 @@ async def dismiss_cookies() -> str | None:
             await server.click(a["id"])
             return a["text"]
     return None
-
-
-def slug(s: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")[:40]
 
 
 def pick_action(actions: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -1337,11 +1334,6 @@ async def main() -> int:
 PIPELINE_WAIT = 300
 QUESTION_ROUNDS = 5
 RESUME_ROUNDS = 1
-
-
-def _cell(value: Any) -> str:
-    """A markdown table cell: a "|" in a job title would split it."""
-    return str(value).replace("|", "\\|")
 
 
 SHOT_CHARS = 48_000  # a screenshot's base64, at most, on its line of the log

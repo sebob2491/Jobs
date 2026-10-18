@@ -42,6 +42,7 @@ import argparse
 import asyncio
 import contextlib
 import datetime
+import functools
 import json
 import os
 import re
@@ -54,6 +55,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import live_compare  # (scripts/live_compare.py, beside this one: the live check's outcome words)
+from live_compare import slug  # (an employer's folder in a run's)
 import live_identity  # (scripts/live_identity.py, beside this one)
 
 SMOKE = Path(__file__).with_name("live_smoke.py")
@@ -436,10 +438,6 @@ def tailored_result(employer: Mapping[str, str], rec: Mapping[str, Any] | None, 
 PASS_MINUTES = 20  # a run's most (live_smoke.py's own limit is longer: a run past this is stopped)
 
 
-def slug(name: str) -> str:  # (live_smoke.py's: an employer's folder in a run's)
-    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40]
-
-
 def folder_of(probe: str, employer: str, n: int | None = None) -> str:
     """A run's own folder in the probes' --out: reset-kla-1, tailored-asm-asm-america."""
     return f"{probe}-{slug(employer)}" + (f"-{n}" if n else "")
@@ -634,8 +632,7 @@ def summary_lines(results: Mapping[str, Any]) -> list[str]:
     return out
 
 
-def _cell(value: Any) -> str:
-    return str(value).replace("|", "\\|").replace("\n", " ")
+_cell = functools.partial(live_compare._cell, one_line=True)  # (a detail's line break would end its table row)
 
 
 def report_markdown(results: Mapping[str, Any]) -> str:
