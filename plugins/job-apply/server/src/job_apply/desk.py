@@ -949,7 +949,7 @@ class Desk:
                  if question_key(str(a.get("label") or "")) in account and a.get("value") not in (None, "")}
         if given and len(given) < len(own):  # (all of them, or none: the form takes them together)
             raise ValueError("Answer each of its security questions here, or none of them (and fill them in in the "
-                             "browser window).")
+                             "desk's browser window).")
         run.account_answers = given
         for a in answers:
             label, value = str(a.get("label") or ""), a.get("value")
@@ -1199,7 +1199,7 @@ class Desk:
                  "The desk stops at each review page; you press Submit.", submit_box)
         line("boards", "LinkedIn and Indeed", "always yours",
              "The desk fills LinkedIn and Indeed applications but never presses their Submit, whatever the settings: you "
-             "do, in the browser window.", "Not a setting: always so")
+             "do, in the desk's browser window.", "Not a setting: always so")
         where = f"{profile} accept_notices (on unless set to false)"
         if notices is None:
             line("accept_notices", "Agree to notices", unknown, busy, where)

@@ -32,7 +32,7 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   over 12 hours old, but not while the queue is paused. While a search runs, the header
   says so (by itself, or pressed) with **Stop search** beside it: the search ends and the
   openings found before it stay.
-- **Apply to selected** works through the picked jobs in the automation browser, two at a
+- **Apply to selected** works through the picked jobs in the desk's browser window, two at a
   time by default, each in its own tab. Two or more picked together go the likeliest to go
   all the way first (the page says so once): employers in `data/desk_handled.yaml`, then job
   systems most of whose listed employers are there (Workday, say), then the rest, and last
@@ -56,7 +56,7 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     an employer ("Why do you want to work here?") isn't reused for another company.
     Consent questions default to not remembered. A box the page wouldn't let the desk fill
     (it timed out) isn't a question: the card says "I couldn't fill …";
-  - a dialog open over a form, which the user answers in the browser before pressing
+  - a dialog open over a form, which the user answers in the desk's browser window before pressing
     Resume (the boxes behind it are filled after that). With `settings.accept_notices` (on
     unless the user turns it off; never in practice mode) the desk agrees for the user to an
     employer's notice about AI screening of the application (Eightfold's opens as the resume
@@ -71,7 +71,7 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     site's reading of the resume, whose guesses could overstate it). Any other dialog over a form still
     stops for the user, and cookie banners keep their own rule;
   - sign-ins, bot checks, CAPTCHAs and emailed codes. The user deals with these in the
-    browser window, and the desk carries on by itself once the page moves past them. A
+    desk's browser window, and the desk carries on by itself once the page moves past them. A
     link a site emails to confirm the address opens in the user's usual browser, which
     leaves the desk's tab where it was: the user reloads that tab after opening the link.
     The queue waits while the user works in that tab. After 5 minutes with nothing
@@ -158,7 +158,7 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   in the list unticked if the desk hadn't begun it. Undo sends nothing: the job stops at its review page.
 - **Pause queue** (in the header, while jobs are queued or running) lets the jobs under way finish their pass and
   starts no other until **Resume queue**. A Submit the user presses still goes, and jobs waiting on them are still
-  watched. A paused queue stays paused after a restart. To stop the queue, never close the automation browser: that
+  watched. A paused queue stays paused after a restart. To stop the queue, never close the desk's browser window: that
   breaks the job in progress (it says so, and its **Resume** opens the application again).
 - **A restart** (of the Claude app, a crash, a plugin update) doesn't lose the queue. The desk keeps it in
   `~/.job-apply/desk-queue.json` (each job's number and where it was: nothing the user typed or a page said). Once
@@ -167,9 +167,9 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   they're filled (it applies only if it's still on), and how old the queue is past a week; nothing starts until the user
   presses **Resume queue**. A job it had begun (under way, or waiting on the user) isn't queued again by itself, since
   the user may have sent it on the site: its card says the desk restarted before the application was finished, with
-  **I submitted it already**, **Resume** (filled again from the start up to its review page, never sent) and **Skip
+  **I submitted it myself**, **Resume** (filled again from the start up to its review page, never sent) and **Skip
   job**. A Submit the user pressed before the restart was never sent: that card says so. One whose Submit was being
-  pressed, or was pressed with no confirmation, may have gone in: its card asks the user to check (**I submitted it**,
+  pressed, or was pressed with no confirmation, may have gone in: its card asks the user to check (**I submitted it myself**,
   or **Resume**, which sends nothing). One applied to or skipped meanwhile is left out. A desk page left open doesn't
   reconnect (its key is new at each start): open the desk again (`open_job_desk`). With two Claude sessions, one desk
   keeps the queue and the other says so, keeping none; about a minute after the first ends, the other takes it up, its
@@ -177,7 +177,7 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   queue, and the desk says so.
 - **History.** Each line of a job's log on the desk shows the time it was logged (the computer's own clock). Each time
   the desk is done with a job for now (at its review page, sent by the desk, stopped for the user with the kind of stop,
-  failed, skipped, cut short by the desk stopping, or marked as applied: the user's I submitted it, or found applied
+  failed, skipped, cut short by the desk stopping, or marked as applied: the user's I submitted it myself, or found applied
   already), it writes a line in `~/.job-apply/runs.jsonl`: the job, its site, when the pass began and ended and its
   minutes, how it ended and why (the desk's own words, with answers, codes and passwords kept out as far as it can
   tell), the steps it went through, how many times the desk's rounds took the user to it and they pressed Resume, and
@@ -208,10 +208,10 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   there most likely stop at the same place.
 - **The bar over the openings** (once any job has been tried) shows them by where they
   stand, each with its count: Not started, Working, Bot checks (with **Solve them**, the
-  round that brings each up for the user), Needs you, Stuck (the desk couldn't get past
+  round that brings each up for the user), Questions and sign-ins, Stuck (the desk couldn't get past
   something: its Notes, or each card's Report a problem, are for Claude to fix), Ready and
   Done. A group picked hides the others, and nothing hidden is ticked or applied to.
-- **What and where** (the header's button, which shows the titles and places searched now)
+- **What and where** (the header's button, which reads "What and where:" and the titles and places searched now)
   opens a window with the job titles Find jobs looks for (typed, or picked from its ideas
   for IT, equipment and HR work; the first four are searched), the places it looks in (a
   city and state each) and the plugin's employer lists it searches. Saving it finds jobs
@@ -241,6 +241,24 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
 - **Tailor my resume for each job** holds each picked job, before its browser tab
   opens, until Claude has written a resume for it (see Tailoring resumes). The page
   says how many are waiting. **Use my usual resume** sends one on without.
+
+## The desk's wording
+
+Use the desk's own words when you talk about it, and keep to them when you change its page or its messages:
+
+- Voice: headings, pills and messages are the desk speaking to the user ("Needs you", "Waiting for you in the
+  desk's browser window"); buttons and switches are the user's own words ("Submit for me", "Tailor my resume for
+  each job", "I submitted it myself").
+- States: one word per state, the same in an opening's row, the bar over the openings and the card: Queued, Working,
+  Questions, Sign in, Emailed code, Bot check, CAPTCHA, Stuck, Your Submit, Ready to submit, Submitted, Didn't
+  finish, Skipped.
+- Color: yellow means something waits for the user now; blue is information (a tip, an update); red is a problem
+  (its text starts "Problem: "); green is done or safe; grey is neutral.
+- A message says what happened, then what to press, in two sentences. The browser the desk fills applications in
+  is "the desk's browser window", and a site's applicant system is a "job system (Workday, say)", never an "ATS".
+- A count beside a word means the same set wherever that word appears: "Needs you" counts every job stopped for
+  the user: the bar's Bot checks and Questions and sign-ins, its Stuck ones but those that didn't finish, and its
+  Ready ones waiting on a Submit of the user's own.
 
 ## Steps
 
@@ -289,7 +307,7 @@ resume:
 When a site shows Cloudflare's "Just a moment…", a CAPTCHA or a "verify you are human"
 page, the desk pauses that job, brings its tab to the front, and waits for the user to
 pass the check. It never tries to get around one: no disguising the browser, no
-CAPTCHA-solving services. The automation browser keeps its own profile in
+CAPTCHA-solving services. The desk's browser window keeps its own profile in
 `~/.job-apply/browser` (`browser-msedge` when Edge stands in for Chrome), so a site
 checked once usually lets it through for a while. If
 a site refuses automated browsers altogether (TSMC's careers site has), the user

@@ -107,7 +107,7 @@ through its `missing` and `profile_gaps` together.
      the question and its opposite: a "Yes" for "Are you willing to take a drug test?"
      must not answer "Have you ever failed one?".
    - Submit mode: `review` (default, they approve each submit) or `auto` for chosen
-     ATSs such as `[workday, greenhouse, lever]`. LinkedIn and Indeed always need
+     job systems such as `[workday, greenhouse, lever]`. LinkedIn and Indeed always need
      them to click Submit themselves.
    - Cookie banners: the desk declines them, and one with no way to decline (TI's "Agree and
      Proceed") waits for them. Ask whether the desk may accept those for them
@@ -181,7 +181,7 @@ through its `missing` and `profile_gaps` together.
    echoed.
 
 5. **Browser.** Run `open_application(url="https://www.linkedin.com/login")`. A
-   Chrome window opens with its own profile. Ask the user to sign in to LinkedIn,
+   browser window opens with its own profile: the desk's browser window. Ask the user to sign in to LinkedIn,
    and to Indeed (`https://secure.indeed.com/auth`), in that window. The sign-ins are
    kept for future sessions. Without Chrome it uses Microsoft Edge (on every Windows
    computer). If no browser starts, have them install Google Chrome, or run the

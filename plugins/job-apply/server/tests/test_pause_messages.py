@@ -59,5 +59,33 @@ def test_the_stops_said_in_one_place_say_what_to_do_too():
 def test_the_audit_tells_a_stop_with_an_action_from_one_without():
     assert _ends_without_action("The page didn't move on. The site said nothing more about it.")
     assert _ends_without_action("Something went wrong on the site. Look at it and read what it says.")
-    assert not _ends_without_action("The page didn't move on. Check it in the browser window, then press Resume.")
+    assert not _ends_without_action("The page didn't move on. Check it in the desk's browser window, then press Resume.")
     assert not _ends_without_action("The page didn't move on: {}.")  # (the action is where the {} is built)
+
+
+def _said(tree: ast.AST) -> list[tuple[int, str]]:
+    """Every text the driver may say (its strings, an f-string's own words), docstrings left out."""
+    docs = {id(n.value) for n in ast.walk(tree) if isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant)}
+    out = []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docs:
+            out.append((n.lineno, n.value))
+        elif isinstance(n, (ast.JoinedStr, ast.BinOp)):
+            out.append((n.lineno, _words(n)))
+    return out
+
+
+def test_the_window_has_one_name_and_so_has_i_submitted_it():
+    """The review of Oct 18 (U12): the window the desk fills applications in was "the automation browser window" in
+    the page's footer, "the browser window" on the cards and "the browser" in other stops. It's "the desk's browser
+    window" everywhere; and the card's button the person presses after sending an application on the site themselves
+    is "I submitted it myself", never "I submitted it" or "I submitted it already"."""
+    said = _said(ast.parse(PIPELINE.read_text(encoding="utf-8")))
+    other = [(line, text[:120]) for line, text in said
+             if re.search(r"automation browser|(?<!desk's )\bbrowser window|\bin the browser\b(?! window)", text)]
+    assert not other, other
+    labels = [(line, text[:120]) for line, text in said if re.search(r"I submitted it(?! myself)", text)]
+    assert not labels, labels
+    desk = (PIPELINE.parent / "static" / "desk.html").read_text(encoding="utf-8")
+    assert not re.search(r"automation browser|(?<!desk's )\bbrowser window", desk)
+    assert not re.search(r">I submitted it(?! myself)|\"I submitted it(?! myself)", desk)
