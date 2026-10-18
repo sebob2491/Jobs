@@ -1,0 +1,23 @@
+{
+  "page": "form",
+  "next": "Next",
+  "captcha": false,
+  "security_asked": false,
+  "account_and_application": false,
+  "job_search": false,
+  "fields": {
+    "*First Name: (text)": "filled by first_name",
+    "Middle Name: (text)": "skipped",
+    "*Last Name: (text)": "filled by last_name",
+    "*Phone: (text)": "filled by phone",
+    "*Email: (text)": "filled by email",
+    "*Address 1 (text)": "filled by address1",
+    "Address 2 (text)": "skipped",
+    "*City/Town (text)": "filled by city",
+    "State/Province (combobox)": "filled by state",
+    "*Zip Code (text)": "filled by postal",
+    "Country (combobox)": "filled by country",
+    "Choose File (file)": "filled by documents.resume",
+    "Hear more about career opportunities (checkbox)": "skipped"
+  }
+}

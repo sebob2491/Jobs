@@ -13,8 +13,9 @@ Companies without a search API get a lighter check of their careers page.
 With --pipeline it instead runs the Job Desk's one-button pipeline on one posting per
 company: through Apply, sign-in pages (where it stops), every form step and the review
 page. Questions the fake profile can't answer get throwaway answers for that run only.
-With --fixtures too, a page it stopped on with questions or a problem becomes a test
-fixture (tests/fixtures/live/pipeline-<company>).
+With --fixtures too, the page it stopped on (wherever it didn't reach the review page) becomes a test
+fixture (tests/fixtures/live/pipeline-<company>), with what the desk decides on it
+(pipeline-<company>.decision.json), which tests/test_live_fixtures.py decides again offline.
 
 --parallel N runs N groups of employers at once, each in a process (and browser) of its
 own; every site is still visited once. --shard I/N runs only the I-th of N groups.
@@ -117,6 +118,8 @@ FAKE_PROFILE: dict[str, Any] = {
 (_HOME / "profile.yaml").write_text(yaml.safe_dump(FAKE_PROFILE), encoding="utf-8")
 
 from job_apply import server  # noqa: E402
+from job_apply import fixtures as fixture_files  # noqa: E402
+from job_apply.config import Profile  # noqa: E402
 from job_apply.fixtures import convert  # noqa: E402
 from job_apply.postings import FetchError, Posting, fetch_posting, finalize, parse_html  # noqa: E402
 from job_apply.search import title_matches  # noqa: E402
@@ -327,6 +330,30 @@ def make_fixture(snapshot: Path, name: str, out: Path) -> str:
     return name
 
 
+def stopped_short(rec: dict[str, Any]) -> bool:
+    """A pipeline record whose last round didn't reach the review page (whatever stopped it: questions, a sign-in, a
+    bot check, a crash's last round): its page is captured with --fixtures (one page an employer)."""
+    rounds = rec.get("rounds") or []
+    return bool(rounds) and rounds[-1].get("status") != "ready"
+
+
+async def decide_fixture(name: str, out: Path, last: dict[str, Any] | None = None) -> None:
+    """Decision replay: the scrubbed page `name` (make_fixture's) opened, and what the desk decides on it
+    (job_apply.fixtures.decide, for the live check's applicant) written beside its expect.json as
+    <name>.decision.json, with the run's own need and reason there (`last`: its last round), a copy in out/fixtures
+    too. tests/test_live_fixtures.py decides it again offline. It takes the browser's tab to the saved page."""
+    page = FIXTURE_DIR / f"{name}.html"
+    data, text = await fixture_files.read_saved(server, page)
+    decision = fixture_files.decide(data, text, fixture_files.replay_profile(_HOME / "replay"))
+    if last is not None:
+        decision["run"] = {"need": last.get("need"), "reason": str(last.get("reason") or "")[:80]}
+    path = fixture_files.write_decision(FIXTURE_DIR / f"{name}{fixture_files.DECISION_SUFFIX}", decision,
+                                        fixture_files.personal_strings(Profile.load()))
+    path.write_text(_mask(path.read_text(encoding="utf-8")), encoding="utf-8")
+    (out / "fixtures").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(path, out / "fixtures" / path.name)
+
+
 def _save(path: Path, text: str) -> None:
     """A file the run writes, with the test identity's email and passwords masked, as they are
     in everything it prints."""
@@ -488,6 +515,10 @@ async def check_company(company: dict[str, Any], out: Path, fixtures: bool, rec:
     rec["snapshot_kb"] = sum(p.stat().st_size for p in dest.iterdir()) // 1024
     if fixtures and form["fields"]:
         rec["fixture"] = make_fixture(dest, f"live-{slug(company['name'])}", out)
+        try:
+            await decide_fixture(rec["fixture"], out)
+        except Exception as e:  # (the fixture stands without it)
+            rec["decision_error"] = f"{type(e).__name__}: {str(e)[:200]}"
 
 
 # Career pages whose job data comes from a call we haven't pinned down yet: record what
@@ -2229,13 +2260,19 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                 live_identity.mask_files(dest, _mask)
             if INBOX_IN_PROFILE:
                 live_identity.drop_images(dest)
-            if fixtures and (rec.get("rounds") or [{}])[-1].get("need") in ("questions", "stuck"):
-                # the page it stopped on, as a test fixture (the fake applicant's details only)
+            if fixtures and stopped_short(rec):
+                # the page it stopped on, whatever the stop, as a test fixture (the fake applicant's details only),
+                # and what the desk decides on it (decide_fixture, below)
                 rec["fixture"] = make_fixture(dest, f"pipeline-{slug(company['name'])}", out)
         except Exception as e:  # the record matters more than the snapshot
             rec["snapshot_error"] = f"{type(e).__name__}: {str(e)[:200]}"
         if run is not None and (rec.get("rounds") or [{}])[-1].get("status") != "ready":
             rec["final_form"] = await final_form()  # (after the snapshot: reading lists opens them)
+        if rec.get("fixture"):  # (after the final form's read too: it opens the saved page in the job's tab)
+            try:
+                await decide_fixture(rec["fixture"], out, rec["rounds"][-1])
+            except Exception as e:  # (the fixture stands without it)
+                rec["decision_error"] = f"{type(e).__name__}: {str(e)[:200]}"
         await server.close_browser()
 
 

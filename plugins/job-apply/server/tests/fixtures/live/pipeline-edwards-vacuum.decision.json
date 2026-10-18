@@ -1,0 +1,22 @@
+{
+  "page": "form",
+  "next": null,
+  "captcha": false,
+  "security_asked": false,
+  "account_and_application": false,
+  "job_search": true,
+  "fields": {
+    "Language (listbox)": "skipped",
+    "Keywords (text)": "skipped",
+    "Select one or more options (text)": "skipped",
+    "Requisition ID (text)": "skipped",
+    "Select one or more options (text) #2": "skipped",
+    "Select one or more options (text) #3": "skipped",
+    "Select one or more options (text) #4": "skipped",
+    "Select one or more options (text) #5": "skipped",
+    "Select one or more options (text) #6": "skipped",
+    "Select one or more options (text) #7": "skipped",
+    "Exact Match (checkbox)": "skipped",
+    "Keyword search options (radio_group)": "skipped"
+  }
+}

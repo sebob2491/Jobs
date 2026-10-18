@@ -117,7 +117,12 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   `--against <an earlier run's>` (a week before: artifacts are kept 7 days), a system twice as slow says so.
   `--import-fixtures <zip or folder> [--companies "A,B"] [--replace]` copies the scrubbed pages a run
   stopped on into `tests/fixtures/live` (one already there stays unless replaced), so the offline tests
-  check them; look each over before committing it (the repo is public).
+  check them; look each over before committing it (the repo is public). Each page comes with its
+  `<name>.decision.json` (what the desk decided there: the page's kind, the button it would press, the
+  CAPTCHA, security-question, account and job-search reads, each box's filled/asked/skipped and rule), and
+  `test_live_fixtures.py::test_live_fixture_decides_the_same` decides it again offline, naming the page and the
+  key that changed. `--replace` is how an intended change is accepted (a run's new capture of the page); for a
+  page no run has captured again, `JOB_APPLY_REDECIDE=1` on that test writes its decisions again (look at the diff).
 - A probe of a few employers on GitHub (where the test identity's secrets are): run the live-nightly
   workflow by hand with `companies` (and `checks`, e.g. `accounts`). It runs only those, in a few minutes,
   and isn't compared or written to the issue: read its artifacts with `nightly_summary.py --artifacts`.
@@ -131,6 +136,9 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   The workflow queues runs, never two at once (one inbox). A routine dispatches the daily run instead of the
   schedule; a scheduled run that comes within 12 hours of a full run skips itself.
 - Plugin manifests: `claude plugin validate --strict .`, plus the same for each plugin folder.
+- The plugin as a person installs it: `uv run --no-project python scripts/mcp_handshake.py --install --doctor`
+  (CI's `install and start` jobs): installs it with the claude CLI in a temporary home, starts its MCP server as
+  `.mcp.json` says and lists its tools, then runs the doctor. Without `--install` it checks this checkout's folder.
 
 ## Development practices
 

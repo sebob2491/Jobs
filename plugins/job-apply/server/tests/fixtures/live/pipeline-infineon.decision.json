@@ -1,0 +1,28 @@
+{
+  "page": "form",
+  "next": null,
+  "captcha": false,
+  "security_asked": false,
+  "account_and_application": false,
+  "job_search": false,
+  "fields": {
+    "Preferred location for Engineer / Senior Engineer Product Engineering (combobox)": "filled by preferred_location",
+    "Accepted file format: doc, docx or pdf (file)": "filled by documents.resume",
+    "First Name (text)": "filled by first_name",
+    "Last Name (text)": "filled by last_name",
+    "Email (text)": "filled by email",
+    "Country code (combobox)": "filled by phone_code",
+    "Phone Number (text)": "filled by phone",
+    "Gender (combobox)": "filled by gender",
+    "Country of Residence (combobox)": "filled by country",
+    "Language of Application (combobox)": "asked",
+    "Preferred Start Date (combobox)": "skipped",
+    " (file)": "skipped",
+    "Salary Expectation (text)": "skipped",
+    "How did you hear about us? (combobox)": "filled by how_heard",
+    "Identity Type (combobox)": "asked",
+    "Unique Identification Number (text)": "asked",
+    "What is your expected fixed annual salary? (text)": "asked",
+    "Save my answers for future applications (checkbox)": "skipped"
+  }
+}

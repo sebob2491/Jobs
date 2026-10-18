@@ -11,6 +11,7 @@ output for other personal data before committing it.
 from __future__ import annotations
 
 import argparse
+import copy
 import functools
 import json
 import re
@@ -546,6 +547,139 @@ def convert(snapshot: Path, name: str, out_dir: Path = DEFAULT_DIR, prof: Profil
                            encoding="utf-8")
     written.append(expect_path)
     return written
+
+
+# Decision replay (a page's <name>.decision.json): what the desk decides on a saved page, recorded by the live check
+# (scripts/live_smoke.py --fixtures) and decided again offline by tests/test_live_fixtures.py, so a change to the
+# pipeline or the answer rules that decides otherwise on a page a nightly stopped on is seen. Scripts are taken out
+# of the saved pages, so what a site draws with them isn't replayed: only what the saved HTML shows.
+DECISION_SUFFIX = ".decision.json"
+# The keys compared (the "run" entry is what the live run itself said there, kept to read, not decided again)
+DECISION_KEYS = ("page", "next", "captcha", "security_asked", "account_and_application", "job_search", "fields")
+REPLAY_RESUME = "jobdesk-test-resume.pdf"  # (live_identity.RESUME_NAME: the run's own test resume's name)
+# The applicant the decisions are made for: the live check's technician (live_smoke.FAKE_PROFILE, which
+# tests/test_live_fixtures.py keeps this the same as) with a fixed address and a test resume of its own
+REPLAY_PROFILE: dict[str, Any] = {
+    "personal": {
+        "first_name": "Testy", "last_name": "McTestface", "email": "testy.mctestface@example.com",
+        "phone": "480-555-0199", "phone_country_code": "+1",
+        "address": {"line1": "175 S Arizona Ave", "city": "Chandler", "state": "AZ", "postal_code": "85225",
+                    "country": "United States"},
+        "linkedin_url": "https://www.linkedin.com/in/example-test-profile", "drivers_license": True,
+    },
+    "documents": {"resume": None},
+    "work_authorization": {"authorized_to_work": True, "requires_sponsorship": False, "us_person": True,
+                           "us_citizen": True, "over_18": True},
+    "preferences": {"how_did_you_hear": "Company Website", "willing_to_relocate": True,
+                    "willing_to_travel": "Yes", "flexible_schedule": True,
+                    "locations": ["Phoenix, AZ", "Chandler, AZ", "Tempe, AZ"]},
+    "eeo": {"gender": "Decline to self-identify", "hispanic_latino": "Decline to self-identify",
+            "race": "Decline to self-identify", "veteran": "I don't wish to answer",
+            "disability": "I do not want to answer"},
+    "work_history": [{"title": "Equipment Technician", "company": "Example Fab", "location": "Chandler, AZ",
+                      "start": "2021-03", "end": "present",
+                      "description": "Maintained and repaired process equipment; ran preventive maintenance."}],
+    "education_history": [{"school": "Arizona State University", "degree": "Bachelor of Science",
+                           "major": "Electrical Engineering", "start": 2016, "end": 2020}],
+    "education": {"highest_degree": "Bachelor's Degree",
+                  "degrees_earned": [{"level": "high_school"},
+                                     {"level": "bachelor", "field": "Electrical Engineering"}]},
+    "settings": {"submit_mode": "dry_run", "browser_channel": "chromium", "headless": True, "accept_cookies": True},
+}
+
+
+def replay_profile(folder: Path) -> Profile:
+    """REPLAY_PROFILE, with its test resume written into `folder` (the rules answer a file box only with a file
+    that's there)."""
+    resume = folder / REPLAY_RESUME
+    if not resume.exists():
+        folder.mkdir(parents=True, exist_ok=True)
+        resume.write_bytes(b"%PDF-1.4\n% a test resume for replaying the desk's decisions\n")
+    data = copy.deepcopy(REPLAY_PROFILE)
+    data["documents"] = {"resume": str(resume)}
+    return Profile(data)
+
+
+async def read_saved(srv: Any, html: Path) -> tuple[dict[str, Any], str]:
+    """A saved page opened in the server's browser and read as the Job Desk reads a page (Applier._look): the form
+    without its lists' choices, the first 4000 characters of its words, and whether a CAPTCHA's pictures show."""
+    await srv.browser.goto(html.resolve().as_uri())
+    data = await srv.inspect_form(include_dropdown_options=False)
+    text = await srv.page_text(4000)
+    data["challenge"] = await srv.browser.challenge_showing()
+    return data, text
+
+
+def field_decision(field: dict[str, Any], prof: Profile, file_inputs: int = 1) -> str:
+    """What the answer rules do with a box (autofill.resolve_field, for no job in particular): "filled by <rule>",
+    "skipped by <rule>" (the rule leaves it empty on purpose), "asked" (no answer, and it's required: the person's)
+    or "skipped" (no answer, and it isn't required)."""
+    from .autofill import SKIP, resolve_field
+
+    ans = resolve_field(field, prof, {}, file_inputs)
+    if ans is None:
+        return "asked" if field.get("required") else "skipped"
+    if ans.value in (None, "", SKIP):
+        return f"skipped by {ans.rule}"
+    return f"filled by {ans.rule}"
+
+
+def decide(data: dict[str, Any], text: str, prof: Profile) -> dict[str, Any]:
+    """What the desk decides on a page it has read (read_saved's `data` and `text`): the page's kind
+    (pipeline.classify), the button it would press on (pick_next's), whether a CAPTCHA is on it, security questions
+    are asked, an account form is the whole application, or it's a job search, and each box's answer (field_decision),
+    by "<label> (<kind>)", numbered from the second of the same ("#2")."""
+    from . import pipeline
+
+    kind = pipeline.classify(data, text)
+    step = pipeline.pick_next(data.get("actions") or [], kind == "form")
+    fields = data.get("fields") or []
+    file_inputs = sum(1 for f in fields if f.get("kind") == "file")
+    decided: dict[str, str] = {}
+    for f in fields:
+        key = f"{str(f.get('label') or f.get('name') or '').strip()} ({f.get('kind')})"
+        n, base = 1, key
+        while key in decided:
+            n += 1
+            key = f"{base} #{n}"
+        decided[key] = field_decision(f, prof, file_inputs)
+    return {
+        "page": kind,
+        "next": str(step.get("text") or "").strip() if step else None,
+        "captcha": pipeline._captcha_on(data),
+        "security_asked": pipeline._security_asked(data),
+        "account_and_application": pipeline._account_and_application(data),
+        "job_search": pipeline._job_search(data),
+        "fields": decided,
+    }
+
+
+def decision_differences(name: str, was: dict[str, Any], now: dict[str, Any]) -> list[str]:
+    """Where a page's decision now differs from the one recorded, each said with the page and the key."""
+    out = []
+    for key in DECISION_KEYS:
+        if key == "fields":
+            old, new = was.get("fields") or {}, now.get("fields") or {}
+            for label in sorted(set(old) | set(new)):
+                if old.get(label) != new.get(label):
+                    out.append(f"{name}: fields[{label!r}]: was {old.get(label, '(no such box)')!r}, "
+                               f"now {new.get(label, '(no such box)')!r}")
+        elif was.get(key) != now.get(key):
+            out.append(f"{name}: {key}: was {was.get(key)!r}, now {now.get(key)!r}")
+    return out
+
+
+def scrubbed_decision(decision: dict[str, Any], secrets: list[str] | None = None) -> dict[str, Any]:
+    """A decision as its file keeps it: `secrets` and anyone else's details taken out, as from its expect.json (so one
+    decided again offline is compared as it would be written)."""
+    return json.loads(scrub_others(redact(json.dumps(decision, ensure_ascii=False), secrets or [])))
+
+
+def write_decision(path: Path, decision: dict[str, Any], secrets: list[str] | None = None) -> Path:
+    """A page's decision written beside its expect.json (scrubbed_decision)."""
+    path.write_text(json.dumps(scrubbed_decision(decision, secrets), indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8")
+    return path
 
 
 def main(argv: list[str] | None = None) -> int:

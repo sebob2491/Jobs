@@ -128,18 +128,31 @@ def test_a_runs_scrubbed_stop_pages_are_imported_into_the_tests(tmp_path):
     run_dir = tmp_path / "live-accounts-0" / "shard-1" / "fixtures"
     run_dir.mkdir(parents=True)
     for name, body in (("pipeline-kla.html", "<p>new</p>"), ("pipeline-kla.frame-1.html", "<p>frame</p>"),
-                       ("pipeline-kla.expect.json", '{"fields": []}'), ("pipeline-onsemi.html", "<p>o</p>"),
-                       ("pipeline-onsemi.expect.json", '{"fields": []}')):
+                       ("pipeline-kla.expect.json", '{"fields": []}'),
+                       ("pipeline-kla.decision.json", '{"page": "form"}'),
+                       ("pipeline-onsemi.html", "<p>o</p>"), ("pipeline-onsemi.expect.json", '{"fields": []}'),
+                       ("pipeline-onsemi.decision.json", '{"page": "sign_in"}')):
         (run_dir / name).write_text(body, encoding="utf-8")
     into = tmp_path / "live"
     into.mkdir()
-    (into / "pipeline-onsemi.expect.json").write_text('{"old": true}', encoding="utf-8")
+    for name, body in (("pipeline-onsemi.expect.json", '{"old": true}'),
+                       ("pipeline-onsemi.decision.json", '{"old": 1}'),
+                       ("pipeline-onsemi.frame-9.html", "<p>an old frame</p>"), ("pipeline-onsemi-2.html", "<p>2</p>")):
+        (into / name).write_text(body, encoding="utf-8")
     assert ns.import_fixtures(tmp_path, ["kla"], into) == ["pipeline-kla"]
-    assert sorted(p.name for p in into.iterdir()) == ["pipeline-kla.expect.json", "pipeline-kla.frame-1.html",
-                                                      "pipeline-kla.html", "pipeline-onsemi.expect.json"]
+    assert sorted(p.name for p in into.iterdir()) == [
+        "pipeline-kla.decision.json", "pipeline-kla.expect.json", "pipeline-kla.frame-1.html", "pipeline-kla.html",
+        "pipeline-onsemi-2.html", "pipeline-onsemi.decision.json", "pipeline-onsemi.expect.json",
+        "pipeline-onsemi.frame-9.html"]
     assert ns.import_fixtures(tmp_path, [], into) == []  # (onsemi's is there already)
+    assert (into / "pipeline-onsemi.decision.json").read_text(encoding="utf-8") == '{"old": 1}'
+    # replaced: the run's files alone (what the desk decides there now accepted), never another page's
     assert ns.import_fixtures(tmp_path, [], into, replace=True) == ["pipeline-kla", "pipeline-onsemi"]
     assert (into / "pipeline-onsemi.expect.json").read_text(encoding="utf-8") == '{"fields": []}'
+    assert (into / "pipeline-onsemi.decision.json").read_text(encoding="utf-8") == '{"page": "sign_in"}'
+    assert sorted(p.name for p in into.glob("pipeline-onsemi*")) == [
+        "pipeline-onsemi-2.html", "pipeline-onsemi.decision.json", "pipeline-onsemi.expect.json",
+        "pipeline-onsemi.html"]
 
 
 def test_the_employers_the_desk_goes_all_the_way_at_are_the_accounts_checks_finished_ones():

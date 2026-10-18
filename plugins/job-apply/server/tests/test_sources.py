@@ -249,8 +249,8 @@ def test_each_rule_of_the_fixture_gate_finds_what_its_for():
 
 def test_every_fixture_is_used():
     """A captured page or a mock form nobody tests is weight the public repo carries for nothing: each file under
-    tests/fixtures is named in a test, is a page test_live_fixtures.py loads by its .expect.json, or is linked
-    from another fixture (a frame of a captured page, a page a mock site leads to)."""
+    tests/fixtures is named in a test, is a page test_live_fixtures.py loads by its .expect.json (or .decision.json),
+    or is linked from another fixture (a frame of a captured page, a page a mock site leads to)."""
     tests_text = "\n".join(p.read_text(encoding="utf-8") for p in sorted((SERVER / "tests").glob("*.py")))
     files = [p for p in sorted(FIXTURES.rglob("*")) if p.is_file()]
     pages = {p.name: p.read_text(encoding="utf-8", errors="replace") for p in files if p.suffix == ".html"}
@@ -258,7 +258,8 @@ def test_every_fixture_is_used():
     def used(path: Path) -> bool:
         if path.name in tests_text or path.stem in tests_text:
             return True
-        if path.name.endswith(".expect.json") or path.with_name(path.stem + ".expect.json").exists():
+        if path.name.endswith((".expect.json", ".decision.json")) \
+                or path.with_name(path.stem + ".expect.json").exists():
             return True
         return any(path.name in text for name, text in pages.items() if name != path.name)
 
