@@ -118,12 +118,14 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   has an account, or where the password still doesn't sign in after Create Account. It presses
   Create Account once per job, and a sign-in with a refused password twice at most (once more
   after a reset or an account it made), so the account isn't locked; then the desk card says what
-  the site said. It prefers a reset email that came after it asked for the reset (an older one only
-  after a short wait, the two clocks may be apart), and opens each reset link once. Where the reset
+  the site said. It prefers a reset email that came after it asked for the reset (one from just
+  before only after a short wait, the two clocks may be apart; one from well before, an earlier
+  reset's, never), and opens each reset link once. Where the reset
   page says its link expired or the password was used before, or the only email's link was opened
   already, or the saved password still doesn't sign in after the reset, the job stops on a sign-in
   card that says so, and no new account is made there. A Resume the user presses on that sign-in card tries the saved password once more
-  (after they reset it to that by hand, say); a Resume on any other card doesn't. An account
+  (after they reset it to that by hand, say; from a spent link's page the desk goes back to the
+  sign-in first); a Resume on any other card doesn't. An account
   there from before that was never verified (the site refuses the sign-in with "Verify your account
   before you sign in") isn't reset: with the email app password saved the desk presses the site's
   "Resend Account Verification" once and opens the new email's link, then signs in; without it the

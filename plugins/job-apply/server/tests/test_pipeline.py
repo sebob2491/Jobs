@@ -2592,9 +2592,10 @@ def test_a_new_password_the_site_never_takes_is_left_to_the_person(srv, monkeypa
     assert "set your saved password as" not in "\n".join(r.log), r.log
 
 
-def _reset_through(monkeypatch, job_apply_home, srv, link: str) -> Run:
+def _reset_through(monkeypatch, job_apply_home, srv, link: str, resumes: int = 0) -> Run:
     """A job whose saved password the site refuses, with the inbox watched: the reset asked for, its email's link
-    (`link`) opened, and the job run until it stops for the person or is ready."""
+    (`link`) opened, and the job run until it stops for the person or is ready; then `resumes` times, the person's
+    Resume and the same again (the log says what each stop said: "stopped: ...")."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
     saved_password(monkeypatch)
@@ -2615,6 +2616,12 @@ def _reset_through(monkeypatch, job_apply_home, srv, link: str) -> Run:
             r = applier.enqueue(job["id"])
             await until(lambda: r.status == "needs_you" and r.need != "email_code" or r.status == "ready",
                         timeout=90, about=state(r))
+            for _ in range(resumes):
+                r.log.append(f"stopped: {r.reason}")
+                applier.resume(job["id"])
+                await until(lambda: r.status not in ("queued", "running"), timeout=90, about=state(r))
+                await until(lambda: r.status == "needs_you" and r.need != "email_code" or r.status == "ready",
+                            timeout=90, about=state(r))
             return r
         finally:
             await applier.stop()
@@ -2662,6 +2669,21 @@ def test_a_reset_link_that_says_its_spent_as_it_opens_is_said_and_makes_no_accou
     assert "saying “This link has expired" in r.reason and "couldn't find the button" not in r.reason, r.reason
     assert "set your saved password as" not in log and "opened Create Account" not in log, r.log
     assert "create your account" not in log, r.log
+
+
+def test_resume_on_a_spent_reset_links_card_goes_back_to_the_sign_in(srv, monkeypatch, job_apply_home):
+    """The re-review of 0.3.209: the card for a spent reset link asks the person to set the password through a new
+    email's link, which opens in their own browser; the desk's tab stayed on the spent page, so every Resume read it
+    again and said the same card. Resume goes back to the sign-in and tries the saved password once; refused there,
+    it's said, and never a Create Account."""
+    r = _reset_through(monkeypatch, job_apply_home, srv, fixture_url("site/reset-password.html") + "?token=abc&gone",
+                       resumes=1)
+    log = "\n".join(r.log)
+    first = next(i for i, line in enumerate(r.log) if line.startswith("stopped: The password reset link from your email"))
+    assert "pressed “Sign In” with your saved password" in r.log[first:], r.log
+    assert r.need == "sign_in" and r.reason.startswith("Your saved password still doesn't sign in on"), \
+        (r.need, r.reason, r.log)
+    assert "opened Create Account" not in log and "create your account" not in log, r.log
 
 
 def test_a_sign_in_refused_after_the_reset_link_opened_makes_no_account(srv, monkeypatch, job_apply_home):
@@ -3248,6 +3270,13 @@ def test_the_desk_going_on_with_a_job_the_person_may_have_worked_in_says_so(srv,
     applier.runs[jobs[3]] = Run(jobs[3], "FSE", "D", status="needs_you", need="stuck", started=True)
     assert desk.apply(urls=[], job_ids=[jobs[3], jobs[4]], submit=False)[0] == [jobs[3], jobs[4]]
     assert [applier.runs[j].in_their_hands for j in jobs[3:]] == [True, False]
+
+    # (the re-review: a questions card answered on the desk, its tab the person's while the card was up)
+    asked = srv.add_job(url="https://f.example/job", title="FSE", company="F")["job"]["id"]
+    q = applier.runs[asked] = Run(asked, "FSE", "F", status="needs_you", need="questions", started=True,
+                                  questions=[{"label": "Shift preference?", "kind": "text", "id": "q1"}])
+    desk.answer(asked, [{"label": "Shift preference?", "value": "Days", "remember": False}])
+    assert q.in_their_hands and q.status == "queued", (q.status, q.log)
 
 
 @pytest.mark.parametrize("slow", [1, 3])
@@ -13400,12 +13429,23 @@ def test_a_reset_link_opened_once_is_never_opened_again(srv, monkeypatch):
 def test_a_reset_email_from_before_the_request_waits_a_moment_for_a_newer_one(srv, monkeypatch):
     """The review of 0.3.209: a reset's email is looked for as far back as a code's (the two clocks can be apart), and
     one from before the desk asked for the reset, by this computer's clock, may be an earlier reset's, its link spent
-    (run 136: the first pass's, opened again, set nothing). A newer one is waited for a moment, and used when it comes;
-    the older one is never opened then."""
+    (run 136: the first pass's, opened again, set nothing). One from a little before is this one's with the clocks apart:
+    a newer one is waited for a moment, and used when it comes. One from further back (RESET_CLOCK_SKEW) is an earlier
+    reset's: never opened, however long nothing newer comes (the re-review: after the wait it was), and its link was the
+    account's, so the wait running out is said, never taken for no email (reset_spent)."""
     inbox: list = []
     applier, (r, _), asked, opened = _waiting_on_resets(srv, monkeypatch, inbox)
     stale = "https://kla.wd1.myworkdayjobs.com/Search/passwordReset?token=stale"
     inbox.append(pipeline.mailbox.Found("reset", stale, "workday.kla.com", r.reset_at - 60))
+    run(applier._check_mail(r))
+    assert opened == [] and not r.mail_done and "an earlier reset's" in r.mail_last, r.mail_last
+    r.reset_at -= pipeline.RESET_FRESH_WAIT  # (the moment gone by, and nothing newer)
+    inbox[-1] = pipeline.mailbox.Found("reset", stale, "workday.kla.com", r.reset_at - 60)
+    run(applier._check_mail(r))
+    assert opened == [] and not r.mail_done and r.reset_spent, (opened, r.mail_last)
+    r.reset_at += pipeline.RESET_FRESH_WAIT
+    near = "https://kla.wd1.myworkdayjobs.com/Search/passwordReset?token=near"
+    inbox.append(pipeline.mailbox.Found("reset", near, "workday.kla.com", r.reset_at - 20))
     run(applier._check_mail(r))
     assert opened == [] and not r.mail_done and "a newer one is waited for" in r.mail_last, r.mail_last
     fresh = "https://kla.wd1.myworkdayjobs.com/Search/passwordReset?token=fresh"
@@ -13456,7 +13496,13 @@ def test_a_reset_email_that_looks_early_by_this_computers_clock_is_used_after_th
     ("You can't reuse a recent password.", True),
     ("You cannot use a password that you have used before.", True),
     ("Password cannot be the same as your previous 5 passwords.", True),
-    ("New password must be different from your current password.", True)])
+    ("New password must be different from your current password.", True),
+    # (the re-review: help that only says what to do if it were, and three more refusals)
+    ("If this link has expired, request a new password reset from the sign-in page.", False),
+    ("Note: the link may be invalid in some mail apps; copy it into your browser.", False),
+    ("The new password cannot be the same as a previous password.", True),
+    ("This request has expired.", True),
+    ("Password Reset Failed", True)])
 def test_what_a_reset_page_says_of_a_password_it_didnt_set(said, refused):
     """Only words said of a link, a token, a reset or a password, and never the site's password rules shown beside its
     boxes (but in an alert: test_a_reset_alert_that_says_the_rules_is_a_refusal)."""
