@@ -15,18 +15,20 @@ concurrency:
 
 jobs:
   tests:
-    # the suite in four parts on separate machines (tests/conftest.py splits it by test id): two parts took
-    # 10 to 15 minutes each by Oct 2026, the wait on every pull request
-    name: tests (Python ${{ matrix.python }}, part ${{ matrix.part }}/4)
+    # the suite in six parts on separate machines (tests/conftest.py splits it by test id): two parts took
+    # 10 to 15 minutes each by Oct 2026, the wait on every pull request, and four took 5 to 6 (the review of Oct 18).
+    # 12 jobs here, 4 on Windows (off the merge's path, so still four parts) and the manifests' make 17, under the 20
+    # jobs the free plan runs at once.
+    name: tests (Python ${{ matrix.python }}, part ${{ matrix.part }}/6)
     runs-on: ubuntu-latest
-    # (each part takes two to six minutes; a browser that hangs would otherwise hold the runner for the six hours
+    # (each part takes a few minutes; a browser that hangs would otherwise hold the runner for the six hours
     # GitHub allows, with the merge waiting on it)
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         python: ["3.10", "3.13"]
-        part: [1, 2, 3, 4]
+        part: [1, 2, 3, 4, 5, 6]
     defaults:
       run:
         working-directory: plugins/job-apply/server
@@ -57,9 +59,11 @@ jobs:
       # (the 25 slowest tests named at the end of each part, so a test that grows slow shows: one of 20 s or more
       # gets @pytest.mark.slow. The part's slow tests start first and xdist hands out the tests one at a time, so
       # none is left to run on alone at the end: see pytest_collection_modifyitems in tests/conftest.py)
-      - run: uv run --frozen pytest -q -n auto --maxschedchunk=1 --durations=25
+      # (-n 8 on the runner's 4 cores: the suite waits on pages far more than it computes, 7 to 15% of the CPU time
+      # its workers' wall time allows, so more workers than cores finish sooner: the review of Oct 18)
+      - run: uv run --frozen pytest -q -n 8 --maxschedchunk=1 --durations=25
         env:
-          JOB_APPLY_TEST_SHARD: ${{ matrix.part }}/4
+          JOB_APPLY_TEST_SHARD: ${{ matrix.part }}/6
           JOB_APPLY_SLOW_FIRST: "1"
 
   windows:
@@ -93,7 +97,7 @@ jobs:
       - run: uv run --frozen playwright install chromium
       - name: The tests find the browser (else every browser test would be skipped, not failed)
         run: uv run --frozen python -c "import sys; sys.path.insert(0, 'tests'); from conftest import browser_available; sys.exit(not browser_available())"
-      - run: uv run --frozen pytest -q -n auto --maxschedchunk=1 --durations=25
+      - run: uv run --frozen pytest -q -n 8 --maxschedchunk=1 --durations=25
         env:
           JOB_APPLY_TEST_SHARD: ${{ matrix.part }}/4
           JOB_APPLY_SLOW_FIRST: "1"

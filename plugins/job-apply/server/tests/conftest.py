@@ -341,7 +341,7 @@ def slow_first(items: list) -> list:
 
 
 def pytest_collection_modifyitems(config, items):
-    """JOB_APPLY_TEST_SHARD=1/4 runs only that part of the suite (CI runs the parts on separate
+    """JOB_APPLY_TEST_SHARD=1/6 runs only that part of the suite (CI runs the parts on separate
     machines). A test's part comes from its id, so every machine and xdist worker agrees.
 
     JOB_APPLY_SLOW_FIRST=1 then puts the part's slow tests first (after the split, so each test stays in its part),
