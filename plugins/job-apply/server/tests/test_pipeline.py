@@ -7723,6 +7723,194 @@ def test_the_saved_passwords_place_is_the_page_and_its_frames_on_its_own_system(
     assert [pipeline._frame_of({"id": i}) for i in ("pw", "f1-pw", "f12-b3", None)] == ["", "f1-", "f12-", ""]
 
 
+# An employer's careers page (made up) around a talent community widget's frame, then iCIMS' frame, with buttons of
+# its own ("Next", "Save Job", "Email me jobs like this"). Each page tells the test what was pressed there (POST
+# /__log on its own address): the test's handler keeps them, in order, as (host, what).
+EMPLOYER_SITE = "https://careers.examplefab.example"
+WIDGET_JOIN = "https://talent.examplewidget.example/join"
+_LOG_JS = """<script>
+  const log = (what) => fetch('/__log', {method: 'POST', body: what});
+</script>"""
+EMPLOYER_AROUND_ICIMS = _LOG_JS + """<h1>Field Service Technician</h1>
+<iframe id="widget" src="%s" width="500" height="220"></iframe>
+<iframe id="icims" width="700" height="420"></iframe>
+<p><button type="button" onclick="log('next')">Next</button>
+<button type="button" onclick="log('save-job')">Save Job</button>
+<button type="button" onclick="log('email-jobs')">Email me jobs like this</button></p>
+<script>document.getElementById('icims').src = '%s' + location.pathname + '/login' + location.search;</script>""" % (
+    WIDGET_JOIN, ICIMS_HOST)
+WIDGET_PAGE = _LOG_JS + """<h2>Join our talent community</h2>
+<form onsubmit="event.preventDefault(); log('widget-sign-up')">
+  <label for="wem">Email</label><input id="wem" type="email">
+  <label for="wpw">Create a password</label><input id="wpw" type="password">
+  <input id="wterms" type="checkbox" onchange="log('widget-terms')"><label for="wterms">I agree to the terms and conditions</label>
+  <button type="submit">Sign Up</button>
+</form>"""
+ICIMS_CREATE = _LOG_JS + """<h2>Create your account</h2>
+<form id="f" onsubmit="event.preventDefault(); log('account:' + terms.checked + ':' + (pw.value === pw2.value));
+                       location.href = location.pathname.replace(/login$/, 'questions');">
+  <label for="em">Email</label><input id="em" type="email" required>
+  <label for="fn">First Name</label><input id="fn" type="text" required>
+  <label for="ln">Last Name</label><input id="ln" type="text" required>
+  <label for="pw">Password</label><input id="pw" type="password" required>
+  <label for="pw2">Confirm Password</label><input id="pw2" type="password" required>
+  <input id="terms" type="checkbox" required><label for="terms">I agree to the Terms of Use</label>
+  <button type="submit">Create Account</button>
+</form>"""
+ICIMS_SIGN_IN = _LOG_JS + """<h2>Sign In</h2>
+<form id="f" onsubmit="event.preventDefault(); if (localStorage.getItem('reset')) { log('signed-in');
+                       location.href = location.pathname.replace(/login$/, 'questions'); }
+                       else document.getElementById('err').textContent = 'Invalid email or password.';">
+  <label for="em">Email</label><input id="em" type="email" required>
+  <label for="pw">Password</label><input id="pw" type="password" required>
+  <button type="submit">Sign In</button>
+</form>
+<div id="err" role="alert"></div>
+<a href="forgot">Forgot your password?</a>"""
+ICIMS_FORGOT = _LOG_JS + """<h2>Reset your password</h2>
+<form onsubmit="event.preventDefault(); log('reset-asked');
+                document.body.innerHTML = '<h2>Check your inbox</h2><p>We sent you an email with a link to reset your password.</p>';">
+  <label for="em">Email</label><input id="em" type="email" required>
+  <button type="submit">Send reset link</button>
+</form>"""
+ICIMS_NEW_PASSWORD = _LOG_JS + """<h2>Set a new password</h2>
+<form onsubmit="event.preventDefault(); log('reset-set'); localStorage.setItem('reset', '1');
+                location.href = location.pathname.replace(/new-password$/, 'login');">
+  <label for="np">New Password</label><input id="np" type="password" required>
+  <label for="np2">Confirm New Password</label><input id="np2" type="password" required>
+  <button type="submit">Save Password</button>
+</form>"""
+ICIMS_QUESTIONS = """<h2>Application questions</h2>
+<form onsubmit="event.preventDefault()">
+  <label for="q">Describe a repair you are proud of *</label><textarea id="q" required></textarea>
+  <button type="submit">Next</button>
+</form>"""
+
+
+async def _employer_around_icims(srv, icims: dict[str, str],
+                                 employer: str = EMPLOYER_AROUND_ICIMS) -> list[tuple[str, str]]:
+    """`employer` (EMPLOYER_AROUND_ICIMS) at any path of EMPLOYER_SITE, the widget, and `icims`' pages by the end of their path
+    (careers-examplefab.icims.com/jobs/<n>/<end>), in the desk's browser (routed: nothing leaves the machine). What
+    the pages say was pressed, in order."""
+    pressed: list[tuple[str, str]] = []
+
+    async def handler(route):
+        req = route.request
+        parts = urlparse(req.url)
+        if parts.path == "/__log":
+            pressed.append((parts.hostname or "", req.post_data or ""))
+            body = "{}"
+        elif req.url.startswith(EMPLOYER_SITE):
+            body = employer
+        elif req.url.startswith(WIDGET_JOIN):
+            body = WIDGET_PAGE
+        elif req.url.startswith(ICIMS_HOST + "/jobs/"):
+            body = icims.get(parts.path.rsplit("/", 1)[-1], "")
+        else:
+            body = ""
+        with contextlib.suppress(Exception):  # (a tab closed as the test ends)
+            await route.fulfill(status=200 if body else 404, content_type="text/html",
+                                body=body or "<html><body>not found</body></html>")
+
+    await srv.browser.page()
+    await srv.browser._ctx.route(lambda url: url.startswith("https://"), handler)
+    return pressed
+
+
+def _theirs(pressed: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """What was pressed anywhere but in iCIMS' frame: the employer's page's buttons, the widget's."""
+    return [p for p in pressed if not p[0].endswith("icims.com")]
+
+
+def test_a_framed_icims_create_account_leaves_the_page_and_a_widget_around_it_alone(srv, monkeypatch, job_apply_home):
+    """iCIMS' Create Account in its frame on an employer's page, a talent community widget's frame before it (its own
+    password box, terms box and "Sign Up"). With manage_accounts, the desk fills iCIMS' form, ticks iCIMS' own terms
+    and presses its Create Account: never the widget's terms box or Sign Up (_make_account read every frame's boxes and
+    buttons: the security review of the framed sign-in), nor the employer's own buttons."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=EMPLOYER_SITE + "/jobs/2002", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        pressed = await _employer_around_icims(srv, {"login": ICIMS_CREATE, "questions": ICIMS_QUESTIONS})
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=90, about=state(r))
+            widget = next(f for f in r.page.frames if f.url == WIDGET_JOIN)
+            return r, pressed, await widget.evaluate("() => [wem.value, wpw.value, wterms.checked]")
+        finally:
+            await applier.stop()
+
+    r, pressed, widget = run(go())
+    assert ("careers-examplefab.icims.com", "account:true:true") in pressed, (pressed, r.reason, r.log)
+    assert _theirs(pressed) == [], (pressed, r.log)
+    assert widget == ["", "", False], widget
+    assert any(line.startswith("pressed “Create Account” to create your account") for line in r.log), r.log
+
+
+@pytest.mark.slow
+def test_a_framed_icims_reset_presses_its_own_buttons_never_the_employers(srv, monkeypatch, job_apply_home):
+    """iCIMS' sign-in in its frame on an employer's page whose own buttons read "Next", "Save Job" and "Email me jobs like
+    this", a widget's frame before it. The saved password is refused; with the inbox watched the desk asks iCIMS for a
+    reset (its "Forgot your password?", then "Send reset link"), opens the emailed link (the employer's page again,
+    iCIMS' new-password form in its frame), and presses iCIMS' "Save Password". _ask_for_reset and _set_new_password took
+    their buttons from every frame and the page: the employer's "Next" (or "Email me jobs like this") for the reset's
+    Send, its "Save Job" for the new password's Save (the security review of the framed sign-in)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    manage_accounts(job_apply_home)
+    watched_inbox(monkeypatch, reset_link=EMPLOYER_SITE + "/jobs/2003?reset=abc")
+    job = srv.add_job(url=EMPLOYER_SITE + "/jobs/2003", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        # (the emailed link's page frames iCIMS' new-password form: the employer's page passes its query on. No widget
+        # here: its password box would make the reset's page one the desk doesn't fill in)
+        employer = EMPLOYER_AROUND_ICIMS.replace("'/login' + location.search",
+                                                 "(location.search ? '/new-password' : '/login') + location.search")
+        employer = employer.replace(f'<iframe id="widget" src="{WIDGET_JOIN}" width="500" height="220"></iframe>', "")
+        assert WIDGET_JOIN not in employer and "new-password" in employer
+        pressed = await _employer_around_icims(srv, {"login": ICIMS_SIGN_IN, "forgot": ICIMS_FORGOT,
+                                                     "new-password": ICIMS_NEW_PASSWORD, "questions": ICIMS_QUESTIONS},
+                                               employer)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running") and r.need != "email_code", timeout=120,
+                        about=state(r))
+            return r, pressed
+        finally:
+            await applier.stop()
+
+    r, pressed = run(go())
+    mine = [what for host, what in pressed if host.endswith("icims.com")]
+    assert mine[:3] == ["reset-asked", "reset-set", "signed-in"], (pressed, r.reason, r.log)
+    assert _theirs(pressed) == [], (pressed, r.log)
+    log = "\n".join(r.log)
+    assert "asked it to email a password reset" in log and "set your saved password as" in log, log
+
+
+def test_the_saved_passwords_place_is_where_a_password_is_saved(monkeypatch):
+    """_password_place: the page's own system's password where one is saved for it, else the first frame's whose system
+    has one saved, not merely the first frame on a system (a UKG Pro frame before iCIMS', only iCIMS' password saved).
+    With none saved, the first system's, as before (and nothing goes in)."""
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    monkeypatch.delenv("JOB_APPLY_SECRET_UKG_PASSWORD", raising=False)
+    monkeypatch.delenv("JOB_APPLY_SECRET_WORKDAY_PASSWORD", raising=False)
+    icims, ukg = ICIMS_HOST + "/jobs/2002/login", "https://recruiting.ultipro.com/EXA1000/JobBoard/x"
+    employer, workday = "https://careers.examplefab.example/jobs/2002", "https://examplefab.wd5.myworkdayjobs.com/x"
+    for page in (employer, workday):
+        assert pipeline._password_place({"url": page, "frame_urls": {"": page, "f1-": ukg, "f2-": icims}}) == (
+            "icims_password", {"f2-"}), page
+    assert pipeline._password_place({"url": employer, "frame_urls": {"f1-": ukg}}) == ("ukg_password", {"f1-"})
+    monkeypatch.setenv("JOB_APPLY_SECRET_WORKDAY_PASSWORD", "not-a-real-password-either")
+    assert pipeline._password_place({"url": workday, "frame_urls": {"": workday, "f2-": icims}}) == (
+        "workday_password", {""})
+
+
 def test_an_emailed_code_goes_only_into_this_jobs_own_frames(srv):
     """An emailed code's boxes (Applier._code_boxes): the tab's own, and a frame's on this job's own place (the iCIMS
     frame on the page it paused on, a frame from the employer's own site), never a frame from another site."""

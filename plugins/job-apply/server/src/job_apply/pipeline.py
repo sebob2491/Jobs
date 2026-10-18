@@ -5351,11 +5351,16 @@ class Applier:
         if _captcha_on(data) or _security_asked(data) and not _security_answered(data):
             return False
         srv = self.srv
+        form = data  # (the page as a whole: what _wait_for_account sees change)
+        # its boxes, buttons and statement: the saved password's own place's (_password_view), never another site's
+        # frame's around it (a talent community widget's terms box and "Sign Up" before iCIMS' frame)
+        data = _password_view(data)
         statement = _privacy_statement(data)
         if statement is not None:
             if not await self._accept_statement(run, data, statement):
                 return False
-            data, _ = await self._look(text=False)  # (as it is once accepted)
+            form, _ = await self._look(text=False)  # (as it is once accepted)
+            data = _password_view(form)
         terms = await self._said_terms(_terms_boxes(data))
         boxes = terms + _new_candidate_boxes(data, run.company) + _other_positions_boxes(data)
         own = [a for a in data.get("actions") or [] if a.get("account_form") or a.get("in_account_form")
@@ -5383,7 +5388,7 @@ class Applier:
         run.account_made = (f"created your account on {site} with {with_}" + (" and agreed to its terms"
                             if terms else "") + (" and accepted its data privacy statement" if statement else "")
                             + _manage_hint())
-        await self._wait_for_account(data)
+        await self._wait_for_account(form)
         return True
 
     async def _account_card(self, run: Run, data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -5446,20 +5451,21 @@ class Applier:
             deadline = time.monotonic() + ACCOUNT_STEP_WAIT
             while True:
                 now, _ = await self._look(text=False)
-                notice = _notice(now)
+                notice = _notice(_password_view(now))  # (the statement over the password's own place: _make_account)
                 if notice is not None or time.monotonic() > deadline:
                     break
                 await asyncio.sleep(0.5)
             if notice is not None or now.get("dialogs"):
                 break  # (a dialog of another sort opened: not pressed again over it)
-            link = next((a for a in now.get("actions") or [] if a.get("text", "").strip() == said), link)
+            link = next((a for a in _password_view(now)["actions"] if a.get("text", "").strip() == said), link)
         # (each way it can fail is said in the log: APS's, live, Oct 2026, failed with no clue why)
         if notice is None:
             told = "; ".join(e for e in now.get("errors") or [] if not _ERROR_COUNT.match(e.strip()))[:200]
             self._log(run, f"I pressed “{said}” twice, and no statement opened over the page"
                       + (f" (it says “{told}”)" if told else ""))
             return False
-        run.statement_accepted = await self._answer_notice(run, now, notice, set(), over_form=False) == "agreed"
+        run.statement_accepted = await self._answer_notice(run, _password_view(now), notice, set(),
+                                                           over_form=False) == "agreed"
         if not run.statement_accepted:
             self._log(run, f"“{_short(_notice_name(notice))}” opened over the page, and I couldn't accept it for you")
         return run.statement_accepted
@@ -5823,11 +5829,14 @@ class Applier:
                 return False
             return out.get("clicked") is not False
 
-        forgot = _forgot_action(data.get("actions") or [])
+        # (each step's buttons and boxes: the saved password's own place's, never another site's frame around it, an
+        # employer's "Next" or "Email me jobs like this": _password_view)
+        forgot = _forgot_action(_password_view(data).get("actions") or [])
         if forgot is None:  # on the Create Account form: back to the sign-in page, which has the way to a reset
             # (its "Sign In" there is a link or a plain button: the form's own button creates the account, and
             # a sign-in form's own would only send the refused password again)
-            back = next((a for a in data.get("actions") or [] if not a.get("disabled") and not a.get("form_submit")
+            back = next((a for a in _password_view(data).get("actions") or [] if not a.get("disabled")
+                         and not a.get("form_submit")
                          and not a.get("account_form") and not a.get("sign_in_form") and not a.get("cookie")
                          and _SIGN_IN_ACTION.match(final_text(a["text"]).strip())), None)
             if back is None:
@@ -5835,12 +5844,12 @@ class Applier:
             if not await press(back):
                 return None
             data, _ = await self._look(text=False)
-            forgot = _forgot_action(data.get("actions") or [])
+            forgot = _forgot_action(_password_view(data).get("actions") or [])
             if forgot is None:
                 return await stop("couldn't find its way to a password reset", data)
         run.reset_from = data.get("url") or ""
         before, _ = await self._look(text=False)  # (the page as it is now, the refused sign-in drawn: what the press changes)
-        forgot = _forgot_action(before.get("actions") or []) or forgot  # (its own, drawn again since, if it was)
+        forgot = _forgot_action(_password_view(before).get("actions") or []) or forgot  # (its own, drawn again since)
         if not await press(forgot):
             return await instead("couldn't open its password reset", data)
         # The reset drawn, not the sign-in still on show nor a page between the two, still loading: a script's way
@@ -5854,11 +5863,11 @@ class Applier:
                 break
             await asyncio.sleep(0.5)
         address = config.Profile.load().get("personal.email")
-        places = _password_place(data)[1]  # (the reset's own boxes: the page's, or its frame's on the password's system)
-        boxes = [f for f in data.get("fields") or [] if f.get("kind") in ("text", "email") and _frame_of(f) in places
+        mine = _password_view(data)  # (the reset's own boxes and button: the page's, or its frame's on the system)
+        boxes = [f for f in mine["fields"] if f.get("kind") in ("text", "email")
                  and re.search(r"e-?mail|user ?name|login", f.get("label") or "", re.I)]
         if (not _RESET_PAGE.search(" ".join([text[:2000], *(data.get("headings") or [])])) or not boxes or not address
-                or any(f.get("kind") == "password" for f in data.get("fields") or [])):
+                or any(f.get("kind") == "password" for f in mine["fields"])):
             return await instead("opened its password reset, which isn't one I can fill in", data)
         captcha = _captcha_on(data)
         if captcha and way_back():
@@ -5877,7 +5886,7 @@ class Applier:
                         "inbox for the reset email and sets your saved password as the new one.", seen=data,
                         code="captcha")
             return "paused"
-        button = self._account_button(data.get("actions") or [], _RESET_ASK, full=False)
+        button = self._account_button(mine["actions"], _RESET_ASK, full=False)
         run.reset_at = time.time()  # (its email is sent as the button is pressed: none from before is this reset's)
         if button is None or not await press(button, allow_submit=True):  # (asks for the email: sends no application)
             return await instead("filled in your email on its password reset, but couldn't press its button", data)
@@ -6086,7 +6095,8 @@ class Applier:
             self._pause(run, "bot_check", f"I put your saved password in {site}'s new-password boxes. Solve its picture "
                         "code and press its button; the desk carries on after that.", seen=data, code="captcha")
             return "paused"
-        button = self._account_button(data.get("actions") or [], _RESET_SET, full=False)
+        # (the reset's own button: never an employer's "Save Job" around iCIMS' frame)
+        button = self._account_button(_password_view(data).get("actions") or [], _RESET_SET, full=False)
         run.did("pressed", button)
         try:
             pressed = button is not None and (await srv.browser.click(button["id"], allow_submit=True)).get("clicked") is not False
@@ -7285,12 +7295,30 @@ def _password_place(data: dict[str, Any]) -> tuple[str | None, set[str]]:
     the page). iCIMS draws its sign-in and Create Account in its frame, on its own address, inside an employer's
     careers page (whose own address is iCIMS' or the employer's): that frame is the password's place. A frame from
     anywhere else (an ad, a third party's widget, another job system) never is, nor are its boxes and buttons; nor a
-    frame whose address isn't known. With no password for the page's own address, the first frame's that has one.
+    frame whose address isn't known. The page's own system's password where one is saved for it, else the first
+    frame's whose is (iCIMS' frame on a page of a system with none saved); with none saved, the first system's.
     fill_secret checks the frame's own address again as it types (Browser.fill_secret)."""
     urls = {"": str(data.get("url") or "")}
     urls.update({p: str(u or "") for p, u in (data.get("frame_urls") or {}).items() if p})
-    secret = password_for(urls[""]) or next((name for p, u in urls.items() if p and (name := password_for(u))), None)
+    systems = [name for u in urls.values() if (name := password_for(u))]  # (the page's first, then its frames')
+    secret = next((name for name in systems if _secret(name) is not None), systems[0] if systems else None)
     return secret, {p for p, u in urls.items() if secret is not None and password_for(u) == secret}
+
+
+def _password_view(data: dict[str, Any]) -> dict[str, Any]:
+    """The page as the saved password's own place shows it (_password_place): only the boxes, buttons and dialogs of
+    the page and its frames on that password's system. A sign-in's, a reset's or a Create Account's steps are taken
+    from it, never from a frame from another site (an employer's "Next" or "Save Job" around iCIMS' frame, a talent
+    community widget's terms box and "Sign Up")."""
+    places = _password_place(data)[1]
+
+    def mine(dialog: dict[str, Any]) -> bool:
+        buttons = dialog.get("buttons") or []
+        return bool(buttons) and all(_frame_of(b) in places for b in buttons)
+
+    return {**data, "fields": [f for f in data.get("fields") or [] if _frame_of(f) in places],
+            "actions": [a for a in data.get("actions") or [] if _frame_of(a) in places],
+            "dialogs": [d for d in data.get("dialogs") or [] if mine(d)]}
 
 
 # The systems whose password the desk page lets the person save, by the name it shows
