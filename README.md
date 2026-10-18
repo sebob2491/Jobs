@@ -124,10 +124,14 @@ Restart Claude Code and run:
 /job-apply:setup
 ```
 
-Setup asks for your resume, fills in `~/.job-apply/profile.yaml`, and asks the
-questions a resume can't answer: work authorization, sponsorship, US-person
-status, relocation, travel, shifts, salary and EEO preferences. It then opens the
-desk's browser window so you can sign in to LinkedIn and Indeed once. The sign-ins persist.
+Setup comes in two stages. First it asks for your resume, fills in
+`~/.job-apply/profile.yaml`, and asks only what your first application needs: contact
+details, work authorization, sponsorship and US-person status, whether the desk may accept
+cookie banners, make your job-site accounts and agree to employers' notices for you, and
+what and where to search. Then it opens the Job Desk. After that it offers, once, the rest
+(relocation, travel, shifts, salary, background, screening and EEO questions): each
+answered is a stop the desk won't make. It asks you to sign in to LinkedIn and Indeed in the
+desk's browser window only if you'll paste their job links. The sign-ins persist.
 
 ## Use
 
