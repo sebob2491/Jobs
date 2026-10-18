@@ -1,0 +1,143 @@
+## list-h
+Openings
+Recommended
+All
+My applications
+Only where the desk goes all the way
+Troubleshooting
+Search by itself every 12 hours
+Select recommended
+Clear
+Sort
+Fit
+Pay
+Newest
+Pay at least $
+/yr
+Posted
+Any
+7 days
+14 days
+30 days
+Any 3
+Working 1
+Stuck 2
+The desk couldn't get past these. It took a note on each: Notes files them together for Claude to fix.
+Notes
+Add
+Apply to selected
+Tick the jobs to apply to.
+Submit for me when nothing needs me
+Off: you press Submit for each one.
+Jobs at once
+1
+2
+3
+Tailor my resume for each job
+Off: your usual resume goes with every application.
+72
+Technician
+Example Stuck · Phoenix, AZ · YYYY-MM-DD · pay not listed
+title matches
+Stuck
+72
+Technician
+Example Failed · Phoenix, AZ · YYYY-MM-DD · pay not listed
+title matches
+Didn't finish
+
+## idle-h
+(hidden)
+
+## needs-h
+Needs you
+1
+Technician · Example Stuck Stuck
+I couldn't find the button that moves this application on.
+Show me
+Resume
+Skip job
+I submitted it myself
+Report a problem
+
+## work-h
+Working on
+Paused: 1 waiting. Press Resume queue to carry on.
+
+## done-h
+Ready and done
+Technician · Example Failed Didn't finish
+The page didn't load: TimeoutError.
+Show me
+Resume
+Skip job
+I submitted it myself
+Report a problem
+No applications tracked yet.
+
+## bank-h
+Common questions
+0 of 12 answered
+Most applications ask these, and your profile doesn't say. Answer once: the desk fills them in at every employer from then on (kept in ~/.job-apply/answers.yaml).
+What pay are you looking for? Write it as the site would ask, e.g. "$28 per hour" or "$60,000 per year".
+When could you start after an offer? (e.g. "Two weeks after an offer")
+Would you agree to a background check if offered a job?
+Yes
+No
+Can you do a job's essential functions, with or without reasonable accommodation?
+Yes
+No
+Have you ever been fired, or asked to resign, from a job?
+No
+Yes
+Which shifts would you work?
+Days
+Evenings
+Nights
+Any shift
+Are you looking for full-time or part-time work?
+Full Time
+Part Time
+Either
+Which language should applications be in?
+English
+Spanish
+Have you ever attended a community college or taken classes at one?
+Yes
+No
+Are you a current or former military spouse or domestic partner?
+No
+Yes
+I do not wish to provide
+If hired, could you show proof of your age?
+Yes
+No
+Are you bound by a non-compete, non-solicitation or similar agreement with a current or past employer?
+No
+Yes
+
+## pw-h
+Site passwords
+0 of 8 saved
+One password per job system: the desk makes your account at each of its employers and signs you in. It stays on this computer; Claude never sees it.
+Workday: Applied Materials, KLA, Intel and 12 more
+SuccessFactors: TSMC Arizona, Amkor Technology, Edwards Vacuum and 4 more
+iCIMS: Daifuku America, Fujifilm
+ApplicantStack: SCREEN SPE USA
+UKG Pro: Nikon Precision, Ultra Clean Holdings (UCT)
+Infor: Benchmark Electronics
+Taleo
+Your email: an app password, to read sign-up codes and password resets
+Save
+Workday: not saved
+SuccessFactors: not saved
+iCIMS: not saved
+ApplicantStack: not saved
+UKG Pro: not saved
+Infor: not saved
+Taleo: not saved
+Email: not saved
+How this works
+Each employer has its own account on its job site. Save one password for a job system and the desk creates your account at each of that system's employers (agreeing to its terms for you) and signs you in, on that system's own sites only; when a site turns the password down, it resets that account's password to this one through the site's "Forgot password" email (unless your profile says manage_accounts: false). It stays on this computer, in ~/.job-apply/secrets.yaml, and Claude never sees it. Use passwords you don't use anywhere else.
+Your email: with an app password for the address in your profile (for Gmail, make one at myaccount.google.com/apppasswords; it needs 2-Step Verification), a job waiting on an emailed code or link gets it from your inbox: only mail from that job's site that arrived after it began waiting, read without marking anything read.
+

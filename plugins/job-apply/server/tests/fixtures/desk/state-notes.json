@@ -1,0 +1,444 @@
+{
+ "profile": {
+  "name": "Sam Rivera",
+  "missing": [],
+  "gaps": [
+   "background: relatives_at_employer, government_employee, military, defense_department, restrictive_agreement, intellectual_property, outside_work, board_member"
+  ],
+  "titles": [],
+  "path": "~/.job-apply/profile.yaml"
+ },
+ "settings": {
+  "submit_mode": "review",
+  "dry_run": false,
+  "manage_accounts": false,
+  "manage_accounts_chosen": true,
+  "auto_submit": false,
+  "tailor_resumes": false,
+  "handled_only": false,
+  "troubleshoot": false,
+  "min_pay": null,
+  "posted_within": null,
+  "auto_search": false,
+  "jobs_at_once": 1,
+  "follow_up_days": 10
+ },
+ "tailoring": 0,
+ "passwords": {
+  "workday": false,
+  "successfactors": false,
+  "icims": false,
+  "applicantstack": false,
+  "ukg": false,
+  "infor": false,
+  "taleo": false,
+  "email": false
+ },
+ "password_systems": [
+  {
+   "value": "workday",
+   "label": "Workday: Applied Materials, KLA, Intel and 12 more"
+  },
+  {
+   "value": "successfactors",
+   "label": "SuccessFactors: TSMC Arizona, Amkor Technology, Edwards Vacuum and 4 more"
+  },
+  {
+   "value": "icims",
+   "label": "iCIMS: Daifuku America, Fujifilm"
+  },
+  {
+   "value": "applicantstack",
+   "label": "ApplicantStack: SCREEN SPE USA"
+  },
+  {
+   "value": "ukg",
+   "label": "UKG Pro: Nikon Precision, Ultra Clean Holdings (UCT)"
+  },
+  {
+   "value": "infor",
+   "label": "Infor: Benchmark Electronics"
+  },
+  {
+   "value": "taleo",
+   "label": "Taleo"
+  }
+ ],
+ "mail_problem": null,
+ "profile_problem": null,
+ "settings_warnings": [],
+ "tracker_problem": null,
+ "tracker_damaged": false,
+ "tracker_path": "~/.job-apply/tracker.db",
+ "version": "0.0.0",
+ "update": null,
+ "answers_problem": null,
+ "search": {
+  "status": "done",
+  "at": 1792350000.0,
+  "error": null,
+  "query": "",
+  "location": null,
+  "errors": {},
+  "browser_only": [],
+  "auto": false,
+  "stopped": null
+ },
+ "seen": {
+  "since": null,
+  "last": null
+ },
+ "listings": [
+  {
+   "url": "https://careers.example.com/stuck/0",
+   "title": "Technician",
+   "company": "Example Stuck",
+   "location": "Phoenix, AZ",
+   "posted": "2026-10-10",
+   "posted_days": 8,
+   "pay": null,
+   "ats": "workday",
+   "fit": {
+    "score": 72,
+    "reasons": [
+     "title matches"
+    ],
+    "concerns": [],
+    "blocked": false,
+    "recommended": true,
+    "parts": [
+     {
+      "why": "start",
+      "points": 50
+     },
+     {
+      "why": "title matches",
+      "points": 22
+     }
+    ]
+   },
+   "notes": [],
+   "job_id": 1,
+   "status": "saved",
+   "run": {
+    "job_id": 1,
+    "title": "Technician",
+    "company": "Example Stuck",
+    "status": "needs_you",
+    "need": "stuck",
+    "reason": "I couldn't find the button that moves this application on.",
+    "code": "no_step_button",
+    "blocking": false,
+    "paused_at": 0.0,
+    "captcha": false,
+    "left_at_restart": false,
+    "questions": [],
+    "log": [],
+    "log_at": [],
+    "went_in": null
+   },
+   "handled": false,
+   "also_on": [],
+   "saved_at": null,
+   "new": false,
+   "not_interested": null
+  },
+  {
+   "url": "https://careers.example.com/failed/1",
+   "title": "Technician",
+   "company": "Example Failed",
+   "location": "Phoenix, AZ",
+   "posted": "2026-10-10",
+   "posted_days": 8,
+   "pay": null,
+   "ats": "workday",
+   "fit": {
+    "score": 72,
+    "reasons": [
+     "title matches"
+    ],
+    "concerns": [],
+    "blocked": false,
+    "recommended": true,
+    "parts": [
+     {
+      "why": "start",
+      "points": 50
+     },
+     {
+      "why": "title matches",
+      "points": 22
+     }
+    ]
+   },
+   "notes": [],
+   "job_id": 2,
+   "status": "saved",
+   "run": {
+    "job_id": 2,
+    "title": "Technician",
+    "company": "Example Failed",
+    "status": "failed",
+    "need": "",
+    "reason": "The page didn't load: TimeoutError.",
+    "code": "",
+    "blocking": false,
+    "paused_at": 0.0,
+    "captcha": false,
+    "left_at_restart": false,
+    "questions": [],
+    "log": [],
+    "log_at": [],
+    "went_in": null
+   },
+   "handled": false,
+   "also_on": [],
+   "saved_at": null,
+   "new": false,
+   "not_interested": null
+  },
+  {
+   "url": "https://careers.example.com/waiting/2",
+   "title": "Technician",
+   "company": "Example Waiting",
+   "location": "Phoenix, AZ",
+   "posted": "2026-10-10",
+   "posted_days": 8,
+   "pay": null,
+   "ats": "workday",
+   "fit": {
+    "score": 72,
+    "reasons": [
+     "title matches"
+    ],
+    "concerns": [],
+    "blocked": false,
+    "recommended": true,
+    "parts": [
+     {
+      "why": "start",
+      "points": 50
+     },
+     {
+      "why": "title matches",
+      "points": 22
+     }
+    ]
+   },
+   "notes": [],
+   "job_id": 3,
+   "status": "saved",
+   "run": {
+    "job_id": 3,
+    "title": "Technician",
+    "company": "Example Waiting",
+    "status": "queued",
+    "need": "",
+    "reason": "",
+    "code": "",
+    "blocking": false,
+    "paused_at": 0.0,
+    "captcha": false,
+    "left_at_restart": false,
+    "questions": [],
+    "log": [],
+    "log_at": [],
+    "went_in": null
+   },
+   "handled": false,
+   "also_on": [],
+   "saved_at": null,
+   "new": false,
+   "not_interested": null
+  }
+ ],
+ "others": [],
+ "applications": [],
+ "bank": [
+  {
+   "id": "desired_pay",
+   "ask": "What pay are you looking for? Write it as the site would ask, e.g. \"$28 per hour\" or \"$60,000 per year\".",
+   "kind": "text",
+   "answer": null
+  },
+  {
+   "id": "start_date",
+   "ask": "When could you start after an offer? (e.g. \"Two weeks after an offer\")",
+   "kind": "text",
+   "answer": null
+  },
+  {
+   "id": "background_check",
+   "ask": "Would you agree to a background check if offered a job?",
+   "kind": "choice",
+   "choices": [
+    "Yes",
+    "No"
+   ],
+   "answer": null
+  },
+  {
+   "id": "essential_functions",
+   "ask": "Can you do a job's essential functions, with or without reasonable accommodation?",
+   "kind": "choice",
+   "choices": [
+    "Yes",
+    "No"
+   ],
+   "answer": null
+  },
+  {
+   "id": "terminated",
+   "ask": "Have you ever been fired, or asked to resign, from a job?",
+   "kind": "choice",
+   "choices": [
+    "No",
+    "Yes"
+   ],
+   "answer": null
+  },
+  {
+   "id": "shift",
+   "ask": "Which shifts would you work?",
+   "kind": "choice",
+   "choices": [
+    "Days",
+    "Evenings",
+    "Nights",
+    "Any shift"
+   ],
+   "answer": null
+  },
+  {
+   "id": "schedule_type",
+   "ask": "Are you looking for full-time or part-time work?",
+   "kind": "choice",
+   "choices": [
+    "Full Time",
+    "Part Time",
+    "Either"
+   ],
+   "answer": null
+  },
+  {
+   "id": "language",
+   "ask": "Which language should applications be in?",
+   "kind": "choice",
+   "choices": [
+    "English",
+    "Spanish"
+   ],
+   "answer": null
+  },
+  {
+   "id": "community_college",
+   "ask": "Have you ever attended a community college or taken classes at one?",
+   "kind": "choice",
+   "choices": [
+    "Yes",
+    "No"
+   ],
+   "answer": null
+  },
+  {
+   "id": "military_spouse",
+   "ask": "Are you a current or former military spouse or domestic partner?",
+   "kind": "choice",
+   "choices": [
+    "No",
+    "Yes",
+    "I do not wish to provide"
+   ],
+   "answer": null
+  },
+  {
+   "id": "proof_of_age",
+   "ask": "If hired, could you show proof of your age?",
+   "kind": "choice",
+   "choices": [
+    "Yes",
+    "No"
+   ],
+   "answer": null
+  },
+  {
+   "id": "non_compete",
+   "ask": "Are you bound by a non-compete, non-solicitation or similar agreement with a current or past employer?",
+   "kind": "choice",
+   "choices": [
+    "No",
+    "Yes"
+   ],
+   "answer": null
+  }
+ ],
+ "area": {
+  "titles": [],
+  "default_titles": [
+   "field service",
+   "customer service engineer",
+   "customer engineer",
+   "equipment technician"
+  ],
+  "searched_titles": 4,
+  "places": [],
+  "states": [],
+  "lists": [
+   "semiconductor-az"
+  ],
+  "own": 0,
+  "choices": [
+   {
+    "name": "semiconductor-az",
+    "label": "Arizona chip makers and their suppliers",
+    "count": 39
+   },
+   {
+    "name": "las-vegas",
+    "label": "Las Vegas-area employers that hire IT people (casinos, gaming tech, data centers...)",
+    "count": 37
+   },
+   {
+    "name": "phoenix-metro",
+    "label": "Large Phoenix-area employers (health care, finance, government, staffing...)",
+    "count": 68
+   }
+  ],
+  "place_ideas": [
+   "Phoenix, AZ",
+   "Las Vegas, NV",
+   "Remote"
+  ],
+  "title_ideas": {
+   "IT": [
+    "Help Desk Technician",
+    "IT Support Specialist",
+    "Desktop Support Technician",
+    "Systems Administrator",
+    "Network Technician"
+   ],
+   "Equipment": [
+    "Field Service Engineer",
+    "Equipment Technician",
+    "Customer Engineer",
+    "Maintenance Technician"
+   ],
+   "HR": [
+    "HR Generalist",
+    "HR Coordinator",
+    "Recruiter",
+    "HR Assistant"
+   ]
+  }
+ },
+ "current": null,
+ "queued": [],
+ "paused": true,
+ "restored": null,
+ "queue_note": null,
+ "queue_note_problem": false,
+ "counts": {
+  "saved": 3
+ },
+ "notes": 2
+}
