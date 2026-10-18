@@ -1,0 +1,198 @@
+{
+  "file": "live-lam-research.html",
+  "address": "https://careers.lamresearch.com/careers/apply?pid=1099555380657",
+  "applicant": "the live check's test applicant",
+  "refused": 0,
+  "page": "form",
+  "next": null,
+  "captcha": false,
+  "security_asked": false,
+  "account_and_application": false,
+  "job_search": false,
+  "errors": [
+    "4 errors found",
+    "Error: Email cannot be left blank.",
+    "Error: Address cannot be left blank.",
+    "Error: City cannot be left blank.",
+    "Error: Zip/Postal Code cannot be left blank."
+  ],
+  "buttons": [
+    "Sign In",
+    "English",
+    "Resume",
+    "Contact Information 4 errors found",
+    "Export Control",
+    "Job-Specific Information",
+    "Contact Consent",
+    "Select file",
+    "Clear Legal First Name",
+    "Clear Legal Last Name",
+    "Clear Email",
+    "Clear Phone Number",
+    "Clear Address",
+    "Clear City",
+    "Clear Zip/Postal Code",
+    "Clear Gender",
+    "Clear Ethnicity",
+    "Clear Disability",
+    "Read more",
+    "Clear Veteran",
+    "Cancel",
+    "Clear form",
+    "Submit application"
+  ],
+  "dialogs": [],
+  "boxes": [
+    {
+      "label": "Accepted file format: .pdf, .doc, .docx, . tct, .rtf",
+      "kind": "file",
+      "required": false,
+      "plan": "fill",
+      "rule": "documents.resume",
+      "value": "<documents.resume>"
+    },
+    {
+      "label": "Legal First Name",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "first_name",
+      "value": "<first_name>"
+    },
+    {
+      "label": "Legal Last Name",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "last_name",
+      "value": "<last_name>"
+    },
+    {
+      "label": "Email",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "email",
+      "value": "<email>"
+    },
+    {
+      "label": "Country code",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "phone_code",
+      "value": "<phone_code>"
+    },
+    {
+      "label": "Phone Number",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "phone",
+      "value": "<phone>"
+    },
+    {
+      "label": "Country/Region of Residence",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "country",
+      "value": "<country>"
+    },
+    {
+      "label": "Address",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "address1",
+      "value": "<address1>"
+    },
+    {
+      "label": "City",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "city",
+      "value": "<city>"
+    },
+    {
+      "label": "Zip/Postal Code",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "postal",
+      "value": "<postal>"
+    },
+    {
+      "label": "For the sole purpose of determining export licensing requirements, please provide your most recent country/region of citizenship or legal permanent residence. If your country/region is not listed please choose \"Other\".",
+      "kind": "combobox",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Do you have unrestricted right to work in the United States?",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "authorized",
+      "value": "<authorized>"
+    },
+    {
+      "label": "Will you now or in the future require visa sponsorship for employment?",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "sponsorship",
+      "value": "<sponsorship>"
+    },
+    {
+      "label": "Gender",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "gender",
+      "value": "<gender>"
+    },
+    {
+      "label": "Ethnicity",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "race",
+      "value": "<race>"
+    },
+    {
+      "label": "Disability",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "disability",
+      "value": "<disability>"
+    },
+    {
+      "label": "Veteran",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "veteran",
+      "value": "<veteran>"
+    },
+    {
+      "label": "I consent to make my profile visible for and receive communications including by email, about positions at Lam. By proceeding, I would like to be considered for roles at Lam Research and for Lam's recruitment team to contact me as follows:",
+      "kind": "combobox",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Save my answers for future applications",
+      "kind": "checkbox",
+      "required": false,
+      "plan": "left",
+      "why": "shows an answer already"
+    }
+  ],
+  "agreement": null,
+  "notice": null
+}

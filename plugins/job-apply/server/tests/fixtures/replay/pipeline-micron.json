@@ -1,0 +1,395 @@
+{
+  "file": "pipeline-micron.html",
+  "address": "https://micron.eightfold.ai/careers/apply?pid=44751998",
+  "applicant": "the live check's test applicant",
+  "refused": 0,
+  "page": "form",
+  "next": null,
+  "captcha": false,
+  "security_asked": false,
+  "account_and_application": false,
+  "job_search": false,
+  "errors": [
+    "4 errors found",
+    "3 errors found",
+    "Error: First name cannot be left blank.",
+    "Error: Last name cannot be left blank.",
+    "Phone number is invalid. Only use digits (0-9), dashes (-) or parentheses ().",
+    "Error: City cannot be left blank.",
+    "Error: Last Name cannot be left blank.",
+    "Error: Address Line 1 cannot be left blank.",
+    "Error: This field cannot be left blank."
+  ],
+  "buttons": [
+    "Resume",
+    "Contact Information 4 errors found",
+    "Application questions 3 errors found",
+    "Application questions",
+    "Position Specific Questions 4 errors found",
+    "Terms and Conditions",
+    "Select file",
+    "Clear Email",
+    "Clear First name",
+    "Clear Last name",
+    "Clear Phone Number",
+    "Clear Country",
+    "Clear State",
+    "Clear City",
+    "Clear Country of Residence",
+    "Clear First Name",
+    "Clear Last Name",
+    "Clear Address Line 1",
+    "Clear City",
+    "Clear Postal Code",
+    "Clear State",
+    "Read more",
+    "Clear Are you at least 18 years old?",
+    "Clear Are you a Domestic Worker or a Foreign Worker?",
+    "Clear When would you be available if an offer was accepted?",
+    "Clear Are you referred to this job by a Micron employee?",
+    "Clear Current/Last Drawn Monthly Basic Salary:",
+    "Clear Please select your academic ranking:",
+    "Cancel",
+    "Clear form",
+    "Submit application"
+  ],
+  "dialogs": [],
+  "boxes": [
+    {
+      "label": "Accepted file format: .rtf, .txt, .doc, .docx or .pdf",
+      "kind": "file",
+      "required": false,
+      "plan": "fill",
+      "rule": "documents.resume",
+      "value": "<documents.resume>"
+    },
+    {
+      "label": "Email",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "email",
+      "value": "<email>"
+    },
+    {
+      "label": "First name",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "first_name",
+      "value": "<first_name>"
+    },
+    {
+      "label": "Last name",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "last_name",
+      "value": "<last_name>"
+    },
+    {
+      "label": "Country code",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "phone_code",
+      "value": "<phone_code>"
+    },
+    {
+      "label": "Phone Number",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "phone",
+      "value": "<phone>"
+    },
+    {
+      "label": "Country",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "country",
+      "value": "<country>"
+    },
+    {
+      "label": "State",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "state",
+      "value": "<state>"
+    },
+    {
+      "label": "City",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "city",
+      "value": "<city>"
+    },
+    {
+      "label": "Country of Residence",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "country",
+      "value": "<country>"
+    },
+    {
+      "label": "First Name",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "first_name",
+      "value": "<first_name>"
+    },
+    {
+      "label": "Last Name",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "last_name",
+      "value": "<last_name>"
+    },
+    {
+      "label": "Address Line 1",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "address1",
+      "value": "<address1>"
+    },
+    {
+      "label": "City",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "city",
+      "value": "<city>"
+    },
+    {
+      "label": "Postal Code",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "postal",
+      "value": "<postal>"
+    },
+    {
+      "label": "State",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "state",
+      "value": "<state>"
+    },
+    {
+      "label": "Please enter your Race/Ethnicity",
+      "kind": "combobox",
+      "required": false,
+      "plan": "fill",
+      "rule": "race",
+      "value": "<race>"
+    },
+    {
+      "label": "Please select your citizenship status: (Note: Please type the country of the position you are applying for to provide your citizenship status in that country. Options for that country will be shown.)",
+      "kind": "combobox",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Please select your disability status:",
+      "kind": "combobox",
+      "required": false,
+      "plan": "fill",
+      "rule": "disability",
+      "value": "<disability>"
+    },
+    {
+      "label": "Are you at least 18 years old?",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "over_18",
+      "value": "<over_18>"
+    },
+    {
+      "label": "Are you a Domestic Worker or a Foreign Worker?",
+      "kind": "combobox",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "When would you be available if an offer was accepted?",
+      "kind": "combobox",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Are you bonded by your current company/school? If yes, pls state the bond value.",
+      "kind": "text",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Have you applied on any previous occasions for employment in any capacity with Micron?",
+      "kind": "combobox",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Do you have any friends/relatives presently employed by Micron?",
+      "kind": "combobox",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Please state their Name/Relationship/Dept/Position/Employee Number",
+      "kind": "text",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Have you ever been terminated or asked to resign by any former employer for the following reasons:",
+      "kind": "combobox",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Are you referred to this job by a Micron employee?",
+      "kind": "combobox",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "If Yes, please state their name/dept/employee no:",
+      "kind": "text",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "All Micron sites must observe U.S. export control rules that control information that may be provided to persons from Cuba, Iran, North Korea, and Syria. Are you a citizen of, or do you hold dual citizenship with any of these countries?",
+      "kind": "combobox",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Expected Monthly Basic Salary (exclude allowance & overtime pay):",
+      "kind": "text",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Do you have any plans to join the board of directors of a for-profit company prior to starting a job with Micron?",
+      "kind": "combobox",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Current/Last Drawn Monthly Basic Salary:",
+      "kind": "text",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Are you currently serving on the board of directors of any for-profit company?",
+      "kind": "combobox",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "How many months is your current package including any fixed yearly bonus?",
+      "kind": "text",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Please provide more details (if yes Recruiter MUST provide details to legal)",
+      "kind": "text",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "In the last 5 years, have you been an employee of a U.S. federal, state, or local government?",
+      "kind": "combobox",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Please select your academic ranking:",
+      "kind": "combobox",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Please provide the name of the government entity, your title, and dates of employment.",
+      "kind": "text",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Please describe your current compensation package. Include description of basic salary, AWS (Annual Wage Supplement)/fixed bonus, variable bonuses, allowances, stock options/equity and other compensation in the currency you received them in:",
+      "kind": "text",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Terms and Conditions Please read carefully. You may ask your recruiter to explain this covenant. I certify that the information contained in the application and related documents or in any written or oral statement is correct to the best of my knowledge and understand that any falsification, misrepresentation or omission on this application is grounds for refusal to hire, or if hired, dismissal (regardless of when the falsification, misrepresentation or omission is discovered). To determine my qualifications, I hereby consent and authorize the company to collect, process, handle, conduct an investigation of information under this my application for legal, personnel, administrative, management purposes, and I release and hold the company harmless from any related liability including for conducting pre-employment screening and future the investigations. I authorize all my prior employers, educational institutions, and other third parties to release all information. I understand and agree that this application or any other documents is not a guarantee of continued employment. I understand that any offer of employment is conditioned upon my submitting and successfully clearing all pre-employment screening activities required by Micron for the specific site or region. The applicant hereby testifies, warrants, and represents that all questions in this application have been fully and accurately answered.",
+      "kind": "combobox",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Have you previously been employed by any Micron Company?",
+      "kind": "radio_group",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "I have a preferred name",
+      "kind": "checkbox",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Please select your gender:",
+      "kind": "radio_group",
+      "required": false,
+      "plan": "ask",
+      "why": "the profile's answer isn't one of its choices"
+    },
+    {
+      "label": "Save my answers for future applications.",
+      "kind": "checkbox",
+      "required": false,
+      "plan": "left",
+      "why": "shows an answer already"
+    }
+  ],
+  "agreement": null,
+  "notice": null
+}

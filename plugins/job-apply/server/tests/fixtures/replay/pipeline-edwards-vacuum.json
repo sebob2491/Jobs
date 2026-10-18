@@ -1,0 +1,114 @@
+{
+  "file": "pipeline-edwards-vacuum.html",
+  "address": "https://career5.successfactors.eu/careers",
+  "applicant": "the live check's test applicant",
+  "refused": 0,
+  "page": "form",
+  "next": null,
+  "captcha": false,
+  "security_asked": false,
+  "account_and_application": false,
+  "job_search": true,
+  "errors": [],
+  "buttons": [
+    "Sign In",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    " (greyed out)",
+    "Search Jobs",
+    "Clear"
+  ],
+  "dialogs": [],
+  "boxes": [
+    {
+      "label": "Language",
+      "kind": "listbox",
+      "required": false,
+      "plan": "left",
+      "why": "shows an answer already"
+    },
+    {
+      "label": "Keywords",
+      "kind": "text",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Select one or more options",
+      "kind": "text",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Requisition ID",
+      "kind": "text",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Select one or more options",
+      "kind": "text",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Select one or more options",
+      "kind": "text",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Select one or more options",
+      "kind": "text",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Select one or more options",
+      "kind": "text",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Select one or more options",
+      "kind": "text",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Select one or more options",
+      "kind": "text",
+      "required": false,
+      "plan": "left",
+      "why": "greyed out"
+    },
+    {
+      "label": "Exact Match",
+      "kind": "checkbox",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Keyword search options",
+      "kind": "radio_group",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    }
+  ],
+  "agreement": null,
+  "notice": null
+}

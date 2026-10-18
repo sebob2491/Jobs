@@ -1,0 +1,355 @@
+{
+  "file": "pipeline-onsemi.html",
+  "address": "https://hctz.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/job/2506217/apply/section/1",
+  "applicant": "the live check's test applicant",
+  "refused": 0,
+  "page": "form",
+  "next": null,
+  "captcha": false,
+  "security_asked": false,
+  "account_and_application": false,
+  "job_search": false,
+  "errors": [
+    "The Address Line 1 field is required."
+  ],
+  "buttons": [
+    "Back to Job Details",
+    "Import Your Profile To Get Started",
+    "Address",
+    "Apply with",
+    "Resume",
+    "Mr.",
+    "Mrs.",
+    "Ms.",
+    "Edit email address",
+    "Remove value for the Country code field.",
+    "Open the drop-down list for Country code.",
+    "Remove value for the Country field.",
+    "Open the drop-down list for Country.",
+    "Remove value for the City field.",
+    "Open the drop-down list for City.",
+    "Remove value for the State field.",
+    "Open the drop-down list for State.",
+    "Remove value for the County field.",
+    "Open the drop-down list for County.",
+    "Remove value for the Zip Code field.",
+    "Open the drop-down list for Zip Code.",
+    "Yes",
+    "No",
+    "Yes",
+    "No",
+    "Yes",
+    "No",
+    "Yes",
+    "No",
+    "Yes",
+    "No",
+    "Yes",
+    "No",
+    "Remove value for the How did you hear about us? field.",
+    "Open the drop-down list for How did you hear about us?.",
+    "onsemi reputation",
+    "industry interest",
+    "Add Experience",
+    "Add Education",
+    "Add Another Link",
+    "Open the drop-down list for Gender.",
+    "Remove value for the Veteran Status field.",
+    "Open the drop-down list for Veteran Status.",
+    "Show More",
+    "Submit"
+  ],
+  "dialogs": [],
+  "boxes": [
+    {
+      "label": "Import your profile from resume",
+      "kind": "file",
+      "required": false,
+      "plan": "left",
+      "why": "its rule (documents.resume) leaves it empty"
+    },
+    {
+      "label": "Last Name",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "last_name",
+      "value": "<last_name>"
+    },
+    {
+      "label": "First Name",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "first_name",
+      "value": "<first_name>"
+    },
+    {
+      "label": "Middle Name",
+      "kind": "text",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Preferred Name",
+      "kind": "text",
+      "required": false,
+      "plan": "fill",
+      "rule": "preferred_name",
+      "value": "<preferred_name>"
+    },
+    {
+      "label": "Previous Last Name",
+      "kind": "text",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Suffix",
+      "kind": "text",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Email Address",
+      "kind": "text",
+      "required": false,
+      "plan": "left",
+      "why": "read-only"
+    },
+    {
+      "label": "Phone Number",
+      "kind": "combobox",
+      "required": false,
+      "plan": "left",
+      "why": "shows an answer already"
+    },
+    {
+      "label": "Phone Number",
+      "kind": "text",
+      "required": false,
+      "plan": "fill",
+      "rule": "phone",
+      "value": "<phone>"
+    },
+    {
+      "label": "Country *",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "country",
+      "value": "<country>"
+    },
+    {
+      "label": "Address Line 1 *",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "address1",
+      "value": "<address1>"
+    },
+    {
+      "label": "Address Line 2",
+      "kind": "text",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Address Line 3",
+      "kind": "text",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "City *",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "city",
+      "value": "<city>"
+    },
+    {
+      "label": "State *",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "state",
+      "value": "<state>"
+    },
+    {
+      "label": "County *",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "county",
+      "value": "<county>"
+    },
+    {
+      "label": "Zip Code *",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "postal",
+      "value": "<postal>"
+    },
+    {
+      "label": "Zip Code+4",
+      "kind": "text",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "How did you hear about us?",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "how_heard",
+      "value": "<how_heard>"
+    },
+    {
+      "label": "Upload Resume",
+      "kind": "file",
+      "required": true,
+      "plan": "fill",
+      "rule": "documents.resume",
+      "value": "<documents.resume>"
+    },
+    {
+      "label": "Upload Cover Letter",
+      "kind": "file",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Link 1",
+      "kind": "text",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Upload Attachment",
+      "kind": "file",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Gender",
+      "kind": "combobox",
+      "required": false,
+      "plan": "fill",
+      "rule": "gender",
+      "value": "<gender>"
+    },
+    {
+      "label": "Veteran Status",
+      "kind": "combobox",
+      "required": false,
+      "plan": "fill",
+      "rule": "veteran",
+      "value": "<veteran>"
+    },
+    {
+      "label": "Full Name",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "full_name",
+      "value": "<full_name>"
+    },
+    {
+      "label": "Title",
+      "kind": "radio_group",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Are you or is any Relative, currently employed by our current independent auditor, PricewaterhouseCoopers, LLP (“PwC”), or were you or any Relative employed by PwC at any time during the last three years? If yes, please explain.",
+      "kind": "radio_group",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Do you, or does any Relative, have a direct or indirect relationship with any member of our Board of Directors or any senior officers of our company, whether personal or professional? If yes, please explain.",
+      "kind": "radio_group",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Will you now or in the future require sponsorship to work in the country for which the position is located?",
+      "kind": "radio_group",
+      "required": true,
+      "plan": "left",
+      "why": "shows an answer already"
+    },
+    {
+      "label": "Have you ever previously worked in any onsemi establishment, anywhere in the world, whether as a full-time or part-time employee, contractor, temporary staff or intern?",
+      "kind": "radio_group",
+      "required": true,
+      "plan": "left",
+      "why": "shows an answer already"
+    },
+    {
+      "label": "Are you eligible to work in the country for which you have applied?",
+      "kind": "radio_group",
+      "required": true,
+      "plan": "left",
+      "why": "shows an answer already"
+    },
+    {
+      "label": "Are you at least 18 years or older?",
+      "kind": "radio_group",
+      "required": true,
+      "plan": "left",
+      "why": "shows an answer already"
+    },
+    {
+      "label": "Please specify the Company Website",
+      "kind": "radio_group",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "I am Hispanic or Latino.",
+      "kind": "checkbox",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Select the races you identify with.",
+      "kind": "checkbox_group",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "I agree to receive updates about new job opportunities.",
+      "kind": "checkbox",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "I agree to receive marketing communications",
+      "kind": "checkbox",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    }
+  ],
+  "agreement": null,
+  "notice": null
+}

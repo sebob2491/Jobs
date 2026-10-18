@@ -1,0 +1,94 @@
+{
+  "file": "live-ebara-technologies.html",
+  "address": "https://www.paycomonline.net/v4/ats/web.php/portal/95CACB007211B4A999FBE2ED52E7762E/jobs/396485",
+  "applicant": "the live check's test applicant",
+  "refused": 0,
+  "page": "form",
+  "next": "Quick Apply",
+  "captcha": false,
+  "security_asked": false,
+  "account_and_application": false,
+  "job_search": false,
+  "errors": [
+    "Legal First Name *",
+    "Legal Last Name *",
+    "Email Address *",
+    "Confirm Email *"
+  ],
+  "buttons": [
+    "Careers",
+    "Sign In",
+    "Create Account",
+    "Quick Apply",
+    "Quick Apply",
+    "X",
+    "Accept Cookies",
+    "+1",
+    "Upload a File * Select here to upload.",
+    "Allowed File Types",
+    "Submit",
+    "Verify",
+    "About hCaptcha & Accessibility Options",
+    "Refresh Challenge."
+  ],
+  "dialogs": [],
+  "boxes": [
+    {
+      "label": "Legal First Name *",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "first_name",
+      "value": "<first_name>"
+    },
+    {
+      "label": "Legal Last Name *",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "last_name",
+      "value": "<last_name>"
+    },
+    {
+      "label": "Email Address *",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "email",
+      "value": "<email>"
+    },
+    {
+      "label": "Confirm Email *",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "email",
+      "value": "<email>"
+    },
+    {
+      "label": "Primary Phone Number",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "phone",
+      "value": "<phone>"
+    },
+    {
+      "label": "Upload a File * Select here to upload.",
+      "kind": "file",
+      "required": true,
+      "plan": "fill",
+      "rule": "documents.resume",
+      "value": "<documents.resume>"
+    },
+    {
+      "label": "Opt in for texts to this number",
+      "kind": "radio_group",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    }
+  ],
+  "agreement": null,
+  "notice": null
+}

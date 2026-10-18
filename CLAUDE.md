@@ -91,6 +91,10 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
     Run by hand (it spends API credit): `claude plugin eval . --trust-plugin --ablation none --runs 1 --no-publish`
     from `plugins/job-apply`; the CLI refuses a plugin folder holding hard links, as a `uv sync`'d `server/.venv`
     does unless made with `UV_LINK_MODE=copy`.
+- A saved page offline: `uv run job-apply-doctor --replay <debug folder | fixture .html> [--profile p] [--json]`
+  says what the desk reads and decides there (page kind, button, CAPTCHA, each box's plan by rule name, agreement
+  verdicts), with no network. A stop's folder also holds `stop.json` (code, reason, the desk's last action, the
+  errors and the words around the first, scrubbed as a report is).
 - Live checks against real employer sites: `uv run python scripts/live_smoke.py`.
   - Add `--pipeline --fake-passwords --parallel 4` to drive the Job Desk pipeline. The full run takes about 6 minutes.
   - Add `--lists phoenix-metro` to check another list, and `--role hr` (or `--role finance`) to look

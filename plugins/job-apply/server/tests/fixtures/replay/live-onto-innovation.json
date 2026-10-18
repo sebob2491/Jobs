@@ -1,0 +1,179 @@
+{
+  "file": "live-onto-innovation.html",
+  "address": "https://wd1.myworkdaysite.com/en-US/recruiting/onto/ONTO_Careers/job/Remote-AZ/Field-Service-Engineer--3--Non-Exempt-_R-5680/apply/applyManually",
+  "applicant": "the live check's test applicant",
+  "refused": 0,
+  "page": "form",
+  "next": "Next",
+  "captcha": false,
+  "security_asked": false,
+  "account_and_application": false,
+  "job_search": false,
+  "errors": [],
+  "buttons": [
+    "Sign In",
+    "Careers Home",
+    "Search for Jobs",
+    "Introduce Yourself",
+    "main menu",
+    "Back to Job Posting",
+    "Next",
+    "Facebook"
+  ],
+  "dialogs": [],
+  "boxes": [
+    {
+      "label": "How Did You Hear About Us?*",
+      "kind": "combobox",
+      "required": true,
+      "plan": "fill",
+      "rule": "how_heard",
+      "value": "<how_heard>"
+    },
+    {
+      "label": "Country*",
+      "kind": "listbox",
+      "required": true,
+      "plan": "left",
+      "why": "on the site's own choice, which the profile doesn't change"
+    },
+    {
+      "label": "Country*",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "country",
+      "value": "<country>"
+    },
+    {
+      "label": "First Name*",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "first_name",
+      "value": "<first_name>"
+    },
+    {
+      "label": "Last Name*",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "last_name",
+      "value": "<last_name>"
+    },
+    {
+      "label": "Address Line 1*",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "address1",
+      "value": "<address1>"
+    },
+    {
+      "label": "Address Line 2",
+      "kind": "text",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "City*",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "city",
+      "value": "<city>"
+    },
+    {
+      "label": "State*",
+      "kind": "listbox",
+      "required": true,
+      "plan": "left",
+      "why": "shows an answer already"
+    },
+    {
+      "label": "State*",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "state",
+      "value": "<state>"
+    },
+    {
+      "label": "Postal Code*",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "postal",
+      "value": "<postal>"
+    },
+    {
+      "label": "Email*",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "email",
+      "value": "<email>"
+    },
+    {
+      "label": "Phone Device Type*",
+      "kind": "listbox",
+      "required": true,
+      "plan": "left",
+      "why": "shows an answer already"
+    },
+    {
+      "label": "Phone Device Type*",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "phone_type",
+      "value": "<phone_type>"
+    },
+    {
+      "label": "Country Phone Code*",
+      "kind": "combobox",
+      "required": true,
+      "plan": "left",
+      "why": "on the site's own choice, which the profile doesn't change"
+    },
+    {
+      "label": "Phone Number*",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "phone",
+      "value": "<phone>"
+    },
+    {
+      "label": "Phone Extension",
+      "kind": "text",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Have you previously been employed by ONTO Innovation, Rudolph Technologies, or Nanometrics?*",
+      "kind": "radio_group",
+      "required": true,
+      "plan": "left",
+      "why": "shows an answer already"
+    },
+    {
+      "label": "I have a preferred name",
+      "kind": "checkbox",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "Terms and Conditions",
+      "kind": "checkbox",
+      "required": false,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    }
+  ],
+  "agreement": null,
+  "notice": null
+}
