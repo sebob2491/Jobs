@@ -343,9 +343,10 @@ def test_the_summary_says_on_how_many_postings_each_system_lists_pay_and_gives_n
                search_rec("Dateless Co", {**whole, "ats": "applicantstack", "pay": "", "posted": ""}, "applicantstack"),
                search_rec("Refused Co", {"error": "FetchError: HTTP 405"}, "icims")]
     facts = la.posting_facts("".join("LIVE_RESULT " + json.dumps(r) + "\n" for r in records))
-    assert facts == {"paycom": {"read": 1, "pay": 1, "dated": 1, "no_date": 0},
-                     "workday": {"read": 3, "pay": 1, "dated": 2, "no_date": 0},
-                     "applicantstack": {"read": 1, "pay": 0, "dated": 1, "no_date": 1}}
+    none = {"placed": 0, "workplace": 0}  # (records from before the workplace was kept: counted neither way)
+    assert facts == {"paycom": {"read": 1, "pay": 1, "dated": 1, "no_date": 0, **none},
+                     "workday": {"read": 3, "pay": 1, "dated": 2, "no_date": 0, **none},
+                     "applicantstack": {"read": 1, "pay": 0, "dated": 1, "no_date": 1, **none}}
     assert la.facts_said(facts) == ("pay listed on 2 of 5 (applicantstack 0 of 1, paycom 1 of 1, workday 1 of 3); "
                                     "no date on 1 of 4 (applicantstack 1 of 1)")
     for name in la.SECRETS:
@@ -356,3 +357,26 @@ def test_the_summary_says_on_how_many_postings_each_system_lists_pay_and_gives_n
     la.main(["--log", f"search={folder / 'run.log'}", "--folder", str(folder)])
     assert "; pay listed on 2 of 5 (applicantstack 0 of 1, paycom 1 of 1, workday 1 of 3); no date on 1 of 4" \
         in capsys.readouterr().out
+
+
+def test_the_summary_says_on_how_many_postings_each_system_says_where_the_job_is_done(tmp_path, capsys, monkeypatch):
+    """The design of Oct 18, F3: how far the desk's Workplace filter reaches, per job system, on the audit's summary
+    line, as the pay listing's does. A record from before the live check kept the workplace isn't counted."""
+    whole = {"title": "Technician", "location": "Chandler, AZ", "description_chars": 4000, "pay": "", "posted": "x"}
+    records = [search_rec("Paid Co", {**whole, "ats": "paycom", "workplace": "hybrid",
+                                      "workplace_source": "structured"}, "paycom"),
+               search_rec("Remote Co", {**whole, "ats": "workday", "workplace": "remote",
+                                        "workplace_source": "location"}),
+               search_rec("Plain Co", {**whole, "ats": "workday", "workplace": "", "workplace_source": ""}),
+               search_rec("Old Co", {**whole, "ats": "workday"})]
+    facts = la.posting_facts("".join("LIVE_RESULT " + json.dumps(r) + "\n" for r in records))
+    assert (facts["paycom"]["placed"], facts["paycom"]["workplace"]) == (1, 1)
+    assert (facts["workday"]["read"], facts["workday"]["placed"], facts["workday"]["workplace"]) == (3, 2, 1)
+    assert la.facts_said(facts).endswith("; workplace read on 2 of 3 (paycom 1 of 1, workday 1 of 2)")
+    for name in la.SECRETS:
+        monkeypatch.delenv(name, raising=False)
+    folder = tmp_path / "live-search"
+    folder.mkdir()
+    (folder / "run.log").write_text("".join("LIVE_RESULT " + json.dumps(r) + "\n" for r in records), encoding="utf-8")
+    la.main(["--log", f"search={folder / 'run.log'}", "--folder", str(folder)])
+    assert "; workplace read on 2 of 3 (paycom 1 of 1, workday 1 of 2)" in capsys.readouterr().out

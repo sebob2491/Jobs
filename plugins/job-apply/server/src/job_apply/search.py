@@ -64,9 +64,11 @@ import yaml
 from bs4 import BeautifulSoup
 
 from . import config
+from . import workplace as wplace
 from .ats import csod_parts, shared_system, workday_parts
 from .autofill import US_STATES, norm
-from .postings import USER_AGENT, csod_context, csod_place, html_to_text, place_in_text, successfactors_place
+from .postings import (USER_AGENT, csod_context, csod_place, html_to_text, icims_workplace, place_in_text,
+                       said_workplace, smartrecruiters_workplace, successfactors_place, successfactors_workplace)
 
 WORKDAY_PAGE = 20  # Workday rejects larger pages
 MAX_ALTERNATIVES = 4
@@ -121,6 +123,12 @@ class Listing:
     pay_period: str = ""
     pay_source: str = ""
     pay_sure: bool = False
+    # where it's done (workplace.py: remote, hybrid or onsite; "" unknown), and where that came from (structured: the
+    # system's own field; location: its location's words); keep_listings reads the location for one the list didn't say
+    workplace: str = ""
+    workplace_source: str = ""
+    # its employment type as the list words it ("Full Time", "Full-Time"; employment.types_of reads it), when it does
+    employment_type: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         out = asdict(self)
@@ -131,6 +139,11 @@ class Listing:
         if not out["pay_period"]:  # (no pay given)
             for k in ("pay_min", "pay_max", "pay_period", "pay_source", "pay_sure"):
                 del out[k]
+        if not out["workplace"]:  # (not said)
+            for k in wplace.FIELDS:
+                del out[k]
+        if not out["employment_type"]:
+            del out["employment_type"]
         return out
 
 
@@ -713,6 +726,7 @@ async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
                 company="", title=p.get("title", ""), url=f"{base}{p.get('externalPath') or ''}",
                 location=where, posted=str(p.get("postedOn") or ""),
                 external_id=(p.get("bulletFields") or [""])[0], ats="workday",
+                **said_workplace(p.get("remoteType")),  # ("Hybrid", "Remote": a tenant's field, where it has it)
             ))
         offset += WORKDAY_PAGE
         if not postings or len(out) >= limit or offset >= total:
@@ -919,7 +933,7 @@ def parse_sitecore(data: Any) -> list[Listing]:
             out.append(Listing(
                 company="", title=c.get("name") or "", url=c["url"], location=place,
                 posted=str(c.get("job_date_posted") or "")[:10], external_id=str(c.get("job_id") or c.get("id") or ""),
-                ats="company_site",
+                ats="company_site", employment_type=str(c.get("job_type") or ""),  # (ASML's "Fix" names none)
             ))
     return out
 
@@ -1112,7 +1126,9 @@ def parse_icims(html: str, base: str, state: str | None = None) -> list[Listing]
             if state and location_matches(location, location_terms(state)) is not True:
                 location = f"{location}; {state}" if location else ""  # its first place only
         out.append(Listing(company="", title=title, url=url, location=location.strip(), posted=posted,
-                           external_id=m.group(1), ats="icims"))
+                           external_id=m.group(1), ats="icims",
+                           # ("Location Type: Onsite", "Remote Location Eligible: Yes" among its details)
+                           **(wplace.fields(*icims_workplace(row)) if row is not None else {})))
     return out
 
 
@@ -1256,7 +1272,8 @@ def parse_phoenixchildrens(html: str, base: str) -> list[Listing]:
         place = parts[-1] if len(parts) >= 3 else ""
         out.append(Listing(company="", title=link.get_text(" ", strip=True), url=url, ats="custom",
                            location=f"{place}, AZ" if place and not _REMOTEISH.search(place) else place,
-                           external_id=url.rstrip("/").rsplit("/", 1)[-1]))
+                           external_id=url.rstrip("/").rsplit("/", 1)[-1],
+                           employment_type=parts[1] if len(parts) >= 3 else ""))  # ("Full-Time", "PRN")
     return out
 
 
@@ -1374,8 +1391,9 @@ def _cp_place(place: str, state: str) -> str:
     person would: "Phoenix, AZ", "Remote (Arizona)", "Statewide (Arizona)"."""
     upper = place.upper()
     region = US_STATES.get(state, state)
-    if "REMOTE" in upper:
-        return f"Remote ({region})" if region else "Remote"
+    if "REMOTE" in upper:  # ("REMOTE OPTIONS": an option, never sure: workplace.location_said)
+        said = "Remote options" if "OPTION" in upper else "Remote"
+        return f"{said} ({region})" if region else said
     if re.search(r"VARIOUS|STATEWIDE", upper):
         return f"Statewide ({region})" if region else "Statewide"
     name = " ".join("Mc" + w[2:].capitalize() if w.startswith("mc") and len(w) > 3 else w.capitalize()
@@ -1959,8 +1977,10 @@ def parse_paycom(data: Any, cfg: Any) -> list[Listing]:
             company="", title=title, url=f"https://www.paycomonline.net/v4/ats/web.php/portal/{cfg}/jobs/{p['jobId']}",
             location=_paycom_place(re.sub(r"\s+", " ", str(p.get("locations") or "")).strip()),
             posted=_paycom_date(p.get("postedOn")), external_id=req.group(1) if req else str(p["jobId"]), ats="paycom",
+            **said_workplace(p.get("remoteType")),  # ("Hybrid", "Remote", "On-site"; "" for none)
+            employment_type=str(p.get("positionType") or ""),  # ("Full Time")
         )
-        if p.get("remoteType"):
+        if p.get("remoteType") and not listing.workplace:  # (a value it can't read: kept as Paycom said it)
             listing.notes.append(f"Paycom lists it as {p['remoteType']}")
         out.append(listing)
     return out
@@ -2146,7 +2166,11 @@ async def rmk_places(listings: list[Listing], read: Callable[[str], Awaitable[st
                 page = await read(listing.url)
             except Exception:  # an unreadable posting stays "check the posting"
                 return
-        listing.location = successfactors_place(BeautifulSoup(page, "html.parser")) or listing.location
+        soup = BeautifulSoup(page, "html.parser")
+        listing.location = successfactors_place(soup) or listing.location
+        if not listing.workplace:  # (its "On-Site" line, under the same title)
+            for k, v in said_workplace(successfactors_workplace(soup)).items():
+                setattr(listing, k, v)
 
     async with _reader(read) as reading:
         await asyncio.gather(*(one(x, reading) for x in todo))
@@ -2476,6 +2500,8 @@ async def _smartrecruiters(client: httpx.AsyncClient, cfg: Any, query: str, limi
             company="", title=p.get("name") or "", url=f"https://jobs.smartrecruiters.com/{cfg}/{p.get('id')}",
             location=where, posted=(p.get("releasedDate") or "")[:10],
             external_id=p.get("refNumber") or p.get("id") or "", ats="smartrecruiters",
+            **said_workplace(smartrecruiters_workplace(loc)),
+            employment_type=str((p.get("typeOfEmployment") or {}).get("label") or ""),  # ("Full-time")
         ))
     return out[:limit]
 
@@ -2524,6 +2550,8 @@ def _oracle_listings(data: dict[str, Any], host: str, site: str) -> list[Listing
                 url=f"https://{host}/hcmUI/CandidateExperience/en/sites/{site}/job/{req.get('Id')}",
                 location=_merge_places(places), posted=req.get("PostedDate") or "",
                 external_id=str(req.get("Id") or ""), ats="oracle_hcm",
+                # (a requisition's own field where the site gives it: ORA_ON_SITE, ORA_HYBRID, ORA_REMOTE)
+                **said_workplace(req.get("WorkplaceTypeCode") or req.get("WorkplaceType")),
             ))
     return out
 
@@ -2712,6 +2740,9 @@ def keep_listings(company: str, listings: list[Listing], terms: list[str], limit
                 and days > posted_within_days:
             continue
         listing.company = company
+        if not listing.workplace:  # ("Remote - US"; "Phoenix, AZ; Remote", "Remote options (Arizona)": an option)
+            for k, v in wplace.fields(*wplace.location_said(listing.location), source="location").items():
+                setattr(listing, k, v)
         where = location_matches(listing.location, terms)
         if where is False and listing.in_area:
             where = True  # (the site's own area filter found it: in the area, however the site names its place)

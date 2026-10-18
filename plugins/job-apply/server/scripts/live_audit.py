@@ -419,25 +419,30 @@ def posting_facts(text: str) -> dict[str, dict[str, int]]:
     """By job system, the search check's postings read (`read`), those whose pay was found (`pay`: pay.py, from the
     posting's data or its words), those whose date wasn't (`no_date`: neither the list nor the posting gave one) and how
     many records said either way (`dated`: a run before the live check recorded dates has none): how far the desk's pay
-    listing and its Posted filter reach (the design of Oct 18, F1 and F2)."""
+    listing and its Posted filter reach (the design of Oct 18, F1 and F2). And of the records that kept it (`placed`),
+    those whose workplace was read (`workplace`: remote, hybrid or onsite, from a field, the location or the text):
+    how far the Workplace filter reaches (F3)."""
     out: dict[str, dict[str, int]] = {}
     for rec in live_compare.read_log(text, "LIVE_RESULT ").values():
         p = rec.get("posting")
         if not isinstance(p, dict) or p.get("error"):
             continue
         system = str(p.get("ats") or next(iter(rec.get("search_config") or {}), "") or "?")
-        facts = out.setdefault(system, {"read": 0, "pay": 0, "dated": 0, "no_date": 0})
+        facts = out.setdefault(system, {"read": 0, "pay": 0, "dated": 0, "no_date": 0, "placed": 0, "workplace": 0})
         facts["read"] += 1
         facts["pay"] += bool(p.get("pay"))
         if "posted" in p:
             facts["dated"] += 1
             facts["no_date"] += not p.get("posted")
+        if "workplace" in p:
+            facts["placed"] += 1
+            facts["workplace"] += bool(p.get("workplace"))
     return out
 
 
 def facts_said(facts: dict[str, dict[str, int]]) -> str:
     """posting_facts in the summary line: "pay listed on 3 of 9 (paycom 1 of 1, workday 2 of 8); no date on 2 of 9
-    (applicantstack 2 of 2)"."""
+    (applicantstack 2 of 2); workplace read on 2 of 9 (paycom 1 of 1, workday 1 of 8)"."""
     if not facts:
         return ""
     read = sum(f["read"] for f in facts.values())
@@ -450,6 +455,11 @@ def facts_said(facts: dict[str, dict[str, int]]) -> str:
         if undated:
             said += " (" + ", ".join(f"{system} {f['no_date']} of {f['dated']}"
                                      for system, f in sorted(undated.items())) + ")"
+    placed = {system: f for system, f in facts.items() if f.get("placed")}
+    if placed:
+        said += (f"; workplace read on {sum(f['workplace'] for f in placed.values())} of "
+                 f"{sum(f['placed'] for f in placed.values())} (" + ", ".join(
+                     f"{system} {f['workplace']} of {f['placed']}" for system, f in sorted(placed.items())) + ")")
     return said
 
 

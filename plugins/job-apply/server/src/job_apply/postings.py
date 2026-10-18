@@ -24,6 +24,12 @@ from .ats import (csod_parts, detect_ats, greenhouse_parts, lever_parts, linkedi
 from .autofill import US_STATES
 from .pay import fields as pay_fields
 from .pay import pay_from_ld, pay_from_posting
+from .workplace import field_said as workplace_field_said
+from .workplace import Fields as WorkplaceFields
+from .workplace import fields as workplace_fields
+from .workplace import from_field as workplace_field
+from .workplace import in_text as workplace_in_text
+from .workplace import location_said as workplace_location_said
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -58,6 +64,11 @@ class Posting:
     pay_period: str = ""
     pay_source: str = ""
     pay_sure: bool = False  # (structured, or right after a pay label: only a sure pay fails a "Pay at least")
+    # where it's done (workplace.py: remote, hybrid or onsite; "" unknown) and where that came from (structured: the
+    # system's own field; location: its location's words; text: its sentences, never sure). finalize() reads the
+    # location and the text for one no field said
+    workplace: str = ""
+    workplace_source: str = ""
     # the whole text, before MAX_DESCRIPTION's cut, and the page's description: read by finalize() for the pay (often
     # the last thing a long posting says), then let go. Never saved
     full_text: str = field(default="", repr=False, compare=False)
@@ -287,12 +298,63 @@ def posting_from_jsonld(ld: dict[str, Any], url: str) -> Posting:
         # (its figures, not only the words _salary_from_ld prints; dollars when it names no currency only in the US)
         **pay_fields(pay_from_ld(ld.get("baseSalary"), in_us=_in_us(ld.get("jobLocation")))),
     )
-    if ld.get("jobLocationType") == "TELECOMMUTE" and "remote" not in p.location.lower():
-        p.location = (p.location + "; Remote").strip("; ")
+    kinds = ld.get("jobLocationType")
+    if "TELECOMMUTE" in (kinds if isinstance(kinds, list) else [kinds]):  # (schema.org's one word for a remote job)
+        p.workplace, p.workplace_source = "remote", "structured"
+        if "remote" not in p.location.lower():
+            p.location = (p.location + "; Remote").strip("; ")
     return p
 
 
 _CITY_STATE = re.compile(r"^([A-Za-z][A-Za-z .'-]*?),?\s+([A-Z]{2})$")  # "Phoenix AZ"
+_SF_WORKPLACE = re.compile(r"(?i)^(?:on-?\s?site|hybrid|remote|fully remote|in[ -]office)$")
+
+
+def said_workplace(value: Any) -> WorkplaceFields:
+    """A job system's own field for where the job is done, as a Posting's or a Listing's workplace fields (source
+    "structured", or "option" for one said as an option: "Remote Eligible"): {} when it has none or says none
+    (workplace.field_said)."""
+    return workplace_fields(*workplace_field_said(value))
+
+
+def smartrecruiters_workplace(location: Any) -> str:
+    """Where a SmartRecruiters job is done, from its location's own flags (remote, hybrid: only a true one says)."""
+    loc = location if isinstance(location, dict) else {}
+    return "hybrid" if loc.get("hybrid") is True else "remote" if loc.get("remote") is True else ""
+
+
+def successfactors_workplace(soup: BeautifulSoup) -> str:
+    """Where a SuccessFactors posting's job is done, from the unlabelled lines under its title (Edwards: "Service",
+    "Phoenix AZ", "United States", "On-Site"): a line that is only that word."""
+    for token in soup.select(".joblayouttoken")[:12]:
+        words = " ".join(token.get_text(" ", strip=True).split())
+        if token.select_one('[itemprop="title"]') is None and _SF_WORKPLACE.match(words):
+            return workplace_field(words)
+    return ""
+
+
+_ICIMS_WORKPLACE = re.compile(r"(?i)^(?:location\s+type|workplace(?:\s+type)?|work\s+(?:location\s+)?(?:type|"
+                              r"arrangement|model)|remote\s+type)$")
+_ICIMS_REMOTE_OK = re.compile(r"(?i)^remote(?:\s+location)?\s+eligible$")
+
+
+def icims_workplace(node: Any) -> tuple[str, bool]:
+    """Where an iCIMS job is done, and whether surely, from its header details (a results row's, or its posting
+    page's): "Location Type: Onsite" (workplace.field_said), else "Remote Location Eligible: Yes", remote as an option
+    (never sure: eligible isn't done so); ("", False) when they don't say ("Remote Location Eligible: No" alone
+    doesn't: it may be hybrid)."""
+    eligible = ""
+    for tag in node.select(".iCIMS_JobHeaderTag"):
+        name, value = tag.select_one("dt"), tag.select_one("dd")
+        if name is None or value is None:
+            continue
+        words = [w.strip() for w in name.get_text(" ", strip=True).split(":") if w.strip()]
+        said = value.get_text(" ", strip=True)
+        if words and all(_ICIMS_WORKPLACE.match(w) for w in words) and workplace_field(said):
+            return workplace_field_said(said)
+        if words and all(_ICIMS_REMOTE_OK.match(w) for w in words):
+            eligible = said.strip().lower()
+    return ("remote", False) if re.match(r"(?:yes|y|true)\b", eligible) else ("", False)
 
 
 def successfactors_place(soup: BeautifulSoup) -> str:
@@ -418,6 +480,10 @@ def parse_html(raw_html: str, url: str) -> Posting:
     p.location = p.location or (_location_from_ld(micro["jobLocation"]) if micro else "") or successfactors_place(soup)
     if not p.location and "career_job_req_id=" in url:  # SuccessFactors' older sites: only the text says
         p.location = place_in_text(p.description)
+    if not p.workplace:  # (SuccessFactors' "On-Site" line under the title, iCIMS's "Location Type" detail)
+        line = successfactors_workplace(soup)
+        for k, v in workplace_fields(*((line, True) if line else icims_workplace(soup))).items():
+            setattr(p, k, v)
     return p
 
 
@@ -455,6 +521,7 @@ async def _fetch_workday(client: httpx.AsyncClient, url: str) -> Posting | None:
         employment_type=info.get("timeType", ""),
         posted_at=info.get("startDate", ""),
         parse_method="workday-api",
+        **said_workplace(info.get("remoteType")),  # ("Hybrid", "Remote", "On Site": a tenant's field, where it has it)
     )
 
 
@@ -509,6 +576,7 @@ async def _fetch_lever(client: httpx.AsyncClient, url: str) -> Posting | None:
         external_id=parts["posting_id"],
         employment_type=cats.get("commitment", ""),
         parse_method="lever-api",
+        **said_workplace(data.get("workplaceType")),  # (remote, hybrid, on-site; "unspecified" says none)
     )
 
 
@@ -537,6 +605,7 @@ async def _fetch_smartrecruiters(client: httpx.AsyncClient, url: str) -> Posting
         employment_type=(data.get("typeOfEmployment") or {}).get("label", ""),
         posted_at=(data.get("releasedDate") or "")[:10],
         parse_method="smartrecruiters-api",
+        **said_workplace(smartrecruiters_workplace(loc)),
     )
 
 
@@ -572,9 +641,11 @@ async def _fetch_oracle(client: httpx.AsyncClient, url: str) -> Posting | None:
         full_text=body,
         apply_url=url,
         external_id=str(d.get("Id") or parts["job_id"]),
-        employment_type=d.get("WorkerType") or d.get("JobSchedule") or "",
+        # (both: "Contingent Worker" says contract, "Part time" the schedule; "Employee" alone says neither)
+        employment_type=", ".join(str(d[k]) for k in ("WorkerType", "JobSchedule") if d.get(k)),
         posted_at=d.get("ExternalPostedStartDate") or "",
         parse_method="oracle-api",
+        **said_workplace(d.get("WorkplaceTypeCode") or d.get("WorkplaceType")),  # (ORA_HYBRID, "On-site", where given)
     )
 
 
@@ -710,5 +781,11 @@ def finalize(posting: Posting) -> Posting:
     if pay is not None and pay.listed:
         for k, v in pay_fields(pay).items():
             setattr(posting, k, v)
+    if not posting.workplace:  # no field said where it's done: its location's words, else its sentences (unsure)
+        if (place := workplace_location_said(posting.location))[0]:  # (beside a place, or an option: "option")
+            for k, v in workplace_fields(*place, source="location").items():
+                setattr(posting, k, v)
+        elif said := workplace_in_text(posting.full_text or posting.description):
+            posting.workplace, posting.workplace_source = said, "text"
     posting.full_text = ""  # (read: let go)
     return posting

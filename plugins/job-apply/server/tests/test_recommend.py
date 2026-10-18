@@ -671,3 +671,100 @@ def test_recommend_takes_a_read_postings_pay_onto_the_opening():
     assert (item["pay_min"], item["pay_max"], item["pay_period"], item["pay_source"]) == (26, 28, "hour", "text")
     assert item["posting"]["pay_period"] == "hour" and item["posting"]["salary"] == "$26 - $28 an hour"
     assert "pay meets your desired $50,000" in item["fit"]["reasons"]
+
+
+def test_recommend_takes_where_a_read_posting_says_its_done_when_it_says_it_better():
+    """The design of Oct 18, F3: the opening keeps where the list said it's done, unless the posting read says it from
+    a better source (its own field over the location's words over its sentences)."""
+    async def search(query, location, limit):
+        return {"results": [
+            {"company": "Example Fab", "title": "Equipment Technician", "url": "https://x/field",
+             "location": "Remote - US", "workplace": "remote", "workplace_source": "location"},
+            {"company": "Example Fab", "title": "Equipment Technician", "url": "https://x/text",
+             "location": "Remote - US", "workplace": "remote", "workplace_source": "location"}]}
+
+    async def fetch(url):
+        said = ("hybrid", "structured") if url.endswith("field") else ("onsite", "text")
+        return Posting(url=url, description=LAM_FSE2, location="Phoenix, AZ", workplace=said[0],
+                       workplace_source=said[1])
+
+    items = {i["url"]: i for i in asyncio.run(recommend(tech(), search, read_postings=2, fetch=fetch,
+                                                        today=TODAY))["results"]}
+    assert (items["https://x/field"]["workplace"], items["https://x/field"]["workplace_source"]) == \
+        ("hybrid", "structured")
+    assert (items["https://x/text"]["workplace"], items["https://x/text"]["workplace_source"]) == ("remote", "location")
+    assert items["https://x/text"]["posting"]["workplace"] == "onsite"  # (the posting's own, kept with it)
+
+
+# ------------------------------------------------------------------ the filter row's facts (the design of Oct 18, F5)
+
+
+@pytest.mark.parametrize("title, level", [
+    ("Field Service Engineer Intern", "intern"), ("Co-op, Equipment Engineering", "intern"),
+    ("Senior Equipment Technician", "senior"), ("Sr. Field Service Engineer", "senior"),
+    ("Lead Process Technician", "senior"), ("Maintenance Supervisor", "senior"), ("Technician III", "senior"),
+    ("Technician II", "mid"), ("Technician I", "entry"), ("Field Service Technician I-III", "entry"),
+    ("Entry Level Equipment Technician", "entry"), ("Junior Analyst", "entry"), ("Equipment Technician", ""),
+])
+def test_a_titles_level_is_read_by_the_scores_own_rules(title, level):
+    from job_apply.recommend import title_rank
+
+    assert title_rank(title) == level
+    assert score_listing({"title": title}, tech(), today=TODAY).to_dict()["facts"] == {"level": level}
+
+
+@pytest.mark.parametrize("text, travel", [
+    ("Must be willing to travel up to 75% of the time.", 75), ("Travel: 0-25%", 25), ("Up to 10% travel.", 10),
+    ("Travel required: up to 50%", 50), ("Domestic and international travel up to 40% expected.", 40),
+    ("20% domestic travel", 20), ("Travel Percentage: 25%", 25), ("Travel - Up to 30% of the time", 30),
+    # not the job's travel: its benefits
+    ("We pay travel reimbursement; 401(k) with 100% match.", None),
+    ("This role is eligible for 100% travel reimbursement.", None),
+    ("We cover 100% of travel costs.", None), ("Some travel may be required.", None),
+])
+def test_travel_is_said_as_the_jobs_share_of_its_time(text, travel):
+    from job_apply.recommend import travel_said
+
+    assert travel_said(text) == travel
+
+
+@pytest.mark.parametrize("text, said", [
+    ("Shift: 1st Shift (United States of America)", ("day", True)),
+    ("Shift: 3rd Shift (United States of America)", ("other", True)),
+    ("Shift: Nights", ("other", True)), ("Schedule: Days/Nights", ("mixed", True)),
+    ("Hours: 6pm - 6am, nights", ("", False)), ("Schedule: Full Time", ("", False)),  # (not "Hours:": the review)
+    ("Work Schedule: Monday - Friday", ("", False)),
+    # its sentences: shown, never sure (it may be a "no")
+    ("This is a day shift role.", ("day", False)), ("We have no night shifts.", ("", False)),
+    ("Equipment Technician. Grow your insights.", ("", False)),
+])
+def test_a_shift_is_sure_only_from_the_postings_own_shift_line(text, said):
+    from job_apply.recommend import shift_said
+
+    assert shift_said(text) == said
+
+
+def test_a_read_postings_requirements_are_its_facts_and_an_unread_one_says_none():
+    """The design of Oct 18, F5: the fit carries what the desk's filter chips hide by, the posting's requirements once
+    read (the same reading that blocks a job's recommendation) and its title's level always."""
+    text = ("Equipment Technician\nMinimum Qualifications:\n- Bachelor's degree in Electrical Engineering required.\n"
+            "- Active Secret clearance required.\n- Up to 50% travel.\nShift: Nights\n"
+            "Preferred Qualifications:\n- Master's degree preferred.")
+    facts = score_listing({"title": "Senior Equipment Technician"}, tech(), text, TODAY).to_dict()["facts"]
+    # (a degree and a clearance in its requirements' sentences: shown, never sure, the second review of the filters;
+    # only a line labelled with them is)
+    assert facts == {"level": "senior", "read": True, "degree": "bachelor", "degree_or_equivalent": False,
+                     "degree_sure": False, "clearance": True, "clearance_later": False, "clearance_sure": False,
+                     "travel": 50, "travel_sure": True, "shift": "other", "shift_sure": True}
+    labelled = text + "\nRequired Education: Bachelor's Degree\nClearance Type: Secret"
+    facts = score_listing({"title": "Equipment Technician"}, tech(), labelled, TODAY).to_dict()["facts"]
+    assert (facts["degree"], facts["degree_sure"], facts["clearance"], facts["clearance_sure"]) == \
+        ("bachelor", True, True, True)
+    later = ("Requirements:\n- Associate's degree or equivalent experience.\n- Ability to obtain a Secret clearance.\n"
+             "Travel to customer sites; travel reimbursement and a 401(k) with 100% match.")
+    facts = score_listing({"title": "Equipment Technician"}, tech(), later, TODAY).to_dict()["facts"]
+    assert (facts["degree"], facts["degree_or_equivalent"], facts["clearance"], facts["clearance_later"]) == \
+        ("associate", True, False, True)
+    assert (facts["travel"], facts["travel_sure"]) == (100, False)  # (requirements' wider reading: never hides)
+    assert (facts["shift"], facts["shift_sure"]) == ("", False)
+    assert score_listing({"title": "Equipment Technician"}, tech(), today=TODAY).to_dict()["facts"] == {"level": ""}

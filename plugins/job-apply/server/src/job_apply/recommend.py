@@ -17,7 +17,7 @@ from datetime import date
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
-from . import pay
+from . import pay, workplace
 from .autofill import _PARTIAL_STUDY, degree_key, entry_dates, norm, school_under_way
 from .config import Profile, listed
 from .postings import QUESTIONS_HEADING, Posting, fetch_posting
@@ -120,7 +120,8 @@ _DEGREES = [  # lowest first, so "Associate's or Bachelor's" counts as an Associ
 _EQUIVALENT = re.compile(r"or equivalent|equivalent (?:combination|experience|work|military)|in lieu of|"
                          r"substitut\w* for (?:a |an |the )?(?:\w+ )?degree|(?:may|can) be substituted|"
                          r"or (?:relevant|related|equivalent) (?:work )?experience|"
-                         r"or (?:at least |a minimum of )?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\+? years|"
+                         # (a word "or", not "for": "licensed for 2 years" is no way around a degree)
+                         r"\bor (?:at least |a minimum of )?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\+? years|"
                          r"(?:ged|high school)[^.\n]{0,40}(?:plus|and|with) \d|"
                          # a list of ways in: "an associate degree, military technical training, field service
                          # experience, or trade certification" (an item of the list, so a comma after it); not
@@ -148,6 +149,8 @@ _NO_DEGREE = re.compile(r"\b(degree|diploma)s?\b(?: is| are)? not (?:\w+ )?(?:re
 _CLAUSES = re.compile(r"\s*[;,()]\s*|\s+(?:but|while|whereas)\s+")
 _CLEARANCE = re.compile(r"(?:active|current|secret|top secret|ts/sci|security|dod)\s+clearance|clearance (?:is )?required")
 _NO_CLEARANCE = re.compile(r"\bno (?:\w+ )?clearance|clearance (?:is )?not required|"
+                           # a labelled line that says none ("Security Clearance Level: None", "Clearance: N/A")
+                           r"clearance[\w ]{0,40}\??:\s*(?:none|n/?a|no|not required)\b|"
                            r"(?:not require|without) (?:a |an |any )?(?:\w+ )?clearance")
 # (and "eligible for a Secret clearance": one to be granted, not held now: the review of Oct 15)
 _CLEARANCE_LATER = re.compile(r"(?:ability|able|eligib\w*) to obtain|obtain and maintain|be able to get|"
@@ -178,6 +181,9 @@ class Fit:
     concerns: list[str] = field(default_factory=list)
     blocked: bool = False  # a hard requirement the profile says isn't met
     held: bool = False  # not preselected until checked: its posting unread, or it's outside the area
+    # what the title and the posting say of the job, for the desk's filter row (posting_facts): its level always, its
+    # requirements once the posting is read. A filter hides an opening only for a fact said here that fails it
+    facts: dict[str, Any] = field(default_factory=dict)
     # how the score adds up, part by part, its start among them ({"why": "posted this week", "points": 10}): they sum to
     # the score (the Job Desk shows them by each opening's score)
     parts: list[dict[str, Any]] = field(default_factory=list)
@@ -430,8 +436,11 @@ def requirements(text: str) -> dict[str, Any]:
                     or re.match(r"[-\s]*or\b", following) and _EQUIVALENT.search("or " + following):
                 out["degree_or_equivalent"] = True
         years += [int(y) for y in _YEARS.findall(sentence) if 0 < int(y) <= 15]
-        if _CLEARANCE.search(sentence) and not _NO_CLEARANCE.search(sentence):
-            if _CLEARANCE_LATER.search(sentence):
+        # (not a heading that names a clearance among other things: Boeing's "Security Clearance and Export Control
+        # Requirements: This position must meet U.S. export control ...", the second review of F5)
+        cleared = re.sub(r"^[^:.]{0,40}clearance\s+and\s+[^:.]{0,60}:\s*", "", sentence)
+        if _CLEARANCE.search(cleared) and not _NO_CLEARANCE.search(cleared):
+            if _CLEARANCE_LATER.search(cleared):
                 out["clearance_later"] = True
             else:
                 out["clearance"] = True
@@ -449,9 +458,266 @@ def requirements(text: str) -> dict[str, Any]:
     return out
 
 
+# --------------------------------------------------------------------- the filter row's facts (the design of Oct 18, F5)
+# As for pay (pay.py): only a reading that is surely the job's may hide it. For a degree or a security clearance that
+# is a line the posting labels with the requirement and its strength, its value on the same line ("Education:
+# Bachelor's (Required)", "Required Education: Master's", "Clearance Type: Secret", "Security Clearance Level:
+# TS/SCI"), with no hedge, preference or way around it. Its sections can't be told apart surely ("Preferred Education
+# and Experience", "Nice to Haves", "Bonus Points", "Plus:" all read as more requirements), so nothing else hides a job:
+# what requirements() reads elsewhere is shown, marked as read from the text (the reviews of F5). A shift or travel
+# hides only from its own labelled line too.
+
+# A title's level words, read with care: "staff" only as a staff engineer, scientist or architect; "senior" not of a
+# senior center, senior living or a senior companion; not a Head Start teacher, lead abatement or lead generation, an
+# assistant to the principal or the CEO; and a trainee is entry level whatever else the title says
+_RANK_SENIOR = re.compile(r"\b(?:senior(?!\s+(?:living|care|center|centre|services|citizens?|community|housing|"
+                          r"residents?|life|day|companion))|sr|snr|staff(?=\s+(?:engineer|scientist|architect))|"
+                          r"principal(?!\s+s\b)|lead(?!\s+(?:generation|abatement|free|based|paint|safe|safety|poisoning))|"
+                          r"manager|mgr|director|dir|head(?!\s+start)|vp|vice president|chief|supervisor|supervising)\b")
+_BOSS = (r"(?:(?:senior|executive|associate|lead)\s+)?(?:principal|director|vp|vice president|ceo|cfo|coo|cto|cio|"
+         r"president|chief\s+\w+|manager|dean|superintendent|pastor|rabbi|head|executive director)(?:\s+of\s+\w+)?")
+_TO_THE = re.compile(rf"\bto\s+(?:the\s+)?{_BOSS}(?:\s+(?:and|&)\s+(?:the\s+)?{_BOSS})*\b")
+_RANK_TRAINEE = re.compile(r"\b(?:trainee|in training)\b")
+_RANK_JUNIOR = re.compile(r"\b(?:early career|entry level|(?<!data )entry|junior|jr|graduate|new grad|apprentice|"
+                          r"trainee)\b")
+# a number at the end of a title's first part that is its level ("Accountant II", "Clerk 2"), not a shift, grade,
+# building, store, route or the like ("Production Worker - Shift 2", "Teacher, Grade 5", "RN - PCU Level 2")
+_LEVEL_AT_END = re.compile(r"\b(?<!shift )(?<!grade )(?<!grades )(?<!building )(?<!bldg )(?<!store )(?<!route )"
+                           r"(?<!region )(?<!district )(?<!site )(?<!location )(?<!clinic )(?<!unit )(?<!room )"
+                           r"(?<!post )(?<!fab )(?<!module )(?<!phase )(?<!cohort )(?<!team )(?<!area )(?<!zone )"
+                           r"(?<!line )(?<!floor )(?<!station )(?<!title )(?<!pcu )(?<!icu )(?<!nicu )"
+                           r"(i{1,3}|iv|v|[1-5])$")
+
+
+def title_rank(title: str) -> str:
+    """A job's level as its title says it: "intern", "senior" (senior, lead, staff engineer, principal, manager,
+    supervisor, director..., or level III and up), "entry" (entry level, junior, graduate, apprentice, a trainee
+    whatever else it says, or level I), "mid" (level II), or "" when the title doesn't say. A level is read in the
+    title's first part only (before " - ", ",", "(" or "/"): its number after the work's word (title_level:
+    "Technician II") or its last word ("Accountant II", "Office Assistant III"), never a shift's, a grade's or a
+    building's ("Production Worker - Shift 2", "Teacher, Grade 5")."""
+    n = norm(title)
+    first = norm(re.split(r"\s[-–]\s|[,(/]", title, maxsplit=1)[0])
+    level = title_level(first)
+    if level is None and (m := _LEVEL_AT_END.search(first)):
+        level = _ROMAN.get(m.group(1)) or int(m.group(1))
+    if _INTERN.search(n):
+        return "intern"
+    if _RANK_TRAINEE.search(n):
+        return "entry"
+    if _RANK_SENIOR.search(_TO_THE.sub(" ", n)) or (level is not None and level >= 3):
+        return "senior"
+    if _RANK_JUNIOR.search(n) or level == 1:
+        return "entry"
+    return "mid" if level == 2 else ""
+
+
+# A line labelled with a requirement: "Required Education: Master's Degree", "Clearance Type: Secret"
+_LABELLED = re.compile(r"^[ \t*•·-]*([A-Za-z][A-Za-z /&'()-]{1,60}?)[ \t]*\??[ \t]*:[ \t]*(\S.*)$")
+_EDUCATION_LABEL = re.compile(r"(?i)^(?:(?:required|minimum)\s+(?:education(?:al)?|degree)(?:\s+(?:level|required))?|"
+                              r"(?:education(?:al)?|degree)\s+(?:\(?required\)?|requirements?)|"
+                              r"(?:education(?:al)?|degree)(?:\s+level)?)$")
+_STRENGTH = re.compile(r"(?i)\brequired\b|\bminimum\b|\brequirements?\b")
+_CLEARANCE_LABEL = re.compile(r"(?i)^(?:required\s+(?:security\s+)?clearance|(?:security\s+)?clearance\s+(?:type|level|"
+                              r"required|requirements?|level\s+required|level\s+must\s+currently\s+possess|"
+                              r"level\s+must\s+be\s+able\s+to\s+obtain|status))$")
+# a hedge, a preference or a way around it: never sure
+_HEDGE = re.compile(r"(?i)\b(?:may|might|could|some|certain|depending|depends|future|eventually|tbd|to be determined|"
+                    r"within\s+\d+\s+(?:years?|months?|days?)|after\s+hire|of\s+hire|not\s+required|not\s+mandatory|"
+                    r"preferred|preferably|preference|a plus|plus|desired|desirable|nice|ideal(?:ly)?|bonus|advantage\w*|"
+                    r"beneficial|helpful|optional|asset|welcome|favou?rabl\w*|great|recommended|valued|considered|"
+                    r"strongly)\b")
+_EQUIVALENT_WIDE = re.compile(r"(?i)\bor\b|\bequivalen\w*|\bin lieu\b|\bin place of\b|\bsubstitut\w*|\binstead\b|"
+                              r"\bcombination\b|\bwithout a degree\b|\babsence of\b")
+_NOT_SECURITY = re.compile(r"(?i)\b(?:card|fingerprint|dps|dcs|ivp|board|medical|health|tax|customs|osha|fbi|"
+                           r"background|drug)\b")
+_CLEARANCE_LEVEL = re.compile(r"(?i)\b(?:top secret|secret|ts|ts/sci|sci|confidential|public trust|q|l|"
+                              r"yankee white)\b")
+_CLEARANCE_NONE = re.compile(r"(?i)^(?:none|n/?a|no|nothing|not\b)|\b(?:not|no|none|without)\b")
+
+
+def _labelled_lines(text: str) -> list[tuple[str, str, str]]:
+    """A posting's labelled lines: (label, value, the next line), the label lowercased."""
+    lines = [line.strip() for line in _prepared(text).splitlines() if line.strip()]
+    out = []
+    for i, line in enumerate(lines):
+        if m := _LABELLED.match(line):
+            out.append((m.group(1).strip().lower(), m.group(2).strip(), lines[i + 1] if i + 1 < len(lines) else ""))
+    return out
+
+
+def degree_said(text: str) -> tuple[str | None, bool]:
+    """The degree a posting surely asks, and whether experience is taken instead (sure only without one: a way around
+    it on the line, or the next, makes it unsure); (None, False) when nothing says it surely. Sure only from a line
+    labelled with the education asked and its strength, its value on that line: "Education: Bachelor's degree
+    (Required)", "Required Education: Master's Degree", "Minimum Education: Bachelor's Degree"; never with a hedge or a
+    preference ("within 2 years of hire", "preferred", "a plus") or a way around it ("or equivalent experience")."""
+    found: list[int] = []
+    for label, value, following in _labelled_lines(text):
+        if not _EDUCATION_LABEL.match(label) or not (_STRENGTH.search(label) or re.search(r"(?i)\brequired\b", value)):
+            continue
+        if _HEDGE.search(value) or _HEDGE.search(label) or _EQUIVALENT_WIDE.search(value) \
+                or _EQUIVALENT_WIDE.search(following) and not _LABELLED.match(following):
+            continue
+        level = _degree_level(value.lower())
+        if level is not None:
+            found.append(level)
+    if not found:
+        return None, False
+    level = min(found)
+    return next(k for k, v in _LEVEL.items() if v == level), False
+
+
+def _degree_level(value: str) -> int | None:
+    """The lowest degree a requirement names, as requirements() reads it (a clause saying one is not required left
+    out); None for none."""
+    asked = " ".join(c for c in _CLAUSES.split(value) if not _NO_DEGREE.search(c))
+    levels = [_LEVEL[key] for key, pattern in _DEGREES if re.search(pattern, asked)]
+    if levels and re.search(r"degree|diploma|\bged\b|\bbs\b|\bb\.s|\ba\.a?\.?s\.|bachelor|master|associate|ph\.?d", asked):
+        return min(levels)
+    return None
+
+
+def clearance_said(text: str) -> tuple[bool, bool, bool]:
+    """(asks a security clearance held now, one to be got, sure). Sure only from a line labelled with the clearance
+    asked, its level on that line: "Clearance Type: Secret", "Clearance Required: Secret", "Security Clearance Level:
+    TS/SCI", "Clearance Level Must Currently Possess: Secret" ("Must Be Able to Obtain": one to be got); never with a
+    hedge or a preference ("may", "some assignments", "preferred"), a None, N/A or No, nor a clearance card,
+    fingerprint, DPS, DCS, IVP or Board one. (False, False, False) when nothing says it surely: requirements()'s reading
+    is shown, never filtered by."""
+    now = later = False
+    for label, value, _ in _labelled_lines(text):
+        if not _CLEARANCE_LABEL.match(label) or _NOT_SECURITY.search(f"{label} {value}"):
+            continue
+        if _CLEARANCE_NONE.search(value) or _HEDGE.search(value) or not _CLEARANCE_LEVEL.search(value):
+            continue
+        if re.search(r"(?i)\bobtain|\beligib|\bable to\b", f"{label} {value}"):
+            later = True
+        else:
+            now = True
+    return now, later, now or later
+
+
+# A posting's own label for its shift ("Shift: 1st Shift (United States of America)", "Shift: Nights", "Schedule:
+# Days/Nights"): a line of its own, the label first. Not "Hours:" ("Hours: 40 per week; occasional evenings")
+_SHIFT_LINE = re.compile(r"(?im)^[ \t*•-]*(?:work\s+)?(?:shift|shifts|shift\s+(?:schedule|type|pattern|time|details)|"
+                         r"schedule|work\s+schedule)[ \t]*:[ \t]*(.{1,160})$")
+_DAY_WORDS = re.compile(r"(?i)\b(?:days?|daytime|mornings?|1st|first)\b")
+# a value's part that is another shift, whole ("Nights", "Swing", "3rd", "Night Job") or as a shift ("2nd shift",
+# "Rotating shifts"); not "every third Saturday", "on-call rotation", "occasional evenings"
+_OTHER_PART = re.compile(r"(?i)^(?:the\s+)?(?:\d+\s*x\s*\d+s?\s+)?(?:(?:nights?|overnights?|evenings?|swing|"
+                         r"grave(?:yard)?|noc|mids|2nd|3rd|second|third)(?:\s+(?:shifts?|jobs?)\b.*)?|rotating|"
+                         r"rotating\s+shifts?\b.*|shift\s+rotation)$")
+# a shift said not to be ("no nights", "not nights", "no weekends or nights", "no night shifts")
+_NOT_SHIFT = re.compile(r"(?i)\b(?:no|not|non|never|without)\s+(?:(?:\w+\s+)?(?:or|and)\s+)?(?:night|evening|overnight|"
+                        r"weekend|swing|graveyard|rotating)\w*(?:\s+shifts?)?(?:\s+(?:or|and)\s+\w+)?")
+# pay for a shift is no shift ("differentials paid for evenings and nights", "Evening shift differential: $2.00/hr")
+_SHIFT_PAY = re.compile(r"(?i)differential|premium|\bpay\b|\bpaid\b|bonus|\$")
+_ROTATING = re.compile(r"(?i)\brotat\w*\b")
+# a shift in the posting's sentences: "this is a night shift position", "day shift"
+_DAY_SHIFT = re.compile(r"(?i)\b(?:day|1st|first)[ -]shifts?\b")
+_OTHER_SHIFT = re.compile(r"(?i)\b(?:night|overnight|evening|swing|graveyard|2nd|3rd|second|third|rotating)[ -]shifts?\b")
+
+
+def _shift_value(value: str) -> str:
+    """A shift line's value as day, other (nights, evenings, swing, a 2nd or 3rd or rotating shift), mixed (both, or a
+    rotation of days and nights) or "" (neither, or any: "Any", "Varies", "All shifts")."""
+    value = _NOT_SHIFT.sub(" ", re.sub(r"\([^)]*\)", " ", value))
+    # (a clause about a shift's pay is no shift: "differentials paid for evenings and nights")
+    value = " ; ".join(c for c in re.split(r"[;,]", value) if not _SHIFT_PAY.search(c))
+    if re.match(r"(?i)\s*(?:any|all|varies|variable|various|open|flexible|n/?a|not applicable)\b", value):
+        return ""
+    parts = [" ".join(p.split()) for p in re.split(r"(?i)[,;/|&]|\s[-\u2013]\s|\b(?:and|or|with|plus)\b", value)]
+    parts = [p for p in parts if p]
+    other = any(_OTHER_PART.match(p) for p in parts)
+    day = bool(_DAY_WORDS.search(value))
+    if _ROTATING.search(value) and re.search(r"(?i)\bdays?\b", value) and re.search(r"(?i)\bnights?\b", value):
+        return "mixed"  # ("Rotating Days/Nights", "Day/Night rotation")
+    return "mixed" if day and other else "day" if day else "other" if other else ""
+
+
+def shift_said(text: str) -> tuple[str, bool]:
+    """A posting's shift: ("day", sure), ("other", sure) for nights, evenings, swing, rotating or a 2nd or 3rd shift,
+    ("mixed", sure) when it names both, or ("", False) when it doesn't say. `sure` only from a line the posting labels
+    its shift or schedule on, read with care (a "no nights" is none, "every third Saturday", "on-call rotation" and a
+    shift's pay aren't shifts); one read from its sentences is shown, and never hides a job."""
+    text = _prepared(text)
+    for line in _SHIFT_LINE.findall(text):
+        said = _shift_value(line)
+        if said:
+            return said, True
+    text = _NOT_SHIFT.sub(" ", text)
+    d, o = bool(_DAY_SHIFT.search(text)), bool(_OTHER_SHIFT.search(text))
+    return ("mixed" if d and o else "day" if d else "other" if o else ""), False
+
+
+# travel said as the job's, a share of its time: "up to 25% travel", "Travel: 0-25%", "Travel: Yes, 50% of the Time",
+# "30-40% overnight travel"; on one line. Not "travel reimbursement", "travel budget", "Travel perks: 30% off", "401(k)
+# with 100% match", "100% employer-paid", "100% free standby flights"
+_NOT_TRAVEL = (r"(?![ \t]*(?:reimburs|expenses?|allowance|stipends?|pay\b|paid\b|time\b|bonus|policy|insurance|"
+               r"benefits?|budget|spend|costs?|claims?|booking|agents?|nurses?|coordinat|perks?|discounts?|"
+               r"privileges|arrangements|management|desk|accident|and\s+expense|&))")
+_NOT_TRAVEL_AFTER = (r"(?![ \t]*(?:off\b|discounts?|match|paid|covered|reimburs\w*|free\b|employer|employee|vested|"
+                     r"commission|coverage|compliance|accuracy|satisfaction|optional|higher|of[ \t]+(?:mileage|airfare|"
+                     r"costs?|expenses?|the[ \t]+irs)))")
+_TRAVEL_SAID = re.compile(
+    rf"(?i)(?:(\d{{1,3}})[ \t]*%?[ \t]*(?:-|to)[ \t]*)?(\d{{1,3}})[ \t]*%[ \t]*(?:of[ \t]+(?:the[ \t]+|your[ \t]+)?"
+    rf"time[ \t]+)?(?:(?:domestic|international|overnight|business|regional|local|and|or|/)[ \t]*)*"
+    rf"travel(?:ing|ling)?\b{_NOT_TRAVEL}|"
+    rf"\btravel(?:ing|ling)?(?:[ \t]+(?:required|requirements?|expectations?|percentage(?:[ \t]+required)?|percent|"
+    rf"amount|is[ \t]+required(?:[ \t]+at)?))?[ \t]*(?::|-|–|is|of|requires?|at)?[ \t]*(?:yes[ \t]*,?[ \t]*)?"
+    rf"(?P<more>>=?|≥|more[ \t]+than|over|at[ \t]+least)?"
+    rf"(?:up[ \t]+to|approximately|approx\.?|about|around|roughly|less[ \t]+than|under|<|~)?"
+    rf"[ \t]*(?:(\d{{1,3}})[ \t]*%?[ \t]*(?:-|to)[ \t]*)?(\d{{1,3}})[ \t]*%{_NOT_TRAVEL_AFTER}")
+
+
+def _prepared(text: str) -> str:
+    """A posting's text as requirements() reads it: plain apostrophes and hyphens, without the application's questions."""
+    text = re.sub(r"[‐-―]", "-", (text or "").replace("’", "'").replace("‘", "'"))
+    return text.split(f"\n{QUESTIONS_HEADING}\n")[0]
+
+
+def travel_said(text: str) -> int | None:
+    """The most travel a posting says the job asks, as a share of its time ("up to 25% travel", "Travel: 0-25%": 25;
+    "Travel: >25%": 26), or None when it doesn't say it so."""
+    found = [int(m.group(2) or m.group(5)) + (1 if m.group("more") else 0)
+             for m in _TRAVEL_SAID.finditer(_prepared(text))]
+    found = [n for n in found if 0 <= n <= 101]
+    return min(max(found), 100) if found else None
+
+
+def posting_facts(title: str, req: dict[str, Any] | None = None, text: str = "") -> dict[str, Any]:
+    """What an opening says of itself, for the desk's filter row (the design of Oct 18, F5): its `level` from its title
+    (title_rank) always; once its posting is read (`req`, requirements() of its `text`), `read`, its degree (`degree`,
+    None when none is asked; `degree_or_equivalent` when experience is taken instead; `degree_sure` when degree_said
+    reads it surely, else requirements()'s reading, shown only), its security clearance (`clearance` held now,
+    `clearance_later` to be got; `clearance_sure` from clearance_said, else requirements()'s reading, shown only), its
+    travel (`travel`, a share of its time; `travel_sure` when said as the job's) and its shift (`shift`: day, other,
+    mixed or ""; `shift_sure` from its own shift line). A filter hides an opening only for a fact said and sure that
+    fails it; an unread posting says none of these, and stays."""
+    out: dict[str, Any] = {"level": title_rank(title)}
+    if req is None:
+        return out
+    travel = travel_said(text)
+    shift, shift_sure = shift_said(text)
+    degree, instead = degree_said(text)
+    now, later, clearance_sure = clearance_said(text)
+    out.update({"read": True,
+                "degree": degree or req["degree"],
+                "degree_or_equivalent": instead if degree else req["degree_or_equivalent"],
+                "degree_sure": degree is not None,
+                "clearance": now or (not clearance_sure and req["clearance"]),
+                "clearance_later": later or (not clearance_sure and req["clearance_later"]),
+                "clearance_sure": clearance_sure,
+                "travel": travel if travel is not None else req["travel"], "travel_sure": travel is not None,
+                "shift": shift, "shift_sure": shift_sure})
+    return out
+
+
 def score_listing(listing: dict[str, Any], prof: Profile, description: str = "",
                   today: date | None = None) -> Fit:
     fit = Fit()
+    fit.facts = posting_facts(listing.get("title") or "")
     fit.parts.append({"why": "start", "points": fit.score})
     title = listing.get("title") or ""
     n = norm(title)
@@ -522,7 +788,9 @@ def score_listing(listing: dict[str, Any], prof: Profile, description: str = "",
         fit.reasons.append(said)
 
     if description:
-        _score_requirements(fit, requirements(description), prof, years)
+        req = requirements(description)
+        _score_requirements(fit, req, prof, years)
+        fit.facts = posting_facts(title, req, description)
     kept = max(0, min(100, fit.score))
     if kept != fit.score:  # (said among the parts too: they sum to the score)
         fit.add(kept - fit.score, "kept within 0 to 100")
@@ -635,9 +903,11 @@ async def recommend(prof: Profile, search: Search, limit_per_company: int = 10, 
             return
         item["posting"] = {k: getattr(posting, k) for k in
                            ("title", "location", "description", "apply_url", "salary", "employment_type",
-                            "posted_at", "external_id", "ats", *pay.FIELDS)}
+                            "posted_at", "external_id", "ats", *pay.FIELDS, *workplace.FIELDS)}
         if posting.pay_period and not item.get("pay_period"):  # (the opening's pay: shown on the desk, and scored)
             item.update({k: getattr(posting, k) for k in pay.FIELDS})
+        if workplace.better(vars(posting), item):  # (where it's done, as the posting says it better than the list)
+            item.update({k: getattr(posting, k) for k in workplace.FIELDS})
         if not str(item.get("posted") or "").strip() and posting.posted_at:
             item["posted"] = posting.posted_at  # the list didn't say when (EY's, iCIMS portals'); the posting does
         item["fit"] = score_listing(item, prof, posting.description, today)
