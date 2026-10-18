@@ -308,6 +308,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="seconds for the server to start and list its tools (the first start installs its "
                              "packages)")
     args = parser.parse_args(argv)
+    for stream in (sys.stdout, sys.stderr):  # (Windows' console is cp1252, and the CLI says "✔ Successfully added")
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure:
+            reconfigure(errors="replace")
     with tempfile.TemporaryDirectory(prefix="mcp-handshake-", ignore_cleanup_errors=True) as temp:
         env = clean_env(Path(temp))
         try:
