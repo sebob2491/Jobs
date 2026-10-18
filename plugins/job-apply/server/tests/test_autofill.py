@@ -1942,6 +1942,19 @@ def test_worked_there_before_only_where_the_profile_names_the_employer_itself():
     ("Intel", "Intelligent Fabrication", "No"), ("Arizona State University", "Arizona Public Service", "No"),
     ("American Express", "American Airlines", "No"), ("United Airlines", "United Health Group", "No"),
     ("ASU", "APS", "No"), ("City of Las Vegas", "City of Henderson", "No"), ("Example Fab Services", "Northwind Litho", "No"),
+    # (the third review's: never by a state's name, nor a generic second word after a common first one)
+    ("Arizona Department of Transportation", "Arizona Department of Education", "No"),
+    ("Arizona Board of Regents", "Arizona Board of Nursing", "No"), ("Arizona Public Service", "Arizona Public Schools", "No"),
+    ("New York Life", "New York Times", "No"), ("New Mexico Gas", "New Mexico State University", "No"),
+    ("North Carolina State", "North Carolina Central", "No"), ("United States Postal Service", "United States Air Force", "No"),
+    ("Community Health Systems", "Community Health Network", "No"), ("National Park Service", "National Park Foundation", "No"),
+    # (nor a two-letter first word read as a short form)
+    ("TTM Technologies", "TT Electronics", "No"), ("SK Hynix", "Southwest Key", "No"), ("JB Hunt", "Johnson Brothers", "No"),
+    ("GE Aerospace", "Global Equities", "No"), ("AB Electronics", "American Bank", "No"),
+    ("ON Semiconductor", "Oracle Network", "No"), ("ON Semiconductor", "Onsite Nursing", "No"),
+    ("EE Times", "Electrical Engineering", "No"), ("PF Changs", "Phoenix Fire", "No"), ("BD Medical", "Banner Desert", "No"),
+    ("ST Microelectronics", "Sound Transit", "No"), ("JE Dunn", "Jones Electric", "No"),
+    ("GE", "General Electric", None),
     # the employer itself: Yes
     ("Wells Fargo & Company", "Wells Fargo", "Yes"), ("Texas Instruments Incorporated", "Texas Instruments", "Yes"),
 ])

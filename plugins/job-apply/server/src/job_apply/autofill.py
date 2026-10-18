@@ -798,32 +798,39 @@ def _employer_key(name: str) -> str:
 _COMMON_FIRST = {name.split()[0] for name in _STATE_BY_NAME} | {
     "the", "american", "america", "united", "national", "first", "general", "global", "international", "advanced",
     "applied", "pacific", "western", "eastern", "northern", "southern", "central", "great", "new", "us", "usa", "city",
-    "county", "state", "university", "community", "citizens", "premier", "standard", "universal", "allied", "midwest"}
+    "county", "state", "university", "community", "citizens", "premier", "standard", "universal", "allied", "midwest"
+} | set(_STATE_BY_NAME)
+# Second words that, after a common first one, still name no employer of their own: "United States Postal Service" and
+# "United States Air Force", "National Park Service" and "National Park Foundation" are two
+_GENERIC_SECOND = {"department", "public", "board", "federal", "health", "states", "community", "school", "schools",
+                   "college", "medical", "park", "life", "times"}
 # the small words a name's initials may leave out ("University of Arizona": ua)
 _SMALL_WORDS = {"of", "and", "the", "for", "at", "de"}
 
 
-def _short_forms(name: str) -> set[str]:
+def _short_forms(name: str, whole: bool = False) -> set[str]:
     """What a name of several words may be shortened to: its initials, of the whole and of its first words, with its
     small words and without, with its legal words and without ("Taiwan Semiconductor Manufacturing Company": tsmc;
     "Analog Devices, Inc.": adi; "Tokyo Electron Limited": tel; "University Medical Center of Southern Nevada": umc);
-    and its initials before its last word ("University of Arizona": uarizona)."""
+    and its initials before its last word ("University of Arizona": uarizona). `whole`: the initials of the whole name
+    alone (for a two-letter short form: "GE" is General Electric's, never "Global Equities Holdings"' first two)."""
     forms: set[str] = set()
     for words in (norm(name).split(), _employer_key(name).split()):
         if words and words[0] == "the":
             words = words[1:]
         big = [w for w in words if w not in _SMALL_WORDS]
         for ws in (words, big):
-            forms |= {"".join(w[0] for w in ws[:n]) for n in range(2, len(ws) + 1)}
-        if len(big) >= 2:
+            forms |= {"".join(w[0] for w in ws[:n]) for n in range(len(ws) if whole else 2, len(ws) + 1)}
+        if len(big) >= 2 and not whole:
             forms.add("".join(w[0] for w in big[:-1]) + big[-1])
     return forms
 
 
 def _as_short(name: str) -> set[str]:
     """How a name may be another's short form: a name of one word, as it is ("ASU", "UArizona"); one of single letters
-    and small words, as its letters ("U of A": ua, uoa); one whose first word isn't a common one, as that word ("TSMC
-    Arizona": tsmc, "UMC Southern Nevada": umc)."""
+    and small words, as its letters ("U of A": ua, uoa); one whose first word isn't a common one, as that word, of three
+    letters or more ("TSMC Arizona": tsmc, "UMC Southern Nevada": umc; never "TT Electronics", "SK Hynix", "GE
+    Aerospace": two letters are any two words' initials)."""
     words = _employer_key(name).split()
     if not words:
         return set()
@@ -831,7 +838,7 @@ def _as_short(name: str) -> set[str]:
         return {words[0]} if len(words[0]) >= 2 else set()
     if all(len(w) == 1 or w in _SMALL_WORDS for w in words):
         return {"".join(w[0] for w in words), "".join(w for w in words if len(w) == 1)}
-    return {words[0]} if len(words[0]) >= 2 and words[0] not in _COMMON_FIRST else set()
+    return {words[0]} if len(words[0]) >= 3 and words[0] not in _COMMON_FIRST else set()
 
 
 def _same_employer(a: str, b: str) -> bool:
@@ -866,14 +873,24 @@ def _may_be_employer(a: str, b: str) -> bool:
     if ka.replace(" ", "") == kb.replace(" ", ""):
         return True
     for short, long in ((a, b), (b, a)):
-        if " " in _employer_key(long) and _as_short(short) & _short_forms(long):
+        if " " in _employer_key(long) and any(s in _short_forms(long, whole=len(s) == 2) for s in _as_short(short)):
             return True
-    wa, wb = ([w for w in k.split() if w not in _SMALL_WORDS] for k in (ka, kb))
-    if not (wa and wb) or wa[0] != wb[0]:
-        return False
+    wa, wb = (_leading_words(k) for k in (ka, kb))
+    if not (wa and wb) or wa[0] != wb[0] or wa[0] in _STATE_BY_NAME:
+        return False  # (never by a state's name: "Arizona Department of ..." are many, "New York Life" isn't the Times)
     if len(wa[0]) >= 3 and wa[0] not in _COMMON_FIRST:
         return True
-    return len(wa) >= 2 and wa[:2] == wb[:2] and wa[1] not in _COMMON_FIRST and len(wa[1]) >= 3
+    return (len(wa) >= 2 and wa[:2] == wb[:2] and wa[1] not in _COMMON_FIRST and wa[1] not in _GENERIC_SECOND
+            and len(wa[1]) >= 3)
+
+
+def _leading_words(key: str) -> list[str]:
+    """A name's words without its small ones, a state's name of two words read as one ("new mexico gas": new mexico,
+    gas)."""
+    words = [w for w in key.split() if w not in _SMALL_WORDS]
+    if len(words) >= 2 and f"{words[0]} {words[1]}" in _STATE_BY_NAME:
+        words = [f"{words[0]} {words[1]}", *words[2:]]
+    return words
 
 
 def _listed(value: Any) -> list[Any]:
