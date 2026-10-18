@@ -58,6 +58,48 @@ def test_the_values_the_review_page_should_show_are_noted_for_the_audit():
     assert "example.com" not in line and "480" not in line and "Arizona Ave" not in line
 
 
+RUN_AGREED = """
+import json, sys
+sys.path.insert(0, "scripts")
+import live_smoke
+live_smoke.use_role("technician")
+agreed = [{"what": "terms gate", "heading": "Welcome, Testy McTestface", "button": "I Agree", "sha": "a" * 40,
+           "words": "Signed in as Testy McTestface (480-555-0199). By pressing I Agree you accept our Terms of Use.",
+           "windows": ["Testy McTestface agrees to binding arbitration."]},
+          {"what": "notice", "heading": "AI Notice", "button": "Ok", "sha": "b" * 40, "words": "We use AI to screen."}]
+seen = set()
+first = live_smoke.agreed_words(agreed[:1], seen)
+then = live_smoke.agreed_words(agreed, seen)
+# the test identity's run: its email and passwords masked in every text kept (as in all the run writes)
+live_smoke._mask = live_smoke.live_identity.masker("jobdesk.test@example.com", ["Xk9-not-a-real-password"])
+masked = live_smoke.agreed_words([{"what": "attestation", "heading": "Sign as jobdesk.test@example.com",
+                                   "button": "Xk9-not-a-real-password", "sha": "c" * 40,
+                                   "words": "Account jobdesk.test@example.com", "choices": ["I am jobdesk.test@example.com"],
+                                   "windows": ["password Xk9-not-a-real-password"]}])
+print("RESULT " + json.dumps({"first": first, "then": then, "all": live_smoke.agreed_words(agreed), "masked": masked}))
+"""
+
+
+def test_the_words_agreed_to_are_kept_scrubbed_for_the_audit_each_in_its_round():
+    """The words of what the desk agreed to (pipeline.Run.agreed) go into each round and agreed.json for the live
+    audit to read again (T2): scrubbed as a page the run stopped on is (the applicant's name and phone taken out), and
+    each in the round it was made in (those already recorded aren't again)."""
+    out = subprocess.run([sys.executable, "-c", RUN_AGREED], cwd=SERVER, capture_output=True, text=True,
+                         encoding="utf-8", timeout=120)
+    line = next((x for x in out.stdout.splitlines() if x.startswith("RESULT ")), None)
+    assert line, out.stdout[-2000:] + out.stderr[-3000:]
+    got = json.loads(line[len("RESULT "):])
+    assert [a["sha"] for a in got["first"]] == ["a" * 40] and [a["sha"] for a in got["then"]] == ["b" * 40]
+    assert [a["what"] for a in got["all"]] == ["terms gate", "notice"]
+    assert "McTestface" not in line and "555-0199" not in line
+    assert got["first"][0]["words"].endswith("By pressing I Agree you accept our Terms of Use.")
+    assert got["first"][0]["windows"][0].endswith(" agrees to binding arbitration.")
+    assert got["all"][1] == {"what": "notice", "heading": "AI Notice", "button": "Ok", "words": "We use AI to screen.",
+                             "choices": [], "windows": [], "sha": "b" * 40}
+    masked = json.dumps(got["masked"])
+    assert "jobdesk.test@" not in masked and "Xk9" not in masked and masked.count("<test-email>") == 3, masked
+
+
 RUN_BAKE = """
 import asyncio, json, sys
 sys.path.insert(0, "scripts")

@@ -204,3 +204,128 @@ def test_a_posting_read_without_its_title_place_or_text_is_said_per_job_system(t
     out = capsys.readouterr().out
     assert "::warning::postings: successfactors: 2 of 2 not read whole" in out
     assert "postings: 3 of 4 not read whole" in out, out
+
+
+PRIVACY = ("Example Fab collects your name, contact details and work history to consider your application. We may share "
+           "them with our affiliates and service providers, and our site uses cookies. Read our Privacy Notice.")
+WAIVER = ("By pressing I Agree you consent to our Terms of Use. Any dispute about your application will be settled by "
+          "binding arbitration, and you waive the right to a jury trial.")
+
+
+def agreed(heading, words, button="I Agree", what="notice", choices=(), windows=()):
+    return {"what": what, "heading": heading, "button": button, "words": words, "choices": list(choices),
+            "windows": list(windows), "sha": "0" * 40}
+
+
+def test_the_words_of_an_agreement_are_read_again_and_a_waiver_deep_in_them_fails_the_audit(tmp_path, capsys,
+                                                                                         monkeypatch):
+    """The audit of Oct 18: the log keeps only an agreement's heading, so a waiver deep in a notice the desk's rules
+    missed couldn't be found afterwards. Each round now carries the words the desk agreed to (live_smoke.py's
+    agreed_words of pipeline.Run.agreed), and the audit reads them again: an arbitration or waiver paragraph fails it,
+    wherever it sits; a plain privacy notice (affiliates, cookies named as its practices) doesn't."""
+    plain = rec("Plain Co", ["agreed to Plain Co's notice “Privacy Notice” for you (settings.accept_notices)"])
+    # (a terms gate's words are its whole page's: a footer's talent community is no part of what it agrees to)
+    footer = PRIVACY + " Join our Talent Community for job alerts."
+    plain["rounds"][0]["agreed"] = [agreed("Privacy Notice", PRIVACY), agreed("Welcome", footer, what="terms gate")]
+    deep = rec("Deep Co", ["agreed to Deep Co's “I Agree” for you (settings.accept_notices)"], status="needs_you")
+    deep["rounds"][0]["agreed"] = [agreed("Candidate Privacy Statement", PRIVACY + " " * 2000 + WAIVER)]
+    signup = rec("Signup Co", ["ticked “I agree” for you (settings.accept_notices)"])
+    box = "I agree to the Terms of Use and to join the talent community for job alerts"
+    signup["rounds"][0]["agreed"] = [agreed(box, box, "ticked", "attestation"),
+                                     agreed("Terms of Use", footer + WAIVER, what="terms gate")]
+    # after its last round (a code read, then the account's terms ticked): read too ("agreed_after"), and a clause past
+    # the first 4,000 characters, in its window
+    signup["agreed_after"] = [agreed("Create your account", "x", what="terms gate",
+                                     windows=["... and you waive your right to a jury trial ..."])]
+    assert list(la.agreement_findings("pipeline", plain)) == []
+    assert list(la.agreement_findings("pipeline", deep)) == [
+        'pipeline/Deep Co: agreed to "Candidate Privacy Statement" which names arbitration']
+    assert list(la.agreement_findings("accounts", signup)) == [
+        f'accounts/Signup Co: agreed to "{box}" which signs the applicant up',
+        'accounts/Signup Co: agreed to "Terms of Use" which names arbitration',
+        'accounts/Signup Co: agreed to "Create your account" which waives a right']
+    # each text read apart, with the kinds the desk read it for (the review of c4edd30): a group's label that also
+    # asks about marketing emails, with its privacy choice alone picked; a notice's heading and words never run on
+    emd = rec("Group Co", ["ticked “Privacy and communications” for you (settings.accept_notices)"])
+    label = ("Privacy and communications: please accept our privacy notice, and tell us if you would like to receive "
+             "marketing emails")
+    emd["rounds"][0]["agreed"] = [
+        agreed(label, label, "I accept the privacy notice", "attestation", choices=["I accept the privacy notice"]),
+        agreed("Join Example Fab", "Promotions and hiring decisions at Example Fab may use artificial intelligence.")]
+    assert list(la.agreement_findings("pipeline", emd)) == []
+    emd["rounds"][0]["agreed"][0]["choices"].append("Yes, I would like to receive marketing emails")
+    assert list(la.agreement_findings("pipeline", emd)) == [
+        f'pipeline/Group Co: agreed to "{label[:79]}…" which signs the applicant up']
+    for name in la.SECRETS:
+        monkeypatch.delenv(name, raising=False)
+    folder = tmp_path / "live-pipeline"
+    folder.mkdir()
+    (folder / "run.log").write_text(text(plain), encoding="utf-8")
+    assert la.main(["--log", f"pipeline={folder / 'run.log'}"]) == 0
+    assert "audit: nothing found (1 records, 0 files); values: as the profile's (0 review pages read); agreements: 2 " \
+           "re-read" in capsys.readouterr().out
+    (folder / "run.log").write_text(text(plain, deep), encoding="utf-8")
+    assert la.main(["--log", f"pipeline={folder / 'run.log'}"]) == 1
+    out = capsys.readouterr().out
+    assert '::error::pipeline/Deep Co: agreed to "Candidate Privacy Statement" which names arbitration' in out
+    assert "agreements: 3 re-read" in out
+
+
+def snapshot(folder, employer, fields, page=True):
+    where = folder / "pipeline" / employer
+    where.mkdir(parents=True)
+    (where / "snapshot.json").write_text(json.dumps({"url": "https://example.com", "fields": fields}), encoding="utf-8")
+    if page:
+        (where / "page.html").write_text("<p>a page</p>", encoding="utf-8")
+
+
+def test_a_box_holding_the_applicants_own_detail_where_the_rules_put_none_is_said(tmp_path, capsys, monkeypatch):
+    """The audit of Oct 18: the values check read dates and degrees only, so the profile's phone in the wrong box
+    passed. Each saved page's boxes are read: one that holds the fake applicant's phone, email, zip, street, LinkedIn
+    or full name (live_profile.py's, never the artifact's) where autofill.resolve_field wouldn't put it is a warning;
+    the same detail in its own box (in any format the site writes it) says nothing. And a stop whose page wasn't saved
+    is a warning, with "pages: N of M stops saved" on the last line."""
+    for name in la.SECRETS:
+        monkeypatch.delenv(name, raising=False)
+    folder = tmp_path / "live-hr"
+    snapshot(folder, "wrong-co", [{"id": "a", "kind": "text", "label": "Employee ID", "value": "(480) 555-0199"},
+                                  {"id": "b", "kind": "text", "label": "Mobile Phone", "value": "480-555-0199"},
+                                  {"id": "c", "kind": "text", "label": "Reference Name", "value": "Testy McTestface"}])
+    # (labels that ask for the detail though no rule of the desk's names them: no finding, the review of c4edd30)
+    snapshot(folder, "asked-co", [{"id": str(i), "kind": "text", "label": label, "value": value} for i, (label, value) in
+                                  enumerate([("Home Phone", "480-555-0199"), ("Contact Number", "480-555-0199"),
+                                             ("Sign-in Email", "testy.mctestface.0a1b2c@example.com"),
+                                             ("City, State or Zip", "85225"), ("Applicant Name", "Testy McTestface"),
+                                             ("Preferred Name", "Testy McTestface"), ("Sign", "Jobdesk Test"),
+                                             ("Website", "https://www.linkedin.com/in/example-test-profile"),
+                                             ("Social Media Profile", "linkedin.com/in/example-test-profile")])])
+    snapshot(folder, "right-co", [
+        {"id": "a", "kind": "text", "label": "Phone Number*", "value": "(480) 555-0199"},
+        {"id": "b", "kind": "text", "label": "Email Address", "value": "testy.mctestface.0a1b2c@example.com"},
+        {"id": "c", "kind": "text", "label": "User Name", "value": "<test-email>"},
+        {"id": "d", "kind": "text", "label": "Postal Code", "value": "85225"},
+        {"id": "e", "kind": "text", "label": "Address Line 1", "value": "175 S Arizona Ave"},
+        {"id": "f", "kind": "text", "label": "LinkedIn Profile", "value": "https://www.linkedin.com/in/example-test-profile"},
+        {"id": "g", "kind": "text", "label": "Electronic Signature", "value": "Jobdesk Test"},
+        {"id": "h", "kind": "text", "label": "Employee ID", "value": "N/A"},
+        {"id": "i", "kind": "password", "label": "Password", "value": "(set)"}])
+    snapshot(folder, "unsaved-co", [], page=False)
+    snapshot(folder, "fixture-co", [])
+    records = [rec("Wrong Co", ["filled 9 boxes"]), rec("Right Co", ["filled 9 boxes"]), rec("Asked Co", ["filled"]),
+               rec("Unsaved Co", ["filled 9 boxes"], status="needs_you"),
+               {**rec("Broken Co", ["filled 9 boxes"], status="needs_you"), "snapshot_error": "TimeoutError: page closed"},
+               # (its page saved, and the fixture made from it failed: said as that, the review of c4edd30)
+               {**rec("Fixture Co", ["filled 9 boxes"], status="needs_you"), "fixture_error": "OSError: disk full"}]
+    assert la.stop_pages("hr", {"Odd Co": {"company": "Odd Co", "rounds": ["not a round"]}}, [folder]) == (0, 0, [])
+    assert la.boxes_findings("hr", la.live_compare.read_log(text(*records), "LIVE_PIPELINE "), [folder]) == [
+        "hr/Wrong Co: box \"Employee ID\" holds the profile's phone",
+        "hr/Wrong Co: box \"Reference Name\" holds the profile's full name"]
+    (folder / "run.log").write_text(text(*records), encoding="utf-8")
+    assert la.main(["--log", f"hr={folder / 'run.log'}", "--folder", str(folder)]) == 0  # (warnings: never a failure)
+    out = capsys.readouterr().out
+    assert "::warning::hr/Wrong Co: box \"Employee ID\" holds the profile's phone" in out
+    assert "::warning::hr/Unsaved Co: the page it stopped on wasn't saved" in out
+    assert "::warning::hr/Broken Co: the page it stopped on wasn't saved (TimeoutError: page closed)" in out
+    assert "::warning::hr/Fixture Co: the page it stopped on was saved, but its fixture failed (OSError: disk full)" in out
+    assert "Right Co" not in out and "Asked Co" not in out and "::error::" not in out
+    assert "; pages: 1 of 3 stops saved" in out

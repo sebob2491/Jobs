@@ -79,54 +79,21 @@ import secrets  # noqa: E402
 
 import yaml  # noqa: E402
 
-# A fresh address each run, on example.com (which takes no mail): Oracle's sites stop sending
-# codes to an address after a day of runs ("Too Many Attempts. Try Again Later.").
-FAKE_EMAIL = f"testy.mctestface.{secrets.token_hex(3)}@example.com"
-FAKE_PROFILE: dict[str, Any] = {
-    "personal": {
-        "first_name": "Testy", "last_name": "McTestface", "email": FAKE_EMAIL,
-        "phone": "480-555-0199", "phone_country_code": "+1",
-        # Chandler's city hall: a real street, so address lookups (Oracle's) can find it
-        "address": {"line1": "175 S Arizona Ave", "city": "Chandler", "state": "AZ", "postal_code": "85225",
-                    "country": "United States"},
-        "linkedin_url": "https://www.linkedin.com/in/example-test-profile", "drivers_license": True,
-    },
-    "documents": {"resume": None},  # (use_role gives it the run's test resume)
-    "work_authorization": {"authorized_to_work": True, "requires_sponsorship": False, "us_person": True,
-                           "us_citizen": True, "over_18": True},
-    "preferences": {"how_did_you_hear": "Company Website", "willing_to_relocate": True,
-                    "willing_to_travel": "Yes", "flexible_schedule": True,
-                    "locations": ["Phoenix, AZ", "Chandler, AZ", "Tempe, AZ"]},
-    "eeo": {"gender": "Decline to self-identify", "hispanic_latino": "Decline to self-identify",
-            "race": "Decline to self-identify", "veteran": "I don't wish to answer",
-            "disability": "I do not want to answer"},
-    # (with a description: Workday's Role Description is required at some employers, and three stopped there, run 44)
-    "work_history": [{"title": "Equipment Technician", "company": "Example Fab", "location": "Chandler, AZ",
-                      "start": "2021-03", "end": "present",
-                      "description": "Maintained and repaired process equipment; ran preventive maintenance."}],
-    "education_history": [{"school": "Arizona State University", "degree": "Bachelor of Science",
-                           "major": "Electrical Engineering", "start": 2016, "end": 2020}],
-    # (its kind named, as setup asks for it: a list with several kinds of a bachelor's, BA and BS, is the
-    # person's to choose from a bare "Bachelor's Degree", and ten employers' stopped there, nightly Oct 11)
-    # as setup writes it: the degrees confirmed finished answer "Do you have a Bachelor's degree?"
-    "education": {"highest_degree": "Bachelor's Degree",
-                  "degrees_earned": [{"level": "high_school"}, {"level": "bachelor", "field": "Electrical Engineering"}]},
-    # (accept_cookies, as a person may set it: a banner with no way to decline, Texas Instruments' Oracle one, is
-    # accepted, so the check sees past it; one that can be declined still is: the owner asked, Oct 13)
-    "settings": {"submit_mode": "dry_run", "browser_channel": "chromium", "headless": True, "accept_cookies": True},
-}
+from live_profile import FAKE_EMAIL, FAKE_PROFILE  # noqa: E402,F401  (scripts/live_profile.py: the fake applicant)
+
 (_HOME / "profile.yaml").write_text(yaml.safe_dump(FAKE_PROFILE), encoding="utf-8")
 
 from job_apply import server  # noqa: E402
 from job_apply import fixtures as fixture_files  # noqa: E402
 from job_apply.config import Profile  # noqa: E402
-from job_apply.fixtures import convert  # noqa: E402
+from job_apply.fixtures import convert, personal_strings, redact  # noqa: E402
 from job_apply.postings import FetchError, Posting, fetch_posting, finalize, parse_html  # noqa: E402
 from job_apply.search import title_matches  # noqa: E402
 from job_apply.autofill import is_empty_value, polarity  # noqa: E402
 from job_apply.ats import detect_ats  # noqa: E402
 from job_apply.search import load_companies, sitecore_search  # noqa: E402
 
+import live_compare  # noqa: E402  (scripts/live_compare.py: a page's form as the nightly's compare keeps it)
 import live_identity  # noqa: E402  (scripts/live_identity.py, beside this one)
 import live_probes  # noqa: E402  (scripts/live_probes.py: the weekly probes' derived password and tailored resume)
 
@@ -2142,6 +2109,30 @@ async def finish_account_choices(run: Any) -> str:
         + f"; pressed \u201c{pressed}\u201d"
 
 
+def agreed_words(agreed: list[dict[str, Any]], seen: set[tuple[str, str, str]] | None = None) -> list[dict[str, Any]]:
+    """What the desk agreed to for the applicant (pipeline.Run.agreed: each notice, terms gate, attestation and account
+    box, in the words its rules read: their first 4,000 characters, and past them the windows around a waiver's or a
+    sign-up's words), for the live audit to read again (live_audit.py's agreements): every text scrubbed as a page
+    the run stopped on is (job_apply.fixtures: the profile's details taken out), and masked as all the run writes
+    (the test identity's email and passwords). With `seen`, only those not in it, which it then holds."""
+    secrets = personal_strings(Profile.load())
+
+    def scrub(text: Any) -> str:
+        return _mask(redact(str(text or ""), secrets))
+
+    out = []
+    for a in agreed:
+        key = (str(a.get("sha") or ""), str(a.get("heading") or ""), str(a.get("button") or ""))
+        if seen is not None:
+            if key in seen:
+                continue
+            seen.add(key)
+        out.append({"what": str(a.get("what") or ""), "heading": scrub(a.get("heading")), "button": scrub(a.get("button")),
+                    "words": scrub(a.get("words")), "choices": [scrub(c) for c in a.get("choices") or []],
+                    "windows": [scrub(w) for w in a.get("windows") or []], "sha": key[0]})
+    return out
+
+
 async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any], fixtures: bool = False) -> None:
     from job_apply.pipeline import Applier, placed_key, question_key
 
@@ -2168,6 +2159,7 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
     applier.start()
     rec["rounds"] = []
     run = None
+    agreed: set[tuple[str, str, str]] = set()  # (each agreement in the round it was made in: agreed_words)
     try:
         run = applier.enqueue(job["id"])
         rounds = QUESTION_ROUNDS + RESUME_ROUNDS + (MAIL_ROUNDS if TEST_IDENTITY else 0)
@@ -2188,6 +2180,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                 # and the words just above each, for one with none of its own
                 "above": await _words_above(run),
                 "page": run.page_info,
+                # what the desk agreed to for the applicant since the last round, in the words its rules read
+                "agreed": agreed_words(run.agreed, agreed),
             })
             if run.need in ("stuck", "sign_in"):  # (an account's step it stopped on, too: UKG Pro's, Oct 2026)
                 await print_shot(company["name"], run.page)
@@ -2247,12 +2241,15 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                 # its record as it is now, not as it was when it paused
                 rec["rounds"].append({"status": run.status, "need": run.need, "code": _stop_code(run),
                                       "reason": run.reason, "url": run.url,
-                                      "log": list(run.log), "questions": [], "markup": [], "page": run.page_info})
+                                      "log": list(run.log), "questions": [], "markup": [], "page": run.page_info,
+                                      "agreed": agreed_words(run.agreed, agreed)})
             break
     finally:
         if TEST_IDENTITY and run is not None and (rec.get("rounds") or [{}])[-1].get("need") == "email_code":
             await report_inbox(company["name"], applier, run)
         await applier.stop()
+        if run is not None:  # what it agreed to after its last round was recorded (a code read, a time limit's end)
+            rec["agreed_after"] = agreed_words(run.agreed, agreed)
         if (rec.get("rounds") or [{}])[-1].get("need") == "sign_in":
             rec["account_form"] = await account_form()
         if run is not None and any(_NO_MATCH.search(q.get("error") or "") for q in run.questions):
@@ -2264,14 +2261,26 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
             snap = await server.debug_snapshot(note=f"live pipeline: {company['name']}")
             dest = out / "pipeline" / slug(company["name"])
             shutil.copytree(snap["saved_to"], dest, dirs_exist_ok=True)
+            # the form on the page it ended on, for the compare (a review page that asks something new: live_compare)
+            with contextlib.suppress(OSError, ValueError, AttributeError):
+                rec["form"] = live_compare.form_shape(
+                    json.loads((dest / "snapshot.json").read_text(encoding="utf-8")).get("fields") or [])
             if _mask is not _no_mask:  # (password boxes are saved empty; the test inbox's address is masked too)
                 live_identity.mask_files(dest, _mask)
             if INBOX_IN_PROFILE:
                 live_identity.drop_images(dest)
+            if run is not None and run.agreed:  # (all the job's agreements, beside the page: after the masking above,
+                try:                            # and never in its way; written scrubbed and masked itself)
+                    _save(dest / "agreed.json", json.dumps(agreed_words(run.agreed), indent=1, ensure_ascii=False))
+                except Exception as e:
+                    rec["agreed_error"] = f"{type(e).__name__}: {str(e)[:200]}"
             if fixtures and stopped_short(rec):
                 # the page it stopped on, whatever the stop, as a test fixture (the fake applicant's details only),
                 # and what the desk decides on it (decide_fixture, below)
-                rec["fixture"] = make_fixture(dest, f"pipeline-{slug(company['name'])}", out)
+                try:
+                    rec["fixture"] = make_fixture(dest, f"pipeline-{slug(company['name'])}", out)
+                except Exception as e:  # (the page is saved all the same: not a snapshot's failure)
+                    rec["fixture_error"] = f"{type(e).__name__}: {str(e)[:200]}"
         except Exception as e:  # the record matters more than the snapshot
             rec["snapshot_error"] = f"{type(e).__name__}: {str(e)[:200]}"
         if run is not None and (rec.get("rounds") or [{}])[-1].get("status") != "ready":

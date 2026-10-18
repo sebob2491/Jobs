@@ -1447,6 +1447,38 @@ def test_with_accept_notices_the_desk_agrees_to_an_ai_notice_and_an_attestation(
     assert went["files"] == [{"label": "Resume", "name": "resume.pdf"}], went["files"]
     assert {(a["label"], a["value"]) for a in went["answers"]} >= {("First name", "Sam"),
                                                                    ("Country of Residence", "United States")}, went
+    # and each kept in the words its rules read (Run.agreed, for the live check's audit: T2), never shown
+    assert [(a["what"], a["heading"], a["button"]) for a in r.agreed] == [
+        ("notice", NOTICE, "I Agree"), ("attestation", r.agreed[1]["heading"], "I Agree")]
+    assert "artificial intelligence" in r.agreed[0]["words"] and r.agreed[1]["heading"].startswith("Terms and Conditions")
+    assert "I certify that the information" in r.agreed[1]["words"] and r.agreed[1]["choices"] == ["I Agree"]
+    assert r.agreed[0]["choices"] == [] and r.agreed[0]["windows"] == []
+    assert all(len(a["sha"]) == 40 and len(a["words"]) <= pipeline.AGREED_WORDS for a in r.agreed)
+    assert "agreed" not in r.public() and "artificial intelligence" not in json.dumps(r.public())
+
+
+def test_an_account_forms_boxes_are_kept_each_in_its_own_words_and_a_long_texts_waiver_in_a_window():
+    """Run.agreed (T2, the review of c4edd30): an account box's label, the choice given and the words above it are
+    kept apart, as the desk read each (never one run into the next); past the first AGREED_WORDS characters, the
+    words either side of a waiver's are kept, so the audit sees a clause deep in a long page."""
+    from job_apply.pipeline import Run
+
+    r = Run(job_id=1)
+    Applier._keep_ticked(r, [
+        {"id": "a", "kind": "checkbox", "label": "I agree", "words_above": "By creating an account you accept Acme's "
+                                                                          "Terms of Use."},
+        {"id": "b", "kind": "radio_group", "label": "Contact Consent",
+         "options": ["I understand that I may be considered for other open positions"]}], "Create Account")
+    assert [(a["what"], a["heading"], a["button"], a["choices"], a["words"]) for a in r.agreed] == [
+        ("account box", "I agree", "Create Account", [], "By creating an account you accept Acme's Terms of Use."),
+        ("account box", "Contact Consent", "Create Account",
+         ["I understand that I may be considered for other open positions"], "")]
+    page = "Terms of Use. " * 400 + "Any dispute goes to binding arbitration under these terms. " + "More. " * 200
+    r.keep_agreed("terms gate", "Welcome", "I Accept", page)
+    kept = r.agreed[-1]
+    assert len(kept["words"]) == pipeline.AGREED_WORDS and "arbitration" not in kept["words"]
+    assert len(kept["windows"]) == 1 and "binding arbitration under these terms" in kept["windows"][0]
+    assert len(kept["windows"][0]) <= 2 * pipeline.AGREED_WINDOW + len("arbitrat")
 
 
 @pytest.mark.parametrize("notice, settings", [("privacy", {}), ("other", {}), ("privacy", {"accept_notices": False}),
@@ -1609,6 +1641,10 @@ def test_a_privacy_agreement_before_the_application_is_accepted_for_the_person(s
         return
     assert "agreed to Example Staffing's “I Accept” for you (settings.accept_notices)" in r.log, r.log
     assert r.url.endswith("generic_form.html") and any(line.startswith("filled") for line in r.log), r.log
+    # and the page's words kept with it (Run.agreed, for the live check's audit), never shown
+    gate = [a for a in r.agreed if a["what"] == "terms gate"]
+    assert [(a["heading"], a["button"]) for a in gate] == [("Privacy Agreement", "I Accept")], r.agreed
+    assert "collects the personal information you give" in gate[0]["words"] and "agreed" not in r.public()
 
 
 def test_a_box_that_wouldnt_fill_is_said_as_that_not_asked(srv, monkeypatch):
@@ -1891,6 +1927,9 @@ def test_with_manage_accounts_the_desk_creates_the_account(srv, monkeypatch, job
         and went["accounts"][0].endswith("and agreed to its terms"), went["accounts"]
     assert "not-a-real-password" not in json.dumps(r.public())
     assert not any("assword" in a["label"] for a in went["answers"]), went
+    # the terms box ticked, kept in its own words with the button that made the account (Run.agreed)
+    assert [(a["what"], a["heading"], a["button"], a["choices"]) for a in r.agreed] == [
+        ("account box", "Yes, I have read and consent to the terms and conditions", "Create Account", [])], r.agreed
 
 
 @pytest.mark.parametrize("chosen", [True, False])

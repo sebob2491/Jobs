@@ -557,7 +557,7 @@ DECISION_SUFFIX = ".decision.json"
 # The keys compared (the "run" entry is what the live run itself said there, kept to read, not decided again)
 DECISION_KEYS = ("page", "next", "captcha", "security_asked", "account_and_application", "job_search", "fields")
 REPLAY_RESUME = "jobdesk-test-resume.pdf"  # (live_identity.RESUME_NAME: the run's own test resume's name)
-# The applicant the decisions are made for: the live check's technician (live_smoke.FAKE_PROFILE, which
+# The applicant the decisions are made for: the live check's technician (scripts/live_profile.py's FAKE_PROFILE, which
 # tests/test_live_fixtures.py keeps this the same as) with a fixed address and a test resume of its own
 REPLAY_PROFILE: dict[str, Any] = {
     "personal": {
