@@ -1516,7 +1516,7 @@ def listed_openings() -> list[dict[str, Any]]:
     """The openings the desk lists: the running desk's, or its last search's (recommendations.json): what makes a Not
     interested mark made before its job was saved ambiguous (Tracker.not_interested_marks)."""
     if _desk is not None:
-        return list(_desk.listings)
+        return list(getattr(_desk, "listings", None) or [])  # (a desk still starting has none yet)
     try:
         saved = json.loads(_recommendations_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
