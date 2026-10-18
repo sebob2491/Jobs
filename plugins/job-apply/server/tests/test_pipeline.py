@@ -3093,23 +3093,103 @@ def test_a_tailored_resume_the_fill_didnt_send_is_never_said_replaced(srv, monke
     assert REPLACED not in r.log, r.log
 
 
-@pytest.mark.parametrize("how", ["resume", "restart", "pressed before"])
+@pytest.mark.parametrize("how", ["resume", "restart", "pressed before", "carried on"])
 def test_a_file_in_an_application_the_person_has_had_is_theirs(srv, monkeypatch, how):
     """The review of 0.3.209: once the person has had the application in their hands (their Resume after a stop, or
     after a restart of the desk, whose job goes on only by it; or a Submit pressed before), a file in its upload may be
     one they put there themselves (My_Own_Pick_final.pdf). It's never deleted, nor anything uploaded beside it: left as
-    it is, and said."""
+    it is, and said. So is one the desk went on with by itself after they may have worked in its tab (Run.in_their_hands,
+    the re-review: Submit for me sent the tailored file in place of theirs)."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     before = {"resume": {"status": "needs_you", "need": "stuck"},
               "restart": {"status": "needs_you", "need": "restarted", "left_at_restart": True, "started": True},
-              "pressed before": {"pressed_before": True}}[how]
-    r, counted = kept_resume_run(srv, "?kept=My_Own_Pick_final.pdf", before=before, resume=how != "pressed before")
+              "pressed before": {"pressed_before": True},
+              "carried on": {"status": "needs_you", "need": "bot_check", "left": True, "started": True,
+                             "in_their_hands": True}}[how]
+    r, counted = kept_resume_run(srv, "?kept=My_Own_Pick_final.pdf", before=before,
+                                 resume=how in ("resume", "restart"), auto_submit=how == "carried on")
     assert "review.html" in r.url, (r.url, r.reason, r.log)
     assert (counted["presses"], counted["deletes"], counted["uploads"]) == (None,) * 3, (counted, r.log)
     assert r.log.count("left the resume in its “Resume/CV” upload as it is (My_Own_Pick_final.pdf), not the one "
                        "tailored for this job: you've had this application in your hands, so what's in it is yours") \
         == 1, r.log
     assert REPLACED not in r.log, r.log
+
+
+def test_the_desk_going_on_with_a_job_the_person_may_have_worked_in_says_so(srv, monkeypatch):
+    """The re-review of 0.3.209: a job the desk goes on with, begun, without the person's Resume, where they may have
+    worked in its tab meanwhile, is marked so (Run.in_their_hands), and a file in its upload stays theirs: the queue
+    picking it up by itself past its pause, their Undo of its Skip, Apply on it again. A job never begun, or queued
+    afresh, isn't."""
+    from types import SimpleNamespace
+
+    from job_apply.desk import Desk
+
+    jobs = [srv.add_job(url=f"https://{n}.example/job", title="FSE", company=n.title())["job"]["id"] for n in "abcde"]
+    applier = Applier(srv)
+    monkeypatch.setattr(srv.browser, "lost", lambda tab: "")
+
+    async def past(r):
+        return True
+
+    applier._past_pause = past
+    tab = SimpleNamespace(is_closed=lambda: False, url="https://a.example/apply")
+    left = applier.runs[jobs[0]] = Run(jobs[0], "FSE", "A", status="needs_you", need="bot_check", left=True, page=tab,
+                                       started=True)
+    run(applier._pick_up_left())
+    assert left.status == "queued" and left.in_their_hands, (left.status, left.log)
+
+    for job_id in jobs[1:3]:
+        applier.enqueue(job_id)
+    applier.runs[jobs[1]].started = True  # (begun: its tab was theirs before the Skip)
+    for job_id in jobs[1:3]:
+        run(applier.skip(job_id))
+        run(applier.unskip(job_id))
+    assert [applier.runs[j].in_their_hands for j in jobs[1:3]] == [True, False]
+
+    desk = Desk(srv)
+    desk.applier = applier
+    applier.runs[jobs[3]] = Run(jobs[3], "FSE", "D", status="needs_you", need="stuck", started=True)
+    assert desk.apply(urls=[], job_ids=[jobs[3], jobs[4]], submit=False)[0] == [jobs[3], jobs[4]]
+    assert [applier.runs[j].in_their_hands for j in jobs[3:]] == [True, False]
+
+
+@pytest.mark.parametrize("slow", [1, 3])
+def test_a_kept_files_box_that_reads_slowly_is_never_taken_for_one_gone(srv, monkeypatch, slow):
+    """The re-review of 0.3.209: the box's read timing out on a loaded machine was taken for the box gone, so the kept
+    resume stayed, unsettled, and Submit for me sent it (the likely flake of the draft test). A read that answers on a
+    later try replaces it as ever; one that never answers is the person's, on a card: nothing deleted, nothing sent."""
+    from playwright.async_api import TimeoutError as PlaywrightTimeout
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    real, tries = srv.browser._locator, []
+
+    def locator(page, box_id):
+        loc = real(page, box_id)
+
+        class Slow:
+            def __getattr__(self, name):
+                return getattr(loc, name)
+
+            async def evaluate(self, script, *args, **kwargs):
+                if script == browser_module.KEPT_STATE_JS and len(tries) < slow:
+                    tries.append(1)
+                    raise PlaywrightTimeout("Timeout 3000ms exceeded.")
+                return await loc.evaluate(script, *args, **kwargs)
+
+        return Slow()
+
+    monkeypatch.setattr(srv.browser, "_locator", locator)
+    r, counted = kept_resume_run(srv, auto_submit=True)
+    if slow < 3:
+        assert (r.status, counted["deletes"], counted["uploads"]) == ("submitted", 1, ["Sam_Rivera_Resume.pdf"]), \
+            (r.status, r.reason, counted, r.log)
+        assert REPLACED in r.log, r.log
+    else:
+        assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
+        assert (counted["presses"], counted["deletes"], counted["uploads"]) == (None,) * 3, (counted, r.log)
+        assert "the page was too slow for me to read it" in r.reason and "Sam_Rivera_Resume.pdf" in r.reason, r.reason
+        assert run(r.page.evaluate("() => window.sent")) is False
 
 
 @pytest.mark.parametrize("checked", [True, False])

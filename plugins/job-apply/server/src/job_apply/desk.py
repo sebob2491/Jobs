@@ -879,6 +879,9 @@ class Desk:
             notes["not_interested"] = left_out
         queued, refused = [], []
         for job_id in ids:
+            begun = self.applier.runs.get(job_id)
+            if begun is not None and begun.started and begun.status not in ("queued", "running"):
+                begun.in_their_hands = True  # (Apply on a job begun before: its tab may hold what they did in it)
             try:
                 self.applier.enqueue(job_id, submit=submit)
                 queued.append(job_id)

@@ -876,6 +876,11 @@ class Run:
     closed_skipped: bool = False
     closed_undone: bool = False
     hands_on: bool = False  # the person pressed Resume on it: what they did in the browser is never reloaded away
+    # the desk went on with it, begun, without the person's Resume, where they may have worked in its tab meanwhile:
+    # the queue picked it up by itself past its pause (_pick_up_left), their Undo of its Skip, or Apply on it again
+    # (desk.apply). A file in its upload may be their own pick: never replaced (Applier._replace_kept: the
+    # re-review of 0.3.209)
+    in_their_hands: bool = False
     invalid_redone: bool = False  # the review page's invalid lists answered again from the profile (once a job)
     reset_no_mail: bool = False  # and none came in RESET_MAIL_WAIT: no account there, most likely, so one is made
     reopened_elsewhere: bool = False  # its sign-in page, opened again, led elsewhere: the job opened again (once a job)
@@ -1588,6 +1593,7 @@ class Applier:
             self._log(run, run.reason)
             return run
         self._log(run, "Skip undone: back in the queue")
+        run.in_their_hands = run.in_their_hands or run.started  # (its tab was theirs before the Skip)
         self.enqueue(job_id)  # (submit=False: Undo is no Submit)
         if place is not None:
             self._cancel(job_id)
@@ -1634,8 +1640,10 @@ class Applier:
                 except Exception:  # a tab mid-way through loading: looked at again next time, not holding the rest
                     continue
             if moved and run.left and run.status == "needs_you":
-                # (carried on by itself: the person may have changed later pages of a saved draft by hand in its tab)
+                # (carried on by itself: the person may have changed later pages of a saved draft by hand in its tab,
+                # or put a file of their own in its upload)
                 self._draft_off(run)
+                run.in_their_hands = True
                 solved = run.job_id == self.round_job  # (its check solved in the desk's round, the person at its tab)
                 try:
                     self.enqueue(run.job_id, submit=run.submit, front=True)
@@ -4313,8 +4321,10 @@ class Applier:
         files may be the person's own file library, where a Delete takes the file off their account, so a file kept
         there stays as it is, as before. Once a job for each document (Run.kept_replaced), so a page that draws the old
         name again is never deleted from again and again. Never once the person has had the application in their hands
-        (their Resume, after a stop or a restart of the desk, or a Submit pressed before): a file there may be their own
-        choice, and it stays, said in the log. A file that won't delete, or a box where which file is the old one isn't
+        (their Resume, after a stop or a restart of the desk, or a Submit pressed before; or the desk went on with it
+        after they may have worked in its tab: Run.in_their_hands): a file there may be their own choice, and it stays,
+        said in the log. A box whose file won't read (a slow page: browser.kept_upload_state's "unread") is the person's
+        too, on a card: taken for a box gone, the kept file would go to the employer unreplaced. A file that won't delete, or a box where which file is the old one isn't
         sure, keeps what it shows, so the fill never uploads beside it (the employer would get two): the person's, said
         on a card once the page is filled, one box at a time (one after it is neither pressed nor settled, so the next
         pass says it). Returns the boxes emptied for their tailored file, and that card's words ("" for none)."""
@@ -4324,12 +4334,19 @@ class Applier:
             if box["kind"] in run.kept_replaced:
                 continue  # (settled for the job: replaced or tried, left as the person's, or the desk's own put in)
             # (the desk's own upload, whatever its name; not in Workday's list; or the box gone: as it is)
-            if await self.srv.browser.kept_upload_state(box["id"]):
+            state = await self.srv.browser.kept_upload_state(box["id"])
+            if state and state != "unread":
                 continue
             what, tailored, old = _DOCUMENT_SAID[box["kind"]], Path(box["tailored"]).name, ", ".join(box["shown"])
             upload = f"“{_short(box['where'])}” upload"
+            if state == "unread" and not (run.hands_on or run.pressed_before or run.in_their_hands):
+                return emptied, (f"The {upload} on {_site(run, data)} has a {what} kept from before"
+                                 + (f" ({old})" if old else "") + f", and the page was too slow for me to read it, to put "
+                                 f"the one tailored for this job ({tailored}) in its place. In the browser window, delete "
+                                 f"the old file with its Delete, upload {tailored} (in this job's folder), then press "
+                                 "Resume.")
             run.kept_replaced.add(box["kind"])
-            if run.hands_on or run.pressed_before:
+            if run.hands_on or run.pressed_before or run.in_their_hands:
                 # (a restart's job goes on only by the person's Resume: hands_on. Never said of the tailored file's name)
                 if not any(s.lower() == tailored.lower() for s in box["shown"]):
                     self._log(run, f"left the {what} in its {upload} as it is" + (f" ({old})" if old else "") + ", not "

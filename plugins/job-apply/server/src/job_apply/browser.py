@@ -1393,12 +1393,23 @@ class BrowserSession:
     async def kept_upload_state(self, box_id: str) -> str:
         """An upload box showing a file, before the file tailored for this job goes in place of one kept from before
         (Applier._replace_kept): "mine" where the desk sent a file into it itself, "other" where what it shows isn't in
-        Workday's list of files (never touched), "" otherwise; "gone" with the box gone (KEPT_STATE_JS)."""
-        async with self._lock:
-            page = await self.page()
-            with contextlib.suppress(PlaywrightError, PlaywrightTimeout, KeyError):
-                return str(await self._locator(page, box_id).evaluate(KEPT_STATE_JS, timeout=3000) or "")
-            return "gone"
+        Workday's list of files (never touched), "" otherwise; "gone" with the box gone (KEPT_STATE_JS). "unread" where
+        the box is there but didn't answer in three tries (a slow page, a loaded machine): never taken for a box gone,
+        whose kept file would go to the employer unreplaced (the re-review of 0.3.209)."""
+        for _ in range(3):
+            async with self._lock:
+                page = await self.page()
+                try:
+                    box = self._locator(page, box_id)
+                    if not await box.count():
+                        return "gone"
+                    return str(await box.evaluate(KEPT_STATE_JS, timeout=3000) or "")
+                except PlaywrightTimeout:
+                    pass
+                except (PlaywrightError, KeyError):
+                    return "gone"
+            await asyncio.sleep(0.5)
+        return "unread"
 
     async def delete_kept_upload(self, box_id: str, name: str) -> str:
         """Press the Delete of a file an upload box shows as kept from before (Workday keeps an account's last resume in
