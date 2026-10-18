@@ -504,6 +504,7 @@ const STOP_WORDS = {questions: ["question card", "question cards"], sign_in: ["s
   your_submit: ["Submit of your own", "Submits of your own"], check_submit: ["Submit to check", "Submits to check"],
   submit_failed: ["Submit that didn't go", "Submits that didn't go"], stuck: ["stuck page", "stuck pages"],
   tailor: ["tailored resume", "tailored resumes"], restarted: ["restart", "restarts"], failed: ["failure", "failures"],
+  maybe_duplicate: ["job that may be one already begun", "jobs that may be ones already begun"],
   other: ["other stop", "other stops"]};
 const stopWords = (kind, n) => (STOP_WORDS[kind] || [String(kind).replace(/_/g, " "), String(kind).replace(/_/g, " ")])[n === 1 ? 0 : 1];
 const ENDED_WORDS = {ready: "at its review page", submitted: "sent by the desk", failed: "failed", skipped: "skipped",
@@ -768,12 +769,15 @@ function renderRows() {
     // skipped (here or before the desk restarted): Undo puts it back
     const undo = r.job_id != null && (r.status === "skipped" || (r.run && r.run.status === "skipped"))
       ? `<button class="link" data-job="${r.job_id}" data-job-act="unskip" title="Put this job back where it was before you skipped it">Undo</button>` : "";
+    // the same posting saved from a job board too: one row, applied for on the employer's site; the board's link here
+    const also = (r.also_on || []).map((a) => link(a.url, `Also on ${esc(a.site)}`, "also")).join(" · ");
     return {key: r.url, html: `<li class="row ${DONE.has(r.status) ? "done" : ""}">
       <input type="checkbox" data-pick="${esc(r.url)}" ${checked} ${done ? "disabled" : ""} aria-label="Select ${esc(r.title)}">
       <span class="score ${scoreClass(fit.score)}" title="How well it fits your profile, out of 100 (${RECOMMEND_AT} or more is recommended). The tags below say why.">${esc(fit.score)}</span>
       <div>${link(r.url, esc(r.title), "title")}
         <div class="meta">${[esc(r.company), r.location ? `<span title="${esc(r.location)}">${esc(places(r.location))}</span>` : "",
           r.posted ? `<span class="nowrap">${esc(shownDate(r.posted))}</span>` : ""].filter(Boolean).join(" · ")}</div>
+        ${also ? `<div class="meta also-on" title="The same posting, saved from a job board too. It's applied for on the employer's site.">${also}</div>` : ""}
         <div class="chips">${chips}</div></div>
       <div class="state">${statusPill(r)}${undo}</div></li>`};
   });
@@ -839,6 +843,7 @@ function jobButtons(r, which) {
   const out = [];
   if (which.includes("show")) out.push(b("show", "Show me"));
   if (which.includes("fill")) out.push(b("fill", "Fill these in", "primary"));
+  if (which.includes("apply_anyway")) out.push(b("apply_anyway", "Apply anyway", "primary"));
   if (which.includes("submit")) out.push(b("submit", "Submit", "primary"));
   if (which.includes("applied")) out.push(b("applied", "I submitted it", "primary"));
   if (which.includes("resume")) out.push(b("resume", "Resume"));
@@ -958,6 +963,8 @@ function renderSide() {
     else if (r.need === "your_submit" || r.need === "check_submit") body = jobButtons(r, ["show", "applied", "skip"]);
     else if (r.need === "submit_failed") body = jobButtons(r, ["show", "submit", "applied", "skip"]);
     else if (r.need === "tailor") body = jobButtons(r, ["usual_resume", "skip"]);
+    // may be a job begun or applied to on another site: nothing opened until the person says
+    else if (r.need === "maybe_duplicate") body = jobButtons(r, ["apply_anyway", "skip"]);
     else body = jobButtons(r, ["show", "resume", "skip", "already"]);
     const key = `${r.job_id}:${r.need}:${(r.questions || []).map((q) => q.label).join("|")}`;
     return {key, html: `<div class="task ${r.blocking ? "hands" : ""}">${head}${wentPanel(r)}${body}</div>`};

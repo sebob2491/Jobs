@@ -32,7 +32,7 @@ from starlette.routing import Route
 
 from . import autofill, config, history, report
 from .pipeline import DESK_PASSWORDS, Applier, placed_key, question_key
-from .ats import detect_ats
+from .ats import JOB_BOARDS, detect_ats, job_board
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .recommend import recommend, score_listing
 from .search import (MAX_ALTERNATIVES, alternatives, load_companies, own_companies_path, search_area,
@@ -389,6 +389,8 @@ class Desk:
                 a.end_round()
             elif action == "usual_resume":
                 a.use_usual_resume(job_id)
+            elif action == "apply_anyway":  # a job that may be one begun or applied to on another site: it isn't
+                a.apply_anyway(job_id)
             elif action == "applied":
                 self.srv.tracker().update(job_id, status="applied", note="marked applied in the Job Desk")
                 a.mark_applied(job_id)
@@ -760,8 +762,14 @@ class Desk:
         runs = {jid: r.public() for jid, r in self.applier.runs.items()}
         rows, seen = [], set()
         handled = config.handled_employers()  # (where the desk goes all the way, in the live check)
-        for item in self.listings:
-            job = t.find_by_url(item["url"])
+        tracked_at = [t.find_by_url(item["url"]) for item in self.listings]
+        # one row per posting: an opening on the employer's site that Claude saved from Indeed already is that job's
+        # row (Apply makes them one job, applied for on the employer's site: Tracker.upsert)
+        copies = iter(t.same_posting([item for item, job in zip(self.listings, tracked_at) if job is None]))
+        also = t.aliases()
+        for item, job in zip(self.listings, tracked_at):
+            copy = next(copies) if job is None else None
+            job = job or copy
             jid = job["id"] if job else None
             seen.add(jid)
             rows.append({
@@ -770,6 +778,7 @@ class Desk:
                 "notes": item.get("notes") or [], "job_id": jid, "status": job["status"] if job else None,
                 "run": runs.get(jid) if jid is not None else None,
                 "handled": str(item.get("company") or "").strip().casefold() in handled,
+                "also_on": _also_on(([copy["url"]] if copy else []) + (also.get(jid, []) if jid is not None else [])),
             })
         tracked = t.list(limit=300)
         # what the person applied to, and where each stands (the page's My applications): the newest email logged for
@@ -791,6 +800,7 @@ class Desk:
                 "fit": score_listing(listing, prof, job.get("description") or "").to_dict(), "notes": [],
                 "job_id": job["id"], "status": job["status"], "run": runs.get(job["id"]), "added": True,
                 "handled": str(job.get("company") or "").strip().casefold() in handled,
+                "also_on": _also_on(also.get(job["id"], [])),
             })
         others = []
         for jid, run in runs.items():
@@ -857,6 +867,11 @@ def _profile_jobs_at_once() -> Any:
 
 def _first_line(e: BaseException) -> str:
     return ((str(e).strip().splitlines() or [type(e).__name__])[0])[:150]
+
+
+def _also_on(urls: list[str]) -> list[dict[str, str]]:
+    """A job's other addresses, for its row's "Also on Indeed": each with the job board it's on."""
+    return [{"site": JOB_BOARDS.get(job_board(u) or "", "another site"), "url": u} for u in dict.fromkeys(urls)]
 
 
 def _saved(names: list[str]) -> dict[str, bool]:

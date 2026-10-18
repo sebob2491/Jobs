@@ -321,8 +321,12 @@ can offer to run that check every day as a scheduled task.
 
 To add jobs from anywhere else, paste their links (LinkedIn, Indeed or any company
 site) into the box above the list. The desk reads each posting, scores it and ticks it
-for Apply. Jobs Claude saves from Indeed or LinkedIn show up in the same list. Without
-Claude Code, run `uv run --project <plugin>/server job-apply-desk`.
+for Apply. Jobs Claude saves from Indeed or LinkedIn show up in the same list. The same
+job from Indeed and the employer's own site is one row (and one application), applied for
+on the employer's site, with an **Also on Indeed** link. Where the desk can't be sure it's
+the same job (another opening alike it, a repost weeks later, or one you already started
+or applied to on Indeed), it keeps both and asks first: **Apply anyway** or **Skip job**.
+Without Claude Code, run `uv run --project <plugin>/server job-apply-desk`.
 
 **Bot checks.** The desk never tries to get around Cloudflare, CAPTCHAs or other bot
 checks: no disguised browser, no CAPTCHA-solving services. When a site shows one, it

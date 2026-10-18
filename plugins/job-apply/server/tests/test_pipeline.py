@@ -14084,3 +14084,173 @@ def test_i_submitted_it_while_the_submit_tool_looks_the_page_over_sends_nothing(
     assert not r.pressed_before
     assert srv.tracker().get(job)["status"] == "applied"
     assert pipeline.FINISHED | {"skipped"} == set(srv._SUBMIT_GONE)  # (the tool's own list, kept as the desk's)
+
+
+def _linked_pair(srv) -> tuple[int, int]:
+    """An Indeed job saved weeks ago, and the employer's posting of it saved now: kept apart (a repost, as often as
+    not) and noted as maybe the same (Tracker.maybe_same). (The employer's job, the Indeed job.)"""
+    from datetime import datetime, timedelta, timezone
+
+    t = srv.tracker()
+    indeed = srv.add_job(url="https://www.indeed.com/viewjob?jk=0b0b0b0b0b0b0b0b", title="Equipment Technician",
+                         company="Intel Corporation", location="Chandler, AZ", source="indeed")["job"]["id"]
+    with t._lock:
+        t.conn.execute("UPDATE jobs SET created_at = ? WHERE id = ?",
+                       ((datetime.now(timezone.utc) - timedelta(days=45)).isoformat(timespec="seconds"), indeed))
+        t.conn.commit()
+    own = srv.add_job(url="https://careers.intel.example/job/1", title="Equipment Technician", company="Intel",
+                      location="Chandler, AZ")["job"]["id"]
+    assert [o["id"] for o in t.maybe_same(own)] == [indeed]
+    return own, indeed
+
+
+def test_two_jobs_that_may_be_one_posting_never_go_at_once_maybe_duplicate(srv, monkeypatch):
+    """The review of 0.3.206 (MEDIUM): with Jobs at once at 2, the employer's job and its Indeed copy (kept apart, as
+    maybe the same) each read the other as saved (the tracker says "in progress" only once a page is opened) and both
+    were filled: Submit for me sent one while the other waited at Indeed for the person. They go one at a time, as two
+    jobs on one site, and the second reads the first as begun by this desk: it stops on the card, nothing opened."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    own, indeed = _linked_pair(srv)
+    applier = Applier(srv)
+    applier.jobs_at_once = 2
+    opened: list[int] = []
+    beside: list[tuple[int, bool, str]] = []
+
+    async def open_(self, r):  # (its page opening takes a moment: the other could begin meanwhile)
+        opened.append(r.job_id)
+        await asyncio.sleep(1.5)
+        other = indeed if r.job_id == own else own
+        beside.append((r.job_id, other in self._slots, self.runs[other].status))
+        r.status, r.reason = "ready", "Filled and waiting on the review page."
+        return False
+
+    monkeypatch.setattr(Applier, "_open", open_)
+
+    async def go():
+        applier.start()
+        try:
+            a, b = applier.enqueue(own, submit=True), applier.enqueue(indeed)
+            await until(lambda: a.status == "ready" and b.status == "needs_you", about=lambda: (state(a)(), state(b)()))
+            await asyncio.sleep(1)
+            return a, b
+        finally:
+            await applier.stop()
+
+    a, b = run(go())
+    assert opened == [own] and beside == [(own, False, "queued")], (opened, beside)
+    assert b.need == "maybe_duplicate" and srv.tracker().get(own)["status"] == "saved"  # (begun here, not yet there)
+    assert b.reason.startswith("This may be the job you already started on the employer's site on "), b.reason
+
+
+def test_submit_for_me_looks_again_for_a_maybe_duplicate_begun_since(srv, monkeypatch):
+    """The review of 0.3.206: the job that may be this one could be begun after this one was filled (on Indeed, by the
+    person or Claude). Submit for me looks once more before it presses: it stops on the card instead. A Submit the
+    person pressed is theirs to send, and so is one after their Apply anyway."""
+    own, indeed = _linked_pair(srv)
+    applier = Applier(srv)
+    pressed: list[dict] = []
+
+    async def submit_application(**kwargs):
+        pressed.append(kwargs)
+        return {"submitted": True, "confirmed": True}
+
+    monkeypatch.setattr(srv, "submit_application", submit_application)
+    srv.update_job(indeed, status="in_progress")
+    r = applier.runs[own] = Run(own, "Equipment Technician", "Intel", status="ready")
+    run(applier._submit(r, by_person=False))
+    assert (r.status, r.need, pressed) == ("needs_you", "maybe_duplicate", []), (r.status, r.need, r.reason)
+    for by_person in (True, False):  # (the person's own Submit; then Submit for me after their Apply anyway)
+        if not by_person:
+            srv.tracker().clear_maybe_same(own, [indeed])
+        r.status, r.need = "ready", ""
+        run(applier._submit(r, by_person=by_person))
+        assert r.need == "stuck" and "tab was closed" in r.reason, (by_person, r.need, r.reason)  # (on to its tab)
+
+
+def _three_alike(srv) -> tuple[int, int, int]:
+    """Intel's posting alike two job boards' copies, Indeed's applied to and LinkedIn's saved: which it's a copy of
+    can't be told, so it's noted as maybe the same as both. (Intel's, Indeed's, LinkedIn's.)"""
+    x = srv.add_job(url="https://www.indeed.com/viewjob?jk=0c0c0c0c0c0c0c0c", title="Equipment Technician",
+                    company="Intel Corporation", location="Chandler, AZ", source="indeed")["job"]["id"]
+    srv.update_job(x, status="applied")
+    b = srv.add_job(url="https://www.linkedin.com/jobs/view/3900000777/", title="Equipment Technician", company="Intel",
+                    location="Chandler, AZ", source="linkedin")["job"]["id"]
+    a = srv.add_job(url="https://careers.intel.example/job/2", title="Equipment Technician", company="Intel",
+                    location="Chandler, AZ")["job"]["id"]
+    assert sorted(o["id"] for o in srv.tracker().maybe_same(a)) == sorted([x, b])
+    return a, x, b
+
+
+def test_apply_anyway_clears_only_the_jobs_its_maybe_duplicate_card_named(srv, monkeypatch):
+    """The review of 0.3.206 (MEDIUM): a job alike one applied to on Indeed and one saved from LinkedIn was held on a
+    card naming the Indeed job alone; the LinkedIn job was then filled (for the person's own Submit), and Apply anyway
+    on the card cleared both, so the first was filled and sent with no one asked about the LinkedIn one. Apply anyway
+    clears what its card named; one begun since stops the job again, on a card naming it, and nothing is opened."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    a, x, b = _three_alike(srv)
+    applier = Applier(srv)
+    opened: list[int] = []
+
+    async def open_(self, r):  # (where its page would open)
+        opened.append(r.job_id)
+        r.status, r.reason = "ready", "Filled and waiting on the review page."
+        return False
+
+    monkeypatch.setattr(Applier, "_open", open_)
+
+    async def go():
+        applier.start()
+        try:
+            ra = applier.enqueue(a, submit=True)
+            await until(lambda: ra.status == "needs_you", about=state(ra))
+            first = ra.reason
+            rb = applier.enqueue(b)
+            await until(lambda: rb.status == "ready", about=state(rb))
+            applier.apply_anyway(a)
+            await until(lambda: a in opened or ra.status == "needs_you" and "LinkedIn" in ra.reason, about=state(ra))
+            await asyncio.sleep(1)
+            return ra, first
+        finally:
+            await applier.stop()
+
+    ra, first = run(go())
+    assert opened == [b], opened  # (Intel's never opened, so never sent)
+    assert f"(job {x}: Equipment Technician at Intel Corporation)" in first and f"job {b}" not in first, first
+    assert (ra.status, ra.need) == ("needs_you", "maybe_duplicate")
+    assert ra.reason.startswith("This may be the job you already started on LinkedIn on ") and \
+        f"(job {b}: Equipment Technician at Intel)" in ra.reason, ra.reason
+    assert [o["id"] for o in srv.tracker().maybe_same(a)] == [b]  # (Indeed's cleared, as its card said; LinkedIn's not)
+
+
+def test_a_maybe_duplicate_card_names_every_job_it_asks_about(srv):
+    """The card names each job it's asking about (its title, employer, status, where and when), and keeps their ids:
+    the ones its Apply anyway clears."""
+    a, x, b = _three_alike(srv)
+    srv.update_job(b, status="in_progress")
+    applier = Applier(srv)
+    r = applier.runs[a] = Run(a, "Equipment Technician", "Intel")
+    found = applier._maybe_done_elsewhere(r)
+    said, ids = found if isinstance(found, tuple) else (found, None)
+    jobs = {j: srv.tracker().get(j) for j in (x, b)}
+    assert said == ("This may be one of the jobs you already started or applied to: "
+                    f"job {x}, Equipment Technician at Intel Corporation (applied on Indeed, {jobs[x]['applied_at'][:10]}); "
+                    f"job {b}, Equipment Technician at Intel (started on LinkedIn, {jobs[b]['updated_at'][:10]}). "
+                    "Apply anyway, or Skip?"), said
+    assert ids == [x, b]
+
+
+def test_a_linked_job_skipped_or_failed_since_holds_no_maybe_duplicate(srv):
+    """The review of 0.3.206 (LOW): a linked job the desk began and then skipped, or that failed, still held this one
+    ("already started"). Skipped or failed, it holds it only as the tracker says it's begun or done."""
+    own, indeed = _linked_pair(srv)
+    applier = Applier(srv)
+    r = applier.runs[own] = Run(own, "Equipment Technician", "Intel")
+    for status in ("skipped", "failed"):
+        applier.runs[indeed] = Run(indeed, "Equipment Technician", "Intel Corporation", status=status, started=True)
+        assert applier._maybe_done_elsewhere(r) is None, status
+    applier.runs[indeed] = Run(indeed, "Equipment Technician", "Intel Corporation", status="needs_you", need="questions",
+                               started=True)
+    assert applier._maybe_done_elsewhere(r) is not None  # (begun, and waiting on the person: asked about)
+    applier.runs[indeed].status = "failed"
+    srv.update_job(indeed, status="in_progress")  # (its page opened before it failed: the tracker says begun)
+    assert applier._maybe_done_elsewhere(r) is not None

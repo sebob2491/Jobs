@@ -87,6 +87,30 @@ def test_a_page_opened_by_its_address_isnt_the_job_opened_before(srv):
     assert sent == [] and srv.get_job(a["id"])["job"]["status"] != "applied"
 
 
+@needs_browser
+def test_claudes_tools_say_a_job_may_be_one_applied_to_on_indeed_and_ask_first(srv):
+    """The review of 0.3.206: the Job Desk asks before applying to a job that may be one begun or applied to on another
+    site (an Indeed job and the employer's posting, kept apart: Tracker.maybe_same), but Claude's own tools didn't.
+    open_application says so (`maybe_same`), and submit_application presses nothing without user_confirmed, until the
+    person said Apply anyway."""
+    sent = routed(srv)
+    indeed = srv.add_job(url="https://www.indeed.com/viewjob?jk=abcabcabcabcabca", title="Tech", company="Intel Corporation",
+                         location="Chandler, AZ", source="indeed")["job"]
+    srv.update_job(indeed["id"], status="applied")
+    own = srv.add_job(url="https://careers.example.com/a", title="Tech", company="Intel", location="Chandler, AZ")["job"]
+    opened = run(srv.open_application(job_id=own["id"]))
+    words = "may be the job already started or applied to: ask the person before applying"
+    assert opened["maybe_same"] == {"jobs": [{"job_id": indeed["id"], "title": "Tech", "company": "Intel Corporation",
+                                              "status": "applied"}], "warning": words}
+    out = run(srv.submit_application(job_id=own["id"]))
+    assert out["submitted"] is False and words in out["reason"] and sent == [], out
+    assert out["maybe_same"] == opened["maybe_same"]["jobs"]
+    assert run(srv.open_application(url="https://careers.example.com/a"))["maybe_same"]["jobs"][0]["job_id"] == indeed["id"]
+    srv.tracker().clear_maybe_same(own["id"], [indeed["id"]])  # (the desk's Apply anyway, on a card naming it)
+    assert "maybe_same" not in run(srv.open_application(job_id=own["id"]))
+    assert words not in run(srv.submit_application(job_id=own["id"])).get("reason", "")
+
+
 def test_a_greenhouse_posting_opened_by_its_address_opens_greenhouses_own_form(srv, monkeypatch):
     """A Greenhouse board set to send visitors to the employer's site redirects its postings
     there (Carvana's, behind a Cloudflare check, Oct 2026). Opened by job or by address, the

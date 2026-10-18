@@ -6,16 +6,19 @@ import builtins
 import contextlib
 import csv
 import functools
+import json
+import logging
 import re
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from . import config
+from .ats import ATS_NAMES, JOB_BOARDS, detect_ats, job_board
 
 STATUSES = [
     "saved",  # ingested, not started
@@ -65,6 +68,26 @@ CREATE TABLE IF NOT EXISTS events (
     status TEXT DEFAULT '',
     note TEXT DEFAULT ''
 );
+-- a job's other addresses: a job board's (Indeed's) for a job kept at the employer's own site (Tracker.upsert)
+CREATE TABLE IF NOT EXISTS aliases (
+    url TEXT PRIMARY KEY,
+    job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS aliases_job ON aliases(job_id);
+-- jobs merged into another, one posting saved twice: the desk's kept queue may still name them (Tracker.merged_into)
+CREATE TABLE IF NOT EXISTS merged (
+    id INTEGER PRIMARY KEY,
+    into_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE
+);
+-- jobs that may be one posting (alike, a job board's copy and the employer's) but weren't made one: the desk asks the
+-- person before applying to one while the other is begun or done (Tracker.maybe_same). Each way round; `cleared` once
+-- the person said Apply anyway for job_id
+CREATE TABLE IF NOT EXISTS maybe_same (
+    job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    other_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    cleared INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (job_id, other_id)
+);
 """
 
 # What an employer email means for the application's status.
@@ -93,6 +116,9 @@ _JOB_FIELDS = [
     "url", "apply_url", "title", "company", "location", "ats", "source", "external_id",
     "salary", "employment_type", "posted_at", "description",
 ]
+# where a job is applied for: the employer's own, once a job board's copy of its posting is one job with it, never
+# filled in from the board's
+_PLACE_FIELDS = ("url", "apply_url", "ats", "source", "external_id")
 
 
 _TRACKING_PARAMS = {"trk", "trackingid", "refid", "src", "source", "gh_src", "lever-source", "from", "ref"}
@@ -173,6 +199,203 @@ def normalize_url(url: str) -> str:
                                      fragment=""))
 
 
+# ----------------------------------------------------------- one posting, one job, whichever site it was saved from
+# Words a company's name ends in that don't tell one employer from another ("Intel Corporation" is Intel's). Not
+# "Group", which some employers' names need to tell them from another ("Atlas Copco Group" stays)
+_LEGAL_WORDS = {"inc", "incorporated", "llc", "ltd", "limited", "corp", "corporation", "co", "company", "holdings",
+                "plc", "lp", "llp"}
+# a requisition number at a title's end, in brackets or after a dash: "(R0012345)", "[JR-2024-001]", "- Req #4567";
+# never words ("(2nd Shift)", "- Level 2")
+_REQ_ID = (r"(?:(?:req(?:uisition)?|job|jr|id|r)\.?\s*(?:id|no|number)?\.?\s*[#:]?\s*)?"
+           r"[a-z]{0,3}[-_]?\d{3,}(?:[-_]\d+)*[a-z]{0,3}")
+_TITLE_REQ = re.compile(rf"(?:\s*\[\s*{_REQ_ID}\s*\]|\s*\(\s*{_REQ_ID}\s*\)|\s+[-–—]\s*{_REQ_ID})\s*$", re.I)
+
+
+@functools.lru_cache(maxsize=8192)
+def company_key(name: str) -> str:
+    """An employer's name as two sites agree on it: casefolded, without punctuation, a leading "The" or the legal
+    words it ends in ("The Boeing Company" and "Boeing", "Applied Materials, Inc." and "Applied Materials")."""
+    words = re.sub(r"[\W_]+", " ", re.sub(r"[.'’]", "", name.casefold())).split()
+    if len(words) > 1 and words[0] == "the":
+        words = words[1:]
+    while len(words) > 1 and words[-1] in _LEGAL_WORDS:
+        words.pop()
+    return " ".join(words)
+
+
+@functools.lru_cache(maxsize=8192)
+def title_key(title: str) -> str:
+    """A job's title as two sites agree on it: casefolded, without punctuation or a requisition number at its end (kept
+    apart: _req_ids)."""
+    said = title.casefold().strip()
+    while (bare := _TITLE_REQ.sub("", said)) != said:
+        said = bare
+    return " ".join(re.sub(r"[\W_]+", " ", said).split())
+
+
+@functools.lru_cache(maxsize=8192)
+def city_key(location: str) -> str | None:
+    """The city a job's place names, casefolded: "Chandler, AZ 85226", Workday's "US-Arizona-Chandler", "US, AZ,
+    Chandler" and "Chandler AZ" are all "chandler". The first place of several ("Phoenix, AZ; Austin, TX"). "" for no
+    place given; None for one naming no city that can be read (a ZIP code alone, "3 Locations"), which matches none."""
+    said = location.strip()
+    if not said:
+        return ""
+    if re.fullmatch(r"(?i)(?:\d+|multiple|various)\s+locations?", said):
+        return None
+    parts = [p.strip() for p in re.split(r"[,;|(]", said)]
+    workday = re.match(r"(?i)(?:us|usa)\s*-\s*[^,;-]+?\s*-\s*([^,;]+)$", said)
+    if workday:
+        city = workday.group(1)
+    elif len(parts) >= 3 and re.fullmatch(r"(?i)us|usa|united states(?: of america)?", parts[0]):
+        city = parts[2]  # ("US, AZ, Chandler")
+    else:
+        city = parts[0]
+    city = re.sub(r"[\s-]+[A-Z]{2}(?:\s+\d{5}(?:-\d{4})?)?$", "", city.strip())  # (its state, without a comma)
+    return " ".join(re.sub(r"[\W\d_]+", " ", city.casefold()).split()) or None
+
+
+def _key(company: str | None, title: str | None, location: str | None) -> tuple[str, str, str | None]:
+    return company_key(company or ""), title_key(title or ""), city_key(location or "")
+
+
+def _alike(a: tuple[str, str, str | None], b: tuple[str, str, str | None]) -> bool:
+    """The same employer and title (each known), in the same city or with one of them giving no place at all. A place
+    naming no city that can be read is never alike any."""
+    if not (a[0] and a[1]) or a[:2] != b[:2] or a[2] is None or b[2] is None:
+        return False
+    return a[2] == b[2] or not a[2] or not b[2]
+
+
+# a requisition number in a job board's copy of a posting: one labelled as one ("Req ID: R12345", "Requisition 4567",
+# "Job Number: 2024-118", "Posting ID 88123", "Req # 5678"), or a bare JR or REQ number of 5 digits or more
+# ("JR0286553"); never another number its words name ("Fanuc R2000 robots": the review of 0.3.206)
+_REQ_IN_TEXT = re.compile(
+    r"(?i)\b(?:req(?:uisition)?\.?\s*(?:id|no\.?|number|#)|requisition|job\s*(?:id|no\.?|number|#)"
+    r"|posting\s*(?:id|no\.?|number|#))\s*[:#]?\s*([a-z]{0,4}[-_]?\d{3,}(?:[-_]\d+)*)\b"
+    r"|\b((?:jr|req)[-_]?\d{5,})\b")
+_REQ_LIKE = re.compile(r"(?i)[a-z]{0,4}[-_ #:]*\d{3,}(?:[-_]\d+)*[a-z]{0,3}")
+
+
+def _req_id(said: str) -> str:
+    """A requisition number as two sites agree on it: its digits, without leading zeros ("JR0286553" is "286553")."""
+    digits = "".join(re.findall(r"\d", said))
+    return digits.lstrip("0") or ("0" if digits else "")
+
+
+@functools.lru_cache(maxsize=8192)
+def _title_ids(title: str) -> frozenset[str]:
+    said, ids = title.casefold().strip(), set()
+    while m := _TITLE_REQ.search(said):
+        ids.add(_req_id(m.group(0)))
+        said = said[:m.start()]
+    return frozenset(i for i in ids if i)
+
+
+def _req_ids(title: str | None, external_id: str | None, description: str | None, url: str,
+             board: str | None) -> frozenset[str]:
+    """The requisition numbers a job gives: at its title's end, its external id when that's one (never a job board's
+    own number for its listing, which is in its address), and, for a job board's copy, any its text names."""
+    ids = set(_title_ids(title or ""))
+    external = (external_id or "").strip()
+    if _REQ_LIKE.fullmatch(external) and not (board and _req_id(external) in url):
+        ids.add(_req_id(external))
+    if board:
+        ids |= {_req_id(next(g for g in m.groups() if g)) for m in _REQ_IN_TEXT.finditer(description or "")}
+    return frozenset(i for i in ids if i)
+
+
+def _differ(a: frozenset[str], b: frozenset[str]) -> bool:
+    """Two jobs whose requisition numbers tell them apart: each gives one, and none is the other's."""
+    return bool(a and b and not a & b)
+
+
+# Merged without asking only when saved within this many days of each other: a job board's copy found later is the
+# employer's repost, as often as not
+MERGE_DAYS = 30
+_UNBEGUN = ("saved", "skipped")
+
+
+class _Job(NamedTuple):
+    """A job as postings are matched (Tracker._postings): its id (0 for a posting not saved yet), match key, the job
+    board it was saved from (None: the employer's own site), status, when it was saved, and whether it holds a job
+    board's copy already (an alias)."""
+    id: int
+    key: tuple[str, str, str | None]
+    board: str | None
+    status: str
+    created: datetime | None
+    aliased: bool
+
+
+def _kept_apart(own: _Job, own_ids: frozenset[str], board: _Job, board_ids: frozenset[str],
+                alias_only: bool = False) -> str | None:
+    """Why the employer's job and a job board's copy alike it aren't made one without asking, or None when they are:
+    saved more than MERGE_DAYS apart (the employer's repost, as often as not), or the board's copy begun or done (it may
+    have been sent in there; one done is the person's), and as the tracker opens the employer's too. A board's copy
+    saved now (`alias_only`) only becomes an alias of the employer's job, which keeps its status; so where that job is
+    begun or done, or holds a job board's copy already, only when the two name the same requisition number (the review
+    of 0.3.206: another opening alike Intel's JR1 applied to, on Indeed a week later, took its "applied")."""
+    if own.created is None or board.created is None or abs(own.created - board.created) > timedelta(days=MERGE_DAYS):
+        return f"as they were saved more than {MERGE_DAYS} days apart"
+    same_number = bool(own_ids & board_ids)
+    unsure = ", and no requisition number shows it's this posting"
+    for job in ([own] if alias_only else [board, own]):
+        if job.status not in _UNBEGUN and not (alias_only and same_number):
+            return f"as job {job.id} is {job.status.replace('_', ' ')}{unsure if alias_only else ''}"
+    if own.aliased and not same_number:
+        return f"as job {own.id} has a job board's copy already{unsure}"
+    return None
+
+
+def _rank(row: sqlite3.Row) -> tuple[int, bool, int]:
+    """Which of two rows for one posting is kept: the one furthest along, then a skipped one (the person said no to
+    that job), then the older."""
+    return _progress(row["status"]), row["status"] == "skipped", -row["id"]
+
+
+@functools.lru_cache(maxsize=8192)
+def _board(url: str, source: str) -> str | None:
+    """The job board a job was saved from (ats.JOB_BOARDS), by its address or the source it was saved with
+    ("indeed"); None for one saved from the employer's own site."""
+    board = job_board(url)
+    if board:
+        return board
+    said = set(re.findall(r"[a-z]+", (source or "").casefold()))
+    return next((b for b in JOB_BOARDS if b in said), None)
+
+
+def _ats_of(values: dict[str, str]) -> str:
+    """The job system a posting is applied on, as postings.finalize names it: its Apply's, else its own address's."""
+    applied_on = detect_ats(values.get("apply_url")) if values.get("apply_url") else "company_site"
+    return applied_on if applied_on != "company_site" else detect_ats(values.get("url"))
+
+
+def _move_folder(src: Path, dst: Path, gone_id: int) -> None:
+    """What's in a merged job's folder (a tailored resume, the record of a Submit press) moved into the kept job's: the
+    folder itself, where the kept job has none or an empty one; else each thing in it, one whose name the kept job's
+    has already going under "from-job-<id>" ("from-job-<id>-2", and on, where that has it too): never written over,
+    and the move always finishes. The folder emptied goes."""
+    if src == dst:
+        return
+    if not any(src.iterdir()):
+        src.rmdir()
+        return
+    if not dst.exists() or dst.is_dir() and not any(dst.iterdir()):
+        if dst.exists():
+            dst.rmdir()
+        src.rename(dst)
+        return
+    for child in sorted(src.iterdir()):
+        target, n = dst / child.name, 1
+        while target.exists():
+            target = dst / (f"from-job-{gone_id}" if n == 1 else f"from-job-{gone_id}-{n}") / child.name
+            n += 1
+        target.parent.mkdir(exist_ok=True)
+        child.rename(target)
+    src.rmdir()
+
+
 def _locked(method):
     """One call at a time: the MCP tools run in worker threads, the desk on its event loop."""
     @functools.wraps(method)
@@ -200,6 +423,8 @@ class Tracker:
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.executescript(_SCHEMA)
         self._renormalize()
+        self._merge_copies()
+        self._gather_folders()
 
     def _renormalize(self) -> None:
         """Bring addresses saved before normalize_url knew a variant up to date. Two rows
@@ -215,16 +440,192 @@ class Tracker:
                 self.conn.execute("UPDATE jobs SET url = ? WHERE id = ?", (url, row["id"]))
                 continue
             this = self.conn.execute("SELECT * FROM jobs WHERE id = ?", (row["id"],)).fetchone()
-            keep, drop = sorted((this, other), key=lambda r: (_progress(r["status"]), -r["id"]), reverse=True)
-            for table in ("events", "emails"):
-                self.conn.execute(f"UPDATE {table} SET job_id = ? WHERE job_id = ?", (keep["id"], drop["id"]))
+            keep, drop = sorted((this, other), key=_rank, reverse=True)
+            self._fold(keep["id"], drop["id"])
             fill = {k: drop[k] for k in _JOB_FIELDS if k != "url" and drop[k] and not keep[k]}
             self.conn.execute("DELETE FROM jobs WHERE id = ?", (drop["id"],))
             sets = ", ".join(f"{k} = ?" for k in ["url", *fill])
             self.conn.execute(f"UPDATE jobs SET {sets} WHERE id = ?", (url, *fill.values(), keep["id"]))
             self.conn.execute("INSERT INTO events (job_id, at, status, note) VALUES (?, ?, '', ?)",
                               (keep["id"], _now(), f"merged with job {drop['id']}: the same posting"))
+        for alias in self.conn.execute("SELECT url FROM aliases").fetchall():  # (and the other addresses kept)
+            url = normalize_url(alias["url"])
+            if url == alias["url"]:
+                continue
+            if self.conn.execute("SELECT 1 FROM jobs WHERE url = ? UNION SELECT 1 FROM aliases WHERE url = ?",
+                                 (url, url)).fetchone():
+                self.conn.execute("DELETE FROM aliases WHERE url = ?", (alias["url"],))  # (a job has it already)
+            else:
+                self.conn.execute("UPDATE aliases SET url = ? WHERE url = ?", (url, alias["url"]))
         self.conn.commit()
+
+    def _fold(self, keep: int, drop: int) -> None:
+        """A job about to go, one posting with `keep`: its history, emails, other addresses and maybe-the-same links moved
+        onto that one, and noted as merged into it (Tracker.merged_into), with any merged into it before."""
+        for table in ("events", "emails", "aliases"):
+            self.conn.execute(f"UPDATE {table} SET job_id = ? WHERE job_id = ?", (keep, drop))
+        self.conn.execute("UPDATE OR IGNORE maybe_same SET job_id = ? WHERE job_id = ?", (keep, drop))
+        self.conn.execute("UPDATE OR IGNORE maybe_same SET other_id = ? WHERE other_id = ?", (keep, drop))
+        self.conn.execute("DELETE FROM maybe_same WHERE job_id = other_id")
+        self.conn.execute("UPDATE merged SET into_id = ? WHERE into_id = ?", (keep, drop))
+        self.conn.execute("INSERT OR REPLACE INTO merged (id, into_id) VALUES (?, ?)", (drop, keep))
+
+    def _postings(self) -> dict[tuple[str, str], builtins.list[_Job]]:
+        """Every job whose employer and title are known, by them (company_key, title_key), as postings are matched."""
+        aliased = {r[0] for r in self.conn.execute("SELECT DISTINCT job_id FROM aliases")}
+        out: dict[tuple[str, str], builtins.list[_Job]] = {}
+        for row in self.conn.execute("SELECT id, url, source, company, title, location, status, created_at FROM jobs"):
+            key = _key(row["company"], row["title"], row["location"])
+            if key[0] and key[1]:
+                out.setdefault((key[0], key[1]), []).append(
+                    _Job(row["id"], key, _board(row["url"], row["source"] or ""), row["status"],
+                         _moment(row["created_at"]), row["id"] in aliased))
+        return out
+
+    def _ids(self, job: _Job, known: dict[int, frozenset[str]]) -> frozenset[str]:
+        """A saved job's requisition numbers (_req_ids), read once a match (`known`)."""
+        if job.id not in known:
+            row = self.conn.execute("SELECT title, external_id, description, url FROM jobs WHERE id = ?",
+                                    (job.id,)).fetchone()
+            known[job.id] = _req_ids(row["title"], row["external_id"], row["description"], row["url"], job.board)
+        return known[job.id]
+
+    def _match(self, new: _Job, new_ids: frozenset[str], group: builtins.list[_Job],
+               known: dict[int, frozenset[str]]) -> tuple[_Job | None, builtins.list[_Job], str]:
+        """The jobs from the other side that this posting (`new`) may be, alike it (_alike) with no requisition number
+        telling them apart (_differ): job boards' copies for the employer's own posting, and the employer's own jobs
+        holding a board's copy already (an alias: that copy may be this posting's); the employer's jobs for a board's
+        copy. With the one it may be made one with, if any: the only one, a board's copy for the employer's posting
+        (two of the employer's own are never one: they may be two openings), alike no other from this posting's side
+        (Intel's JR1 and JR2 both alike Indeed's copy: which it's a copy of can't be told); or the only one naming the
+        same requisition number, which no other from this posting's side names too. And why there's none."""
+        def same(a: _Job, a_ids: frozenset[str], b: _Job) -> bool:
+            return a.id != b.id and _alike(a.key, b.key) and not _differ(a_ids, self._ids(b, known))
+
+        mine = [j for j in group if j.id != new.id and (j.board is None) == (new.board is None)]
+        if new.board is None:
+            theirs = [j for j in group if (j.board is not None or j.aliased) and same(new, new_ids, j)]
+        else:
+            theirs = [j for j in group if j.board is None and same(new, new_ids, j)]
+        if not theirs:
+            return None, theirs, ""
+        named = [j for j in theirs if new_ids & self._ids(j, known)]
+        pick = named if len(named) == 1 else theirs
+        if len(pick) == 1 and new.board is None and pick[0].board is None:
+            return None, theirs, f"as job {pick[0].id} is another of the employer's postings, with a job board's copy"
+        one = pick[0]
+        if pick is named:  # (the same number: only another naming it too is a rival)
+            rivals = [j for j in mine if new_ids & self._ids(one, known) & self._ids(j, known)]
+        else:
+            rivals = [j for j in mine if same(one, self._ids(one, known), j)]
+        if len(pick) > 1 or rivals:
+            return None, theirs, "as more than one matches"
+        return one, theirs, ""
+
+    def _link(self, job_id: int, others: builtins.list[int], why: str, now: str) -> None:
+        """Note jobs that may be one posting but aren't made one (_match, _kept_apart), each way round: the desk asks the
+        person before applying to one while another is begun or done (Tracker.maybe_same). Said in the job's history
+        the first time. Nothing written for links already there (the tracker opening with nothing new takes no write
+        lock: another session may be writing)."""
+        there = {(r[0], r[1]) for r in self.conn.execute(
+            "SELECT job_id, other_id FROM maybe_same WHERE job_id = ? OR other_id = ?", (job_id, job_id))}
+        added = [o for o in others if (job_id, o) not in there]
+        for a, b in [(job_id, o) for o in added] + [(o, job_id) for o in others if (o, job_id) not in there]:
+            self.conn.execute("INSERT OR IGNORE INTO maybe_same (job_id, other_id) VALUES (?, ?)", (a, b))
+        if added:
+            said = f"maybe the same as job{'s' if len(added) > 1 else ''} {', '.join(map(str, added))}: kept apart, {why}"
+            self.conn.execute("INSERT INTO events (job_id, at, status, note) VALUES (?, ?, '', ?)", (job_id, now, said))
+            logging.getLogger(__name__).info("job %s %s", job_id, said)
+
+    def _merge_copies(self) -> None:
+        """Jobs saved before a posting was one job whichever site it came from (Tracker.upsert), as the tracker opens: a
+        job board's copy and the employer's own posting made one where upsert would make them one now (_match: each the
+        other's only match, no requisition number telling them apart), both untouched (saved or skipped: nothing under
+        way or sent at either) and saved within MERGE_DAYS of each other (_kept_apart). The one kept is the skipped one
+        (the person said no to that job), else the older, with the employer's address and where it's applied for, the
+        board's address kept as an alias, and the other's history, emails and folder moved onto it (_gather_folders).
+        The others alike are noted as maybe the same (_link), for the desk to ask before applying. Run at every open:
+        one read of the jobs, and nothing to do once they're one."""
+        postings, now = self._postings(), _now()
+        known: dict[int, frozenset[str]] = {}
+        done: set[int] = set()
+        for group in postings.values():
+            if all(j.board is None and not j.aliased for j in group) or all(j.board is not None for j in group):
+                continue
+            for own in group:
+                if own.board is not None or own.id in done:
+                    continue
+                one, theirs, why = self._match(own, self._ids(own, known), group, known)
+                if one is not None and one.id not in done:
+                    why = _kept_apart(own, self._ids(own, known), one, self._ids(one, known)) or ""
+                    if not why:
+                        done |= {own.id, one.id}
+                        self._merge_pair(one.id, own.id, one.board or "")
+                        continue
+                others = [j.id for j in theirs if j.id not in done]
+                if others:
+                    self._link(own.id, others, why, now)
+        self.conn.commit()
+
+    def _merge_pair(self, board_id: int, own_id: int, board: str) -> None:
+        """A job board's copy (board_id) and the employer's own posting (own_id) made one job (_merge_copies)."""
+        theirs, own = (self.conn.execute("SELECT * FROM jobs WHERE id = ?", (i,)).fetchone() for i in (board_id, own_id))
+        keep, drop = sorted((theirs, own), key=_rank, reverse=True)
+        sets: dict[str, Any] = {k: own[k] for k in _PLACE_FIELDS}
+        sets.update({k: drop[k] for k in (*_JOB_FIELDS, "applied_at", "notes")
+                     if k not in _PLACE_FIELDS and drop[k] and not keep[k]})
+        if keep["notes"] and drop["notes"] and drop["notes"] != keep["notes"]:  # (the person's own notes: both kept)
+            sets["notes"] = f"{keep['notes']}\n{drop['notes']}"
+        sets["created_at"] = min(keep["created_at"], drop["created_at"])
+        self._fold(keep["id"], drop["id"])
+        self.conn.execute("DELETE FROM jobs WHERE id = ?", (drop["id"],))  # (first: its address goes to the one kept)
+        self.conn.execute(f"UPDATE jobs SET {', '.join(f'{k} = ?' for k in sets)} WHERE id = ?",
+                          (*sets.values(), keep["id"]))
+        self.conn.execute("INSERT OR REPLACE INTO aliases (url, job_id) VALUES (?, ?)", (theirs["url"], keep["id"]))
+        name = JOB_BOARDS.get(board, "the job board")
+        self.conn.execute("INSERT INTO events (job_id, at, status, note) VALUES (?, ?, '', ?)",
+                          (keep["id"], _now(), f"merged with job {drop['id']}: the same posting on {name} and the "
+                                               f"employer's site; {name}'s link kept as an alias"))
+
+    def _gather_folders(self) -> None:
+        """A merged job's folder (a tailored resume, the record of a Submit press, which the desk reads so as never to
+        press Submit again) moved into the kept job's (_move_folder): as the tracker opens after the merge, and at
+        each open after for one that couldn't be moved then (a file open in another program). A Submit press it records
+        with no confirmation is noted in the kept job's history too ("pressed Submit; ..."), which the desk reads as
+        well (Applier._press_recorded), wherever the record goes."""
+        gone = {r["id"]: r["into_id"] for r in self.conn.execute("SELECT id, into_id FROM merged")}
+        base = config.applications_dir()
+        if not gone or not base.is_dir():
+            return
+        for folder in sorted(base.iterdir()):
+            named = re.match(r"(\d+)-", folder.name)
+            if not named or int(named.group(1)) not in gone or not folder.is_dir():
+                continue
+            gone_id = int(named.group(1))
+            into = self.conn.execute("SELECT id, company, title FROM jobs WHERE id = ?", (gone[gone_id],)).fetchone()
+            if into is None:
+                continue
+            try:
+                record = json.loads((folder / "submission.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                record = None
+            said = f"pressed Submit; recorded for job {gone_id}, merged into this one: it may have gone in"
+            if isinstance(record, dict) and not record.get("confirmed") and not self.conn.execute(
+                    "SELECT 1 FROM events WHERE job_id = ? AND note = ?", (into["id"], said)).fetchone():
+                self.conn.execute("INSERT INTO events (job_id, at, status, note) VALUES (?, ?, '', ?)",
+                                  (into["id"], _now(), said))
+                self.conn.commit()
+            try:
+                _move_folder(folder, self.job_dir(into["id"], into["company"], into["title"]), gone_id)
+            except OSError as e:
+                logging.getLogger(__name__).warning("job %s's folder %s wasn't moved into job %s's (%s): tried again at "
+                                                    "the next start", gone_id, folder.name, into["id"], e)
+
+    def _at(self, url: str) -> sqlite3.Row | None:
+        """The job at this address (normalized), or with it among its other addresses (aliases)."""
+        return (self.conn.execute("SELECT * FROM jobs WHERE url = ?", (url,)).fetchone()
+                or self.conn.execute("SELECT jobs.* FROM aliases JOIN jobs ON jobs.id = aliases.job_id "
+                                     "WHERE aliases.url = ?", (url,)).fetchone())
 
     @_locked
     def close(self) -> None:
@@ -251,14 +652,25 @@ class Tracker:
 
     @_locked
     def upsert(self, posting: dict[str, Any], status: str | None = None) -> tuple[dict[str, Any], bool]:
-        """Insert a job, or refresh empty fields of an existing one. Returns (job, created)."""
+        """Insert a job, or refresh empty fields of an existing one. Returns (job, created).
+
+        One posting is one job, whichever site it was saved from (the code review's worth building 8: the same job from
+        Indeed and from the employer's site was two, and the desk could apply to it twice): a posting at an address
+        the tracker doesn't know joins the job saved from the other side that it surely is (_decide, _join), its
+        address kept as one of the job's own (aliases), which finds the job from then on. One it may be, but not surely,
+        is saved as a job of its own, noted as maybe the same (_link): the desk asks before applying to it while the
+        other is begun or done."""
         url = normalize_url(posting["url"])
-        existing = self.conn.execute("SELECT * FROM jobs WHERE url = ?", (url,)).fetchone()
+        existing = self._at(url)
         now = _now()
         values = {k: str(posting.get(k) or "") for k in _JOB_FIELDS}
         values["url"] = url
+        board = _board(url, values["source"])
         if existing:
             updates = {k: v for k, v in values.items() if v and not existing[k]}
+            if board and _board(existing["url"], existing["source"] or "") is None:
+                # a job board's copy of a job kept at the employer's site: never where it's applied for
+                updates = {k: v for k, v in updates.items() if k not in _PLACE_FIELDS}
             if updates:
                 sets = ", ".join(f"{k} = ?" for k in updates)
                 self.conn.execute(
@@ -267,6 +679,9 @@ class Tracker:
                 )
                 self.conn.commit()
             return self.get(existing["id"]), False
+        one, maybe, why = self._decide(values, board, now, self._postings(), {})
+        if one is not None:
+            return self._join(one.id, values, board, now), False
         status = status or "saved"
         cols = ", ".join(_JOB_FIELDS)
         marks = ", ".join("?" for _ in _JOB_FIELDS)
@@ -278,10 +693,61 @@ class Tracker:
             "INSERT INTO events (job_id, at, status, note) VALUES (?, ?, ?, ?)",
             (cur.lastrowid, now, status, "added"),
         )
+        if maybe and cur.lastrowid is not None:  # (kept apart, and said: the desk asks before applying)
+            self._link(cur.lastrowid, [j.id for j in maybe], why, now)
         self.conn.commit()
         job = self.get(cur.lastrowid)
         Path(job["folder"]).mkdir(parents=True, exist_ok=True)
         return job, True
+
+    def _decide(self, values: dict[str, str], board: str | None, now: str,
+                postings: dict[tuple[str, str], builtins.list[_Job]],
+                known: dict[int, frozenset[str]]) -> tuple[_Job | None, builtins.list[_Job], str]:
+        """For a posting not saved yet: the job it's made one with, if any (_match: surely the same posting; and
+        _kept_apart: for the employer's posting, a board's copy untouched and saved within MERGE_DAYS; for a board's
+        copy, an employer's job saved within MERGE_DAYS, untouched and holding no board's copy yet, or else naming the
+        same requisition number); the jobs it may be the same as; and why it isn't made one with them."""
+        key = _key(values["company"], values["title"], values["location"])
+        new = _Job(0, key, board, "saved", _moment(now), False)
+        new_ids = _req_ids(values["title"], values["external_id"], values["description"], values["url"], board)
+        one, theirs, why = self._match(new, new_ids, postings.get((key[0], key[1]), []), known)
+        if one is not None:
+            one_ids = self._ids(one, known)
+            why = (_kept_apart(one, one_ids, new, new_ids, alias_only=True) if board
+                   else _kept_apart(new, new_ids, one, one_ids)) or ""
+        return (None if why else one), theirs, why
+
+    @_locked
+    def linked(self, job_id: int) -> builtins.list[int]:
+        """Every job noted as maybe the same posting as this one (Tracker.maybe_same), Apply anyway or not: the desk
+        never has two of them under way at once."""
+        return [r[0] for r in self.conn.execute("SELECT other_id FROM maybe_same WHERE job_id = ? ORDER BY other_id",
+                                                (job_id,))]
+
+    def _join(self, job_id: int, values: dict[str, str], board: str | None, now: str) -> dict[str, Any]:
+        """A posting at a new address joins the job saved from the other side that it is (upsert). The job keeps its
+        id, status, history, emails and folder (job_dir finds a job's folder by its id, and its employer and title are
+        only filled in where empty). The employer's own posting gives a job board's job its address and where it's
+        applied for (apply_url, ats, source, external_id), the board's address kept as an alias; a job board's copy only
+        becomes an alias of the employer's job. Either way the posting fills in what the job didn't say."""
+        row = self.conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        sets: dict[str, Any] = {k: v for k, v in values.items() if k not in _PLACE_FIELDS and v and not row[k]}
+        if board:
+            alias = values["url"]
+            note = (f"the same posting on {JOB_BOARDS[board]}: its link kept as an alias (applied for on the "
+                    "employer's site)")
+        else:
+            alias, theirs = row["url"], _board(row["url"], row["source"] or "")
+            sets.update({k: values[k] for k in _PLACE_FIELDS})
+            sets["ats"] = values["ats"] or _ats_of(values)
+            note = (f"merged: the same posting on the employer's site ({ATS_NAMES.get(sets['ats'], sets['ats'])}); "
+                    f"{JOB_BOARDS.get(theirs or '', 'the job board')}'s link kept as an alias")
+        sets["updated_at"] = now
+        self.conn.execute(f"UPDATE jobs SET {', '.join(f'{k} = ?' for k in sets)} WHERE id = ?", (*sets.values(), job_id))
+        self.conn.execute("INSERT OR REPLACE INTO aliases (url, job_id) VALUES (?, ?)", (alias, job_id))
+        self.conn.execute("INSERT INTO events (job_id, at, status, note) VALUES (?, ?, '', ?)", (job_id, now, note))
+        self.conn.commit()
+        return self.get(job_id)
 
     @_locked
     def get(self, job_id: int, with_description: bool = True) -> dict[str, Any] | None:
@@ -290,8 +756,73 @@ class Tracker:
 
     @_locked
     def find_by_url(self, url: str) -> dict[str, Any] | None:
-        row = self.conn.execute("SELECT * FROM jobs WHERE url = ?", (normalize_url(url),)).fetchone()
-        return self._row(row)
+        """The job at this address, or with it among its other addresses (a job board's, for one kept at the
+        employer's site)."""
+        return self._row(self._at(normalize_url(url)))
+
+    @_locked
+    def aliases(self) -> dict[int, builtins.list[str]]:
+        """Each job's other addresses (a job board's, for one kept at the employer's site), by job, as they came."""
+        out: dict[int, builtins.list[str]] = {}
+        for row in self.conn.execute("SELECT url, job_id FROM aliases ORDER BY rowid"):
+            out.setdefault(row["job_id"], []).append(row["url"])
+        return out
+
+    @_locked
+    def same_posting(self, postings: builtins.list[dict[str, Any]]) -> builtins.list[dict[str, Any] | None]:
+        """For each of these postings (the desk's openings, from employers' own sites, at addresses the tracker doesn't
+        know yet), the job saved from the other side that it surely is (_decide: a job Claude saved from Indeed, say),
+        or None: the desk lists the two as one, and Apply makes them one job (upsert). None too for two of them alike
+        the same job: which it is can't be told."""
+        if not postings:  # (the page asks every 1.5 s: no read of the jobs for none)
+            return []
+        saved, now = self._postings(), _now()
+        known: dict[int, frozenset[str]] = {}
+        found = []
+        for p in postings:
+            values = {k: str(p.get(k) or "") for k in _JOB_FIELDS}
+            values["url"] = normalize_url(values["url"])
+            one, _, _ = self._decide(values, _board(values["url"], values["source"]), now, saved, known)
+            found.append(one.id if one is not None else None)
+        return [self._row(self.conn.execute("SELECT * FROM jobs WHERE id = ?", (i,)).fetchone(), with_description=False)
+                if i is not None and found.count(i) == 1 else None for i in found]
+
+    @_locked
+    def merged_into(self, job_id: int) -> int | None:
+        """The job a job no longer here was merged into (one posting saved twice), or None."""
+        row = self.conn.execute("SELECT into_id FROM merged WHERE id = ?", (job_id,)).fetchone()
+        return row["into_id"] if row else None
+
+    @_locked
+    def maybe_same(self, job_id: int) -> builtins.list[dict[str, Any]]:
+        """The jobs this one may be the same posting as (alike, from the other site, but not made one: upsert), unless
+        the person said Apply anyway for it, each with the job board it was saved from (`board`, None for the
+        employer's own site). The desk asks before applying to it while one of them is begun or done."""
+        rows = self.conn.execute("SELECT jobs.* FROM maybe_same JOIN jobs ON jobs.id = maybe_same.other_id "
+                                 "WHERE maybe_same.job_id = ? AND NOT maybe_same.cleared ORDER BY jobs.id", (job_id,))
+        return [{**(self._row(r, with_description=False) or {}), "board": _board(r["url"], r["source"] or "")}
+                for r in rows.fetchall()]
+
+    @_locked
+    def clear_maybe_same(self, job_id: int, others: builtins.list[int]) -> None:
+        """The person's Apply anyway: this job isn't one of these it may be the same as (the ones its card named: for
+        this job only, and for those alone; another begun later is asked about again, and they're asked about still,
+        should one of them be started). Said in its history."""
+        wanted = [int(o) for o in others]
+        if not wanted:
+            return
+        marks = ", ".join("?" for _ in wanted)
+        others = [r[0] for r in self.conn.execute(
+            f"SELECT other_id FROM maybe_same WHERE job_id = ? AND NOT cleared AND other_id IN ({marks})",
+            (job_id, *wanted))]
+        if not others:
+            return
+        self.conn.execute(f"UPDATE maybe_same SET cleared = 1 WHERE job_id = ? AND other_id IN ({marks})",
+                          (job_id, *wanted))
+        self.conn.execute("INSERT INTO events (job_id, at, status, note) VALUES (?, ?, '', ?)",
+                          (job_id, _now(), f"Apply anyway: not the same as job{'s' if len(others) > 1 else ''} "
+                                           f"{', '.join(map(str, others))}, as the person said"))
+        self.conn.commit()
 
     @_locked
     def list(self, status: str | None = None, company: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
