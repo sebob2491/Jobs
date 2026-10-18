@@ -627,34 +627,68 @@ def test_pasted_links_are_read_saved_and_listed(srv):
     run(go())
 
 
-def test_openings_new_since_the_last_visit_are_tagged(srv):
-    desk = Desk(srv)
-    desk.applier.start = lambda: None
-    desk.search.update(status="done", at=time.time())
+def test_openings_new_since_the_last_visit_are_tagged(srv, job_apply_home):
+    """Code review, worth building 9: the desk keeps when the person last looked at the openings (desk.json's last_seen,
+    from the page loading or coming to the front), and the look before this visit began. An opening first saved after
+    that one (found by a search, or saved by Claude) is New, all visit long: a reload or the page coming to the front
+    again within VISIT_GAP doesn't take its mark away, nor does the desk restarting; the next visit's New is what came
+    after this one. The first visit ever marks nothing. The look is written at most once a minute, not at every poll."""
+    from job_apply import desk as desk_module
+
     fit = {"score": 80, "reasons": ["title matches"], "concerns": [], "blocked": False, "recommended": True}
+    t0 = time.time() - 10 * 3600
+    desk = Desk(srv)
     desk.listings = [{"company": "Example Fab", "title": "Field Service Engineer", "url": "https://example.com/1",
                       "location": "Phoenix, AZ", "fit": fit}]
+    desk.found = {"https://example.com/1": t0}
 
+    def new() -> set[str]:
+        return {r["title"] for r in desk.state()["listings"] if r["new"]}
+
+    desk.saw(now=t0 + 100)  # the first look ever
+    assert new() == set() and desk.seen_since is None
+    desk.listings.append({"company": "Example Litho", "title": "Equipment Technician", "url": "https://example.com/2",
+                          "location": "Chandler, AZ", "fit": fit})
+    desk.found["https://example.com/2"] = t0 + 200
+
+    def kept() -> float:
+        return json.loads((job_apply_home / "desk.json").read_text(encoding="utf-8"))["last_seen"]
+
+    desk.saw(now=t0 + 130)  # the same visit, half a minute on: not written again yet
+    assert (desk.last_seen, kept()) == (t0 + 130, t0 + 100)
+    desk.saw(now=t0 + 300)  # the same visit: nothing came after a visit before it; written, a minute on
+    assert new() == set() and kept() == t0 + 300
+
+    later = t0 + 300 + desk_module.VISIT_GAP + 1  # the next visit: what came after the look at t0 + 300
+    desk.listings.append({"company": "Example Etch", "title": "Etch Technician", "url": "https://example.com/3",
+                          "location": "Tempe, AZ", "fit": fit})
+    desk.found["https://example.com/3"] = t0 + 400 + desk_module.VISIT_GAP
+    claudes = srv.add_job(url="https://careers.example.com/jobs/9", title="Equipment Technician II",
+                          company="Example Tool", location="Phoenix, AZ")["job"]  # (saved by Claude just now)
+    desk.saw(now=later)
+    assert desk.seen_since == t0 + 300
+    assert new() == {"Etch Technician", "Equipment Technician II"}
+    desk.saw(now=later + 120)  # a reload, the page to the front again: still this visit, still New
+    assert new() == {"Etch Technician", "Equipment Technician II"}
+    state = Desk(srv).state()  # and after a restart of the desk
+    assert {r["title"] for r in state["listings"] if r["new"]} == {"Equipment Technician II"}  # (its own openings: none)
+    assert state["seen"] == {"since": t0 + 300, "last": later + 120}
+    srv.update_job(claudes["id"], status="skipped")  # taken up since: no news
+    assert new() == {"Etch Technician"}
+
+    # through the page's own call, locked to it as every call is
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with person_browser() as browser:
-                page = await browser.new_page()
-                await page.goto(desk.url)
-                await page.wait_for_selector("text=Field Service Engineer")
-                assert await page.locator(".chip.new").count() == 0  # a first visit tags nothing
-                desk.listings.append({"company": "Example Litho", "title": "Equipment Technician",
-                                      "url": "https://example.com/2", "location": "Chandler, AZ", "fit": fit})
-                await page.reload()
-                await page.wait_for_selector("text=Equipment Technician")
-                tagged = page.locator("li.row", has=page.locator(".chip.new"))
-                assert await tagged.count() == 1 and "Equipment Technician" in await tagged.inner_text()
-                assert "1 new" in await page.inner_text("#searched")
-                await browser.close()
+            async with _client(desk) as c:
+                assert (await c.post("/api/seen", json={})).status_code == 403
+                seen = (await c.post("/api/seen", headers={"x-desk-token": desk.token}, json={})).json()
+                return seen
         finally:
             await desk.stop()
 
-    run(go())
+    seen = run(go())
+    assert seen["since"] == later + 120 and seen["last"] > seen["since"]  # (hours on: a visit of its own)
 
 
 def test_a_typo_in_answers_yaml_doesnt_take_the_desk_down(srv, job_apply_home):
@@ -3594,3 +3628,397 @@ def test_my_applications_on_the_page_are_grouped_marked_for_follow_up_and_copy_a
     assert seen["kept"] == "true" and "Quiet Fab" in seen["kept_rows"] and "Talk Fab" not in seen["kept_rows"], seen
     assert seen["sizes"][0] <= seen["sizes"][1], seen["sizes"]
     assert seen["sent"] == [], seen["sent"]  # (nothing went anywhere but the desk)
+
+
+def _fit(score: int, **more) -> dict:
+    """An opening's fit as recommend.py gives it, its parts adding up to its score."""
+    return {"score": score, "reasons": ["title matches"], "concerns": [], "blocked": False, "held": False,
+            "recommended": score >= 60,
+            "parts": [{"why": "start", "points": 50}, {"why": "title matches", "points": score - 50}], **more}
+
+
+def _set_profile_settings(home: Path, **settings) -> None:
+    profile = yaml.safe_load((home / "profile.yaml").read_text(encoding="utf-8"))
+    profile["settings"] = {**profile["settings"], **settings}
+    (home / "profile.yaml").write_text(yaml.safe_dump(profile), encoding="utf-8")
+
+
+def test_whats_new_lists_the_openings_saved_since_a_time_or_its_last_call(srv, job_apply_home):
+    """Code review, worth building 9: a morning check for Claude. whats_new(since) lists the openings first saved after
+    `since` (a date, a time, or "12h"/"3d"): the desk's, by when a search first found each, and the jobs saved to the
+    tracker another way; without it, the ones saved since its last call (kept in the person's folder; the last 24 hours
+    at the first). Best score first (lower at an employer the person said Not interested in), none they said Not
+    interested in, none begun; with a few lines to say them in. It never searches by itself."""
+    from datetime import timedelta
+
+    from job_apply import desk as desk_module
+
+    now = time.time()
+    listings = [
+        {"company": "Example Fab", "title": "Old Technician", "url": "https://example.com/old", "fit": _fit(90)},
+        {"company": "Example Fab", "title": "Field Service Engineer", "url": "https://example.com/fse",
+         "location": "Phoenix, AZ", "fit": _fit(70)},
+        {"company": "Example Litho", "title": "Equipment Technician", "url": "https://example.com/tech",
+         "location": "Chandler, AZ", "fit": _fit(85)},
+        {"company": "Example Etch", "title": "Etch Technician", "url": "https://example.com/etch", "fit": _fit(95)},
+    ]
+    (job_apply_home / "recommendations.json").write_text(json.dumps({"results": listings, "at": now - 3600}),
+                                                        encoding="utf-8")
+    (job_apply_home / "openings_found.json").write_text(json.dumps({"found": {
+        "https://example.com/old": now - 3 * 86400, "https://example.com/fse": now - 3600,
+        "https://example.com/tech": now - 3600, "https://example.com/etch": now - 3600}}), encoding="utf-8")
+    t = srv.tracker()
+    t.set_not_interested("https://example.com/etch", company="Example Etch", title="Etch Technician", reason="title")
+    t.set_not_interested("https://example.com/litho-2", company="Example Litho", title="Litho Tech", reason="company")
+    saved = srv.add_job(url="https://careers.example.com/jobs/7", title="Field Service Engineer", company="Example Tool",
+                        location="Phoenix, AZ")["job"]
+    begun = srv.add_job(url="https://careers.example.com/jobs/8", title="Equipment Technician", company="Example Tool",
+                        location="Phoenix, AZ")["job"]
+    srv.update_job(begun["id"], status="in_progress")
+    hour_ago = datetime.fromtimestamp(now - 3600, timezone.utc).isoformat(timespec="seconds")
+    t.conn.execute("UPDATE jobs SET created_at = ?", (hour_ago,))  # (saved an hour ago, as the search ran)
+    t.conn.commit()
+
+    told = srv.whats_new(since=(datetime.now() - timedelta(days=2)).isoformat(timespec="minutes"))
+    titles = [(o["title"], o["company"]) for o in told["openings"]]
+    assert set(titles) == {("Field Service Engineer", "Example Fab"), ("Equipment Technician", "Example Litho"),
+                           ("Field Service Engineer", "Example Tool")}, titles
+    scores = [o["score"] for o in told["openings"]]
+    assert scores == sorted(scores, reverse=True), told
+    tech = next(o for o in told["openings"] if o["company"] == "Example Litho")
+    assert tech["score"] == 75 and tech["url"] == "https://example.com/tech"  # (said Not interested in Example Litho)
+    tool_job = next(o for o in told["openings"] if o["company"] == "Example Tool")
+    assert tool_job["job_id"] == saved["id"] and isinstance(tool_job["score"], int)
+    assert told["count"] == 3 and told["summary"].startswith("3 new openings since "), told["summary"]
+    assert "75 · Equipment Technician · Example Litho · Chandler, AZ" in told["summary"], told["summary"]
+    assert told["searched_at"] and not told["first_call"]
+    assert srv.whats_new(since="12h")["count"] == 3
+    assert srv.whats_new(since="4d")["count"] == 4  # (the old one too)
+    with pytest.raises(ValueError, match="since should be"):
+        srv.whats_new(since="yesterday-ish")
+
+    # without `since`: since its last call (the first: the last 24 hours)
+    (job_apply_home / "whats_new.json").unlink()
+    first = srv.whats_new()
+    assert first["first_call"] and first["count"] == 3
+    again = srv.whats_new()
+    assert (again["count"], again["openings"]) == (0, []) and again["summary"].startswith("Nothing new since "), again
+    fresh = srv.add_job(url="https://careers.example.com/jobs/9", title="Etch Technician", company="Example Tool")["job"]
+    later = srv.whats_new()
+    assert [o["job_id"] for o in later["openings"]] == [fresh["id"]], later
+    assert json.loads((job_apply_home / "whats_new.json").read_text(encoding="utf-8"))["at"] <= time.time()
+    assert desk_module.WHATS_NEW_MOST == 50
+
+
+def test_not_interested_hides_an_opening_until_undone_lowers_its_employer_and_is_never_queued(srv, job_apply_home):
+    """Code review, worth building 9: Not interested on an opening hides it (but for the bar's Not interested group),
+    with a reason or none (Title, Company, Location, Pay, Other), kept in the tracker; Undo shows it again. For reason
+    Company, that employer's other openings score 10 lower (recommend.NOT_INTERESTED_COMPANY), said in their parts and
+    concerns. The desk never queues one: not by Apply with its address, nor by its job number. Not for a job the desk has
+    a card for (Skip job is for those), nor one sent in. Locked to the page, as every call is."""
+    desk = Desk(srv)
+    desk.applier.start = lambda: None  # (nothing is filled: what's queued is what's looked at)
+    desk.search.update(status="done", at=time.time())
+    fse, tech, litho = "https://example.com/fse", "https://example.com/tech", "https://example.com/litho"
+    desk.listings = [
+        {"company": "Example Fab", "title": "Field Service Engineer", "url": fse, "fit": _fit(80)},
+        {"company": "Example Fab, Inc.", "title": "Equipment Technician", "url": tech, "fit": _fit(65)},
+        {"company": "Example Litho", "title": "Litho Technician", "url": litho, "fit": _fit(70)},
+    ]
+    claudes = srv.add_job(url="https://careers.example.com/jobs/5", title="Etch Technician", company="Example Etch")["job"]
+    sent = srv.add_job(url="https://careers.example.com/jobs/6", title="Etch Technician II", company="Example Etch")["job"]
+    srv.update_job(sent["id"], status="applied")
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with _client(desk) as c:
+                h = {"x-desk-token": desk.token}
+
+                async def rows() -> dict:
+                    return {r["url"]: r for r in (await c.get("/api/state", headers=h)).json()["listings"]}
+
+                async def mark(url: str, reason: str = "", token: dict | None = None):
+                    return await c.post("/api/not_interested/mark", headers=h if token is None else token,
+                                        json={"url": url, "reason": reason})
+
+                assert (await mark(fse, token={})).status_code == 403
+                assert (await mark(fse, "boring")).status_code == 400  # (only the reasons offered)
+                assert (await mark("https://example.com/gone")).status_code == 400  # (not in the list: a stale page)
+                assert (await mark(sent["url"])).status_code == 400  # (sent in already)
+                assert (await c.post("/api/not_interested/forget", headers=h, json={"url": fse})).status_code == 404
+                assert srv.tracker().not_interested() == {}
+
+                assert (await mark(fse, "company")).json() == {"ok": True}
+                r = await rows()
+                assert r[fse]["not_interested"]["reason"] == "company" and not r[fse]["new"]
+                lowered = r[tech]["fit"]
+                assert (lowered["score"], lowered["recommended"]) == (55, False)
+                assert lowered["parts"][-1] == {"why": "you said not interested in Example Fab", "points": -10}
+                assert sum(p["points"] for p in lowered["parts"]) == lowered["score"]
+                assert "you said not interested in Example Fab" in lowered["concerns"]
+                assert r[litho]["fit"]["score"] == 70 and r[litho]["not_interested"] is None  # (another employer)
+
+                # Apply never queues it: by its address, by its job number, with others or alone
+                out = (await c.post("/api/apply", headers=h, json={"urls": [fse, litho]})).json()
+                litho_id = srv.tracker().find_by_url(litho)["id"]
+                assert out["queued"] == [litho_id] and out["not_interested"] == ["Field Service Engineer"], out
+                assert (await mark(claudes["url"], "pay")).status_code == 200
+                out = (await c.post("/api/apply", headers=h, json={"job_ids": [claudes["id"]], "submit": True})).json()
+                assert out == {"queued": [], "already_applied": [], "not_interested": ["Etch Technician"]}, out
+                assert [j for _, j in desk.applier.tasks] == [litho_id]
+                assert desk.apply(urls=[fse], job_ids=[claudes["id"]], submit=False) == ([], [])
+                # one the desk has a card for (queued now) isn't for Not interested: Skip job is
+                said = await mark(litho, "title")
+                assert said.status_code == 400 and "Skip job" in said.json()["error"]
+                events = [e["note"] for e in srv.get_job(claudes["id"])["history"]]
+                assert "not interested (pay)" in events
+
+                # Undo: shown again, its employer's openings as they were, and Apply queues it
+                assert (await c.post("/api/not_interested/undo", headers=h, json={"url": fse})).json() == {"undone": True}
+                assert (await c.post("/api/not_interested/undo", headers=h, json={"url": fse})).json() == {"undone": False}
+                r = await rows()
+                assert r[fse]["not_interested"] is None and r[tech]["fit"] == _fit(65)
+                queued = (await c.post("/api/apply", headers=h, json={"urls": [fse]})).json()["queued"]
+                assert queued == [srv.tracker().find_by_url(fse)["id"]]
+        finally:
+            await desk.stop()
+
+    run(go())
+
+
+def test_jobs_queued_together_go_the_likeliest_to_go_all_the_way_first(srv, job_apply_home):
+    """Code review, worth building 9: jobs queued together (Apply to selected) go the ones most likely to go all the way
+    first: at employers where the live check went all the way (desk_handled.yaml), then on job systems the desk usually
+    goes all the way on (Workday), then the rest, and last the ones that need the person anyway: Indeed's and LinkedIn's
+    (their Submit is always the person's) and an employer whose bot checks the desk's history met more often than not.
+    Each tier keeps the person's order. One queued alone keeps its place after those before it, and Resume still puts
+    its job first. The page says it once ("ordered")."""
+    from job_apply import history
+
+    def job(url: str, company: str, **more) -> int:  # (each its own title: none alike another)
+        return srv.add_job(url=url, title=f"Technician {url.rsplit('/', 1)[-1]}", company=company, **more)["job"]["id"]
+
+    rest1 = job("https://careers.rest-one.example/jobs/1", "Rest One")
+    board = job("https://www.indeed.com/viewjob?jk=2222222222222222", "Board Co", source="indeed")
+    handled = job("https://intel.wd1.myworkdayjobs.com/External/job/Chandler/Equipment-Technician_JR0001", "Intel")
+    workday = job("https://unlisted.wd5.myworkdayjobs.com/External/job/Phoenix/Equipment-Technician_R0002", "Unlisted Co")
+    rest2 = job("https://careers.rest-two.example/jobs/2", "Rest Two")
+    walled = job("https://careers.walled.example/jobs/3", "Walled Co")
+    now = time.time()
+    for days, outcome, need in ((3, "needs_you", "bot_check"), (2, "ready", ""), (1, "needs_you", "bot_check")):
+        history.append(_history_line(now, days, 2.0, job_id=walled, company="Walled Co", outcome=outcome, need=need))
+    desk = Desk(srv)
+    desk.applier.start = lambda: None  # (nothing is filled: the order is what's looked at)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with _client(desk) as c:
+                h = {"x-desk-token": desk.token}
+
+                async def apply(*ids: int) -> dict:
+                    return (await c.post("/api/apply", headers=h, json={"job_ids": list(ids)})).json()
+
+                out = await apply(rest1, board, handled, workday, rest2, walled)
+                assert out["queued"] == [handled, workday, rest1, rest2, board, walled] and out["ordered"], out
+                assert [j for _, j in desk.applier.tasks] == out["queued"]
+                # one alone keeps its place, after those queued before it: the person's own press
+                late_rest = job("https://careers.rest-three.example/jobs/4", "Rest Three")
+                late_handled = job("https://intel.wd1.myworkdayjobs.com/External/job/Chandler/Technician_JR0005", "Intel")
+                assert await apply(late_rest) == {"queued": [late_rest], "already_applied": []}
+                assert await apply(late_handled) == {"queued": [late_handled], "already_applied": []}
+                assert [j for _, j in desk.applier.tasks][-2:] == [late_rest, late_handled]
+                # in tiers already: queued as they are, and nothing said
+                other_rest = job("https://careers.rest-four.example/jobs/6", "Rest Four")
+                other_handled = job("https://intel.wd1.myworkdayjobs.com/External/job/Chandler/Tech_JR0007", "Intel")
+                assert await apply(other_handled, other_rest) == {"queued": [other_handled, other_rest],
+                                                                  "already_applied": []}
+                # Resume still puts its job first
+                assert (await c.post(f"/api/job/{walled}/resume", headers=h, json={})).status_code == 200
+                assert [j for _, j in desk.applier.tasks][0] == walled
+        finally:
+            await desk.stop()
+
+    run(go())
+
+
+def test_the_safety_window_says_each_setting_as_the_desk_acts_on_it(srv, job_apply_home, monkeypatch):
+    """Code review, worth building 9: the Safety window (/api/safety) lists each setting that decides what the desk does
+    in the person's name, its value now and what that means in plain words (as CLAUDE.md's rules say it), and where to
+    change it: from the very settings and switches the desk acts on, so it can't say otherwise. Practice mode turns
+    Submit for me, accounts and notices off whatever they say; Troubleshooting turns Submit for me off. Read-only, and
+    locked to the page as every call is."""
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+
+    def lines() -> dict:
+        return {line["key"]: line for line in desk.safety()["lines"]}
+
+    # as the tests' profile has it: review, accounts off, notices on (unless turned off), cookies off, one job at once
+    s = lines()
+    assert set(s) >= {"practice", "auto_submit", "boards", "accept_notices", "manage_accounts", "accept_cookies",
+                      "email_codes", "email_password", "email_tracking", "jobs_at_once", "troubleshoot", "bot_checks"}
+    assert all(line["where"] and line["said"] for line in s.values())
+    assert (s["practice"]["value"], s["auto_submit"]["value"]) == ("off", "off")
+    assert s["auto_submit"]["said"] == "The desk stops at each review page; you press Submit."
+    assert s["boards"]["value"] == s["bot_checks"]["value"] == "always yours"
+    assert "never presses their Submit" in s["boards"]["said"] and "never solves a CAPTCHA" in s["bot_checks"]["said"]
+    notices = s["accept_notices"]
+    assert notices["value"] == "on" and "notice about AI screening" in notices["said"]
+    assert "Never a newsletter, job alerts, a talent community or marketing" in notices["said"]
+    assert "accept_notices" in notices["where"]
+    assert s["manage_accounts"]["value"] == "off" and "never creates an account" in s["manage_accounts"]["said"]
+    assert s["accept_cookies"]["value"] == "off" and "never accepted" in s["accept_cookies"]["said"]
+    assert (s["email_codes"]["value"], s["email_tracking"]["value"], s["email_password"]["value"]) == (
+        "off", "off", "not saved")
+    assert s["jobs_at_once"]["value"] == "1" and s["troubleshoot"]["value"] == "off"
+
+    # turned on, on the desk and in the profile
+    desk.applier.auto_submit, desk.applier.jobs_at_once = True, 3
+    _set_profile_settings(job_apply_home, manage_accounts=True, accept_cookies=True, email_codes=True,
+                          email_tracking=True)
+    config.save_site_password("email_password", "not-a-real-app-password")
+    s = lines()
+    assert s["auto_submit"]["value"] == "on" and "submitted for you" in s["auto_submit"]["said"]
+    accounts = s["manage_accounts"]
+    assert accounts["value"] == "on" and "ticking only the site's terms (never a newsletter)" in accounts["said"]
+    assert "\"Forgot password\"" in accounts["said"] and "CAPTCHA or security question" in accounts["said"]
+    assert "one with no way to decline is accepted for you" in s["accept_cookies"]["said"]
+    assert s["email_password"]["value"] == "saved"
+    assert "the password-reset email it just asked that site for" in s["email_password"]["said"]
+    assert "not-a-real-app-password" not in json.dumps(desk.safety())
+    assert s["email_codes"]["value"] == s["email_tracking"]["value"] == "on"
+    assert s["jobs_at_once"]["value"] == "3" and "up to 3 applications" in s["jobs_at_once"]["said"]
+
+    # practice mode: nothing sent, no account made, nothing agreed to, whatever those say
+    _set_profile_settings(job_apply_home, submit_mode="dry_run")
+    s = lines()
+    assert s["practice"]["value"] == "on" and "never submits it" in s["practice"]["said"]
+    assert s["auto_submit"]["value"] == s["accept_notices"]["value"] == "off in practice mode"
+    assert s["manage_accounts"]["value"] == "off in practice mode"
+    assert "reset" not in s["email_password"]["said"]
+    monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
+    assert "JOB_APPLY_NEVER_SUBMIT=1" in lines()["practice"]["where"]
+    monkeypatch.delenv("JOB_APPLY_NEVER_SUBMIT")
+    _set_profile_settings(job_apply_home, submit_mode="review", accept_notices=False)
+    desk.troubleshoot = True
+    s = lines()
+    assert s["auto_submit"]["value"] == "off while Troubleshooting is on" and s["troubleshoot"]["value"] == "on"
+    assert s["accept_notices"]["value"] == "off" and "the desk stops for you" in s["accept_notices"]["said"]
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with _client(desk) as c:
+                assert (await c.get("/api/safety")).status_code == 403
+                assert (await c.get("/api/safety", headers={"x-desk-token": "guess"})).status_code == 403
+                got = await c.get("/api/safety", headers={"x-desk-token": desk.token})
+                return got.status_code, got.json()
+        finally:
+            await desk.stop()
+
+    status, said = run(go())
+    assert status == 200 and said == desk.safety() and said["problem"] is None
+
+
+def test_the_page_marks_new_openings_hides_one_not_wanted_with_undo_and_shows_safety(srv, job_apply_home):
+    """The desk page (on a phone's width, with no sideways scroll): openings first saved since the last visit carry a
+    New mark and make the bar's New group; a score pressed shows how it adds up; Not interested asks why (or not),
+    hides the opening (its employer's other openings lower, for Company), and its Undo (in the word at the foot of the
+    window, or by its row in the Not interested group) brings it back; and the header's Safety opens the window."""
+    from job_apply import desk as desk_module
+
+    now = time.time()
+    old, fse, tech = "https://example.com/old", "https://example.com/fse", "https://example.com/tech"
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=now)
+    desk.listings = [
+        {"company": "Example Litho", "title": "Litho Technician", "url": old, "location": "Phoenix, AZ", "fit": _fit(75)},
+        {"company": "Example Fab", "title": "Field Service Engineer", "url": fse, "location": "Phoenix, AZ",
+         "fit": _fit(80)},
+        {"company": "Example Fab", "title": "Equipment Technician", "url": tech, "location": "Chandler, AZ",
+         "fit": _fit(76)},
+    ]
+    desk.found = {old: now - 5 * desk_module.VISIT_GAP, fse: now - 60, tech: now - 60}
+    desk.last_seen = now - 2 * desk_module.VISIT_GAP  # (the person's last look: this page's begins a new visit)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 390, "height": 900})
+                await page.goto(desk.url)
+                await page.wait_for_selector("text=Field Service Engineer")
+                seen = {"new": sorted(await page.locator("li.row", has=page.locator(".chip.new")).locator(".title")
+                                      .all_inner_texts())}
+                seen["bar"] = " ".join((await page.inner_text("#stops")).split())
+                await page.click("[data-stop=fresh]")
+                await page.wait_for_selector("[data-stop=fresh][aria-pressed=true]")
+                seen["fresh_rows"] = await page.locator("#rows li.row").count()
+                await page.click("[data-stop=any]")
+                # how a score adds up
+                await page.click(f"button.score[data-parts='{fse}']")
+                seen["parts"] = " ".join((await page.locator("li.row", has_text="Field Service Engineer")
+                                          .locator(".parts").inner_text()).split())
+                seen["sizes"] = [await page.evaluate("() => [document.documentElement.scrollWidth, "
+                                                     "document.documentElement.clientWidth]")]
+                # Not interested, for its company: hidden, its employer's other opening lower
+                await page.click(f"[data-ni='{fse}']")
+                await page.wait_for_selector("#ni[open]")
+                seen["asked"] = await page.inner_text("#ni-what")
+                await page.click("[data-ni-reason=company]")
+                await page.locator("li.row", has_text="Field Service Engineer").wait_for(state="detached")
+                await page.wait_for_function("document.getElementById('toast').textContent.includes('hidden')")
+                seen["toast"] = await page.inner_text("#toast")
+                tech_row = page.locator("li.row", has_text="Equipment Technician")
+                await tech_row.locator(".score:text('66')").wait_for()
+                seen["concern"] = await tech_row.locator(".chip.minus").inner_text()
+                assert srv.tracker().not_interested()[fse]["reason"] == "company"
+                # its group, with Undo by its row
+                await page.click("[data-stop=unwanted]")
+                hidden = page.locator("li.row", has_text="Field Service Engineer")
+                await hidden.wait_for()
+                seen["hidden_chip"] = await hidden.locator(".chip.stop").inner_text()
+                seen["hidden_box"] = await hidden.locator("input[type=checkbox]").is_disabled()
+                seen["sizes"].append(await page.evaluate("() => [document.documentElement.scrollWidth, "
+                                                         "document.documentElement.clientWidth]"))
+                await hidden.locator(f"[data-ni-undo='{fse}']").click()
+                await page.click("[data-stop=any]")
+                await page.locator("li.row", has_text="Field Service Engineer").wait_for()
+                await tech_row.locator(".score:text('76')").wait_for()
+                # no reason, and Undo from the word at the foot of the window
+                await page.click(f"[data-ni='{tech}']")
+                await page.click("[data-ni-reason='']")
+                await tech_row.wait_for(state="detached")
+                assert srv.tracker().not_interested()[tech]["reason"] == ""
+                await page.click(f"#toast [data-ni-undo='{tech}']")
+                await page.locator("li.row", has_text="Equipment Technician").wait_for()
+                seen["left"] = srv.tracker().not_interested()
+                # the header's Safety
+                await page.click("#safety-btn")
+                await page.wait_for_selector("#safety[open] li[data-safety=auto_submit]")
+                seen["safety"] = await page.inner_text("#safety-body li[data-safety=auto_submit]")
+                seen["safety_lines"] = await page.locator("#safety-body li").count()
+                seen["sizes"].append(await page.evaluate("() => [document.documentElement.scrollWidth, "
+                                                         "document.documentElement.clientWidth]"))
+                await page.click("[data-act=safety-close]")
+                await page.wait_for_selector("#safety", state="hidden")
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    assert seen["new"] == ["Equipment Technician", "Field Service Engineer"], seen
+    assert "New 2" in seen["bar"] and seen["fresh_rows"] == 2, seen
+    assert seen["parts"] == "start 50 · title matches +30 = 80", seen["parts"]
+    assert seen["asked"] == "Field Service Engineer at Example Fab", seen
+    assert seen["toast"].startswith("Not interested: Field Service Engineer is hidden.") and "Undo" in seen["toast"], seen
+    assert seen["concern"] == "you said not interested in Example Fab", seen
+    assert seen["hidden_chip"] == "Not interested: Company" and seen["hidden_box"], seen
+    assert seen["left"] == {}, seen
+    assert seen["safety"].startswith("Submit for me: off. The desk stops at each review page; you press Submit."), seen
+    assert seen["safety_lines"] >= 12, seen
+    assert all(scroll <= client for scroll, client in seen["sizes"]), seen["sizes"]

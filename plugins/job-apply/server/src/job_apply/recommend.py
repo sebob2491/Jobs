@@ -167,20 +167,51 @@ _NO_DRIVERS = re.compile(r"(?:licen[cs]e|\bcdl)(?: is| are)? not (?:\w+ )?(?:req
                          r"\bno (?:\w+ )?(?:driver|cdl)|\b(?:do|does) not (?:need|require) (?:a |an )?(?:valid )?(?:driver|cdl)")
 
 
+START = 50  # where every opening's score starts, before what's added for it and taken off
+
+
 @dataclass
 class Fit:
-    score: int = 50
+    score: int = START
     reasons: list[str] = field(default_factory=list)
     concerns: list[str] = field(default_factory=list)
     blocked: bool = False  # a hard requirement the profile says isn't met
     held: bool = False  # not preselected until checked: its posting unread, or it's outside the area
+    # how the score adds up, part by part, its start among them ({"why": "posted this week", "points": 10}): they sum to
+    # the score (the Job Desk shows them by each opening's score)
+    parts: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def recommended(self) -> bool:
         return not self.blocked and not self.held and self.score >= RECOMMEND_AT
 
+    def add(self, points: int, why: str) -> None:
+        """`points` added to the score (taken off, below 0), with what for, among its parts."""
+        self.score += points
+        self.parts.append({"why": why, "points": points})
+
     def to_dict(self) -> dict[str, Any]:
         return {**asdict(self), "recommended": self.recommended}
+
+
+# Points off each other opening at an employer the person said they're not interested in (the Job Desk's Not
+# interested, for its reason "Company"): enough to take a borderline one out of the recommended, not to hide it
+NOT_INTERESTED_COMPANY = 10
+
+
+def not_interested_in(fit: dict[str, Any], company: str, points: int = NOT_INTERESTED_COMPANY) -> dict[str, Any]:
+    """An opening's fit (Fit.to_dict()) at an employer the person said Not interested in, for reason Company: `points`
+    off its score (kept within 0 to 100), said among its concerns and its parts ("you said not interested in Acme",
+    -10), and recommended no longer once that takes it under RECOMMEND_AT. A fit saved before scores had parts gets
+    none."""
+    score = int(fit.get("score") or 0)
+    lowered = max(0, score - points)
+    said = f"you said not interested in {company}"
+    out = {**fit, "score": lowered, "concerns": [*(fit.get("concerns") or []), said],
+           "recommended": bool(fit.get("recommended")) and lowered >= RECOMMEND_AT}
+    if isinstance(fit.get("parts"), list):
+        out["parts"] = [*fit["parts"], {"why": said, "points": lowered - score}]
+    return out
 
 
 # --------------------------------------------------------------------- profile
@@ -420,46 +451,48 @@ def requirements(text: str) -> dict[str, Any]:
 def score_listing(listing: dict[str, Any], prof: Profile, description: str = "",
                   today: date | None = None) -> Fit:
     fit = Fit()
+    fit.parts.append({"why": "start", "points": fit.score})
     title = listing.get("title") or ""
     n = norm(title)
     targets = target_titles(prof)
     hit = next((t for t in targets if title_matches(title, t)), None)
     if hit:
-        fit.score += 25
+        fit.add(25, f"title matches “{hit}”")
         fit.reasons.append(f"title matches “{hit}”")
     elif _near_target(title, targets):
-        fit.score += 5  # near one ("Field Engineer" for field service, "Recruiting Coordinator" for Recruiter)
+        # near one ("Field Engineer" for field service, "Recruiting Coordinator" for Recruiter)
+        fit.add(5, "title near one of yours")
     else:  # even fresh, nearby and qualified, not what the person looks for: shown, not preselected
-        fit.score -= 25
+        fit.add(-25, "not one of your target titles")
         fit.concerns.append("not one of your target titles")
 
     years = applicant_years(prof, today)
     level = title_level(title)
     if _INTERN.search(n):
-        fit.score -= 40
+        fit.add(-40, "internship")
         fit.concerns.append("internship")
     elif _SENIOR.search(n):
         if years is None or years < 5:
-            fit.score -= 20
+            fit.add(-20, "senior-level role")
             fit.concerns.append("senior-level role" + (f"; you have about {years:g} years" if years is not None else ""))
     elif level and level >= 3:
         if years is None or years < 4:
-            fit.score -= 10
+            fit.add(-10, f"level {level} role")
             fit.concerns.append(f"level {level} role" + (f"; you have about {years:g} years" if years is not None else ""))
     elif _JUNIOR.search(n) or level == 1:
         if years is None or years < 3:
-            fit.score += 8
+            fit.add(8, "entry-level role")
             fit.reasons.append("entry-level role")
 
     days = days_since(listing.get("posted") or "", today)
     if days is not None:
         if days <= 7:
-            fit.score += 10
+            fit.add(10, "posted this week" if days else "posted today")
             fit.reasons.append("posted this week" if days else "posted today")
         elif days <= 30:
-            fit.score += 4
+            fit.add(4, "posted this month")
         elif days > 60:
-            fit.score -= 5
+            fit.add(-5, "posted over two months ago")
             fit.concerns.append("posted over two months ago")
 
     cities = [norm(str(c).split(",")[0]) for c in prof.get("preferences.locations") or []]
@@ -467,22 +500,24 @@ def score_listing(listing: dict[str, Any], prof: Profile, description: str = "",
     # (whole words: "Phoenixville, PA" isn't in Phoenix: the review of Oct 15)
     city = next((c for c in cities if c and re.search(rf"\b{re.escape(c)}\b", where)), None)
     if city:
-        fit.score += 5
+        fit.add(5, f"in {city.title()}")
         fit.reasons.append(f"in {city.title()}")
     elif far := _far_place(listing.get("location") or "", cities):
         if prof.get("preferences.willing_to_relocate") is False:  # shown, not preselected
-            fit.score -= 25
+            fit.add(-25, f"in {far}, away from the places you named")
             fit.blocked = True
             fit.concerns.append(f"in {far}, away from the places you named (and you'd rather not relocate)")
         else:
-            fit.score -= 5
+            fit.add(-5, f"in {far}, away from the places you named")
             fit.concerns.append(f"in {far}, away from the places you named")
     for note in listing.get("notes") or []:
         fit.concerns.append(note)
 
     if description:
         _score_requirements(fit, requirements(description), prof, years)
-    fit.score = max(0, min(100, fit.score))
+    kept = max(0, min(100, fit.score))
+    if kept != fit.score:  # (said among the parts too: they sum to the score)
+        fit.add(kept - fit.score, "kept within 0 to 100")
     return fit
 
 
@@ -492,18 +527,18 @@ def _score_requirements(fit: Fit, req: dict[str, Any], prof: Profile, years: flo
         asked = _DEGREE_NAME[req["degree"]]
         if mine and _LEVEL[mine] < _LEVEL[req["degree"]]:
             if req["degree_or_equivalent"]:
-                fit.score -= 6
+                fit.add(-6, f"asks for {asked} or equivalent experience")
                 fit.concerns.append(f"asks for {asked} or equivalent experience (you have {_DEGREE_NAME[mine]})")
             else:  # a requirement not met: shown, not preselected
-                fit.score -= 25
+                fit.add(-25, f"requires {asked}")
                 fit.blocked = True
                 fit.concerns.append(f"requires {asked} (you have {_DEGREE_NAME[mine]})")
         elif mine:
-            fit.score += 5
+            fit.add(5, f"your degree meets the minimum ({asked})")
             fit.reasons.append(f"your degree meets the minimum ({asked})")
     if req["years"] is not None and years is not None:
         if req["years"] > years + 0.5:
-            fit.score -= 12
+            fit.add(-12, f"asks for {req['years']}+ years")
             fit.concerns.append(f"asks for {req['years']}+ years (you have about {years:g})")
             # far short (10+ asked of about 5): shown, not preselected; unless the years are the other
             # way to a degree the applicant has ("a Bachelor's or 4 years")
@@ -511,30 +546,30 @@ def _score_requirements(fit: Fit, req: dict[str, Any], prof: Profile, years: flo
                 _LEVEL[mine] >= _LEVEL[req["degree"]]
             fit.blocked = fit.blocked or (req["years"] >= years + 3 and req["years"] > years * 1.5 and not degree_instead)
         else:
-            fit.score += 5
+            fit.add(5, f"you have the {req['years']}+ years it asks for")
             fit.reasons.append(f"you have the {req['years']}+ years it asks for")
     clearance = str(prof.get("work_authorization.security_clearance") or "").strip().lower()
     if req["clearance"] and clearance in ("", "none", "no", "n/a"):
-        fit.score -= 30
+        fit.add(-30, "requires an active security clearance")
         fit.blocked = True
         fit.concerns.append("requires an active security clearance")
     if req["us_person"]:
         us_person = prof.get("work_authorization.us_person")
         if us_person is False:
-            fit.score -= 40
+            fit.add(-40, "export-controlled: U.S. persons only")
             fit.blocked = True
             fit.concerns.append("export-controlled: U.S. persons only")
         elif us_person is None:
             fit.concerns.append("export-controlled role: check that you count as a U.S. person")
     limit = _travel_limit(prof.get("preferences.willing_to_travel"))
     if req["travel"] and limit is not None and req["travel"] > limit:
-        fit.score -= 10
+        fit.add(-10, f"up to {req['travel']}% travel")
         fit.concerns.append(f"up to {req['travel']}% travel (you said {limit}%)")
     if req["shifts"] and prof.get("preferences.flexible_schedule") is False:
-        fit.score -= 5
+        fit.add(-5, "shift, weekend or on-call work")
         fit.concerns.append("shift, weekend or on-call work")
     if req["drivers_license"] and prof.get("personal.drivers_license") is False:
-        fit.score -= 15
+        fit.add(-15, "requires a driver's license")
         fit.concerns.append("requires a driver's license")
 
 

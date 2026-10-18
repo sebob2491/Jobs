@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -1153,6 +1154,75 @@ async def desk_history(days: int = 7, recent: int = 20) -> dict[str, Any]:
     if not 1 <= days <= 366 or not 1 <= recent <= 200:
         raise ValueError("days should be from 1 to 366, and recent from 1 to 200")
     return {**await asyncio.to_thread(history.summary, days, recent), "file": str(history.history_path())}
+
+
+WHATS_NEW_FIRST = 24 * 3600  # what the first call of whats_new looks back over, with no call before it to go from
+
+
+def _since_time(said: str, now: float) -> float:
+    """whats_new's `since`: a date or a time ("2026-10-17", "2026-10-17T08:00", this computer's time unless it says its
+    offset), or how long ago ("12h", "3d")."""
+    text = said.strip()
+    ago = re.fullmatch(r"(\d{1,4})\s*([hd])", text.lower())
+    if ago:
+        return now - int(ago.group(1)) * (3600 if ago.group(2) == "h" else 86400)
+    try:
+        t = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return (t if t.tzinfo else t.astimezone()).timestamp()
+    except (ValueError, OverflowError, OSError):  # (OSError: a time this computer's clock can't say, year 1 on Windows)
+        raise ValueError(f"since should be a date or time like 2026-10-17 or 2026-10-17T08:00, or 12h or 3d, "
+                         f"not {said!r}") from None
+
+
+@tool()
+def whats_new(since: str | None = None) -> dict[str, Any]:
+    """A morning check: the openings first saved since `since` (a date or time like "2026-10-17" or
+    "2026-10-17T08:00", or "12h", "3d"), or since this tool's last call (kept in ~/.job-apply;
+    the last 24 hours at the first call). From the Job Desk's openings (each by when a search
+    first found it) and the jobs saved to the tracker another way (ingest_job, add_job), none
+    begun, sent or skipped, and none the user said Not interested in on the desk; best score
+    first, each with its title, company, location, score (out of 100; `recommended` from 60),
+    address and job number once saved. `summary` lists them in a few lines, and
+    `searched_at` says when the desk last searched. It never searches by itself: for fresh
+    openings, search first (the desk's Find jobs, or search_company_jobs with the find-jobs
+    skill), then call this. Each morning: search, then whats_new."""
+    from . import desk as job_desk
+    from .history import stamp
+
+    now = time.time()
+    path = job_desk._whats_new_path()
+    if since is not None:
+        start, first = _since_time(since, now), False
+    else:
+        try:
+            kept = json.loads(path.read_text(encoding="utf-8")).get("at")
+        except (OSError, ValueError, AttributeError):
+            kept = None
+        last = job_desk._seconds(kept)
+        start, first = (now - WHATS_NEW_FIRST, True) if last is None else (last, False)
+    found = job_desk.whats_new(tracker(), start)
+    config.ensure_home()
+    # (the next call without `since` starts here: to the second, as the tracker keeps its times, so a job saved in the
+    # second of this call is in the next one too, never in neither)
+    config.write_text_atomic(path, json.dumps({"at": int(now)}))
+    try:
+        searched = json.loads(job_desk._recommendations_path().read_text(encoding="utf-8")).get("at")
+    except (OSError, ValueError, AttributeError):
+        searched = None
+    searched_at = stamp(s) if (s := job_desk._seconds(searched)) is not None else None
+    shown = found[:job_desk.WHATS_NEW_MOST]
+    when = stamp(start)[:16].replace("T", " ")
+    if found:
+        summary = "\n".join([f"{len(found)} new opening{'s' if len(found) != 1 else ''} since {when}, best first:"]
+                            + [f"- {o['score']} · {o['title']} · {o['company']}" + (f" · {o['location']}" if o['location']
+                                                                                     else "") for o in shown[:10]]
+                            + ([f"and {len(found) - 10} more"] if len(found) > 10 else []))
+    else:
+        summary = f"Nothing new since {when}."
+    if searched_at is None:
+        summary += " The Job Desk hasn't searched yet: press Find jobs there, or search with the find-jobs skill."
+    return {"since": stamp(start), "until": stamp(now), "first_call": first, "count": len(found), "openings": shown,
+            "summary": summary, "searched_at": searched_at}
 
 
 def _mark_ready(job: dict[str, Any], note: str) -> None:

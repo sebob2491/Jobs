@@ -161,10 +161,18 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
 1. **Find jobs** searches every employer's career site for your target titles in
    your area. Each opening gets a fit score, with the reasons and concerns under it:
    "title matches", "posted this week", "requires a Bachelor's (you have a high
-   school diploma)", "senior-level role", "requires an active clearance". Openings that
-   weren't there on your last visit are tagged **New**. Ones listed only as "US -
+   school diploma)", "senior-level role", "requires an active clearance". Press a score
+   (or point at it) to see how it adds up: "start 50 · title matches +25 · posted this
+   week +10 · in Phoenix +5 = 90". Openings first saved since your last visit (the desk
+   keeps when you last looked, in `desk.json`) are tagged **New**, and stay so while you're
+   on the page, and the bar over the list has a **New** group. Ones listed only as "US -
    Multiple Locations", "Remote - US (Field Based)" and the like are kept and marked
    "check the posting": you may be able to do them from your area.
+   **Not interested** on an opening hides it, with a reason if you give one (Title,
+   Company, Location, Pay or Other). It's never applied to, not even by **Apply to
+   selected**; **Undo** (at the foot of the window, or by its row under the bar's **Not
+   interested** group) brings it back. For Company, that employer's other openings score
+   10 lower, said in their score's breakdown.
    It searches only when you press it, unless you turn on **Search by itself every 12
    hours** (off by default; it waits while the queue is paused). A search running is
    shown in the header, with **Stop search** beside it.
@@ -174,7 +182,12 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
    desk couldn't open to check, or whose posting puts the job in another state.
    They're under **All**, with the reason, so you can still tick them yourself.
    The desk works through them in the browser window, two at a time, each in its own
-   tab (**Jobs at once**, beside Submit for me, sets 1, 2 or 3). It
+   tab (**Jobs at once**, beside Submit for me, sets 1, 2 or 3), the ones most likely to
+   go all the way first: employers where the plugin's live check reached the review page,
+   then job systems it usually gets through, then the rest, and last LinkedIn's and Indeed's
+   (their Submit is always yours) and employers where the desk met bot checks more often
+   than not. Each group keeps your order, and a job you start alone, or **Resume**, isn't
+   moved. It
    clicks into each application, fills every page, adds Workday's work and
    education blocks, and stops at each review page. It never works on two jobs at
    one employer's site at once, and only one job at a time signs in, makes an account or
@@ -306,6 +319,19 @@ sent by the desk and marked as applied, its stops for you by kind, failed and sk
 time with the desk (waits included, and jobs filled at once overlap), and the employers it
 stopped at most, with the latest lines. Or ask Claude how the week went.
 
+**Safety** in the header lists what the desk does in your name, and what it never does, as
+your settings stand now: practice mode, Submit for me, LinkedIn and Indeed (always yours),
+agreeing to notices, making accounts, cookie banners, emailed codes and the email app
+password's limits, reading replies, Jobs at once, Troubleshooting, bot checks (always yours)
+and passwords. Each line says what it means for you ("Submit for me: off. The desk stops at
+each review page; you press Submit.") and where to change it. It only shows them: nothing
+there changes a setting.
+
+**A morning check.** Ask Claude "what's new?" and it calls `whats_new`: the openings first
+saved since its last call (or since a day or time you give), best score first. It doesn't
+search by itself, so for fresh ones, have it search first (or turn on Search by itself every
+12 hours). Claude can offer to do both each morning.
+
 **My applications** (beside Recommended and All) lists each application you sent in,
 newest first, with where it stands and when the employer last wrote: "Heard 2026-10-03:
 confirmation" (point at it for the email's one-line summary), or "No reply yet". The bar
@@ -348,7 +374,8 @@ Everything personal stays on your machine in `~/.job-apply/`. Set
 | `tracker.db` | Application tracker (SQLite). `export_jobs_csv` writes a spreadsheet. |
 | `answers.yaml` | Answers you gave in the Job Desk, reused on later applications. Edit or delete entries freely. |
 | `companies.yaml` | Optional: which of the plugin's employer lists to search (`lists:`) and employers of your own, in place of the default list. |
-| `recommendations.json`, `desk.json` | The Job Desk's last search, and its switches ("Submit for me", "Jobs at once") |
+| `recommendations.json`, `desk.json` | The Job Desk's last search, and its switches ("Submit for me", "Jobs at once") and when you last looked at it |
+| `openings_found.json`, `whats_new.json` | When each opening was first found (for **New** and `whats_new`), and when `whats_new` was last called |
 | `desk-queue.json` | The Job Desk's queue, kept for a restart: each job's number and where it was, never your answers |
 | `runs.jsonl` | The Job Desk's history: a line each time it's done with a job for now (when, how long, how it ended and why), with your answers, codes and passwords kept out as far as the desk can tell. The newest 4000 lines or so are kept. |
 | `browser/` | The automation browser's profile, which keeps your sign-ins |
@@ -415,6 +442,7 @@ plugins/job-apply/
 | `log_email`, `logged_emails` | Record employer replies; each email counts once and statuses only move forward |
 | `open_job_desk` | Open the Job Desk page: recommended openings ranked against the profile, one-button applying |
 | `desk_history` | How the Job Desk's last few days went, from its history (`runs.jsonl`), as its This week window shows it |
+| `whats_new` | The openings first saved since its last call (or a given day or time), best score first, with a short list to say them in; it never searches by itself |
 
 ## Development
 

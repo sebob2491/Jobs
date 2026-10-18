@@ -88,7 +88,19 @@ CREATE TABLE IF NOT EXISTS maybe_same (
     cleared INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (job_id, other_id)
 );
+-- openings the person said they're not interested in (the desk's Not interested), by address (most aren't saved as jobs):
+-- hidden from the desk's openings and never queued, until their Undo; with the employer, the title and the reason given
+-- (NOT_INTERESTED_REASONS, or none). "company" lowers that employer's other openings (recommend.not_interested_in)
+CREATE TABLE IF NOT EXISTS not_interested (
+    url TEXT PRIMARY KEY,
+    company TEXT DEFAULT '',
+    title TEXT DEFAULT '',
+    reason TEXT DEFAULT '',
+    at TEXT NOT NULL
+);
 """
+# The reasons the desk's Not interested offers (each optional)
+NOT_INTERESTED_REASONS = ("title", "company", "location", "pay", "other")
 
 # What an employer email means for the application's status.
 EMAIL_CATEGORIES = {
@@ -898,6 +910,40 @@ class Tracker:
             elif target and status in _PIPELINE and _PIPELINE.index(target) > _PIPELINE.index(status):
                 status = target
         return self.update(job_id, status=status, note=note)
+
+    @_locked
+    def set_not_interested(self, url: str, company: str = "", title: str = "", reason: str = "") -> None:
+        """The person said Not interested in the opening at this address (the desk's Not interested), for `reason` (one
+        of NOT_INTERESTED_REASONS, or none): kept until undone, and said in its job's history when it's a saved job."""
+        if reason and reason not in NOT_INTERESTED_REASONS:
+            raise ValueError(f"reason should be one of {', '.join(NOT_INTERESTED_REASONS)}, or none")
+        url, now = normalize_url(url), _now()
+        self.conn.execute("INSERT OR REPLACE INTO not_interested (url, company, title, reason, at) VALUES (?, ?, ?, ?, ?)",
+                          (url, company or "", title or "", reason or "", now))
+        job = self._at(url)
+        if job is not None:
+            self.conn.execute("INSERT INTO events (job_id, at, status, note) VALUES (?, ?, '', ?)",
+                              (job["id"], now, "not interested" + (f" ({reason})" if reason else "")))
+        self.conn.commit()
+
+    @_locked
+    def undo_not_interested(self, url: str) -> bool:
+        """The person's Undo on Not interested: the opening shows again. Whether it was marked."""
+        url = normalize_url(url)
+        gone = self.conn.execute("DELETE FROM not_interested WHERE url = ?", (url,)).rowcount
+        job = self._at(url)
+        if gone and job is not None:
+            self.conn.execute("INSERT INTO events (job_id, at, status, note) VALUES (?, ?, '', ?)",
+                              (job["id"], _now(), "not interested undone"))
+        self.conn.commit()
+        return bool(gone)
+
+    @_locked
+    def not_interested(self) -> dict[str, dict[str, str]]:
+        """The openings the person said Not interested in, by their address (normalized), each with its company, title,
+        reason ("" for none) and when (`at`)."""
+        rows = self.conn.execute("SELECT url, company, title, reason, at FROM not_interested ORDER BY at")
+        return {r["url"]: {k: r[k] or "" for k in ("company", "title", "reason", "at")} for r in rows}
 
     @_locked
     def log_email(self, job_id: int, thread_id: str, category: str, summary: str = "",

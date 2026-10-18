@@ -79,3 +79,8 @@ The goal is a short, deduplicated list of real openings saved to the tracker
 
 6. **Report.** Give a table with id, company, title, location, ATS and a one-line fit
    note, then ask which ones to apply to. The `apply` skill takes it from there.
+
+7. **Each morning.** Offer once: "each morning: search, then whats_new". After a search
+   (this skill's, or the Job Desk's Find jobs), `whats_new()` lists the openings first
+   saved since its last call, best score first, leaving out the ones the user marked Not
+   interested on the desk. It never searches by itself.

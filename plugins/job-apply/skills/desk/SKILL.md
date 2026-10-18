@@ -11,14 +11,30 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
 - **Find jobs** searches every employer's career site for the profile's
   `preferences.titles` in its `preferences.locations` (or home state). It ranks each
   opening, with plain reasons and concerns under it: a degree requirement the user's
-  education doesn't meet, senior titles, clearances, export control, travel.
+  education doesn't meet, senior titles, clearances, export control, travel. Pressing a
+  score (or pointing at it) shows how it adds up, from the ranking's own parts ("start 50 ·
+  title matches +25 · posted this week +10 · in Phoenix +5 = 90").
+  Openings first saved since the user's last visit (the desk keeps when they last looked
+  at the page, `last_seen` in `desk.json`, and the look before this visit; a look 30 minutes
+  after the last begins a new visit) carry a **New** mark all visit long, and make the bar's
+  **New** group. **Not interested** on an opening hides it, with an optional reason (Title,
+  Company, Location, Pay, Other), kept in the tracker: it's never queued, by Apply to
+  selected or otherwise, until its **Undo** (in the word at the foot of the window, or by its
+  row in the bar's **Not interested** group). For Company, that employer's other openings
+  score 10 lower ("you said not interested in Acme −10"). It isn't offered on a job the desk
+  has a card for (Skip job is for those) or one sent in.
   It searches only when pressed. **Search by itself every 12 hours** (beside
   Troubleshooting, off unless the user turns it on) also searches when the openings are
   over 12 hours old, but not while the queue is paused. While a search runs, the header
   says so (by itself, or pressed) with **Stop search** beside it: the search ends and the
   openings found before it stay.
 - **Apply to selected** works through the picked jobs in the automation browser, two at a
-  time by default, each in its own tab. It clicks through Apply, autofills every page, adds
+  time by default, each in its own tab. Two or more picked together go the likeliest to go
+  all the way first (the page says so once): employers in `data/desk_handled.yaml`, then job
+  systems most of whose listed employers are there (Workday, say), then the rest, and last
+  LinkedIn's and Indeed's (their Submit is the user's) and employers where the desk's own
+  history met bot checks more often than it reached the review page. Each group keeps the
+  user's order; one started alone, or a Resume, isn't moved. It clicks through Apply, autofills every page, adds
   Workday's work and education blocks, and stops at each review page. Before they go, it says what will stop
   them: a job system with no saved password, no email app password for sites that email a
   code, common questions not answered yet. The person can go ahead or see to those first.
@@ -160,6 +176,13 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   job's median (waits for sites and the inbox included, and jobs filled at once overlap), the employers it stopped at
   most, and the latest lines. For "how did this week go?", call `desk_history()` (`days=` for another span); the desk
   needn't be open.
+- **Safety** (in the header) opens a read-only window listing each setting that decides what
+  the desk does in the user's name, its value now and what that means for them, with where to
+  change it: practice mode (`submit_mode`), Submit for me, LinkedIn and Indeed (always the
+  user's Submit), `accept_notices`, `manage_accounts`, `accept_cookies`, `email_codes` and
+  the email app password's limits, `email_tracking`, Jobs at once, Troubleshooting, bot
+  checks (always the user's) and passwords. It's worked out from the same settings the desk
+  acts on, so when the user asks "what will the desk do for me?", point them there.
 - **A newer version**: the desk looks at the plugin's published version when it starts and
   every few hours, and says when a newer one is out, with the two update commands (then a
   restart of the Claude app). Best done between runs. `JOB_APPLY_NO_UPDATE_CHECK=1` turns the look off.
@@ -225,6 +248,11 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
 5. The desk keeps running while Claude Code is open. Without Claude, the user can run
    `uv run --project <plugin>/server job-apply-desk` (the path is `plugin_root` in
    `setup_status`).
+6. **A morning check.** Offer it once: "each morning: search, then whats_new". Search
+   first (the desk's Find jobs, its Search by itself every 12 hours, or the find-jobs
+   skill), then call `whats_new()`: the openings first saved since its last call (or
+   `since="2026-10-17"`, `"12h"`), best score first, with a `summary` to show as it is. It
+   never searches by itself. With the user's go-ahead, this can be a scheduled task.
 
 ## Tailoring resumes
 
