@@ -185,7 +185,8 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
    applying to it. For Company, that employer's other openings score 10 lower, said in their
    score's breakdown.
    It searches only when you press it, unless you turn on **Search by itself every 12
-   hours** (off by default; it waits while the queue is paused). A search running is
+   hours** (under **More**, at the end of the Openings head; off by default; it waits while
+   the queue is paused). Each switch that's on is said in a line under the head. A search running is
    shown in the header, with **Stop search** beside it.
 2. Tick the ones you want, or press **Select recommended**, then **Apply to
    selected**. **Select recommended** leaves out openings whose posting asks for a
@@ -197,7 +198,7 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
    go all the way first: employers where the plugin's live check reached the review page,
    then job systems it usually gets through, then the rest, and last LinkedIn's and Indeed's
    (their Submit is always yours) and employers where the desk met bot checks more often
-   than not. Each group keeps your order, and a job you start alone, or **Resume**, isn't
+   than not. Each group keeps your order, and a job you start alone, or **Carry on**, isn't
    moved. It
    clicks into each application, fills every page, adds Workday's work and
    education blocks, and stops at each review page. It never works on two jobs at
@@ -209,7 +210,7 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
      fills the same question, worded the same way. An answer about one employer
      ("Why do you want to work here?", "Have you worked for us before?") isn't reused
      for another.
-   - A dialog open over a form. You answer it in the desk's browser window and press **Resume**, and the
+   - A dialog open over a form. You answer it in the desk's browser window and press **Carry on**, and the
      desk fills the form in behind it. It agrees for you to an employer's notice about AI
      screening of your application (Eightfold's employers show one as your resume goes up)
      and to its privacy notice and terms of use (a privacy agreement's "I Accept", a terms
@@ -312,9 +313,9 @@ A restart (of the Claude app, a crash, a plugin update) doesn't lose the queue. 
 desk is open again, the jobs it hadn't begun are back in the queue in their order, paused:
 a notice at the top says how many, and how many of them Submit for me will send once
 they're filled (it applies only if it's still on), and nothing starts until you press
-**Resume queue**. A job it had begun isn't queued again by itself, as you may have sent it
+**Carry on with the queue**. A job it had begun isn't queued again by itself, as you may have sent it
 on the site: its card says the desk restarted before the application was finished, with
-**I submitted it myself**, **Resume** (filled again up to its review page, never sent) and
+**I submitted it myself**, **Carry on** (filled again up to its review page, never sent) and
 **Skip job**. A Submit you pressed before the restart wasn't sent, and that
 card says so. A job whose Submit was being pressed, or showed no confirmation, may have
 gone in: its card asks you to check. A desk page you left open has to be opened again (ask
@@ -349,8 +350,8 @@ confirmation" (point at it for the email's one-line summary), or "No reply yet".
 over it groups them: **Waiting**, **Heard back**, **Interviews** (interviewing or an offer)
 and **Closed** (rejected or withdrawn). One you applied to 10 days ago or more
 (`follow_up_days`) with no email at all, not even a "we received your application", is
-marked **Follow up?** with the day it became due: Claude can draft a polite follow-up as
-a Gmail draft, for you to send. An interview's row has **Prep me**, which copies a request
+marked with the day its follow-up became due, and **Follow up** copies a request for you
+to paste to Claude, which drafts a polite follow-up as a Gmail draft, for you to send. An interview's row has **Prep me**, which copies a request
 ("Prep me for my interview: job 12, ...") for you to paste to Claude, which then prepares
 you for it. The replies come from `/job-apply:track-responses`, which reads them through
 the Gmail connector with `email_tracking` on, never with the desk's email app password, and
@@ -403,7 +404,7 @@ Settings in `profile.yaml`:
 | `accept_cookies` | `false` | The Job Desk declines cookie banners. One with no way to decline (TI's "Agree and Proceed") waits for you, unless this is `true`: then the desk accepts it for you. |
 | `manage_accounts` | `true` | The Job Desk creates your account at a job system with the password you saved on the desk for it (ticking the site's terms, never a newsletter), resets a password the site refuses through its "Forgot password" email, and presses "Resend Account Verification" for an account never verified. A form's security questions are asked on the desk's card and never remembered; a picture code stays yours. Never in practice mode. `false`: the desk fills in Create Account for you to finish. |
 | `jobs_at_once` | `2` | How many applications the Job Desk fills at the same time (1 to 3), each in its own tab of the desk's browser window. Never two at one employer's site or job-system tenant; one at a time signs in, makes an account, resets a password or waits on an emailed code; while a sign-in or code needs you, no other job starts and no other tab comes to the front. `1` fills them one after another. The desk's **Jobs at once** buttons change it there (kept in `desk.json` until this setting changes). |
-| `follow_up_days` | `10` | The days an application you sent in waits with no reply (not even a "we received it" email) before the Job Desk's My applications marks it **Follow up?** (1 to 90). |
+| `follow_up_days` | `10` | The days an application you sent in waits with no reply (not even a "we received it" email) before the Job Desk's My applications marks it for a follow-up (1 to 90). |
 | `auto_submit_ats` | `[]` | With `submit_mode: auto`, the job systems Claude may submit on without asking (`workday`, `greenhouse`, `lever`, `eightfold`, `successfactors`). The Job Desk has its own switch, **Submit for me**. |
 | `browser_channel` | `chrome` | The browser the desk drives: `chrome`, `msedge`, or `chromium` (Playwright's bundled browser). `headless: true` hides its window. |
 

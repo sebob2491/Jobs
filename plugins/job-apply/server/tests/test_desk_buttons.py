@@ -1,4 +1,4 @@
-"""The desk's buttons that no test pressed through the page (the design of Oct 18, A9): Resume queue on the notice of
+"""The desk's buttons that no test pressed through the page (the design of Oct 18, A9): Carry on with the queue on the notice of
 jobs back after a restart, Undo on a skipped job's row, Show me, Clear, the review round's Stop, and the header's This
 week, Safety, Notes and What and where. Each is pressed in the real page; the test checks the call it made to the desk
 (or that it made none) and what the page shows after."""
@@ -68,7 +68,7 @@ def _idle_desk(srv) -> Desk:
 
 
 def test_resume_queue_on_the_restored_notice_lets_the_jobs_back_go_on(srv):
-    """Jobs queued again after a restart wait, paused, under a notice with Resume queue: pressed, the queue goes on,
+    """Jobs queued again after a restart wait, paused, under a notice with Carry on with the queue: pressed, the queue goes on,
     the notice goes and the header's button is Pause queue again."""
     from job_apply.pipeline import Run
 
@@ -79,13 +79,13 @@ def test_resume_queue_on_the_restored_notice_lets_the_jobs_back_go_on(srv):
     a.tasks.append(("apply", job["id"]))
     a._restored_ids.add(job["id"])
     a.paused = True
-    assert "Press Resume queue to go on." in a.restored_notice()
+    assert "Press Carry on with the queue." in a.restored_notice()
 
     async def go():
         async with _desk_page(desk) as (page, calls):
             notice = page.locator("#notices .waiting", has_text="back in the queue")
             await notice.wait_for()
-            assert await page.inner_text("#pause-btn") == "Resume queue (1 waiting)"
+            assert await page.inner_text("#pause-btn") == "Carry on with the queue (1 waiting)"
             await notice.locator("[data-act=resume]").click()
             await notice.wait_for(state="detached")
             await page.wait_for_selector("#pause-btn:text-is('Pause queue')")
@@ -124,7 +124,7 @@ def test_undo_on_a_skipped_jobs_row_puts_it_back_in_the_queue(srv):
 
 def test_show_me_brings_the_jobs_tab_up_or_says_its_closed(srv):
     """Show me on the banner of the job holding the queue brings its tab to the front; on a job whose tab is closed
-    the desk answers 409 and the page says so, pointing to Resume."""
+    the desk answers 409 and the page says so, pointing to Carry on."""
     desk, jobs = _stopped_desk(srv, {"Example Fab": dict(status="needs_you", need="sign_in", blocking=True),
                                      "Example Litho": dict(status="needs_you", need="stuck")})
     fab, litho = jobs["Example Fab"], jobs["Example Litho"]
@@ -147,7 +147,7 @@ def test_show_me_brings_the_jobs_tab_up_or_says_its_closed(srv):
     calls = run(go())
     assert calls == [("POST", f"/api/job/{fab}/show", {}), ("POST", f"/api/job/{litho}/show", {})], calls
     assert shown == [fab, litho]
-    assert said == ["Its tab is closed. Press Resume to open it again."], said
+    assert said == ["Its tab is closed. Press Carry on to open it again."], said
     assert desk.applier.runs[litho].status == "needs_you"  # (nothing else done to it)
 
 

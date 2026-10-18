@@ -227,12 +227,12 @@ CODE_WHY: dict[str, tuple[str, str]] = {
     "agreement_stayed": ("A notice or dialog stayed after its button", "Being looked into"),
     "blank_page": ("Blank page", "Being looked into"),
     "page_not_loaded": ("Page didn't finish loading", "Being looked into"),
-    "site_error": ("Site error (the site's own page)", "Reload or open the posting later, then Resume"),
+    "site_error": ("Site error (the site's own page)", "Reload or open the posting later, then press Carry on"),
     "site_went_wrong": ("Site error (\"Something went wrong\")", "Being looked into"),
     "site_unreachable": ("The application's page couldn't be reached", "Being looked into"),
-    "site_down": ("Site error (down for maintenance)", "Resume once it's back"),
+    "site_down": ("Site error (down for maintenance)", "Carry on once it's back"),
     "site_blocks": ("Site blocks automated browsers", "Apply in your own browser"),
-    "try_later": ("Site error (it says try again later)", "Leave it a while, then Resume"),
+    "try_later": ("Site error (it says try again later)", "Leave it a while, then press Carry on"),
     "posting_closed": ("No opening found (the posting closed)", "Nothing to apply to"),
     "bot_check": ("Bot check", "Solve it; the desk carries on"),
     "captcha": ("CAPTCHA", "Solve it; the desk carries on"),
@@ -241,8 +241,8 @@ CODE_WHY: dict[str, tuple[str, str]] = {
     "agreement_theirs": ("Privacy notice to accept", "Accepted for you (accept_notices)"),
     "sends_first": ("Sends your name and email first", "Press its Apply yourself"),
     "practice_stop": ("Practice mode stops at a button that sends", "Press it yourself (practice sends nothing)"),
-    "assessment": ("An assessment to take", "Take it, then press Resume"),
-    "screening": ("A tax credit screening", "Fill it in, then press Resume"),
+    "assessment": ("An assessment to take", "Take it, then press Carry on"),
+    "screening": ("A tax credit screening", "Fill it in, then press Carry on"),
     "maybe_duplicate": ("May be a job applied to already", "Apply anyway, or Skip"),
     "tailor": ("Waiting for a tailored resume", "Claude writes it, or use the usual resume"),
     "account_theirs": ("Account needed (sign-in)", "Sign in or create the account"),
@@ -263,7 +263,7 @@ CODE_WHY: dict[str, tuple[str, str]] = {
     "not_submitted": ("Submit not pressed (see the run)", "Being looked into"),
     "submit_failed": ("Submit pressed; the form stayed", "Being looked into"),
     "check_submit": ("Submit pressed; no confirmation showed", "Check whether it went"),
-    "restarted": ("Begun before the desk restarted", "Resume it, or skip it"),
+    "restarted": ("Begun before the desk restarted", "Carry on with it, or skip it"),
 }
 _CODED = re.compile(r"(?:^| \u00b7 )\[([a-z_]{1,40})\] ?")  # a detail's stop code, before its reason
 _SYSTEM = re.compile(r"\b(BrassRing|Eightfold|Amazon|Workday|SuccessFactors|Oracle)\b")
@@ -331,13 +331,13 @@ def why(outcome: str, said: str) -> tuple[str, str]:
     if "Something went wrong" in d:
         return "Site error (\"Something went wrong\")", "Being looked into"
     if "site's own trouble" in d:  # (the site's error page where the posting should be, "Content missing", an empty page)
-        return "Site error (the site's own page)", "Reload or open the posting later, then Resume"
+        return "Site error (the site's own page)", "Reload or open the posting later, then press Carry on"
     # steps that are the person's by the desk's rules (run 51: Circle K's and Taylor Morrison's assessments, Kforce's
     # screening, the State of Arizona's name and email sent first)
     if "take its assessment" in d:
-        return "An assessment to take", "Take it, then press Resume"
+        return "An assessment to take", "Take it, then press Carry on"
     if "tax credit screening" in d:
-        return "A tax credit screening", "Fill it in, then press Resume"
+        return "A tax credit screening", "Fill it in, then press Carry on"
     if "name and email first" in d:
         return "Sends your name and email first", "Press its Apply yourself"
     if "Degree list" in d:

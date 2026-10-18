@@ -660,7 +660,7 @@ def list_jobs(status: str | None = None, company: str | None = None, limit: int 
     yet), and `follow_up_due`: the day a follow-up became due, for one applied to
     settings.follow_up_days days ago (10 unless the profile says) or more with no email
     logged, not even a confirmation; null otherwise. The Job Desk's My applications
-    marks those "Follow up?".
+    marks those with the day it became due and a Follow up button (a request to draft one, for Claude).
 
     A job the user marked Not interested on the Job Desk has `not_interested: true` and
     `not_interested_reason` (title, company, location, pay, other, or "" for none): ask

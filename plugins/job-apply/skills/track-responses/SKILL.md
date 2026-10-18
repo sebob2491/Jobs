@@ -59,8 +59,9 @@ stop.
 5. **Report** in a short table: company, role, what arrived, new status. Then list
    the action items: interviews to schedule, assessments with deadlines, emails
    that need a reply. Then list the applications still due a follow-up (`list_jobs`
-   again: `follow_up_due` set, marked "Follow up?" on the desk): applied that long ago
-   with no reply at all. Offer to:
+   again: `follow_up_due` set, with a **Follow up** button on the desk, which copies
+   "Draft a follow-up email for job <id>, ..." for the user to paste to you): applied that
+   long ago with no reply at all. Offer to:
    - draft replies, saved as Gmail **drafts** only. Never send email for the user;
    - draft a short, polite follow-up email for each one due (asking where the
      application stands and restating interest in the role), as a Gmail **draft** only,
