@@ -3483,10 +3483,11 @@ def test_a_persons_no_for_a_lone_box_leaves_it_unticked():
 # The wrong answers the mutation pass found (Oct 18)
 
 
-def test_a_lone_box_is_ticked_only_by_the_persons_plain_yes():
+def test_a_lone_box_is_ticked_only_by_a_yes_never_by_a_decline_or_a_maybe():
     """A single box the person's own answer names was ticked for any answer but a no: "Decline to self-identify"
-    ticked "I identify as a protected veteran", and "Maybe" ticked "I am willing to relocate". Only a yes ticks it;
-    a decline, "Prefer not to say", "Maybe", "Only if required" or anything else that isn't one leaves it."""
+    ticked "I identify as a protected veteran", and "Maybe" ticked "I am willing to relocate". Only an answer that
+    reads as a yes ticks it; a decline, "Prefer not to say", "Maybe", "Only if required" or anything else that reads
+    as neither yes nor no leaves it."""
     for match, label in (("veteran", "I identify as a protected veteran"), ("disabilit", "I have a disability"),
                          ("relocat", "I am willing to relocate")):
         for said in ("Decline to self-identify", "Prefer not to say", "Maybe", "Only if required", "Not applicable"):
@@ -3550,3 +3551,103 @@ def test_is_sponsorship_required_drawn_as_a_text_area_takes_the_profiles_no():
     assert _answer("Is visa sponsorship needed for you?", p, kind="textarea") == "No"
     assert _answer("Is employment sponsorship required for you?", p, kind="textarea") == "No"
     assert _answer("Visa sponsorship needed (explain)", p, kind="textarea") is None
+
+
+# A review of those fixes (Oct 18)
+
+
+def _work(**said):
+    return Profile({"work_authorization": said})
+
+
+def test_a_us_citizen_question_that_goes_on_with_or_or_by_is_never_answered_as_citizenship_alone():
+    """"Are you a US citizen or do you have authorization to work in the US?" is true for a permanent resident or a
+    visa holder allowed to work, but the citizen rule read only its start and answered No for them (with "U.S." too).
+    "...by birth?" asks what the profile never says. Both are left to the other rules or the person, never a No nor
+    the citizenship's country; the question alone, "(Yes/No)" and "If not, ..." are still the citizen question, and
+    "US citizen or permanent resident" still the U.S. person's."""
+    pr = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=False, us_person=True,
+               citizenship="Mexico")
+    visa = _work(authorized_to_work=True, requires_sponsorship=True, us_citizen=False, us_person=False,
+                 citizenship="India")
+    citizen = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=True, us_person=True,
+                    citizenship="United States")
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    for us in ("US", "U.S."):
+        for rest in ("or do you have authorization to work in the US?", "or do you hold a valid work visa?",
+                     "or do you have an EAD?", "or otherwise able to work in the US without restriction?",
+                     "or can you provide proof of work eligibility?"):
+            label = f"Are you a {us} citizen {rest}"
+            for p in (pr, visa):
+                for said in (_answer(label, p, **yes_no), _answer(label, p)):
+                    assert said not in ("No", "Mexico", "India"), (label, said)
+        for p in (citizen, pr):
+            assert _answer(f"Are you a {us} citizen by birth?", p, **yes_no) is None, us
+            assert _answer(f"Are you a {us} citizen by birth?", p) is None, us
+        assert _answer(f"Are you a {us} citizen?", citizen, **yes_no) == "Yes"
+        assert _answer(f"Are you a {us} citizen? (Yes/No)", pr) == "No"
+        assert _answer(f"Are you a {us} citizen? If not, please list your citizenship", citizen) == "Yes"
+        a = resolve_field(f(f"Are you a {us} citizen or permanent resident?", **yes_no), pr, {"company": "Acme"})
+        assert a is not None and (a.value, a.rule) == ("Yes", "us_person"), a
+
+
+def test_a_signature_box_that_says_the_date_is_recorded_gets_the_name_and_one_that_asks_for_a_date_doesnt():
+    """A signature box that says the date is added for the person ("Signature (type your name; the date is added
+    automatically)", "Sign your full name (no dates)") takes the name, as before. One that asks for a date to be
+    entered ("Enter the date beside your electronic signature", "...type your full legal name and the date"), or for a
+    signature and a date in one box, never does."""
+    p = prof()
+    for label in ("Signature (type your name; the date is added automatically)",
+                  "Signature (type your full name; today's date will be recorded)",
+                  "Signature of Applicant (type full name). Date will be captured upon submission.",
+                  "Signature: Type your name. Dates are recorded automatically.", "Sign your full name (no dates)"):
+        a = resolve_field(f(label), p)
+        assert a is not None and (a.value, a.rule) == ("Sam Rivera", "signature"), (label, a)
+    for label in ("Enter the date beside your electronic signature (MM/DD/YYYY)",
+                  "Electronic Signature (type your full legal name and the date)", "Signature and Date",
+                  "Applicant Signature & Date", "Signature/Date"):
+        a = resolve_field(f(label), p)
+        assert a is None or a.rule != "signature", (label, a)
+
+
+def test_a_long_date_signed_label_that_names_another_day_gets_no_date():
+    """A long label that starts with "Date signed" or "Signature date" but asks when something else was signed or
+    happened (a non-compete, an offer letter, a military discharge, the last day employed) gets no date, nor the name;
+    one about this form's own signing still gets today."""
+    from datetime import date
+
+    p = prof()
+    for label in ("Date signed (if you signed a non-compete with your current employer)",
+                  "Date signed - Please enter the date you signed the attached offer letter",
+                  "Signature date: enter the date of your military discharge",
+                  "Signature date of your current non-compete agreement, if any",
+                  "Date Signed (enter the date you signed this application, or the date you were last employed)"):
+        assert resolve_field(f(label), p) is None, label
+    a = resolve_field(f("Signature Date (date you signed the self-identification form)"), p)
+    assert a is not None and a.value == date.today().strftime("%m/%d/%Y"), a
+
+
+def test_a_sponsorship_question_about_someone_else_or_the_employers_policy_is_left():
+    """"Is sponsorship available for candidates who need it?" asks the employer's policy, and "...required for your
+    spouse or dependents?" or "...for any family member?" someone else's need: never the person's own No, in a text
+    area, a text box or a list."""
+    p = _work(authorized_to_work=True, requires_sponsorship=False)
+    for label in ("Is sponsorship available for candidates who need it?",
+                  "Is employment sponsorship required for any family member?",
+                  "Is sponsorship required for your spouse or dependents?",
+                  "Will you require sponsorship for your spouse?"):
+        for kind in ("textarea", "text"):
+            assert _answer(label, p, kind=kind) is None, (label, kind)
+        assert _answer(label, p, kind="radio_group", options=["Yes", "No"]) is None, label
+    assert _answer("Will you require sponsorship?", p, kind="radio_group", options=["Yes", "No"]) == "No"
+
+
+def test_a_profile_whose_citizenship_is_the_united_states_answers_the_us_citizen_question():
+    """A profile that says its citizenship is the United States, but not us_citizen, answers "Are you a US Citizen?"
+    Yes (it gave the country, "United States", in a text box and nothing among Yes and No). Another country's
+    citizenship says nothing of a second, U.S. one: left."""
+    p = _work(citizenship="United States")
+    assert _answer("Are you a US Citizen?", p) == "Yes"
+    assert _answer("Are you a U.S. citizen?", p, kind="radio_group", options=["Yes", "No"]) == "Yes"
+    assert _answer("Are you a US Citizen?", _work(citizenship="Mexico")) is None
+    assert _answer("Are you a US Citizen?", _work(us_citizen=False, citizenship="United States")) == "No"
