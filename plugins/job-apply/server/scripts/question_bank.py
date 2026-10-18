@@ -13,9 +13,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import nightly_summary  # noqa: E402  (beside this one)
+import nightly_summary  # (beside this one)
 
-from job_apply import config  # noqa: E402
+from job_apply import config
 
 
 def bare(label: str) -> str:

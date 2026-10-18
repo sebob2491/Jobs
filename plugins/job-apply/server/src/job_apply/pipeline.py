@@ -4506,18 +4506,19 @@ class Applier:
         """A resume (or cover letter) box that shows a file kept from before, where this job has one tailored for it
         (autofill.kept_documents: Workday keeps an account's last resume in My Experience's "Resume/CV" upload, and the
         desk left it there, so the employer got the old resume: NXP's, the weekly probe of Oct 2026). The kept file is
-        deleted with its own Delete in Workday's list (browser.delete_kept_upload), and the fill that follows puts the
-        tailored one in the box it emptied (_replaced_in says so). Only in Workday's list: another site's list of stored
-        files may be the person's own file library, where a Delete takes the file off their account, so a file kept
-        there stays as it is, as before. Once a job for each document (Run.kept_replaced), so a page that draws the old
-        name again is never deleted from again and again. Never once the person has had the application in their hands
-        (their Resume, after a stop or a restart of the desk, or a Submit pressed before; or the desk went on with it
-        after they may have worked in its tab: Run.in_their_hands): a file there may be their own choice, and it stays,
-        said in the log. A box whose file won't read (a slow page: browser.kept_upload_state's "unread") is the person's
-        too, on a card: taken for a box gone, the kept file would go to the employer unreplaced. A file that won't delete, or a box where which file is the old one isn't
-        sure, keeps what it shows, so the fill never uploads beside it (the employer would get two): the person's, said
-        on a card once the page is filled, one box at a time (one after it is neither pressed nor settled, so the next
-        pass says it). Returns the boxes emptied for their tailored file, and that card's words ("" for none)."""
+        deleted with its own Delete in Workday's list (delete_kept_upload, in browser_uploads.py), and the fill that
+        follows puts the tailored one in the box it emptied (_replaced_in says so). Only in Workday's list: another
+        site's list of stored files may be the person's own file library, where a Delete takes the file off their
+        account, so a file kept there stays as it is, as before. Once a job for each document (Run.kept_replaced), so a
+        page that draws the old name again is never deleted from again and again. Never once the person has had the
+        application in their hands (their Resume, after a stop or a restart of the desk, or a Submit pressed before; or
+        the desk went on with it after they may have worked in its tab: Run.in_their_hands): a file there may be their
+        own choice, and it stays, said in the log. A box whose file won't read (a slow page: browser_uploads.py's
+        kept_upload_state's "unread") is the person's too, on a card: taken for a box gone, the kept file would go to
+        the employer unreplaced. A file that won't delete, or a box where which file is the old one isn't sure, keeps
+        what it shows, so the fill never uploads beside it (the employer would get two): the person's, said on a card
+        once the page is filled, one box at a time (one after it is neither pressed nor settled, so the next pass says
+        it). Returns the boxes emptied for their tailored file, and that card's words ("" for none)."""
         job = self.srv.tracker().get(run.job_id, with_description=False) or {}
         emptied: list[dict[str, Any]] = []
         for box in kept_documents(data.get("fields") or [], config.Profile.load(), job):
@@ -4929,15 +4930,15 @@ class Applier:
         """A block past the profile's entries, with nothing in it, where the desk added a block of that kind on this
         pass: Workday's My Experience drew the account's saved school (or job) after the desk had looked for it and
         added one (Hitachi High-Tech America's, run 92; U.S. Bank's and Baker Tilly's, runs 52 and 62), and the page
-        then had more blocks than the profile has entries. The empty one goes with its own Delete, as many as the
-        desk added (`added`, by kind: taken down as they go), only the last block of its kind, never its only one (a
-        block before others would hand its number on), and only the very block an Add the desk pressed drew
-        (browser.added_blocks); once a block (`tried`). A block with anything in it, or one the desk didn't add, stays
-        the person's (_entry_gaps says so). Where the site drew the saved entry INTO the desk's block (Workday numbers
-        its blocks by place: Arizona State University's, run 108, the desk's mark left on a block now holding the saved
-        job, and a new empty block after it, unmarked), the marked block holds a value the desk never put there (a
-        text box or list neither among `filled`, the boxes its own fills went into on this pass, by id, nor showing
-        one of `given`, what they put there: a box drawn again under a new id, or a once-answer, is still the
+        then had more blocks than the profile has entries. The empty one goes with its own Delete, as many as the desk
+        added (`added`, by kind: taken down as they go), only the last block of its kind, never its only one (a block
+        before others would hand its number on), and only the very block an Add the desk pressed drew
+        (browser_blocks.py's added_blocks); once a block (`tried`). A block with anything in it, or one the desk didn't
+        add, stays the person's (_entry_gaps says so). Where the site drew the saved entry INTO the desk's block
+        (Workday numbers its blocks by place: Arizona State University's, run 108, the desk's mark left on a block now
+        holding the saved job, and a new empty block after it, unmarked), the marked block holds a value the desk never
+        put there (a text box or list neither among `filled`, the boxes its own fills went into on this pass, by id, nor
+        showing one of `given`, what they put there: a box drawn again under a new id, or a once-answer, is still the
         desk's), and the empty last block is the desk's own. True when it deleted one."""
         prof = config.Profile.load()
         extra: dict[str, str] = {}  # block: its kind
@@ -4962,10 +4963,10 @@ class Applier:
             delete = _own_delete(deletes, block)
             if delete is None:
                 continue
-            # the very block the desk's own press drew (browser.add_entries marks it), never a saved one drawn beside
-            # it, empty for a moment (the review of 0.3.173): a block it can't tell so is the person's. Unless the mark
-            # sits on a block of this kind the site filled (values in it the desk never typed: the saved entry drawn
-            # into the desk's own, the empty one after it then the desk's)
+            # the very block the desk's own press drew (browser_blocks.py's add_entries marks it), never a saved one
+            # drawn beside it, empty for a moment (the review of 0.3.173): a block it can't tell so is the person's.
+            # Unless the mark sits on a block of this kind the site filled (values in it the desk never typed: the saved
+            # entry drawn into the desk's own, the empty one after it then the desk's)
             marked = [h for h in await self.srv.browser.added_blocks() if numbered.match(h)]
             reused = _block_key(block) not in {_block_key(h) for h in marked}
             if reused:

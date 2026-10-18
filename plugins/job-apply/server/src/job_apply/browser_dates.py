@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from playwright.async_api import Error as PlaywrightError, Frame, Locator, Page, TimeoutError as PlaywrightTimeout
 
 from .autofill import date_form
+from .formjs import DAY_CELL_JS
 
 
 class DatesMixin:
@@ -194,14 +195,14 @@ class DatesMixin:
         at most), and the day pressed, as a person picks one. The box must then show that day. A box that opens no
         calendar has the day typed, as any other search box has its answer."""
         frame = self._frame_for(page, field["id"])
-        await frame.evaluate(browser.DAY_CELL_JS,
+        await frame.evaluate(DAY_CELL_JS,
                              [field["id"], "", True])  # (a dialog open already is no calendar it opens)
         await self._activate(loc)
         found = "none"
         for _ in range(browser.DATE_PICKER_MONTHS + 1):
             found = "none"
             for _ in range(10):  # (a calendar drawn a moment after the click)
-                found = await frame.evaluate(browser.DAY_CELL_JS, [field["id"], day.isoformat()])
+                found = await frame.evaluate(DAY_CELL_JS, [field["id"], day.isoformat()])
                 if found != "none":
                     break
                 await page.wait_for_timeout(150)

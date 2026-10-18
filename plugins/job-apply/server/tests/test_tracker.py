@@ -106,7 +106,7 @@ def test_the_tracker_is_used_from_several_threads(job_apply_home):
             for i in range(20):
                 job, _ = t.upsert({"url": f"https://example.com/jobs/{n}-{i}", "title": "Tech"})
                 t.update(job["id"], status="in_progress")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             errors.append(e)
 
     threads = [threading.Thread(target=add, args=(n,)) for n in range(4)]

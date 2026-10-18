@@ -374,7 +374,7 @@ def inbox_report(env: Mapping[str, str], senders: Iterable[str] = (), paused_at:
                     raw = next((p for p in parts if isinstance(p, tuple)), None)
                     code = raw is not None and bool(mailbox.message_code(
                         email.message_from_bytes(raw[1], policy=email.policy.default)))
-                except Exception:  # noqa: BLE001 - an odd message: said as one the desk can't read a code from
+                except Exception:  # an odd message: said as one the desk can't read a code from
                     code = False
                 seen.append((received, {
                     "folder": label, "from": shown.rsplit("@", 1)[1].lower() if "@" in shown else "",

@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Any
 from playwright.async_api import Error as PlaywrightError, Frame, Locator, Page, TimeoutError as PlaywrightTimeout
 
 from .autofill import choose_option, is_empty_value, norm
+from .formjs import (FIELD_OPTIONS_JS, MARK_OPTIONS_JS, OPEN_MENU_JS, OPEN_PICKERS_JS, OUTSIDE_CLICK_JS, SHOWN_VALUE_JS,
+                     WORKDAY_CHOSEN_JS)
 
 
 class MenusMixin:
@@ -44,7 +46,7 @@ class MenusMixin:
         waited = 0
         while True:
             try:
-                options = await loc.evaluate(browser.FIELD_OPTIONS_JS)
+                options = await loc.evaluate(FIELD_OPTIONS_JS)
             except PlaywrightError:
                 options = []
             if any(not is_empty_value(o) for o in options) or waited >= max(wait_ms, placeholder_ms if options else 0):
@@ -76,7 +78,7 @@ class MenusMixin:
         return options
 
     async def _open(self, page: Page, field_id: str, loc: Locator) -> None:
-        await self._frame_for(page, field_id).evaluate(browser.MARK_OPTIONS_JS)
+        await self._frame_for(page, field_id).evaluate(MARK_OPTIONS_JS)
         await self._activate(loc)
 
     async def _read_listbox_options(self, page: Page, field: dict) -> list[str]:
@@ -106,16 +108,16 @@ class MenusMixin:
         await self._close_pickers(page)
         for frame in self._menu_frames(page):
             try:
-                if not await frame.evaluate(browser.OPEN_MENU_JS):
+                if not await frame.evaluate(OPEN_MENU_JS):
                     continue
                 await frame.evaluate("() => { const a = document.activeElement; if (a && a !== document.body) a.blur(); }")
                 await page.wait_for_timeout(150)
-                if not await frame.evaluate(browser.OPEN_MENU_JS):
+                if not await frame.evaluate(OPEN_MENU_JS):
                     continue
                 await page.keyboard.press("Escape")
                 await page.wait_for_timeout(150)
-                if await frame.evaluate(browser.OPEN_MENU_JS):
-                    await frame.evaluate(browser.OUTSIDE_CLICK_JS)
+                if await frame.evaluate(OPEN_MENU_JS):
+                    await frame.evaluate(OUTSIDE_CLICK_JS)
             except PlaywrightError:
                 continue
 
@@ -144,21 +146,21 @@ class MenusMixin:
         filled after says so itself."""
         for frame in frames or self._menu_frames(page):
             try:
-                if not await frame.evaluate(browser.OPEN_PICKERS_JS, ["", field_id]):
+                if not await frame.evaluate(OPEN_PICKERS_JS, ["", field_id]):
                     continue
                 for attempt in ("blur", "inside", "opener", "beside"):
                     # (each only while it's still open and no notice is: looked at again first)
-                    if not await frame.evaluate(browser.OPEN_PICKERS_JS,
+                    if not await frame.evaluate(OPEN_PICKERS_JS,
                                                 ["" if attempt == "beside" else attempt, field_id]):
                         break
                     if attempt == "beside":
-                        await frame.evaluate(browser.OUTSIDE_CLICK_JS)
+                        await frame.evaluate(OUTSIDE_CLICK_JS)
                     elif attempt != "blur":
                         await page.keyboard.press("Escape")
                     gone = False
                     for _ in range(2 if attempt == "blur" else 4):
                         await page.wait_for_timeout(100)
-                        if gone := not await frame.evaluate(browser.OPEN_PICKERS_JS, ["", field_id]):
+                        if gone := not await frame.evaluate(OPEN_PICKERS_JS, ["", field_id]):
                             break
                     if gone:
                         break
@@ -316,7 +318,7 @@ class MenusMixin:
         """After picking from a menu, the field must show that choice (else the click
         landed in some other menu, or the widget refused it)."""
         await page.wait_for_timeout(150)
-        pills = await loc.evaluate(browser.WORKDAY_CHOSEN_JS)
+        pills = await loc.evaluate(WORKDAY_CHOSEN_JS)
         if pills is not None:
             # A Workday prompt shows what it took as a pill, so a missing one is a miss for sure
             # (the entry was a group that opened its own list, or the pick hadn't landed yet).
@@ -324,10 +326,10 @@ class MenusMixin:
                 if any(norm(choice) in norm(p) or choose_option(choice, [p]) for p in pills):
                     return
                 await page.wait_for_timeout(200)
-                pills = await loc.evaluate(browser.WORKDAY_CHOSEN_JS) or []
+                pills = await loc.evaluate(WORKDAY_CHOSEN_JS) or []
             raise ValueError(f"Picked {choice!r} but the field didn't take it"
                              + (f" (it shows {', '.join(pills)[:80]!r})" if pills else ""))
-        shown = await loc.evaluate(browser.SHOWN_VALUE_JS)
+        shown = await loc.evaluate(SHOWN_VALUE_JS)
         # Only positive evidence counts: some widgets display the value where we can't see it,
         # and search text left in the box ("C" for "Choose not to disclose") isn't a choice.
         if (shown and norm(choice) not in norm(shown) and not norm(choice).startswith(norm(shown))
@@ -346,7 +348,7 @@ class MenusMixin:
         """Open a pick-only list once more, by a click alone: never an ArrowDown, which on some lists changes the value
         while closed (the review's). False when it won't take a click (not opened again)."""
         try:
-            await self._frame_for(page, field_id).evaluate(browser.MARK_OPTIONS_JS)
+            await self._frame_for(page, field_id).evaluate(MARK_OPTIONS_JS)
             await loc.click(timeout=2500)
             return True
         except (PlaywrightError, PlaywrightTimeout):
@@ -464,7 +466,7 @@ class MenusMixin:
             # Unless the search chose it: Workday chooses the one entry its search finds at once, and closes the
             # list (live probe 45, Oct 13), its pill the answer itself, word for word ("C" isn't "C#": the review's)
             said = " ".join(text.split()).casefold()
-            took = next((p for p in await loc.evaluate(browser.WORKDAY_CHOSEN_JS) or []
+            took = next((p for p in await loc.evaluate(WORKDAY_CHOSEN_JS) or []
                          if " ".join(p.split()).casefold() == said), None)
             if took is not None:
                 await self._clear_search(page, loc)  # (nothing typed left in its box)

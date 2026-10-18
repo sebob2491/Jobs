@@ -51,11 +51,12 @@ def test_the_slow_tests_go_first_only_when_asked(monkeypatch, off):
     assert kept == SLOW + [i for i in EVERY if i not in SLOW]  # (the slow first, each group in its own order)
 
 
-def test_each_part_holds_the_same_tests_with_the_slow_ones_first_or_not(monkeypatch):
+@pytest.mark.parametrize("parts", [4, 6])  # (CI's Windows parts and its Linux parts: .github/workflows/tests.yml)
+def test_each_part_holds_the_same_tests_with_the_slow_ones_first_or_not(monkeypatch, parts):
     seen: list = []
-    for part in range(1, 5):
-        plain, plain_deselected = run_hook(monkeypatch, f"{part}/4", None)
-        first, first_deselected = run_hook(monkeypatch, f"{part}/4", "1")
+    for part in range(1, parts + 1):
+        plain, plain_deselected = run_hook(monkeypatch, f"{part}/{parts}", None)
+        first, first_deselected = run_hook(monkeypatch, f"{part}/{parts}", "1")
         assert sorted(first) == sorted(plain) and first_deselected == plain_deselected, part  # (the same split)
         assert first == [i for i in plain if i in SLOW] + [i for i in plain if i not in SLOW], part
         assert sorted(plain + plain_deselected) == sorted(EVERY), part

@@ -121,7 +121,7 @@ def test_two_reports_in_the_same_second_get_folders_of_their_own(job_apply_home)
 
 
 def test_the_desk_builds_a_report_for_a_job_and_only_for_one_it_has(srv, job_apply_home):
-    from test_desk import _client  # noqa: PLC0415
+    from test_desk import _client
 
     from job_apply.desk import Desk
 

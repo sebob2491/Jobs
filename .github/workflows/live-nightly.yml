@@ -23,7 +23,7 @@ name: live-nightly
 # last 20 runs, and the employers whose result keeps flipping. Its body is rewritten, never commented on.
 # Only runs of the default branch write to the issues: a manual run from another branch shows
 # its comparison in the job summary only.
-# The five checks run at once, each on a machine of its own (a fraction of the time they took
+# The four checks (finance is paused) run at once, each on a machine of its own (a fraction of the time they took
 # one after another); the compare job then reads their logs.
 # A manual run can be a probe of a few employers or checks (its inputs): it runs only those, and
 # isn't compared or written to the issue; its artifacts hold the results

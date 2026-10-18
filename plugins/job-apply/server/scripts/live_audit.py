@@ -37,7 +37,7 @@ from typing import Any, Iterator
 from job_apply.autofill import degree_key
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import live_compare  # noqa: E402  (scripts/live_compare.py, beside this one)
+import live_compare  # (scripts/live_compare.py, beside this one)
 
 SECRETS = ("LIVE_TEST_EMAIL", "LIVE_TEST_EMAIL_PASSWORD", "LIVE_TEST_SITE_PASSWORD")
 MAX_FILE = 50 * 1024 * 1024

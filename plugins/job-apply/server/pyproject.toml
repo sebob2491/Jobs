@@ -1,6 +1,6 @@
 [project]
 name = "job-apply"
-version = "0.3.0"
+version = "0.3.0"  # not the release version: plugin.json's is (config.plugin_version); bumping this changes uv.lock
 description = "MCP server that ingests job postings, tracks applications, and fills application forms in a real browser."
 requires-python = ">=3.10"
 dependencies = [
@@ -38,8 +38,9 @@ extend-exclude = ["tests/fixtures"]
 
 [tool.ruff.lint]
 # pyflakes (unused/undefined names), the error-level pycodestyle checks, and bugbear's
-# bug patterns (mutable defaults, late-binding closures, assert False, ...)
-select = ["E4", "E7", "E9", "F", "B"]
+# bug patterns (mutable defaults, late-binding closures, assert False, ...), and a `# noqa` that no longer
+# silences anything (RUF100)
+select = ["E4", "E7", "E9", "F", "B", "RUF100"]
 ignore = [
     "B007",  # loop variable unused in the body: the for/else/break idiom reads it after the loop
     "B905",  # zip() without strict=: a style choice, and strict=True turns a short list into a crash

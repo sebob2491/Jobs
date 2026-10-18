@@ -45,9 +45,9 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import live_audit  # noqa: E402  (scripts/live_audit.py, beside this one: the review pages' values)
-import live_compare  # noqa: E402  (scripts/live_compare.py, beside this one)
-import live_probes  # noqa: E402  (scripts/live_probes.py, beside this one: the weekly probes' results)
+import live_audit  # (scripts/live_audit.py, beside this one: the review pages' values)
+import live_compare  # (scripts/live_compare.py, beside this one)
+import live_probes  # (scripts/live_probes.py, beside this one: the weekly probes' results)
 
 REPO = "sebob2491/Jobs"
 HANDLED_FILE = Path(__file__).resolve().parents[2] / "data" / "desk_handled.yaml"
@@ -60,7 +60,7 @@ HANDLED_FLIPS = ("accounts", "pipeline")  # the checks whose flipping employers 
 def fetch(url: str) -> Any:
     request = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json",
                                                    "User-Agent": "job-apply-nightly-summary"})
-    with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 (a fixed https address)
+    with urllib.request.urlopen(request, timeout=30) as response:  # (a fixed https address)
         return json.load(response)
 
 

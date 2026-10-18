@@ -19,15 +19,20 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   - `never.py`: what the desk never agrees to, ticks or presses for the person (one list, every path);
   - `browser.py` and `formjs.py`: the browser and the form reader; the browser's tabs, menus, dates, uploads and
     blocks are in `browser_tabs.py`, `browser_menus.py`, `browser_dates.py`, `browser_uploads.py`, `browser_blocks.py`;
+  - `config.py`: paths, the profile, settings and secrets (and `live_test_identity`);
+  - `ats.py`: which job system a link is; `postings.py`: a posting read into a record;
   - `search.py`: employer job searches;
   - `recommend.py`: ranking;
-  - `mailbox.py`: emailed codes;
+  - `mailbox.py`: emailed codes, and the confirmation and password-reset links;
   - `tracker.py`: the SQLite tracker;
   - `report.py`: problem reports;
   - `history.py`: the desk's run history (`runs.jsonl`, the This week window);
+  - `render.py`: a resume or cover letter as a PDF;
+  - `doctor.py`: the setup check (`job-apply-doctor`, the `doctor` tool);
+  - `updates.py`: whether a newer version is out, for the desk to say;
   - `fixtures.py`: the scrubber.
 - `data/companies.yaml` is the default employer list (`semiconductor-az`), and
-  `data/lists/*.yaml` holds the others (`phoenix-metro`). A person's own
+  `data/lists/*.yaml` holds the others (`phoenix-metro`, `las-vegas`). A person's own
   `~/.job-apply/companies.yaml` names lists under `lists:`.
 - `data/question_bank.yaml`: the common questions the desk's "Common questions" card asks once (answers go to the
   person's own `answers.yaml` with the entry's pattern). `scripts/question_bank.py <run's artifacts>` lists the
@@ -40,15 +45,19 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
 
 ## Running things (from `plugins/job-apply/server`)
 
-- Tests: `JOB_APPLY_CHROMIUM_PATH=/opt/pw-browsers/chromium uv run pytest -q -p no:cacheprovider -n auto tests`.
-  - The full suite takes about 6 minutes a part on CI (Oct 2026), and 13 to 16 on a 4-core session.
+- Tests: `JOB_APPLY_CHROMIUM_PATH=/opt/pw-browsers/chromium uv run pytest -q -n 8 tests`.
+  - 8 workers on a 4-core machine (CI's too): the suite waits on pages far more than it computes.
+  - The full suite takes a few minutes per part on CI, and 15 to 20 on a 4-core session.
     Locally, run the affected test files, ruff and mypy; the PR's required checks run the full suite.
     Add `-m "not slow"` for a quicker run: it leaves out the tests marked `@pytest.mark.slow`.
-  - CI runs it in four parts on separate machines: `JOB_APPLY_TEST_SHARD=1/4` (to `4/4`) runs one part.
+  - `uv run python scripts/dev_test.py` runs the tests that import what changed since the branch left
+    `origin/main` (`--deep`: and what imports that; `--all`: everything; `--list`: only say which), with
+    `-n 8 --ff`; any other argument goes to pytest (`--lf`, `-x`, `-k`).
+  - CI runs it in six parts on separate machines: `JOB_APPLY_TEST_SHARD=1/6` (to `6/6`) runs one part.
     Each part starts its slow tests first (`JOB_APPLY_SLOW_FIRST=1` with `--maxschedchunk=1`), so none
     is left running alone at the end. A test that takes 20 s or more in a part's `--durations` list
     gets the mark.
-  - CI also runs it on Windows (`windows (Python 3.13, part n/4)`), the owner's platform. Those checks
+  - CI also runs it on Windows, in four parts (`windows (Python 3.13, part n/4)`), the owner's platform. Those checks
     aren't required (a failure doesn't block the merge), so look at them yourself. Windows reads and
     writes text as cp1252 unless told otherwise: give every text file `encoding="utf-8"`, tests too.
     Build paths with pathlib (`as_posix()` for a relative path shown, `Path.as_uri()` for `file://`).
@@ -73,8 +82,8 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
     `LIVE_TEST_EMAIL_PASSWORD` and `LIVE_TEST_SITE_PASSWORD` in the environment (setting them up:
     `scripts/TEST_IDENTITY.md`), refuses to start without them, and masks them in all it prints
     and writes. The nightly's `accounts` check runs it once the repository has them as secrets, with
-    `--everywhere`: at every employer on both lists (about 100), a code-sending system's employers in one
-    `--parallel` group (one inbox).
+    `--everywhere`: at every employer on the lists in `live_identity.LIST_ROLES` (about 100), a code-sending
+    system's employers in one `--parallel` group (one inbox).
   - Each check's machine audits what it wrote (`scripts/live_audit.py`): a consent the desk never gives (a newsletter,
     job alerts, a talent community, marketing, texts or calls, arbitration, at-will, a waiver), a submit, or the test
     identity's secrets, an emailed code or a security answer in a file fail that job with an `::error::` line each.
@@ -123,12 +132,19 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   schedule; a scheduled run that comes within 12 hours of a full run skips itself.
 - Plugin manifests: `claude plugin validate --strict .`, plus the same for each plugin folder.
 
+## Development practices
+
+The dev-kit's practices (`plugins/dev-kit/skills/practices/SKILL.md`) apply here: a failing test first for every
+fix, tests in parallel, CI with required checks and auto-merge, a review pass, nothing personal in the repo. Where
+this file says otherwise, it wins.
+
 ## Shipping a change
 
 1. Work on the session's designated branch. Every fix gets a test that fails on the old
    code: prove it by stashing `src/`.
 2. Bump `plugins/<plugin>/.claude-plugin/plugin.json`'s `version` for every change people
-   would notice. Without a bump, their app doesn't update.
+   would notice. Without a bump, their app doesn't update. If the last full nightly is newer than
+   `data/desk_handled.yaml`'s `as_of`, refresh it (`scripts/nightly_summary.py --handled`) in the same PR.
 3. Open a PR to `main` and fix what a review finds: a read-only review (an agent told not to edit) for a
    change to how the desk fills, clicks or decides; none for tests, docs or the live check's scripts.
    Two or three related fixes go in one version and one PR.
@@ -181,8 +197,8 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   - The live check's test identity (the owner's call, Oct 10) is the one exception to "never in
     practice mode", for accounts and notices alike: a clearly fake applicant ("Jobdesk Test")
     with its own inbox, at the employers in `test_identity_employers.yaml`, or (the nightly's accounts check, `--everywhere`:
-    the owner's call, Oct 11) at every employer on both lists, and which never submits. It also takes an employer's
-    assessment with random answers ("Take Assessment": the owner's call, Oct 13), pressing the assessment's own
+    the owner's call, Oct 11) at every employer on the lists in `live_identity.LIST_ROLES`, and which never submits.
+    It also takes an employer's assessment with random answers ("Take Assessment": the owner's call, Oct 13), pressing the assessment's own
     Submit or Finish only off the application's site; on the person's desk an assessment stays theirs. And it agrees
     to the notices a person's desk leaves to them (a waiver of rights in Freeport-McMoRan's data privacy statement: the
     owner's call, Oct 13), by an agree button only, never a Submit (`_test_identity_agrees`). With `--security-answers`
@@ -190,8 +206,8 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
     on the desk's card for it, as a person would there: a question from the list, an answer made from its site password
     (`live_identity.security_answer`), so it goes on into the application. It's on
     only with `JOB_APPLY_LIVE_TEST_IDENTITY=1` and `JOB_APPLY_NEVER_SUBMIT=1` set and the
-    profile's email being `LIVE_TEST_EMAIL` (`config.live_test_identity`), so a person's own
-    profile never turns it on; Submit stays refused in it.
+    profile's email being `LIVE_TEST_EMAIL` (or that inbox's own `+tag` address: the `--plus` probe;
+    `config.live_test_identity`), so a person's own profile never turns it on; Submit stays refused in it.
 - **Passwords:**
   - a saved password goes only onto its own system's sites;
   - the inbox app password only reads sign-up codes (and, with `manage_accounts`, the reset
