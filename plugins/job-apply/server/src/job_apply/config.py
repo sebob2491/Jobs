@@ -242,7 +242,7 @@ JOBS_AT_ONCE_DEFAULT = 2
 JOBS_AT_ONCE_MAX = 3
 
 
-# How many days an application sent in waits with no reply before the desk's My applications asks "Follow up?"
+# How many days an application sent in waits with no reply before the desk's My applications marks it for a follow-up
 # (settings.follow_up_days), where the profile doesn't say, and the most it takes
 FOLLOW_UP_DAYS_DEFAULT = 10
 FOLLOW_UP_DAYS_MAX = 90
@@ -292,7 +292,7 @@ class Settings:
     # how many jobs the Job Desk fills at once, each in its own tab (1 to JOBS_AT_ONCE_MAX); the desk's own
     # "Jobs at once" control changes it there (kept in desk.json)
     jobs_at_once: int = JOBS_AT_ONCE_DEFAULT
-    # the days an application sent in waits with no reply before My applications asks "Follow up?" (1 to
+    # the days an application sent in waits with no reply before My applications marks it for a follow-up (1 to
     # FOLLOW_UP_DAYS_MAX)
     follow_up_days: int = FOLLOW_UP_DAYS_DEFAULT
     # the live check's test identity (live_test_identity): accounts and notices in practice mode too
@@ -838,10 +838,11 @@ def _bank_entries() -> list[dict[str, Any]]:
 
 def question_bank() -> list[dict[str, Any]]:
     """The questions most applications ask that a profile doesn't answer (data/question_bank.yaml), each
-    with the person's answer from answers.yaml where they gave one ("answer")."""
+    with the person's answer from answers.yaml where they gave one ("answer"), and how many of the nightly's
+    applications asked it ("seen": the desk's card shows the most asked first)."""
     given = {a.get("bank"): a.get("answer") for a in saved_answers() if a.get("bank")}
-    return [{k: e[k] for k in ("id", "ask", "kind", "choices", "match", "example") if k in e} | {"answer": given.get(e["id"])}
-            for e in _bank_entries()]
+    return [{k: e[k] for k in ("id", "ask", "kind", "choices", "match", "example", "seen") if k in e}
+            | {"answer": given.get(e["id"])} for e in _bank_entries()]
 
 
 def _current_bank_patterns(saved: list[dict[str, Any]]) -> None:

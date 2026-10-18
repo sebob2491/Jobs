@@ -141,6 +141,12 @@ button.score:hover { outline: 1px solid var(--muted); }
 .chip.new { background: var(--info-bg); color: var(--info-text); font-weight: 600; }
 .chip.handled { background: var(--good-bg); color: var(--good); font-weight: 600; }
 .handled-switch { font-size: 13px; display: flex; align-items: center; gap: 6px; }
+/* the Openings head's More (Troubleshooting, Search by itself), and a muted line for each switch that's on */
+.card-head details.more { padding: 0; border-top: 0; color: var(--text); }
+.card-head details.more summary { cursor: pointer; color: var(--accent); }
+.more-body { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 6px; }
+.switch-hint { flex-basis: 100%; font-size: 13px; color: var(--muted); }
+.switch-hint p { margin: 0; }
 .empty { padding: 28px 16px; text-align: center; color: var(--muted); }
 .side { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .task { padding: 12px 14px; border-top: 1px solid var(--line); }
@@ -211,7 +217,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
     <span class="small" id="searched"></span>
     <button class="link" id="notes-btn" data-act="notes" title="Notes the desk took where it stopped on something it most likely got wrong, for you to file" hidden>Notes</button>
     <button class="link" id="alerts" data-act="alerts" hidden>Alert me</button>
-    <button id="pause-btn" data-act="pause" title="The job under way finishes what it is doing; no other job starts until you press Resume queue" hidden>Pause queue</button>
+    <button id="pause-btn" data-act="pause" title="The job under way finishes what it is doing; no other job starts until you press Carry on with the queue" hidden>Pause queue</button>
     <button class="link" id="week-btn" data-act="week" title="What the desk did in the last 7 days: jobs filled and sent, where it stopped for you, and how long each job took">This week</button>
     <button class="link" id="safety-btn" data-act="safety" title="What the desk does in your name, and what it never does: each setting as it is now, and where to change it">Safety</button>
     <button id="area-btn" data-act="area" title="What and where Find jobs searches: the job titles, places and employer lists">What and where</button>
@@ -230,11 +236,15 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
         <button data-filter="mine" aria-pressed="false">My applications <span id="mine-count"></span></button>
       </div>
       <label class="openings-only handled-switch" title="Only the employers where, in the plugin's live check, the desk took a test applicant all the way to the application's review page. Bot checks, CAPTCHAs and steps it can't do yet are elsewhere."><input type="checkbox" id="handled-only"> Only where the desk goes all the way</label>
-      <label class="openings-only handled-switch" title="To get the desk going at more employers: Find jobs searches every list's employers (yours, and HR jobs too), and only the openings where the desk doesn't go all the way yet show, whatever their fit. Nothing is sent while it's on."><input type="checkbox" id="troubleshoot"> Troubleshooting</label>
-      <label class="openings-only handled-switch" title="Off: the desk searches only when you press Find jobs. On: it also searches by itself when the openings are over 12 hours old (on opening, or on a page left open), but not while the queue is paused. The header says when a search is running, with Stop search beside it."><input type="checkbox" id="auto-search"> Search by itself every 12 hours</label>
       <span class="spacer"></span>
       <span class="openings-only links"><button class="link" data-act="select-recommended">Select recommended</button>
       <button class="link" data-act="select-none">Clear</button></span>
+      <!-- the switches seldom changed, out of the way; each one on is said in a line under the head (switch-hint) -->
+      <details class="openings-only more" id="more"><summary>More</summary><div class="more-body">
+      <label class="handled-switch" title="To get the desk going at more employers: Find jobs searches every list's employers (yours, and HR jobs too), and only the openings where the desk doesn't go all the way yet show, whatever their fit. Nothing is sent while it's on."><input type="checkbox" id="troubleshoot"> Troubleshooting</label>
+      <label class="handled-switch" title="Off: the desk searches only when you press Find jobs. On: it also searches by itself when the openings are over 12 hours old (on opening, or on a page left open), but not while the queue is paused. The header says when a search is running, with Stop search beside it."><input type="checkbox" id="auto-search"> Search by itself every 12 hours</label>
+      </div></details>
+      <div class="switch-hint" id="switch-hint" hidden></div>
     </div>
     <div class="filters openings-only" id="filters">
       <span class="group" role="group" aria-label="Sort the openings">Sort
@@ -358,6 +368,18 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
     <div class="actions" style="margin-top: 16px">
       <button class="primary" type="submit">Save and find jobs</button>
       <button type="button" data-act="area-close">Cancel</button>
+    </div>
+  </form>
+</dialog>
+<!-- before Apply sends the ticked jobs off: what will stop them (/api/preflight). Seeing to them first is the default
+     button, so Enter never applies -->
+<dialog id="preflight" aria-labelledby="preflight-h">
+  <form method="dialog">
+    <h2 id="preflight-h">Before these go</h2>
+    <ul id="preflight-lines"></ul>
+    <div class="actions">
+      <button class="primary" id="preflight-first" value="first" autofocus>See to these first</button>
+      <button id="preflight-apply" value="apply">Apply anyway</button>
     </div>
   </form>
 </dialog>
@@ -739,7 +761,7 @@ function renderStops(all) {
 // My applications' groups (tracker.GROUPS, each application in one, worked out by the desk), in the bar's order
 const APP_GROUPS = [
   ["all", "All", "Every application"],
-  ["waiting", "Waiting", "Sent in (or ready to send) with no reply yet. Follow up? marks the ones that have waited long enough to ask"],
+  ["waiting", "Waiting", "Sent in (or ready to send) with no reply yet. Follow up shows on the ones that have waited long enough to ask"],
   ["heard", "Heard back", "A reply came (a confirmation, an assessment or another email), and nothing further yet"],
   ["interviews", "Interviews", "Interviewing, or an offer"],
   ["closed", "Closed", "Rejected or withdrawn"],
@@ -775,9 +797,10 @@ function renderApps() {
     const h = j.last_heard;
     const heard = h ? `<span class="nowrap heard" title="${esc((h.summary || "") + (j.emails > 1 ? ` (${j.emails} emails logged)` : ""))}">Heard
       ${esc(h.day || shownDay(h.received_at))}: ${esc(HEARD_WORDS[h.category] || h.category)}</span>` : `<span class="nowrap heard">No reply yet</span>`;
-    const dueTip = `No reply${days ? ` ${days} days` : ""} after you applied. Ask Claude to draft a polite follow-up email: `
-      + "it's saved as a Gmail draft, for you to send.";
-    const due = j.follow_up_due ? `<span class="pill warn" title="${esc(dueTip)}">Follow up? Due ${esc(j.follow_up_due)}</span>` : "";
+    const dueTip = `No reply${days ? ` ${days} days` : ""} after you applied. Follow up copies a request for Claude to draft `
+      + "a polite follow-up email (saved as a Gmail draft, for you to send): paste it to Claude. Nothing is sent anywhere.";
+    const due = j.follow_up_due ? `<span class="pill warn" title="${esc(dueTip)}">Follow-up due ${esc(j.follow_up_due)}</span>`
+      + `<button data-act="follow-up" data-job="${j.id}" title="${esc(dueTip)}">Follow up</button>` : "";
     const prepTip = `Copies a request for Claude to prep you for this ${prepWhat(j)}: paste it to Claude. Nothing is sent anywhere.`;
     const prep = prepFor(j) ? `<button data-act="prep" data-job="${j.id}" title="${esc(prepTip)}">Prep me</button>` : "";
     return {key: "app" + j.id, html: `<li class="row app">
@@ -831,6 +854,60 @@ function askNotInterested(url) {
   $("ni").showModal();
 }
 
+// Before Apply: what will stop the ticked jobs, in a window whose default (focused) button is See to these first, so
+// Enter or Escape never applies. True only for the person's Apply anyway
+function askPreflight(lines) {
+  const d = $("preflight");
+  $("preflight-lines").replaceChildren(...lines.map((line) => {
+    const li = document.createElement("li");
+    li.textContent = line;
+    return li;
+  }));
+  return new Promise((resolve) => {
+    d.addEventListener("close", () => resolve(d.returnValue === "apply"), {once: true});
+    d.returnValue = "";
+    d.showModal();
+    $("preflight-first").focus();
+  });
+}
+
+// Apply to selected: what will stop these jobs, said once before they go (the same list isn't asked about twice), then
+// queued
+let applying = false;  // an Apply under way (its pre-flight asked, or its window open): another press waits for it
+async function applyTicked(urls, auto) {
+  const pre = await api("/api/preflight", {urls});
+  const said = (pre.lines || []).join("\n");
+  if (said && said !== preflightSeen) {
+    if (!await askPreflight(pre.lines)) { seeToFirst(pre.lines[0]); return; }
+    preflightSeen = said;
+  }
+  const out = await api("/api/apply", {urls, submit: auto});
+  selected.clear();
+  // (two or more queued together go the likeliest to go all the way first: said once, here)
+  if (out.ordered) toast(`Queued ${out.queued.length}, the ones likely to go all the way first.`);
+  if ((out.already_applied || []).length) alert("Already applied or skipped, so not queued: " + out.already_applied.join(", ")
+    + ". Undo on a skipped job puts it back.");
+  if ((out.not_interested || []).length) alert("You said you're not interested, so not queued: "
+    + out.not_interested.join(", ") + ". Undo on it (under Not interested) brings it back.");
+}
+
+// See to these first: the card for the first thing said (the Common questions card, or Site passwords with that
+// job system picked), scrolled to
+function seeToFirst(line) {
+  if (/common question/i.test(line) && !$("bank-card").hidden) {
+    bankAll = true;  // (every one unanswered, not only the most asked four: each stops a job)
+    renderBank();
+    $("bank-card").scrollIntoView({block: "start"});
+    return;
+  }
+  const pick = $("pw-site");
+  const system = /email app password/i.test(line) ? [...pick.options].find((o) => o.value === "email")
+    : [...pick.options].find((o) => line.startsWith(o.label.split(":")[0] + ":"));
+  if (system) pick.value = system.value;
+  $("pw-form").closest("section").scrollIntoView({block: "start"});
+  $("pw").focus({preventScroll: true});
+}
+
 // Text onto the clipboard: true once it's there (the clipboard, or where it isn't allowed, a copy of a box's text)
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* the older way, below */ }
@@ -852,7 +929,18 @@ async function copyText(text) {
 async function prepMe(jobId) {
   const j = (state.applications || []).find((x) => x.id === jobId);
   if (!j) return;
-  const text = `Prep me for my ${prepWhat(j)}: job ${j.id}, ${j.title || "Untitled job"} at ${j.company || "the employer"} (use interview-prep)`;
+  forClaude(`Prep me for my ${prepWhat(j)}: job ${j.id}, ${j.title || "Untitled job"} at ${j.company || "the employer"} (use interview-prep)`);
+}
+
+// Follow up, on an application due a follow-up: as Prep me, a request copied for the person to paste to Claude, who
+// drafts the email (track-responses: a Gmail draft, for them to send). Nothing is sent anywhere
+async function followUp(jobId) {
+  const j = (state.applications || []).find((x) => x.id === jobId);
+  if (!j) return;
+  forClaude(`Draft a follow-up email for job ${j.id}, ${j.title || "Untitled job"} at ${j.company || "the employer"} (use track-responses)`);
+}
+
+async function forClaude(text) {
   if (await copyText(text)) toast("Copied: paste it to Claude");
   else prompt("Couldn't copy it. Copy this, and paste it to Claude:", text);
 }
@@ -881,10 +969,30 @@ function sorted(rows) {
   return by ? rows.map((r, i) => [by(r), i, r]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((x) => x[2]) : rows;
 }
 
+// Under the Openings head, a line for each switch that's on, saying what it does now (their tooltips aren't seen on a
+// phone, and two of them sit under More)
+function renderSwitchHint(mine, rows) {
+  const s = state.settings || {};
+  // (the employers among the openings the list shows now)
+  const employers = new Set(rows.filter((r) => r.handled).map((r) => String(r.company || "").trim().toLowerCase())).size;
+  // Troubleshooting on: More stays open, so the box that turns it off is always in sight
+  if (s.troubleshoot && !$("more").open) $("more").open = true;
+  const lines = [
+    s.handled_only ? `Only where the desk goes all the way: showing ${employers ? `the ${employers} employer${employers === 1 ? "" : "s"}` : "the employers"} where the plugin's live check reached the review page; bot checks and steps the desk can't do yet are elsewhere.` : "",
+    s.troubleshoot ? "Troubleshooting: nothing is submitted; Find jobs searches every list; only the employers where the desk doesn't go all the way yet are shown." : "",
+    s.auto_search ? "Search by itself: the desk searches again when the openings are over 12 hours old (not while the queue is paused)." : "",
+  ].filter(Boolean);
+  const hint = $("switch-hint");
+  hint.hidden = mine || !lines.length;
+  const html = lines.map((line) => `<p>${esc(line)}</p>`).join("");
+  if (hint.dataset.html !== html) { hint.innerHTML = html; hint.dataset.html = html; }
+}
+
 function renderRows() {
   if (!state) return;
   const mine = filter === "mine";
   document.querySelectorAll(".openings-only").forEach((el) => { el.hidden = mine; });
+  if (mine) renderSwitchHint(true, []);
   $("mine-count").textContent = (state.applications || []).length ? `(${state.applications.length})` : "";
   if (mine) { renderApps(); return; }
   $("app-groups").hidden = true;
@@ -896,6 +1004,7 @@ function renderRows() {
     || r.not_interested);
   renderStops(listed.filter(shown));
   const rows = sorted(listed.filter(shown).filter(inStop));
+  renderSwitchHint(false, rows);
   const entries = rows.map((r) => {
     const fit = r.fit || {score: 0, reasons: [], concerns: []};
     const done = DONE.has(r.status) || (r.run && UNDER_WAY.has(r.run.status)) || !!r.not_interested;
@@ -1013,7 +1122,7 @@ function jobButtons(r, which) {
   if (which.includes("submit")) out.push(b("submit", "Submit", "primary"));
   // (one label wherever it is: the person sent it on the site, their own press)
   if (which.includes("applied")) out.push(b("applied", "I submitted it myself", "primary"));
-  if (which.includes("resume")) out.push(b("resume", "Resume"));
+  if (which.includes("resume")) out.push(b("resume", "Carry on"));
   if (which.includes("usual_resume")) out.push(b("usual_resume", "Use my usual resume"));
   if (which.includes("later")) out.push(b("later", "Later", "",
     "Let the other jobs go on; this one waits in its tab until you finish it there"));
@@ -1116,14 +1225,14 @@ function renderSide() {
     const qs = r.questions || [];
     const repeated = new Set(qs.map((q) => q.label).filter((l, i, all) => all.indexOf(l) !== i));
     const form = qs.length ? `<form data-answer="${r.job_id}">${qs.map((q, i) => question(r.job_id, q, i, repeated.has(q.label))).join("")}</form>` : "";
-    // questions (with Resume, for answers typed into the page itself), or a missing file plus questions
+    // questions (with Carry on, for answers typed into the page itself), or a missing file plus questions
     // (and Later on a sign-in holding the queue: an account form's security questions, put on its card)
-    // left by a restart of the desk, with no tab to show: Resume fills it again up to its review page (never sending
+    // left by a restart of the desk, with no tab to show: Carry on fills it again up to its review page (never sending
     // it); one whose Submit may have gone in says so, with I submitted it myself first, and one begun has it last
     if (r.left_at_restart) body = jobButtons(r, r.need === "check_submit" ? ["applied", "resume", "skip"] : ["resume", "skip", "already"]);
     else if (form || r.need === "questions") body = form + jobButtons(r, ["fill", "show", "resume",
       ...(r.blocking && r.need === "sign_in" ? ["later"] : []), "skip", "already"]);
-    // a sign-in holding the queue keeps Resume beside Later: its card may ask for Resume after a
+    // a sign-in holding the queue keeps Carry on beside Later: its card may ask for Carry on after a
     // password reset by hand (the desk then presses its sign-in once more)
     else if (["sign_in", "bot_check", "email_code"].includes(r.need))
       body = jobButtons(r, ["show", ...(r.blocking ? (r.need === "sign_in" ? ["resume", "later"] : ["later"]) : ["resume"]), "skip", "already"]);
@@ -1145,12 +1254,12 @@ function renderSide() {
   const queued = runs.filter((r) => r.status === "queued").length;
   const workEntries = working.map((r) => ({key: "w" + r.job_id, html: `<div class="task"><h3><span class="spin"></span> ${esc(r.title)} <span class="small">· ${esc(r.company)}</span></h3>
     <ul class="log">${logLines(r, 4)}</ul>${jobButtons(r, [])}</div>`}));
-  if (state.paused) workEntries.push({key: "p", html: `<div class="task small">Paused: ${queued} waiting. Press Resume queue to carry on.</div>`});
+  if (state.paused) workEntries.push({key: "p", html: `<div class="task small">Paused: ${queued} waiting. Press Carry on with the queue.</div>`});
   else if (queued) workEntries.push({key: "q", html: `<div class="task small">${queued} more queued.</div>`});
   if (!workEntries.length) workEntries.push({key: "idle", html: `<div class="empty">Idle.</div>`});
   patch($("work"), workEntries);
 
-  // the ones with a Submit to press first, then the ones that didn't finish (Resume), then the ones sent or skipped
+  // the ones with a Submit to press first, then the ones that didn't finish (Carry on), then the ones sent or skipped
   const DONE_ORDER = {ready: 0, failed: 1, submitted: 2, skipped: 2};
   const done = runs.filter((r) => r.status in DONE_ORDER).sort((a, b) => DONE_ORDER[a.status] - DONE_ORDER[b.status]);
   const ready = done.filter((r) => r.status === "ready").length;
@@ -1186,13 +1295,23 @@ function bankQuestion(q) {
   return {key: `${q.id}:${q.answer || ""}`, html: `<label class="bankq"><span>${esc(q.ask)}</span>${input}</label>`};
 }
 
+// The unanswered ones the card shows until Show all is pressed: the most asked (each entry's `seen`), so the cards under it
+// stay in sight on a first visit
+const BANK_SHOWN = 4;
+let bankAll = false;
+
 function renderBank() {
   const bank = state.bank || [];
   $("bank-card").hidden = !bank.length;
   const open = bank.filter((q) => q.answer == null || q.answer === ""), given = bank.filter((q) => !open.includes(q));
   $("bank-count").textContent = `${given.length} of ${bank.length} answered`;
   $("bank-count").className = "pill " + (open.length ? "warn" : "good");
-  patch($("bank"), open.map(bankQuestion));
+  // (most asked first; the bank's own order among those asked as often)
+  const asked = open.map((q, i) => [q, i]).sort((a, b) => (b[0].seen || 0) - (a[0].seen || 0) || a[1] - b[1]).map((x) => x[0]);
+  const shown = bankAll ? asked : asked.slice(0, BANK_SHOWN);
+  const more = asked.length - shown.length;
+  patch($("bank"), [...shown.map(bankQuestion), ...(more ? [{key: `more:${asked.length}`, html: `<p class="bankq"><button
+    class="link" data-act="bank-all">Show all ${asked.length}</button></p>`}] : [])]);
   $("bank-done").hidden = !given.length;
   patch($("bank-given"), given.map(bankQuestion));
 }
@@ -1223,11 +1342,11 @@ function renderHeader() {
   $("find").innerHTML = sr.status === "running" ? `<span class="spin"></span> Searching…` : "Find jobs";
   $("find").disabled = sr.status === "running";
   $("stop-search").hidden = sr.status !== "running";
-  // Pause queue while jobs are queued or running; Resume queue (with how many wait) while paused
+  // Pause queue while jobs are queued or running; Carry on with the queue (with how many wait) while paused
   const lined = allRuns(), lineWaits = lined.filter((r) => r.status === "queued").length;
   $("pause-btn").hidden = !state.paused && !lineWaits && !lined.some((r) => r.status === "running");
   $("pause-btn").dataset.act = state.paused ? "resume" : "pause";
-  $("pause-btn").textContent = state.paused ? `Resume queue${lineWaits ? ` (${lineWaits} waiting)` : ""}` : "Pause queue";
+  $("pause-btn").textContent = state.paused ? `Carry on with the queue${lineWaits ? ` (${lineWaits} waiting)` : ""}` : "Pause queue";
   const fresh = (state.listings || []).filter((r) => isNew(r) && (r.added || (r.fit && r.fit.recommended))).length;
   $("searched").textContent = sr.status === "running"
     ? (sr.auto ? "Searching by itself (the openings were over 12 hours old), started " : "Searching, started ") + ago(sr.started)
@@ -1276,8 +1395,10 @@ function renderHeader() {
   const pws = Object.entries(state.passwords || {});
   $("pw-count").textContent = `${pws.filter(([, saved]) => saved).length} of ${pws.length} saved`;
   $("pw-count").className = "pill " + (pws.some(([, saved]) => saved) ? "good" : "");
-  $("pw-state").innerHTML = Object.entries(state.passwords || {}).map(([site, saved]) =>
-    `<span class="pill ${saved ? "good" : ""}" data-site="${esc(site)}">${esc(systems[site] || site)}: ${saved ? "saved" : "not saved"}</span>`).join(" ");
+  // a pill for each one saved (the count says how many aren't): no row of grey "not saved" on a first visit
+  $("pw-state").innerHTML = pws.filter(([, saved]) => saved).map(([site]) =>
+    `<span class="pill good" data-site="${esc(site)}">${esc(systems[site] || site)}: saved</span>`).join(" ");
+  $("pw-state").hidden = !pws.some(([, saved]) => saved);
   const notes = [];
   const waiting = allRuns().find((r) => r.blocking);
   // what to do is in its Needs you card; here, only which job the queue is waiting on
@@ -1303,13 +1424,13 @@ function renderHeader() {
        <span>Go through them one by one: each review page comes up in the desk's browser window to check${toSend.some((r) => r.need !== "check_submit") ? " before you send it" : ""}.</span>
        <button class="primary" data-act="review-round">Review them</button>`});
   if (s.troubleshoot) notes.push({cls: "notice info", html: `<strong>Troubleshooting is on: no application is submitted.</strong>
-    <span>Find jobs searches every list's employers, and only the openings where the desk doesn't go all the way yet show. The desk still makes accounts and fills each step, which the sites keep. Turn it off (under Openings) to apply for real.</span>`});
+    <span>Find jobs searches every list's employers, and only the openings where the desk doesn't go all the way yet show. The desk still makes accounts and fills each step, which the sites keep. Turn it off (under Openings, More) to apply for real.</span>`});
   const needing = allRuns().filter((r) => r.status === "needs_you").length;
   document.title = needing ? `(${needing}) Needs you · Job Desk` : "Job Desk";
-  // the jobs back in the queue after a restart of the desk wait for the person's Resume queue; and why the queue isn't
+  // the jobs back in the queue after a restart of the desk wait for the person's Carry on with the queue; and why the queue isn't
   // kept here, if it isn't (another desk keeps it, or the folder allows no lock)
   if (state.restored) notes.push({cls: "waiting", html: `<strong>${esc(state.restored)}</strong>
-    <button class="primary" data-act="resume">Resume queue</button>`});
+    <button class="primary" data-act="resume">Carry on with the queue</button>`});
   if (state.queue_note) notes.push(state.queue_note_problem ? {cls: "notice bad", html: problemSaid(esc(state.queue_note))}
     : {cls: "notice info", html: esc(state.queue_note)});
   if (state.tailoring) notes.push({cls: "waiting", html: `<strong>${state.tailoring} job${state.tailoring === 1 ? "" : "s"} waiting for a tailored resume.</strong>
@@ -1821,6 +1942,8 @@ document.addEventListener("click", (e) => {
   }
   if (a === "notes-copy") copyNotes();
   if (a === "prep") prepMe(Number(job));
+  if (a === "follow-up") followUp(Number(job));
+  if (a === "bank-all") { bankAll = true; renderBank(); }
   if (a === "notes-close") $("notes").close();
   if (a === "notes-clear" && confirm("Clear these notes? Do this once they're filed: they can't be brought back.")) {
     act(async () => { await api("/api/notes/clear", {ids: notesShown}); $("notes").close(); });
@@ -1858,26 +1981,13 @@ document.addEventListener("click", (e) => {
   if (a === "select-none") { selected.clear(); renderRows(); }
   if (a === "apply") {
     const urls = [...selected].filter(selectable);
-    if (!urls.length) return;
+    // (one Apply at a time: a second quick press would ask the pre-flight twice and open its window over itself)
+    if (!urls.length || applying || $("preflight").open) return;
     const auto = state.settings.auto_submit && !state.settings.dry_run && !state.settings.troubleshoot;
     if (auto && !confirm(`Submit ${urls.length} application(s) for you wherever nothing needs you?`)) return;
+    applying = true;
     act(async () => {
-      // what will stop these jobs, said once before they go (the same list isn't asked about twice)
-      const pre = await api("/api/preflight", {urls});
-      const said = (pre.lines || []).join("\n");
-      if (said && said !== preflightSeen) {
-        if (!confirm("Before these go:\n\n" + pre.lines.map((x) => "\u2022 " + x).join("\n\n")
-                     + "\n\nApply anyway? (Cancel to see to these first.)")) return;
-        preflightSeen = said;
-      }
-      const out = await api("/api/apply", {urls, submit: auto});
-      selected.clear();
-      // (two or more queued together go the likeliest to go all the way first: said once, here)
-      if (out.ordered) toast(`Queued ${out.queued.length}, the ones likely to go all the way first.`);
-      if ((out.already_applied || []).length) alert("Already applied or skipped, so not queued: " + out.already_applied.join(", ")
-        + ". Undo on a skipped job puts it back.");
-      if ((out.not_interested || []).length) alert("You said you're not interested, so not queued: "
-        + out.not_interested.join(", ") + ". Undo on it (under Not interested) brings it back.");
+      try { await applyTicked(urls, auto); } finally { applying = false; }
     });
   }
   if (jobAct === "fill") {

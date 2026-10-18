@@ -164,16 +164,18 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
                 meta = await page.locator(".meta").first.inner_text()
                 assert "2026-08-25" in meta and "T13:11" not in meta  # the date, not the time of day
                 await page.click("text=Select recommended")
-                said: list[str] = []  # what will stop them, said first (the common questions unanswered here)
-                page.once("dialog", lambda d: (said.append(d.message), asyncio.ensure_future(d.accept())))
+                # what will stop them, said first (the common questions unanswered here), and Apply anyway pressed
                 await page.click("#apply")
+                await page.wait_for_selector("#preflight[open]")
+                said = await page.inner_text("#preflight")
+                await page.click("#preflight-apply")
                 for _ in range(50):
                     if desk.applier.tasks:
                         break
                     await asyncio.sleep(0.1)
                 queued = [jid for _, jid in desk.applier.tasks]
                 assert [srv.tracker().get(j)["title"] for j in queued] == ["Field Service Engineer"]
-                assert said and said[0].startswith("Before these go:") and "common question" in said[0], said
+                assert said.startswith("Before these go") and "common question" in said, said
 
                 await page.select_option("select[data-q]", "Yes")
                 # a searchable list: typed in, the entry needn't be among those shown
@@ -251,9 +253,9 @@ def test_the_banner_names_the_job_waited_on_and_the_profile_gaps_are_in_words(sr
                 banner = await page.inner_text("#notices .waiting")
                 assert "Field Service Engineer (Example Fab)" in banner and "Sign in on Workday" not in banner, banner
                 assert "Sign in on Workday in the desk's browser window." in await page.inner_text("#needs")
-                # Resume beside Later: the card may ask for Resume after a password reset by hand
+                # Carry on beside Later: the card may ask for Carry on after a password reset by hand
                 buttons = await page.locator("#needs button").all_inner_texts()
-                assert "Resume" in buttons and "Later" in buttons, buttons
+                assert "Carry on" in buttons and "Later" in buttons, buttons
                 notice = await page.inner_text("#notices .notice")
                 assert "still needs: your resume file and whether you need visa sponsorship." in notice, notice
                 assert "documents.resume" not in notice
@@ -454,6 +456,7 @@ def test_the_desk_searches_by_itself_only_with_its_switch_on_and_a_search_can_be
                 assert not await page.is_checked("#auto-search") and await page.is_hidden("#stop-search")
                 # turned on while the queue is paused: still nothing
                 desk.applier.paused = True
+                await page.click("#more summary")  # (under the Openings head's More)
                 await page.check("#auto-search")
                 await asyncio.sleep(3.5)
                 assert desk.auto_search is True and not searched
@@ -864,7 +867,7 @@ def test_the_tailoring_switch_is_kept_and_its_waiting_jobs_listed(srv, job_apply
 
 
 def test_the_queue_is_paused_and_resumed_through_the_api(srv):
-    """Pause queue and Resume queue (issue #112, note 36): behind the page's key like the rest, an unknown action is
+    """Pause queue and Carry on with the queue (issue #112, note 36): behind the page's key like the rest, an unknown action is
     no action, and the state says whether the queue is paused. Not one of the settings: kept with the queue."""
     desk = Desk(srv)
     desk.applier.start = lambda: None
@@ -891,7 +894,7 @@ def test_the_queue_is_paused_and_resumed_through_the_api(srv):
 
 
 def test_the_pause_button_pauses_and_resumes_the_queue(srv):
-    """The header's Pause queue shows while jobs are queued or running, turns into Resume queue (with how many wait)
+    """The header's Pause queue shows while jobs are queued or running, turns into Carry on with the queue (with how many wait)
     once pressed, and the Working on card says the queue is paused (issue #112, note 36)."""
     from job_apply.pipeline import Run
 
@@ -912,7 +915,7 @@ def test_the_pause_button_pauses_and_resumes_the_queue(srv):
                 desk.applier.tasks.append(("apply", job["id"]))
                 await page.wait_for_selector("#pause-btn:visible:text-is('Pause queue')")
                 await page.click("#pause-btn")
-                await page.wait_for_selector("#pause-btn:text-is('Resume queue (1 waiting)')")
+                await page.wait_for_selector("#pause-btn:text-is('Carry on with the queue (1 waiting)')")
                 assert desk.applier.paused
                 assert "Paused: 1 waiting" in await page.locator("#work").inner_text()
                 await page.click("#pause-btn")
@@ -1617,6 +1620,7 @@ def test_troubleshooting_searches_every_list_shows_where_the_desk_stops_and_send
                 await page.check("#handled-only")
                 await page.wait_for_selector("text=HR Generalist", state="detached")
                 listed = list(desk.listings)
+                await page.click("#more summary")  # (under the Openings head's More)
                 await page.check("#troubleshoot")
                 # the other way's openings are cleared; Find jobs searches again, troubleshooting's way
                 await page.click("#find")
@@ -2573,6 +2577,7 @@ def test_the_common_questions_are_asked_once_on_the_page_and_kept(srv, job_apply
             async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.goto(desk.url)
+                await page.click("#bank [data-act=bank-all]")  # (the most asked four show until Show all)
                 await page.wait_for_selector("#bank-card:not([hidden]) select[data-bank=shift]")
                 await page.select_option("select[data-bank=shift]", "Nights")
                 await page.wait_for_function("document.getElementById('bank-count').textContent.startsWith('1 of')")
@@ -3275,7 +3280,7 @@ def test_after_a_restart_the_jobs_never_begun_are_queued_again_paused_and_the_be
                                                                                                   how):
     """The queue is kept in the person's folder as it changes. The desk starting again queues the jobs it never began
     again, in their order, with Submit for me where they had it and it's still on; and the queue comes back paused, said
-    at the top of the page, so none starts without the person's Resume queue. A job begun before the restart isn't
+    at the top of the page, so none starts without the person's Carry on with the queue. A job begun before the restart isn't
     queued again (the review of the restart, HIGH: one stopped on its review page's errors, the person may have fixed
     them and pressed the site's own Submit; a fresh pass with Submit for me would send a second application): it's a
     card, which says to check where it is, and its Resume fills it again up to its review page, never sending it, as
@@ -3336,10 +3341,10 @@ def test_after_a_restart_the_jobs_never_begun_are_queued_again_paused_and_the_be
                 assert (r.status, r.need, r.left_at_restart, r.submit) == ("needs_you", "restarted", True, False)
                 # (its tab is gone with the restart: nothing to look at there, and the case it's for, said)
                 assert r.reason == ("The desk restarted before this application was finished. If you sent it yourself "
-                                    "on the site, press I submitted it myself. Otherwise Resume fills it again up to "
+                                    "on the site, press I submitted it myself. Otherwise Carry on fills it again up to "
                                     "its review page (nothing is sent), or Skip job."), r.reason
             assert after.state()["restored"] == (
-                "2 jobs from before the desk restarted are back in the queue, paused. Press Resume queue to go on. 2 of "
+                "2 jobs from before the desk restarted are back in the queue, paused. Press Carry on with the queue. 2 of "
                 "them go in by Submit for me once they're filled; turn Submit for me off first if you'd rather check each.")
             assert d not in q.runs and e not in q.runs
             async with person_browser() as browser:
@@ -3349,18 +3354,18 @@ def test_after_a_restart_the_jobs_never_begun_are_queued_again_paused_and_the_be
                 await card.wait_for()
                 said = await card.inner_text()  # (its tab is gone with the restart: nothing to look at there)
                 assert ("The desk restarted before this application was finished. If you sent it yourself on the site, "
-                        "press I submitted it myself. Otherwise Resume fills it again up to its review page (nothing "
+                        "press I submitted it myself. Otherwise Carry on fills it again up to its review page (nothing "
                         "is sent), or Skip job.") in said, said
                 buttons = await card.locator("button").all_inner_texts()
-                assert buttons == ["Resume", "Skip job", "I submitted it myself", "Report a problem"], buttons
+                assert buttons == ["Carry on", "Skip job", "I submitted it myself", "Report a problem"], buttons
                 await asyncio.sleep(1)
                 assert passes == [a, b]  # (paused: nothing restored has started)
                 notice = page.locator("#notices", has_text="back in the queue, paused")
-                await notice.locator("button", has_text="Resume queue").click()  # the person's Resume queue
+                await notice.locator("button", has_text="Carry on with the queue").click()  # the person's Carry on with the queue
                 await _until(lambda: q.runs[c].status == q.runs[f].status == "ready", about=lambda: passes)
                 await notice.wait_for(state="detached")
                 assert passes[2:] == [c, f] and q.runs[a].status == q.runs[b].status == "needs_you"
-                await card.locator("button", has_text="Resume").click()  # filled again, never sent
+                await card.locator("button", has_text="Carry on").click()  # filled again, never sent
                 await _until(lambda: q.runs[a].status == "ready")
             assert passes[2:] == [c, f, a] and not q.runs[a].submit
         finally:
@@ -3409,8 +3414,8 @@ def test_a_job_whose_submit_may_have_gone_in_isnt_queued_again_after_a_restart(s
                 await card.wait_for()
                 assert "may have gone in" in await card.inner_text()
                 buttons = await card.locator("button").all_inner_texts()
-                assert buttons == ["I submitted it myself", "Resume", "Skip job", "Report a problem"], buttons
-                await card.locator("button", has_text="Resume").click()  # filled again, never sent
+                assert buttons == ["I submitted it myself", "Carry on", "Skip job", "Report a problem"], buttons
+                await card.locator("button", has_text="Carry on").click()  # filled again, never sent
                 await _until(lambda: q.runs[recorded].status == "ready")
             assert not q.runs[recorded].submit and q.runs[recorded].pressed_before
             assert passes == [fine, recorded]
@@ -3423,7 +3428,7 @@ def test_a_job_whose_submit_may_have_gone_in_isnt_queued_again_after_a_restart(s
 def test_submit_for_me_goes_on_after_a_restart_only_while_it_is_still_on(srv):
     """Submit for me applies to a job never begun, queued again after a restart, only while it's still on (desk.json),
     as it does to any job queued now; a job queued before it was turned on stays without it. The notice that they're
-    back says how many Submit for me sends once they're filled (the re-check: Resume queue sends those too)."""
+    back says how many Submit for me sends once they're filled (the re-check: Carry on with the queue sends those too)."""
     with_it, without = _jobs(srv, 2)
     before = Desk(srv)
     before.applier.restore()
@@ -3438,7 +3443,7 @@ def test_submit_for_me_goes_on_after_a_restart_only_while_it_is_still_on(srv):
         assert again.applier.auto_submit and again.applier.paused  # (back paused: nothing is filled here)
         assert again.applier.runs[with_it].submit and not again.applier.runs[without].submit
         assert again.state()["restored"] == (
-            "2 jobs from before the desk restarted are back in the queue, paused. Press Resume queue to go on. 1 of "
+            "2 jobs from before the desk restarted are back in the queue, paused. Press Carry on with the queue. 1 of "
             "them goes in by Submit for me once it's filled; turn Submit for me off first if you'd rather check each.")
         again.applier.auto_submit = False  # turned off, then another restart
         again._save_settings()
@@ -3575,7 +3580,7 @@ def test_a_queue_kept_long_ago_comes_back_paused_and_says_how_old_it_is(srv, mon
             try:
                 assert later.applier.paused and [j for _, j in later.applier.tasks] == [job]
                 assert later.state()["restored"] == ("1 job from before the desk restarted (kept 30 days ago) is back "
-                                                     "in the queue, paused. Press Resume queue to go on.")
+                                                     "in the queue, paused. Press Carry on with the queue.")
                 await asyncio.sleep(1)
                 assert passes == []
             finally:
@@ -3762,7 +3767,7 @@ def test_a_desk_takes_the_queue_up_once_the_other_has_ended_and_holds_only_what_
                                                                                        job_apply_home):
     """The re-check of the restart: a desk that found another keeping the queue only tried again as it was opened, and
     then paused its whole queue for what it picked up. It looks again about every minute while the other runs; once
-    that one has ended, the note goes, and the jobs it had kept are back, held for the person's Resume queue (said so),
+    that one has ended, the note goes, and the jobs it had kept are back, held for the person's Carry on with the queue (said so),
     while this desk's own queue goes on."""
     import subprocess
     import sys
@@ -3796,7 +3801,7 @@ def test_a_desk_takes_the_queue_up_once_the_other_has_ended_and_holds_only_what_
             assert not q.queue_elsewhere and desk.state()["queue_note"] is None and not q.paused
             assert [j for _, j in q.tasks] == [theirs]
             assert desk.state()["restored"] == ("1 job the Job Desk before this one kept (it has ended) is back in the "
-                                                "queue, held. Press Resume queue to go on.")
+                                                "queue, held. Press Carry on with the queue.")
             desk.apply(urls=[], job_ids=[later], submit=False)
             await _until(lambda: q.runs[later].status == "ready")
             await asyncio.sleep(1)
@@ -4087,8 +4092,9 @@ def test_my_applications_on_the_page_are_grouped_marked_for_follow_up_and_copy_a
     """My applications on the desk's page: a bar groups the applications (Waiting, with how many are due a follow-up;
     Heard back; Interviews; Closed), with counts, and the group picked is kept in the browser. Each row says when the
     employer last wrote ("Heard <day>: <category>", the summary as its tooltip) or "No reply yet", and one due a
-    follow-up says "Follow up?" with its day. An interview's row, and one whose newest email is an assessment, has
-    Prep me: the page can't reach Claude, so it copies a request to paste to Claude and says so. Nothing is sent."""
+    follow-up says the day it became due, with Follow up. An interview's row, and one whose newest email is an
+    assessment, has Prep me: the page can't reach Claude, so each copies a request to paste to Claude and says so.
+    Nothing is sent."""
     ids = _after_submit_jobs(srv, monkeypatch)
     desk = Desk(srv)
     desk.applier.start = lambda: None
@@ -4131,6 +4137,11 @@ def test_my_applications_on_the_page_are_grouped_marked_for_follow_up_and_copy_a
                 seen["waiting"] = await page.inner_text("#rows")
                 seen["quiet"] = " ".join((await page.inner_text("#rows li:has-text('Quiet Fab')")).split())
                 seen["waiting_preps"] = await page.locator("#rows [data-act=prep]").count()
+                seen["follow_ups"] = await page.locator("#rows [data-act=follow-up]").count()
+                await page.locator("#rows li", has_text="Quiet Fab").locator("[data-act=follow-up]").click()
+                await page.wait_for_function("async () => (await navigator.clipboard.readText()).includes('follow-up')")
+                seen["copied_follow_up"] = await page.evaluate("navigator.clipboard.readText()")
+                seen["toast_follow_up"] = await page.inner_text("#toast")
                 await page.reload()
                 await page.wait_for_function("document.getElementById('mine-count').textContent === '(10)'")
                 await page.click("[data-filter=mine]")
@@ -4165,8 +4176,13 @@ def test_my_applications_on_the_page_are_grouped_marked_for_follow_up_and_copy_a
     assert seen["heard_preps"] == [1, 0], seen
     waiting = seen["waiting"]
     assert all(c in waiting for c in ("Quiet Fab", "Fresh Fab", "Ready Fab")) and "Ack Fab" not in waiting, waiting
-    assert "Follow up? Due 2026-10-11" in seen["quiet"] and "No reply yet" in seen["quiet"], seen["quiet"]
-    assert waiting.count("Follow up?") == 1 and seen["waiting_preps"] == 0, waiting
+    assert "Follow-up due 2026-10-11" in seen["quiet"] and "No reply yet" in seen["quiet"], seen["quiet"]
+    assert waiting.count("Follow-up due") == 1 and seen["waiting_preps"] == 0, waiting
+    # (the review of Oct 18, U8: Follow up is a button, as Prep me is, copying a request for track-responses)
+    assert seen["follow_ups"] == 1, seen
+    assert seen["copied_follow_up"] == (f"Draft a follow-up email for job {ids['Quiet Fab']}, Technician at Quiet Fab "
+                                        "(use track-responses)"), seen["copied_follow_up"]
+    assert seen["toast_follow_up"] == "Copied: paste it to Claude", seen["toast_follow_up"]
     assert seen["kept"] == "true" and "Quiet Fab" in seen["kept_rows"] and "Talk Fab" not in seen["kept_rows"], seen
     assert seen["sizes"][0] <= seen["sizes"][1], seen["sizes"]
     assert seen["sent"] == [], seen["sent"]  # (nothing went anywhere but the desk)
@@ -5269,3 +5285,348 @@ def test_a_queue_this_folder_cant_keep_is_a_problem_and_one_kept_elsewhere_is_in
                 "a lock)."] in said, said
     else:
         assert ["notice info", pipeline.QUEUE_ELSEWHERE] in said, said
+
+
+def test_the_job_button_is_carry_on_and_the_queues_is_carry_on_with_the_queue(srv, job_apply_home):
+    """The review of Oct 18 (U3): the job's "Resume" sat beside "Use my usual resume" and "Tailor my resume for each
+    job". It's "Carry on" (still the API's `resume`), and the paused queue's is "Carry on with the queue": on the desk,
+    "Resume" is only ever the document."""
+    desk, jobs = _stopped_desk(srv, {"Example Fab": dict(status="needs_you", need="stuck"),
+                                     "Example Tailor": dict(status="needs_you", need="tailor")})
+    desk.applier.paused = True
+    queued = srv.add_job(url="https://example.com/queued", title="Technician", company="Example Queued")["job"]
+    desk.applier.enqueue(queued["id"])
+    pressed: list[int] = []
+    desk.applier.resume = pressed.append  # (what the press asks of the queue, and nothing driven)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                card = page.locator("#needs .task", has_text="Example Fab")
+                await card.wait_for()
+                buttons = await card.locator("button").all_inner_texts()
+                acts = await card.locator("button").evaluate_all("bs => bs.map((b) => b.dataset.jobAct)")
+                tailor = await page.locator("#needs .task", has_text="Example Tailor").locator("button").all_inner_texts()
+                await page.wait_for_selector("#pause-btn:not([hidden])")
+                queue = (await page.inner_text("#pause-btn"), await page.get_attribute("#pause-btn", "data-act"))
+                await card.locator("button", has_text="Carry on").click()
+                await _until(lambda: pressed == [jobs["Example Fab"]], about=lambda: pressed)
+                await browser.close()
+                return buttons, acts, tailor, queue
+        finally:
+            await desk.stop()
+
+    buttons, acts, tailor, queue = run(go())
+    assert "Carry on" in buttons and "Resume" not in buttons, buttons
+    assert acts[buttons.index("Carry on")] == "resume", acts  # (the API's name stays)
+    assert "Use my usual resume" in tailor and "Resume" not in tailor, tailor
+    assert queue == ("Carry on with the queue (1 waiting)", "resume"), queue
+
+
+def test_each_switch_that_is_on_is_said_under_the_openings_head(srv, job_apply_home, monkeypatch):
+    """The review of Oct 18 (U4): the Openings head's switches said what they do only in tooltips (none on a phone),
+    and Troubleshooting, a developer's mode, sat beside the main filter. Each switch that's on is said in a muted line
+    under the head, and gone once it's off; Troubleshooting and Search by itself are under the head's More."""
+    monkeypatch.setattr(config, "handled_employers", lambda: {"example fab", "example litho", "example quiet"})
+    searched: list[str] = []
+
+    async def no_search(query, companies=None, location=None, limit_per_company=10):
+        searched.append(query)  # (never the real sites)
+        return {"results": [], "errors": {}, "browser_only": []}
+
+    monkeypatch.setattr(srv, "search_company_jobs", no_search)
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())  # (fresh: Search by itself has nothing to search)
+    desk.listings = [{"company": name, "title": "Technician", "url": f"https://example.com/{i}", "location": "Phoenix, AZ",
+                      "fit": _fit(70)} for i, name in enumerate(["Example Fab", "Example Fab", "Example Litho",
+                                                                  "Example Bank"])]
+    # (one the desk goes all the way at, but not recommended: not shown, so not counted among the employers shown)
+    desk.listings.append({"company": "Example Quiet", "title": "Technician", "url": "https://example.com/quiet",
+                          "location": "Phoenix, AZ", "fit": _fit(40)})
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        seen: dict = {}
+
+        async def hint() -> str:
+            await page.wait_for_timeout(100)
+            return "" if await page.is_hidden("#switch-hint") else " ".join((await page.inner_text("#switch-hint")).split())
+
+        async def said(start: str) -> str:
+            await page.wait_for_function("(s) => { const h = document.getElementById('switch-hint'); "
+                                         "return !h.hidden && h.innerText.includes(s); }", arg=start)
+            return await hint()
+
+        async def gone() -> str:
+            await page.wait_for_selector("#switch-hint", state="hidden")
+            return await hint()
+
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("text=Example Bank")
+                seen["first"] = await hint()
+                seen["more_hidden"] = await page.is_hidden("#troubleshoot") and await page.is_hidden("#auto-search")
+                await page.check("#handled-only")
+                seen["handled"] = await said("Only where")
+                await page.uncheck("#handled-only")
+                seen["handled_off"] = await gone()
+                await page.click("#more summary")
+                await page.check("#auto-search")
+                seen["auto"] = await said("Search by itself:")
+                await page.click("[data-filter=mine]")  # (said with the openings only)
+                seen["mine"] = await gone()
+                await page.click("[data-filter=recommended]")
+                await said("Search by itself:")
+                await page.uncheck("#auto-search")
+                seen["auto_off"] = await gone()
+                # (last: turned on or off, Troubleshooting clears the openings for Find jobs to search again)
+                await page.check("#troubleshoot")
+                seen["troubleshoot"] = await said("Troubleshooting:")
+                await page.uncheck("#troubleshoot")
+                seen["troubleshoot_off"] = await gone()
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    assert seen["first"] == "" and seen["more_hidden"], seen
+    assert seen["handled"] == ("Only where the desk goes all the way: showing the 2 employers where the plugin's live "
+                               "check reached the review page; bot checks and steps the desk can't do yet are "
+                               "elsewhere."), seen["handled"]
+    assert seen["troubleshoot"] == ("Troubleshooting: nothing is submitted; Find jobs searches every list; only the "
+                                    "employers where the desk doesn't go all the way yet are shown."), seen
+    assert seen["auto"] == ("Search by itself: the desk searches again when the openings are over 12 hours old (not "
+                            "while the queue is paused)."), seen["auto"]
+    assert seen["handled_off"] == seen["troubleshoot_off"] == seen["auto_off"] == seen["mine"] == "", seen
+    assert searched == [], searched
+
+
+def test_the_common_questions_show_the_most_asked_four_and_site_passwords_only_the_saved(srv, job_apply_home):
+    """The review of Oct 18 (U10): twelve open Common questions pushed Site passwords below the fold, and that card
+    showed eight grey "not saved" pills under "0 of 8 saved". The card shows the four questions most applications
+    asked (question_bank.yaml's `seen`) with "Show all N"; Site passwords a pill only for each one saved."""
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    bank = desk.state()["bank"]
+    assert len(bank) > 4 and all(isinstance(q.get("seen"), int) for q in bank), bank
+    most = [q["id"] for q in sorted(bank, key=lambda q: -q["seen"])][:4]  # (stable: the bank's order among equals)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        seen: dict = {}
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("#bank-card:not([hidden]) [data-bank]")
+                seen["shown"] = await page.eval_on_selector_all("#bank [data-bank]", "bs => bs.map((b) => b.dataset.bank)")
+                seen["link"] = await page.inner_text("#bank [data-act=bank-all]")
+                seen["pills"] = await page.inner_text("#pw-state")
+                seen["pills_hidden"] = await page.is_hidden("#pw-state")
+                seen["count"] = await page.inner_text("#pw-count")
+                await page.click("#bank [data-act=bank-all]")
+                await page.wait_for_selector("#bank [data-act=bank-all]", state="detached")
+                seen["all"] = await page.eval_on_selector_all("#bank [data-bank]", "bs => bs.map((b) => b.dataset.bank)")
+                config.secrets_path().write_text("workday_password: a\n", encoding="utf-8")
+                await page.wait_for_selector("#pw-state [data-site=workday]")
+                seen["saved"] = await page.eval_on_selector_all("#pw-state .pill", "ps => ps.map((p) => p.innerText)")
+                seen["count_saved"] = await page.inner_text("#pw-count")
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    assert seen["shown"] == most, seen
+    assert seen["link"] == f"Show all {len(bank)}", seen
+    assert sorted(seen["all"]) == sorted(q["id"] for q in bank) and seen["all"][:4] == most, seen
+    assert seen["pills"] == "" and seen["pills_hidden"], seen
+    systems = len(desk.state()["passwords"])
+    assert seen["count"] == f"0 of {systems} saved" and seen["count_saved"] == f"1 of {systems} saved", seen
+    assert seen["saved"] == ["Workday: saved"], seen
+
+
+def test_the_preflight_dialog_defaults_to_seeing_to_things_first(srv, job_apply_home):
+    """The review of Oct 18 (U11): what will stop the ticked jobs was a native confirm whose OK applied, and it couldn't
+    point to Site passwords. It's a window whose default (focused) button is See to these first: Enter or Escape never
+    applies, and See to these first takes the person to the card for the first thing said (Site passwords, with that
+    job system picked). Apply anyway applies. Nothing else asks first (Submit for me is off)."""
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    url = "https://acme.wd1.myworkdayjobs.com/External/job/Phoenix-AZ/Technician_R1"
+    desk.listings = [{"company": "Example Fab", "title": "Technician", "url": url, "ats": "workday",
+                      "location": "Phoenix, AZ", "fit": _fit(80)}]
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        seen: dict = {"native": []}
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1200, "height": 700})
+                page.on("dialog", lambda d: (seen["native"].append(d.message), asyncio.ensure_future(d.dismiss())))
+                await page.goto(desk.url)
+                await page.wait_for_selector("text=Technician")
+                await page.click("text=Select recommended")
+                await page.click("#apply")
+                await page.wait_for_selector("#preflight[open]")
+                seen["said"] = await page.eval_on_selector_all("#preflight-lines li", "ls => ls.map((l) => l.innerText)")
+                seen["focused"] = await page.evaluate("document.activeElement.id")
+                await page.keyboard.press("Enter")
+                await page.wait_for_selector("#preflight", state="hidden")
+                await page.wait_for_timeout(500)
+                seen["after_enter"] = list(desk.applier.tasks)
+                seen["picked"] = await page.input_value("#pw-site")
+                seen["pw_focused"] = await page.evaluate("document.activeElement.id")
+                seen["pw_in_view"] = await page.evaluate("(() => { const r = document.getElementById('pw-h')"
+                                                         ".getBoundingClientRect(); return r.top >= 0 && r.top < innerHeight; })()")
+                await page.click("#apply")
+                await page.wait_for_selector("#preflight[open]")
+                await page.keyboard.press("Escape")
+                await page.wait_for_selector("#preflight", state="hidden")
+                await page.wait_for_timeout(500)
+                seen["after_escape"] = list(desk.applier.tasks)
+                await page.click("#apply")
+                await page.wait_for_selector("#preflight[open]")
+                await page.click("#preflight-apply")
+                await _until(lambda: desk.applier.tasks)
+                seen["applied"] = [srv.tracker().get(j)["url"] for _, j in desk.applier.tasks]
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    assert seen["said"][0].startswith("Workday: no password saved, so 1 of these jobs stops at the sign-in"), seen
+    assert seen["focused"] == "preflight-first", seen
+    assert seen["after_enter"] == [] and seen["after_escape"] == [], seen
+    assert seen["picked"] == "workday" and seen["pw_focused"] == "pw" and seen["pw_in_view"], seen
+    assert seen["applied"] == [url], seen
+    assert seen["native"] == [], seen  # (no browser confirm: the page's own window)
+
+
+def _preflight_desk(srv, url: str, ats: str) -> Desk:
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    desk.listings = [{"company": "Example Fab", "title": "Technician", "url": url, "ats": ats,
+                      "location": "Phoenix, AZ", "fit": _fit(80)}]
+    return desk
+
+
+def test_see_to_these_first_for_the_common_questions_shows_them_all(srv, job_apply_home):
+    """The review of U11: See to these first, when the common questions came first, went to their card, which showed
+    only the most asked four while every one unanswered stops a job. It shows them all."""
+    desk = _preflight_desk(srv, "https://boards.greenhouse.io/example/jobs/1", "greenhouse")  # (no account, no code)
+    unanswered = [q["id"] for q in desk.state()["bank"] if q.get("answer") in (None, "")]
+    assert len(unanswered) > 4, unanswered
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        seen: dict = {}
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1200, "height": 700})
+                await page.goto(desk.url)
+                await page.wait_for_selector("#bank-card:not([hidden]) [data-act=bank-all]")
+                seen["before"] = await page.locator("#bank [data-bank]").count()
+                await page.click("text=Select recommended")
+                await page.click("#apply")
+                await page.wait_for_selector("#preflight[open]")
+                seen["said"] = await page.eval_on_selector_all("#preflight-lines li", "ls => ls.map((l) => l.innerText)")
+                await page.keyboard.press("Enter")  # (See to these first)
+                await page.wait_for_selector("#preflight", state="hidden")
+                await page.wait_for_selector("#bank [data-act=bank-all]", state="detached")
+                seen["after"] = await page.eval_on_selector_all("#bank [data-bank]", "bs => bs.map((b) => b.dataset.bank)")
+                seen["in_view"] = await page.evaluate("(() => { const r = document.getElementById('bank-h')"
+                                                      ".getBoundingClientRect(); return r.top >= 0 && r.top < innerHeight; })()")
+                seen["tasks"] = list(desk.applier.tasks)
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    assert len(seen["said"]) == 1 and "common question" in seen["said"][0], seen
+    assert seen["before"] == 4 and sorted(seen["after"]) == sorted(unanswered) and seen["in_view"], seen
+    assert seen["tasks"] == [], seen
+
+
+def test_two_quick_presses_of_apply_ask_the_preflight_once(srv, job_apply_home):
+    """The review of U11: a double click on Apply to selected asked the pre-flight twice and opened its window over
+    itself. An Apply under way (its pre-flight asked, or its window open) makes another press do nothing."""
+    url = "https://acme.wd1.myworkdayjobs.com/External/job/Phoenix-AZ/Technician_R1"
+    desk = _preflight_desk(srv, url, "workday")
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        calls: list[str] = []
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                page.on("request", lambda r: calls.append(r.url.split("?")[0].rsplit("/api/", 1)[-1])
+                        if "/api/preflight" in r.url or "/api/apply" in r.url else None)
+                await page.goto(desk.url)
+                await page.wait_for_selector("text=Technician")
+                await page.click("text=Select recommended")
+                await page.dblclick("#apply")
+                await page.wait_for_selector("#preflight[open]")
+                await page.wait_for_timeout(800)
+                await page.click("#preflight-apply")
+                await _until(lambda: desk.applier.tasks)
+                await page.wait_for_timeout(500)
+                await browser.close()
+                return calls, list(desk.applier.tasks)
+        finally:
+            await desk.stop()
+
+    calls, tasks = run(go())
+    assert calls == ["preflight", "apply"], calls
+    assert len(tasks) == 1, tasks
+
+
+def test_more_stays_open_while_troubleshooting_is_on(srv, job_apply_home, monkeypatch):
+    """The review of U4: Troubleshooting under a closed More could be on with the box that turns it off out of sight.
+    While it's on, More is open (closed again, it opens on the page's next refresh); with it off, More starts closed."""
+    async def no_search(query, companies=None, location=None, limit_per_company=10):
+        return {"results": [], "errors": {}, "browser_only": []}  # (never the real sites)
+
+    monkeypatch.setattr(srv, "search_company_jobs", no_search)
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    desk.troubleshoot = desk.applier.hold_submits = True  # (as its box sets them: settings_view)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        seen: dict = {}
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("#troubleshoot:visible")
+                seen["open"] = await page.eval_on_selector("#more", "d => d.open")
+                await page.click("#more summary")  # (closed by the person)
+                await page.wait_for_selector("#troubleshoot:visible")  # (open again with the next refresh)
+                seen["checked"] = await page.is_checked("#troubleshoot")
+                await page.uncheck("#troubleshoot")
+                await page.wait_for_function("() => !document.getElementById('troubleshoot').checked")
+                await _until(lambda: not desk.troubleshoot)
+                await page.reload()
+                await page.wait_for_selector("#plugin-version:not(:empty)")
+                seen["off_open"] = await page.eval_on_selector("#more", "d => d.open")
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    assert seen == {"open": True, "checked": True, "off_open": False}, seen

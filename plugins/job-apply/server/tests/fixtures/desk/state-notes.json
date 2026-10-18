@@ -259,13 +259,15 @@
    "id": "desired_pay",
    "ask": "What pay are you looking for? Write it as the site would ask, e.g. \"$28 per hour\" or \"$60,000 per year\".",
    "kind": "text",
-   "answer": null
+   "answer": null,
+   "seen": 8
   },
   {
    "id": "start_date",
    "ask": "When could you start after an offer? (e.g. \"Two weeks after an offer\")",
    "kind": "text",
-   "answer": null
+   "answer": null,
+   "seen": 2
   },
   {
    "id": "background_check",
@@ -275,7 +277,8 @@
     "Yes",
     "No"
    ],
-   "answer": null
+   "answer": null,
+   "seen": 3
   },
   {
    "id": "essential_functions",
@@ -285,7 +288,8 @@
     "Yes",
     "No"
    ],
-   "answer": null
+   "answer": null,
+   "seen": 2
   },
   {
    "id": "terminated",
@@ -295,7 +299,8 @@
     "No",
     "Yes"
    ],
-   "answer": null
+   "answer": null,
+   "seen": 11
   },
   {
    "id": "shift",
@@ -307,7 +312,8 @@
     "Nights",
     "Any shift"
    ],
-   "answer": null
+   "answer": null,
+   "seen": 14
   },
   {
    "id": "schedule_type",
@@ -318,7 +324,8 @@
     "Part Time",
     "Either"
    ],
-   "answer": null
+   "answer": null,
+   "seen": 5
   },
   {
    "id": "language",
@@ -328,7 +335,8 @@
     "English",
     "Spanish"
    ],
-   "answer": null
+   "answer": null,
+   "seen": 1
   },
   {
    "id": "community_college",
@@ -338,7 +346,8 @@
     "Yes",
     "No"
    ],
-   "answer": null
+   "answer": null,
+   "seen": 1
   },
   {
    "id": "military_spouse",
@@ -349,7 +358,8 @@
     "Yes",
     "I do not wish to provide"
    ],
-   "answer": null
+   "answer": null,
+   "seen": 2
   },
   {
    "id": "proof_of_age",
@@ -359,7 +369,8 @@
     "Yes",
     "No"
    ],
-   "answer": null
+   "answer": null,
+   "seen": 1
   },
   {
    "id": "non_compete",
@@ -369,7 +380,8 @@
     "No",
     "Yes"
    ],
-   "answer": null
+   "answer": null,
+   "seen": 9
   }
  ],
  "area": {

@@ -529,10 +529,12 @@ class Desk:
                 a.submit_now(job_id)
             elif action == "show":
                 if not await a.focus(job_id):
-                    return JSONResponse({"error": "Its tab is closed. Press Resume to open it again."}, status_code=409)
+                    return JSONResponse({"error": "Its tab is closed. Press Carry on to open it again."},
+                                        status_code=409)
             elif action == "round":  # the desk's Bot checks round: this check's tab up, nothing started over it
                 if not await a.focus(job_id):
-                    return JSONResponse({"error": "Its tab is closed. Press Resume to open it again."}, status_code=409)
+                    return JSONResponse({"error": "Its tab is closed. Press Carry on to open it again."},
+                                        status_code=409)
                 a.start_round(job_id)
             elif action == "round_end":
                 a.end_round()
@@ -1347,7 +1349,7 @@ class Desk:
             said = ("Practice mode sends nothing either way." if dry else
                     "Nothing is sent while your profile can't be read." if unread else "The desk applies for real.")
         line("troubleshoot", "Troubleshooting", "on" if a.hold_submits else "off", said,
-             "The Troubleshooting box under Openings")
+             "The Troubleshooting box under Openings, More")
         line("bot_checks", "Bot checks and CAPTCHAs", "always yours",
              "The desk never gets around a bot check and never solves a CAPTCHA: it pauses the job and brings its tab "
              "up for you.", "Not a setting: always so")

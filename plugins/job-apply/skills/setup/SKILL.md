@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Set up the job-apply plugin, which means building the applicant profile from the user's resume, answering the work-authorization, preference and EEO questions, and opening the browser so the user can sign in to LinkedIn and Indeed. Use on first use, when setup_status reports a missing profile field, when something about the plugin seems broken (its doctor tool checks the computer's setup), or when the user wants to change their saved answers or submit settings.
+description: Set up the job-apply plugin in two stages. First what the first application needs (the applicant profile from the user's resume, contact details, work authorization and sponsorship, the consents for cookie banners, accounts and notices, and what and where to search), then the Job Desk; after that, offered once, the preference, background, screening and EEO questions that mean fewer stops. Use on first use, when setup_status reports a missing profile field, when something about the plugin seems broken (its doctor tool checks the computer's setup), or when the user wants to change their saved answers or submit settings.
 ---
 
 # Set up job-apply
@@ -36,11 +36,23 @@ at all (its server didn't start), have them run the installer again, or
 
 ## Steps
 
-Ask everything the Job Desk would otherwise stop an application for here, in one sitting:
-the person answers once, and the desk fills it in on every application after that. When the
-user asks for that later ("ask me everything the desk needs", "the desk's background
-questions"), or the desk's "Fewer stops" notice lists something, run `setup_status` and go
-through its `missing` and `profile_gaps` together.
+Setup comes in two stages, so that a new user reaches their first filled application
+soon, with the least answered that it needs:
+
+- **Stage 1, before the first application** (steps 1 to 7): the resume, contact details,
+  work authorization and sponsorship, the three consents (cookie banners, accounts,
+  notices), and what and where to search. Then the Job Desk opens.
+- **Stage 2, the rest** (step 8): what gives fewer stops later: voluntary
+  self-identification (EEO), the background questions, screening answers, the common
+  questions, and the other preferences. Offer it once, after the desk is open, saying what
+  it's for ("Each answer here is a stop the desk won't make: about 10 minutes. Now, or
+  later?"), and never push. Run it whenever the user asks for it later ("ask me everything
+  the desk needs", "the desk's background questions"), or when the desk's "Fewer stops"
+  notice lists something: run `setup_status` and go through its `missing` and
+  `profile_gaps` together. Whatever stays unanswered, the desk asks on a job's card when an
+  application needs it, and the person answers once there.
+
+### Stage 1: before the first application
 
 1. Run `setup_status`. On first run it creates `~/.job-apply/profile.yaml` from the
    template, and it lists the missing fields.
@@ -75,15 +87,91 @@ through its `missing` and `profile_gaps` together.
    one costs more than a missing one. If the source resume lists it wrongly, tell
    the user where to fix it (for Indeed, profile.indeed.com).
 
-3. **Fill in what the resume can't answer.** Ask with AskUserQuestion where the
-   choices are fixed, and keep it to one or two rounds:
-   - Work authorization: authorized to work in the US, sponsorship needed now or
-     later, US citizen, US person for export control (ITAR/EAR, common for
-     semiconductor equipment jobs), security clearance.
-   - Preferences: willing to relocate, willing to travel (Field Service roles often
-     travel 25–75%), a valid driver's license (`personal.drivers_license`), shifts,
-     nights, weekends and on-call, desired salary (or leave it empty to be asked each
-     time), earliest start date, target titles and locations.
+3. **Contact details and work authorization.** Take the name, email, phone and address
+   (city, state, country) from the resume, and ask for any `setup_status` still lists as
+   missing. Then ask, with AskUserQuestion: authorized to work in the US, sponsorship needed
+   now or later, US citizen, US person for export control (ITAR/EAR, common for
+   semiconductor equipment jobs), security clearance.
+
+4. **The three consents, in one AskUserQuestion.** First tell the user what each one means,
+   then ask all three in a single AskUserQuestion (one question each, its default shown as
+   the first choice and marked "(default)"), and write each as they say:
+   - Cookie banners (default: off): the desk declines them, and one with no way to decline
+     (TI's "Agree and Proceed") waits for them. Ask whether the desk may accept those for
+     them (`settings.accept_cookies: true`); leave it off unless they say yes.
+   - Accounts on job sites (default: on): tell them the desk creates their accounts itself
+     (agreeing to each site's terms in their name, and to being considered for other open
+     positions where a site won't make the account without that, never job alerts or a
+     newsletter; a form's security questions come up on the desk's card for them, never
+     remembered; a picture code stays theirs) and, when a site refuses their saved password,
+     asks that site for a password reset and sets the saved password as the new one (reading
+     the reset email needs the email app password on the desk; without it, they finish the
+     reset from the email). Ask whether that's all right, and write
+     `settings.manage_accounts: true` or `false` as they say (`false`: the desk fills in
+     Create Account for them to finish).
+   - Notices and attestations (default: on): tell them the desk agrees, in their name, to an
+     employer's notice about AI screening of their application (Eightfold's employers show
+     one as the resume goes up) and to its privacy notice and terms of use (Kforce's privacy
+     agreement, Schwab's "I Acknowledge the Privacy Notice", a terms box), and picks an
+     application's attestation that its information is true and complete (or their consent
+     to the background check that comes with applying), noting each in the job's log. Never
+     a newsletter, job alerts or a talent community, texts or automated calls, a legal
+     waiver, or the terms of their employment (an at-will acknowledgement is asked of them).
+     It's true because every answer comes from their profile or from them. Any other dialog
+     over a form waits for them, and practice mode never agrees. Ask whether that's all
+     right, and write `settings.accept_notices: true` or `false` as they say (`false`: the
+     desk stops at the notice, and asks the attestation as a question).
+
+5. **The kind of work and where.** Ask the job titles they want ("Help Desk Technician",
+   "HR Generalist"; the first four are searched, all count toward each opening's fit),
+   where they want to work (a city and state each: "Phoenix, AZ", "Las Vegas, NV") and
+   which of the plugin's employer lists fit, then save them with
+   `search_area(titles=[...], places=[...], lists=[...])`: its `choices` name the lists and
+   what each covers (`semiconductor-az`, Arizona's semiconductor employers, the default,
+   who hire HR, finance and IT people too; `phoenix-metro`, large Phoenix-area employers
+   in many fields; `las-vegas`, Las Vegas-area employers that hire IT people). It keeps the places in
+   `preferences.locations`, the titles in `preferences.titles` (ranking follows them) and the
+   lists in `~/.job-apply/companies.yaml`, whose `companies:` takes employers of their own
+   (the shape of the plugin's `templates/companies.example.yaml`). They can change all three
+   later with the desk's What and where button.
+
+6. Write `~/.job-apply/profile.yaml` and keep its comments. Run `setup_status` again
+   until `profile_complete` is true. Then show the user a short summary of their answers to
+   confirm.
+
+7. **Open the Job Desk** (`open_job_desk`) and tell the user, briefly:
+   - It stops at each application's review page for their own Submit ("Submit for me" on
+     the desk changes that); LinkedIn and Indeed applications are always theirs to submit.
+   - **Passwords (optional).** Company sites on Workday and SuccessFactors need an account
+     per company, as do SCREEN's, Nikon Precision's, Benchmark's and Daifuku's. The desk's
+     **Site passwords** card stores one password per job system, on their computer; with
+     one saved, the desk makes their accounts and signs them in. Otherwise the user creates
+     `~/.job-apply/secrets.yaml` themselves, for example `workday_password: "..."`, and runs
+     `chmod 600` on it. Never ask them to paste a password into the chat.
+   - The desk's browser window opens with its own profile when the desk applies. Without
+     Chrome it uses Microsoft Edge (on every Windows computer). If no browser starts, have
+     them install Google Chrome, or run the `playwright install chromium` command shown in
+     `setup_status`'s `browser_note` and set `settings.browser_channel: chromium` in the
+     profile.
+   - **LinkedIn and Indeed**, only when the user says they'll paste LinkedIn or Indeed job
+     links: run `open_application(url="https://www.linkedin.com/login")` and ask them to sign
+     in to LinkedIn, and to Indeed (`https://secure.indeed.com/auth`), in that window. The
+     sign-ins are kept for future sessions. Otherwise skip it: the desk's employer searches
+     need neither.
+
+   Then offer stage 2, once.
+
+### Stage 2: fewer stops (offered once, and whenever asked)
+
+8. Run `setup_status` and go through its `profile_gaps`, then ask the rest. Ask with
+   AskUserQuestion where the choices are fixed, a few at a time:
+   - `work_history dates: <jobs>`: those jobs lack a start or end month (Workday asks both
+     for every job): take them from the resume as `start: 2021-03` and `end: 2023-06` (or
+     `end: present`), and ask the user for any the resume gives only as years or not at
+     all. They needn't remember an old job's months; leave those as they are rather than
+     guess. `education_history degree: <schools>`: those schools have no degree written;
+     confirm with the user what they finished there (`Some college (no degree)` for classes
+     without one).
    - Voluntary self-identification (gender, Hispanic/Latino, race, veteran,
      disability): explain that these are optional, and record their answer or a
      decline option such as "Decline to self-identify". Don't push for an answer.
@@ -93,7 +181,9 @@ through its `missing` and `profile_gaps` together.
      non-compete or similar agreement, owning patents, trademarks or copyrights, keeping
      another job or a business, a seat on a board. Write `true` or `false` for each. A
      `false` answers any wording of them, whatever time it covers; a `true` leaves each one
-     to the person on the desk, since its dates or details differ.
+     to the person on the desk, since its dates or details differ. `setup_status`'s
+     `background: <keys>` lists the ones not answered yet: ask those all at once with
+     AskUserQuestion.
    - An employer the user has worked for and may apply to again: their ID there, for
      `history.employee_ids` (`{Employer: "ID"}`; only that employer's forms get it).
    - Recurring screening questions in the `answers:` list: cleanroom work, lifting
@@ -106,32 +196,23 @@ through its `missing` and `profile_gaps` together.
      it answers. Use the template's patterns, and when you write a new one, test it on
      the question and its opposite: a "Yes" for "Are you willing to take a drug test?"
      must not answer "Have you ever failed one?".
+   - Preferences: willing to relocate, willing to travel (Field Service roles often
+     travel 25–75%), a valid driver's license (`personal.drivers_license`), shifts,
+     nights, weekends and on-call, desired salary (or leave it empty to be asked each
+     time), earliest start date.
+   - `preferences.how_did_you_hear`: ask, or leave it empty and the desk asks once on its
+     common-questions card. Profiles made from the template before 0.3.175 hold its old preset
+     `LinkedIn`, which went into every application: ask whether that's true, and clear it if not.
+   - **Common questions.** Run `common_questions`: the questions most applications ask that the
+     profile doesn't answer (desired pay, start date, shifts...), the ones the desk's Common
+     questions card would stop to ask. Ask the unanswered ones together, each choice question with
+     AskUserQuestion and its `choices` (a text one, such as desired pay, in their own words), and
+     save what they say with `common_questions(answers=[{"id": ..., "answer": ...}])`. Only their
+     answers, never a guess; one they'd rather leave stays on the desk's card. `setup_status`'s
+     `common_questions_unanswered` counts the ones left.
    - Submit mode: `review` (default, they approve each submit) or `auto` for chosen
      job systems such as `[workday, greenhouse, lever]`. LinkedIn and Indeed always need
      them to click Submit themselves.
-   - Cookie banners: the desk declines them, and one with no way to decline (TI's "Agree and
-     Proceed") waits for them. Ask whether the desk may accept those for them
-     (`settings.accept_cookies: true`); leave it off unless they say yes.
-   - Accounts on job sites: tell them the desk creates their accounts itself (agreeing to each
-     site's terms in their name, and to being considered for other open positions where a site
-     won't make the account without that, never job alerts or a newsletter; a form's security
-     questions come up on the desk's card for them, never remembered; a picture code stays theirs) and, when a site
-     refuses their saved password, asks that
-     site for a password reset and sets the saved password as the new one (reading the reset
-     email needs the email app password on the desk; without it, they finish the reset from
-     the email). Ask whether that's all right, and write `settings.manage_accounts: true` or
-     `false` as they say (`false`: the desk fills in Create Account for them to finish).
-   - Notices and attestations: tell them the desk agrees, in their name, to an employer's
-     notice about AI screening of their application (Eightfold's employers show one as the
-     resume goes up) and to its privacy notice and terms of use (Kforce's privacy agreement,
-     Schwab's "I Acknowledge the Privacy Notice", a terms box), and picks an application's
-     attestation that its information is true and complete (or their consent to the background
-     check that comes with applying), noting each in the job's log. Never a newsletter, job
-     alerts or a talent community, texts or automated calls, a legal waiver, or the terms of
-     their employment (an at-will acknowledgement is asked of them). It's true because every answer comes from their profile or from them.
-     Any other dialog over a form waits for them, and practice mode never agrees. Ask whether
-     that's all right, and write `settings.accept_notices: true` or `false` as they say
-     (`false`: the desk stops at the notice, and asks the attestation as a question).
    - Jobs at once: tell them the Job Desk fills two applications at the same time, each in its
      own tab of its browser window (`settings.jobs_at_once`, 1 to 3, default 2), which takes a
      long queue in about half the time. Never two at one employer's site; one at a time signs
@@ -145,53 +226,6 @@ through its `missing` and `profile_gaps` together.
      Both default to off. Explain that Claude only searches for those specific
      messages and never sends or deletes mail.
 
-   - The kind of work and where: ask the job titles they want ("Help Desk Technician",
-     "HR Generalist"; the first four are searched, all count toward each opening's fit),
-     where they want to work (a city and state each: "Phoenix, AZ", "Las Vegas, NV") and
-     which of the plugin's employer lists fit, then save them with
-     `search_area(titles=[...], places=[...], lists=[...])`: its `choices` name the lists and
-     what each covers (`semiconductor-az`, Arizona's semiconductor employers, the default,
-     who hire HR, finance and IT people too; `phoenix-metro`, large Phoenix-area employers
-     in many fields; `las-vegas`, Las Vegas-area employers that hire IT people). It keeps the places in
-     `preferences.locations`, the titles in `preferences.titles` (ranking follows them) and the
-     lists in `~/.job-apply/companies.yaml`, whose `companies:` takes employers of their own
-     (the shape of the plugin's `templates/companies.example.yaml`). They can change all three
-     later with the desk's What and where button.
-   - `preferences.how_did_you_hear`: ask, or leave it empty and the desk asks once on its
-     common-questions card. Profiles made from the template before 0.3.175 hold its old preset
-     `LinkedIn`, which went into every application: ask whether that's true, and clear it if not.
-   - **Common questions.** Run `common_questions`: the questions most applications ask that the
-     profile doesn't answer (desired pay, start date, shifts...), the ones the desk's Common
-     questions card would stop to ask. Ask the unanswered ones together, each choice question with
-     AskUserQuestion and its `choices` (a text one, such as desired pay, in their own words), and
-     save what they say with `common_questions(answers=[{"id": ..., "answer": ...}])`. Only their
-     answers, never a guess; one they'd rather leave stays on the desk's card. `setup_status`'s
-     `common_questions_unanswered` counts the ones left.
-
-4. Write `~/.job-apply/profile.yaml` and keep its comments. Run `setup_status` again
-   until `profile_complete` is true. If its `profile_gaps` lists `work_history dates: <jobs>`,
-   those jobs lack a start or end month (Workday asks both for every job): take them from
-   the resume as `start: 2021-03` and `end: 2023-06` (or `end: present`), and ask the user
-   for any the resume gives only as years or not at all. They needn't remember an old
-   job's months; leave those as they are rather than guess. `education_history degree: <schools>`:
-   those schools have no degree written; confirm with the user what they finished there
-   (`Some college (no degree)` for classes without one). `background: <keys>`: ask those
-   questions, all at once with AskUserQuestion. Then show the user a short summary of their
-   answers to confirm, with sensitive values (EEO choices) summarized rather than
-   echoed.
-
-5. **Browser.** Run `open_application(url="https://www.linkedin.com/login")`. A
-   browser window opens with its own profile: the desk's browser window. Ask the user to sign in to LinkedIn,
-   and to Indeed (`https://secure.indeed.com/auth`), in that window. The sign-ins are
-   kept for future sessions. Without Chrome it uses Microsoft Edge (on every Windows
-   computer). If no browser starts, have them install Google Chrome, or run the
-   `playwright install chromium` command shown in `setup_status`'s `browser_note` and
-   set `settings.browser_channel: chromium` in the profile.
-
-6. **Passwords (optional).** Company sites on Workday and SuccessFactors need an
-   account per company, as do SCREEN's, Nikon Precision's, Benchmark's and Daifuku's.
-   The easiest way to store a password for a job system is the Job Desk's **Site
-   passwords** card (`open_job_desk`). Otherwise the user creates
-   `~/.job-apply/secrets.yaml` themselves, for example
-   `workday_password: "..."`, and runs `chmod 600` on it. Never ask them to paste a
-   password into the chat.
+   Write `~/.job-apply/profile.yaml` (keeping its comments), and show the user a short
+   summary of their answers to confirm, with sensitive values (EEO choices) summarized
+   rather than echoed.

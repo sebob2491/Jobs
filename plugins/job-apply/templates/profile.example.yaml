@@ -192,5 +192,5 @@ settings:
   # buttons change it there.
   jobs_at_once: 2
   # The days an application you sent in waits with no reply (not even a "we received it" email)
-  # before the desk's My applications marks it "Follow up?" (1 to 90).
+  # before the desk's My applications marks it for a follow-up, with a Follow up button (1 to 90).
   follow_up_days: 10

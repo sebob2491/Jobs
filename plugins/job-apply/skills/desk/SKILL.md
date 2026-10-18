@@ -27,8 +27,8 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   `list_jobs` and `get_job` say `not_interested: true` with the reason, `open_application`
   warns, and `submit_application` presses nothing for it without `user_confirmed`: ask the
   user before applying to one.
-  It searches only when pressed. **Search by itself every 12 hours** (beside
-  Troubleshooting, off unless the user turns it on) also searches when the openings are
+  It searches only when pressed. **Search by itself every 12 hours** (under the Openings
+  head's **More**, off unless the user turns it on) also searches when the openings are
   over 12 hours old, but not while the queue is paused. While a search runs, the header
   says so (by itself, or pressed) with **Stop search** beside it: the search ends and the
   openings found before it stay.
@@ -38,10 +38,12 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   systems most of whose listed employers are there (Workday, say), then the rest, and last
   LinkedIn's and Indeed's (their Submit is the user's) and employers where the desk's own
   history met bot checks more often than it reached the review page. Each group keeps the
-  user's order; one started alone, or a Resume, isn't moved. It clicks through Apply, autofills every page, adds
+  user's order; one started alone, or a Carry on, isn't moved. It clicks through Apply, autofills every page, adds
   Workday's work and education blocks, and stops at each review page. Before they go, it says what will stop
   them: a job system with no saved password, no email app password for sites that email a
-  code, common questions not answered yet. The person can go ahead or see to those first.
+  code, common questions not answered yet, in a window whose default button is **See to these
+  first** (it takes the user to the card for the first one: Site passwords with that job system
+  picked, or Common questions; Enter never applies); **Apply anyway** goes ahead.
   A posting the site says has closed or been filled is skipped by itself (its card quotes
   the site; Undo puts it back). A saved draft's **Continue Application** is the way in
   when it's the page's only one and the draft is this job's. Its answers are checked
@@ -57,7 +59,7 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     Consent questions default to not remembered. A box the page wouldn't let the desk fill
     (it timed out) isn't a question: the card says "I couldn't fill …";
   - a dialog open over a form, which the user answers in the desk's browser window before pressing
-    Resume (the boxes behind it are filled after that). With `settings.accept_notices` (on
+    Carry on (the boxes behind it are filled after that). With `settings.accept_notices` (on
     unless the user turns it off; never in practice mode) the desk agrees for the user to an
     employer's notice about AI screening of the application (Eightfold's opens as the resume
     goes up) and to its privacy notice and terms of use (a privacy agreement's "I Accept"
@@ -100,7 +102,8 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   ApplicantStack, UKG Pro, Infor or Taleo (Kforce's; where Taleo asks for a user name, the desk
   uses the profile email as it). The page names, by each system, the employers on the
   user's own lists that use it (on the semiconductor list, Workday has 15 of them; on the
-  Phoenix list, 27). Each employer has its own account. With a password saved, the desk signs in by itself
+  Phoenix list, 27). A pill shows each one saved, and the card's count says how many of
+  them are. Each employer has its own account. With a password saved, the desk signs in by itself
   (pressing the sign-in form's own button, whatever it reads: SuccessFactors' says "Submit")
   and creates the account from Create Account forms (email, password, name and country from
   the profile; it ticks the site's terms, never a newsletter, and a consent to be considered for
@@ -123,9 +126,9 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   reset's, never), and opens each reset link once. Where the reset
   page says its link expired or the password was used before, or the only email's link was opened
   already, or the saved password still doesn't sign in after the reset, the job stops on a sign-in
-  card that says so, and no new account is made there. A Resume the user presses on that sign-in card tries the saved password once more
+  card that says so, and no new account is made there. A Carry on the user presses on that sign-in card tries the saved password once more
   (after they reset it to that by hand, say; from a spent link's page the desk goes back to the
-  sign-in first); a Resume on any other card doesn't. An account
+  sign-in first); a Carry on pressed on any other card doesn't. An account
   there from before that was never verified (the site refuses the sign-in with "Verify your account
   before you sign in") isn't reset: with the email app password saved the desk presses the site's
   "Resend Account Verification" once and opens the new email's link, then signs in; without it the
@@ -157,30 +160,30 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   was, with the tracker's status from before: back in the queue (opened again from the start), or
   in the list unticked if the desk hadn't begun it. Undo sends nothing: the job stops at its review page.
 - **Pause queue** (in the header, while jobs are queued or running) lets the jobs under way finish their pass and
-  starts no other until **Resume queue**. A Submit the user presses still goes, and jobs waiting on them are still
+  starts no other until **Carry on with the queue**. A Submit the user presses still goes, and jobs waiting on them are still
   watched. A paused queue stays paused after a restart. To stop the queue, never close the desk's browser window: that
-  breaks the job in progress (it says so, and its **Resume** opens the application again).
+  breaks the job in progress (it says so, and its **Carry on** opens the application again).
 - **A restart** (of the Claude app, a crash, a plugin update) doesn't lose the queue. The desk keeps it in
   `~/.job-apply/desk-queue.json` (each job's number and where it was: nothing the user typed or a page said). Once
   it's open again, the jobs it hadn't begun are back in the queue in their order, **paused** (one waiting for a
   tailored resume waits for it again): a notice at the top says how many, how many of them Submit for me will send once
   they're filled (it applies only if it's still on), and how old the queue is past a week; nothing starts until the user
-  presses **Resume queue**. A job it had begun (under way, or waiting on the user) isn't queued again by itself, since
+  presses **Carry on with the queue**. A job it had begun (under way, or waiting on the user) isn't queued again by itself, since
   the user may have sent it on the site: its card says the desk restarted before the application was finished, with
-  **I submitted it myself**, **Resume** (filled again from the start up to its review page, never sent) and **Skip
+  **I submitted it myself**, **Carry on** (filled again from the start up to its review page, never sent) and **Skip
   job**. A Submit the user pressed before the restart was never sent: that card says so. One whose Submit was being
   pressed, or was pressed with no confirmation, may have gone in: its card asks the user to check (**I submitted it myself**,
-  or **Resume**, which sends nothing). One applied to or skipped meanwhile is left out. A desk page left open doesn't
+  or **Carry on**, which sends nothing). One applied to or skipped meanwhile is left out. A desk page left open doesn't
   reconnect (its key is new at each start): open the desk again (`open_job_desk`). With two Claude sessions, one desk
   keeps the queue and the other says so, keeping none; about a minute after the first ends, the other takes it up, its
-  jobs held for **Resume queue** while its own go on. A folder that allows no lock (some network drives) keeps no
+  jobs held for **Carry on with the queue** while its own go on. A folder that allows no lock (some network drives) keeps no
   queue, and the desk says so.
 - **History.** Each line of a job's log on the desk shows the time it was logged (the computer's own clock). Each time
   the desk is done with a job for now (at its review page, sent by the desk, stopped for the user with the kind of stop,
   failed, skipped, cut short by the desk stopping, or marked as applied: the user's I submitted it myself, or found applied
   already), it writes a line in `~/.job-apply/runs.jsonl`: the job, its site, when the pass began and ended and its
   minutes, how it ended and why (the desk's own words, with answers, codes and passwords kept out as far as it can
-  tell), the steps it went through, how many times the desk's rounds took the user to it and they pressed Resume, and
+  tell), the steps it went through, how many times the desk's rounds took the user to it and they pressed Carry on, and
   Jobs at once. **This week** (in the header) sums up the last 7 days: jobs filled to their review page, sent by the
   desk and marked as applied, the stops for the user by kind, failed and skipped, the time with the desk in all and a
   job's median (waits for sites and the inbox included, and jobs filled at once overlap), the employers it stopped at
@@ -199,7 +202,8 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
 - **Only where the desk goes all the way** shows only openings at employers where the
   plugin's live check took a test applicant to the review page (a chip marks them in
   the list either way). Bot checks, CAPTCHAs and steps it can't do yet are elsewhere.
-- **Troubleshooting** (beside it) is for getting the desk going at more employers: Find jobs
+  Each of the Openings head's switches that's on is said in a muted line under the head.
+- **Troubleshooting** (under the head's **More**, with Search by itself) is for getting the desk going at more employers: Find jobs
   searches every list's employers (the user's own lists, and the HR list too), only the
   openings where the desk doesn't go all the way yet show, whatever their fit, every one is
   tried, and nothing is submitted while it's on (the header says so; the desk still makes
@@ -217,8 +221,8 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   city and state each) and the plugin's employer lists it searches. Saving it finds jobs
   again; Claude's `search_area` tool changes the same.
 - **Common questions** (a card, while any are unanswered) asks the questions most
-  applications ask that the profile doesn't answer (`data/question_bank.yaml`). Answered
-  once, each goes to `answers.yaml` and fills that question at every employer from then on;
+  applications ask that the profile doesn't answer (`data/question_bank.yaml`): the four
+  most asked (each entry's `seen`), with **Show all** for the rest. Answered once, each goes to `answers.yaml` and fills that question at every employer from then on;
   **Your answers** under it shows the ones given. Claude can ask them in chat too
   (`common_questions`, as setup does).
 - **My applications** (a tab beside Recommended and All) lists each job sent in, or filled
@@ -229,9 +233,11 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   email, and nothing further), **Interviews** (interviewing or an offer) and **Closed**
   (rejected or withdrawn); the group picked is kept in that browser.
   - One applied to `settings.follow_up_days` days ago (10 unless the profile says) with
-    no email logged, not even a confirmation, is marked **Follow up?** with the day it
-    became due. Offer to draft a polite follow-up email for it, as a Gmail draft only
-    (see the track-responses skill).
+    no email logged, not even a confirmation, says the day its follow-up became due, with
+    **Follow up**: like Prep me, it copies a request for the user to paste to you ("Draft a
+    follow-up email for job 12, Technician at Example Fab (use track-responses)"). When it's
+    pasted, draft a polite follow-up email for it, as a Gmail draft only (see the
+    track-responses skill).
   - An interview's row (or one whose newest email is an assessment) has **Prep me**. The
     page can't reach Claude, so it copies a request for the user to paste to you ("Prep
     me for my interview: job 12, Technician at Example Fab (use interview-prep)"). When

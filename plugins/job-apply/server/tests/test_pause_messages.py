@@ -10,7 +10,7 @@ from typing import Union
 PIPELINE = Path(__file__).resolve().parents[1] / "src" / "job_apply" / "pipeline.py"
 # A thing the person does (the review of 0.3.189: "look", "read", "use", "let" and "run" made almost any message pass)
 ACTION = re.compile(r"\b(press|answer|sign in|log in|create|reload|solve|fill|choose|enter|save|turn|open|close|remove|"
-                    r"delete|type|pick|upload|apply|wait|complete|take|accept|decline|add|set|tick|untick|fix|resume|"
+                    r"delete|type|pick|upload|apply|wait|complete|take|accept|decline|add|set|tick|untick|fix|carry on|"
                     r"submit|put|give|tell|start|reset|confirm|agree|select|scroll|install|update|copy|paste|switch|"
                     r"leave|skip|mark|check|try)\b", re.I)
 
@@ -179,7 +179,7 @@ class A:
         ps.back_from = (1, stuck)
         (page, kept), ps.back_from = ps.back_from, None
         self._pause(run, "stuck", kept, code="a")
-        self.after(run, (["box"], "I deleted the old file. Upload the new one, then press Resume."))
+        self.after(run, (["box"], "I deleted the old file. Upload the new one, then press Carry on."))
         self._pause(run, "stuck", f(x), code="a")
     def after(self, run, replacing):
         emptied, stuck = replacing
@@ -191,7 +191,7 @@ class A:
     asked = "This may be a job you applied to. Apply anyway, or Skip?"
     assert sorted(said, key=str) == sorted([[asked], [asked], ["The site is slow."],
                                             ["The page didn't move on.", "The site said no."],
-                                            ["I deleted the old file. Upload the new one, then press Resume."],
+                                            ["I deleted the old file. Upload the new one, then press Carry on."],
                                             None], key=str)
 
 
@@ -207,7 +207,7 @@ def test_the_stops_said_in_one_place_say_what_to_do_too():
 def test_the_audit_tells_a_stop_with_an_action_from_one_without():
     assert _ends_without_action("The page didn't move on. The site said nothing more about it.")
     assert _ends_without_action("Something went wrong on the site. Look at it and read what it says.")
-    assert not _ends_without_action("The page didn't move on. Check it in the desk's browser window, then press Resume.")
+    assert not _ends_without_action("The page didn't move on. Check it in the desk's browser window, then press Carry on.")
     assert not _ends_without_action("The page didn't move on: {}.")  # (the action is where the {} is built)
 
 
@@ -241,6 +241,23 @@ def test_the_window_has_one_name_and_so_has_i_submitted_it():
     desk = (PIPELINE.parent / "static" / "desk.html").read_text(encoding="utf-8")
     assert not re.search(r"automation browser|(?<!desk's )\bbrowser window", desk)
     assert not re.search(r">I submitted it(?! myself)|\"I submitted it(?! myself)", desk)
+
+
+def test_the_job_button_is_carry_on_and_resume_is_only_the_document():
+    """The review of Oct 18 (U3): the job's "Resume" button sat beside "Use my usual resume" and "Tailor my resume for
+    each job", and about 45 stops ended "then press Resume". The button is "Carry on" (the queue's "Carry on with the
+    queue"), and every message says so: on the desk, "Resume" is only ever the document."""
+    said = _said(ast.parse(PIPELINE.read_text(encoding="utf-8")))
+    for name in ("desk.py", "server.py", "browser_menus.py", "browser_dates.py", "browser_uploads.py"):
+        said += [(f"{name}:{line}", text) for line, text in
+                 _said(ast.parse((PIPELINE.parent / name).read_text(encoding="utf-8")))]
+    # (the document's own label, "Resume", and a file's name, "<First>_<Last>_Resume.pdf", stay)
+    button = [(line, text[:120]) for line, text in said
+              if text.strip() != "Resume" and re.search(r"(?<![\w/])Resume\b(?![/._])", text)]
+    assert not button, button
+    desk = (PIPELINE.parent / "static" / "desk.html").read_text(encoding="utf-8")
+    assert not re.search(r"(?<![\w/])Resume\b(?![/._])", re.sub(r"(?<!:)//.*", "", desk))  # (comments aside)
+    assert 'b("resume", "Carry on")' in desk and 'data-act="resume">Carry on with the queue<' in desk
 
 
 def _codes(node: ast.AST) -> set[str] | None:
@@ -345,9 +362,9 @@ def test_each_side_of_a_conditional_stop_is_read_as_its_own_message():
     nothing to do fails, however the other reads (the review of T10's plant: read as one message, it passed)."""
     said = _variants(ast.parse('"The site lost the file again and again. Nothing more was said about it by the site '
                                'this time." if run.draft else f"I deleted the {what}" + " (old). Upload the new one, '
-                               'then press Resume."', mode="eval").body)
+                               'then press Carry on."', mode="eval").body)
     assert said == ["The site lost the file again and again. Nothing more was said about it by the site this time.",
-                    "I deleted the {} (old). Upload the new one, then press Resume."]
+                    "I deleted the {} (old). Upload the new one, then press Carry on."]
     assert [_ends_without_action(m) for m in said] == [True, False]
     assert _variants(ast.parse('"a" + ("b" if x else "c") + f"d{e}"', mode="eval").body) == ["abd{}", "acd{}"]
 

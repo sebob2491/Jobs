@@ -889,7 +889,7 @@ def test_a_tab_that_cant_be_read_still_lets_the_queue_go_on(srv, monkeypatch):
     applier._moved_on = broken
     r = applier.runs[1] = Run(1, "FSE", "Example Fab", status="running")
     # a pause that holds the queue
-    applier._pause(r, "sign_in", "Sign in there, then press Resume.", code="account_theirs")
+    applier._pause(r, "sign_in", "Sign in there, then press Carry on.", code="account_theirs")
     assert r.blocking and not r.left
     r.active_at -= pipeline.HANDS_ON_IDLE + 1  # nothing happened in its tab since
     run(applier._tick())
@@ -1406,7 +1406,7 @@ def test_a_notice_over_the_form_is_the_persons_and_the_form_is_filled_after_it(s
 
     r, (status, need, reason, before), after = run(go())
     assert (status, need) == ("needs_you", "stuck") and f"“{NOTICE}”" in reason, reason
-    assert "press its button in the desk's browser window, then press Resume" in reason and "accept_notices: true" in reason
+    assert "press its button in the desk's browser window, then press Carry on" in reason and "accept_notices: true" in reason
     assert before == {"uploads": 0, "agreed": 0, "first": "", "country": "", "terms": ""}  # nothing done behind it
     assert (r.status, r.need) == ("needs_you", "questions"), (r.status, r.reason, r.log)
     assert [q["label"][:20] for q in r.questions] == ["Terms and Conditions"], r.questions
@@ -1586,7 +1586,7 @@ def test_a_profile_dialog_that_stays_open_is_the_persons(srv, monkeypatch):
     r, shown = profile_run(srv, "?stays")
     assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
     assert r.reason.startswith(f"I pressed “Enter information” in the {PROFILE_DIALOG} on Example Corp's site, and it "
-                               "stayed open. Look at it in the desk's browser window, then press Resume."), r.reason
+                               "stayed open. Look at it in the desk's browser window, then press Carry on."), r.reason
     assert (shown["started"], shown["uploads"], shown["pressed"], shown["first"]) == ("enter", 0, "enter", ""), shown
 
 
@@ -1678,7 +1678,7 @@ def test_a_box_that_wouldnt_fill_is_said_as_that_not_asked(srv, monkeypatch):
     r = run(go())
     assert (r.status, r.need, r.questions) == ("needs_you", "stuck", []), (r.status, r.reason, r.questions)
     assert r.reason.startswith("I couldn't fill “Country of Residence” (the page didn't respond in time). "
-                               "Fill it in the desk's browser window, then press Resume"), r.reason
+                               "Fill it in the desk's browser window, then press Carry on"), r.reason
     assert "TimeoutError" not in r.reason and "question" not in r.reason
 
 
@@ -2682,7 +2682,7 @@ def test_a_sign_in_refused_right_after_the_desks_own_reset_is_said_and_makes_no_
     assert "pressed “Sign In” with your saved password" in r.log[set_at:], r.log
     assert r.need == "sign_in" and r.reason.startswith("I set your saved password through"), (r.need, r.reason, r.log)
     assert "it still doesn't sign in there (it says “Wrong email address or password" in r.reason, r.reason
-    assert "a reset link works once" in r.reason and "then press Resume" in r.reason, r.reason
+    assert "a reset link works once" in r.reason and "then press Carry on" in r.reason, r.reason
     assert "opened Create Account" not in log and "create your account" not in log, r.log
     assert "create-account" not in r.page.url, r.page.url
 
@@ -2736,7 +2736,7 @@ def test_a_sign_in_refused_after_the_reset_link_opened_makes_no_account(srv, mon
     assert r.need == "sign_in" and r.reason.startswith("Your saved password still doesn't sign in on"), \
         (r.need, r.reason, r.log)
     assert "after its password reset (it says “Wrong email address or password" in r.reason, r.reason
-    assert "a reset link works once" in r.reason and "then press Resume" in r.reason, r.reason
+    assert "a reset link works once" in r.reason and "then press Carry on" in r.reason, r.reason
     assert "opened Create Account" not in log and "create your account" not in log, r.log
 
 
@@ -3235,7 +3235,7 @@ def test_a_resume_kept_from_before_that_wont_go_is_the_persons(srv, monkeypatch,
     assert (counted["deletes"], counted["uploads"], counted["coverDeletes"]) == (None,) * 3, (counted, r.log)
     assert counted["presses"] == (1 if query in ("?stuck", "?rerender") else None), counted
     assert run(r.page.evaluate("() => window.sent")) is False
-    assert "Sam_Rivera_Resume.pdf" in r.reason and "then press Resume" in r.reason, r.reason
+    assert "Sam_Rivera_Resume.pdf" in r.reason and "then press Carry on" in r.reason, r.reason
     if query == "?cover":
         assert "files kept from before (2024-resume.pdf, 2024-cover-letter.pdf)" in r.reason \
             and "which is your old resume" in r.reason, r.reason
@@ -5126,7 +5126,7 @@ def test_a_page_that_asks_to_be_refreshed_again_after_its_reload_is_said_for_wha
     assert sum("so I reloaded it" in line for line in r.log) == 1, r.log
     said = "said \u201cSomething went wrong\u201d again" if query == "?again" else "came back without the application"
     assert (r.status, r.need) == ("needs_you", "stuck") and said in r.reason, (r.reason, r.log)
-    assert "then press Resume" in r.reason and "couldn't find the button" not in r.reason, r.reason
+    assert "then press Carry on" in r.reason and "couldn't find the button" not in r.reason, r.reason
 
 
 @pytest.mark.parametrize("query", ["?signin", "?signin&heal"])
@@ -5728,7 +5728,7 @@ def test_a_pass_over_a_job_that_runs_too_long_is_said_and_the_queue_goes_on(srv,
 
     r = run(go())
     assert (r.status, r.need) == ("needs_you", "stuck") and "taken longer than" in r.reason, (r.status, r.reason)
-    assert "press Resume" in r.reason and not r.url.endswith("review.html"), r.reason
+    assert "press Carry on" in r.reason and not r.url.endswith("review.html"), r.reason
 
 
 def test_a_last_press_that_reaches_the_review_page_after_the_time_limit_goes_to_it(srv, monkeypatch, job_apply_home):
@@ -6131,14 +6131,14 @@ def test_a_resume_after_the_password_is_reset_by_hand_signs_in(srv, monkeypatch,
     (need, reason, tries), *refused, (_, _, signed_in) = seen
     assert need == "email_code" and tries == 2, (reason, r.log)  # the reset the desk asked for
     for need, reason, tries in refused:
-        assert need == "sign_in" and "won't try it again for this job unless you press Resume" in reason, (reason, r.log)
+        assert need == "sign_in" and "won't try it again for this job unless you press Carry on" in reason, (reason, r.log)
     assert [tries for _, _, tries in refused] == [3, 3, 4], seen  # the queue's pass pressed nothing
     assert signed_in == 5 and r.seen_form and r.need != "sign_in", (r.reason, r.log)
 
 
 @pytest.mark.parametrize("need, tries", [("sign_in", 1), ("questions", 2), ("stuck", 2)])
 def test_only_a_resume_on_a_sign_in_card_presses_a_refused_password_again(srv, need, tries):
-    """The sign-in card asks the person to reset the password by hand and press Resume, and that
+    """The sign-in card asks the person to reset the password by hand and press Carry on, and that
     Resume gets one more press of the saved password. A Resume on a question's card or a stuck page's,
     of a job whose saved password was refused twice, gave it one all the same: a third refused sign-in,
     which the guard against a locked account is there to stop."""
@@ -6256,7 +6256,7 @@ def test_with_the_inbox_a_new_account_to_verify_is_signed_in_to_once_its_link_is
 
 def test_without_the_inbox_a_new_account_to_verify_waits_for_the_person_and_their_resume(srv, monkeypatch, job_apply_home):
     """The same Workday Sign In, with no inbox to read: the card says to verify the account from the
-    email and press Resume, never that the saved password didn't sign in (it wasn't pressed: the account
+    email and press Carry on, never that the saved password didn't sign in (it wasn't pressed: the account
     isn't verified yet, and a refusal then counts against the account's locking). The Resume signs in,
     once."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
@@ -6282,7 +6282,7 @@ def test_without_the_inbox_a_new_account_to_verify_waits_for_the_person_and_thei
 
     r, (status, need, reason, before), did = run(go())
     assert (status, need) == ("needs_you", "sign_in"), (reason, r.log)
-    assert "verify your new account" in reason and "press Resume" in reason, reason
+    assert "verify your new account" in reason and "press Carry on" in reason, reason
     assert "didn't sign in" not in reason and "locked" not in reason, reason
     assert (before["created"], before.get("signIns", 0)) == (1, 0), before
     assert did["signIns"] == 1 and r.seen_form and r.need != "sign_in", (did, r.reason, r.log)
@@ -6421,7 +6421,7 @@ def test_without_the_inbox_an_account_that_still_needs_verifying_is_told_with_th
 
     r, (status, need, reason, before), did = run(go())
     assert (status, need) == ("needs_you", "sign_in"), (reason, r.log)
-    assert "verified from the link it emailed" in reason and "press Resume" in reason, reason
+    assert "verified from the link it emailed" in reason and "press Carry on" in reason, reason
     assert "(its \u201cResend Account Verification\u201d sends a new one)" in reason, reason
     assert "didn't sign in" not in reason and "locked" not in reason, reason
     assert (before.get("resends", 0), before.get("resets", 0), before.get("presses", 0), before["signIns"]) == (0, 0, 0, 1), before
@@ -8463,7 +8463,7 @@ def test_a_tab_that_crashes_while_its_job_runs_is_opened_again_on_resume(srv, mo
             await applier.stop()
 
     r, said = run(go())
-    assert said == "Its tab crashed. Press Resume to start this application again.", said
+    assert said == "Its tab crashed. Press Carry on to start this application again.", said
     assert r.need == "questions" and r.page is not crashed[0] and crashed[0].is_closed(), (r.reason, r.log)
     assert any(line.startswith("its tab crashed, so I opened the job again") for line in r.log), r.log
 
@@ -8502,7 +8502,7 @@ def test_a_browser_closed_while_its_job_runs_is_said_so_and_opened_again_on_resu
             await applier.stop()
 
     r, said = run(go())
-    assert said == "The desk's browser window was closed. Press Resume to start this application again.", said
+    assert said == "The desk's browser window was closed. Press Carry on to start this application again.", said
     assert r.need == "questions" and r.page is not closed[0] and closed[0].is_closed(), (r.reason, r.log)
 
 
@@ -8861,7 +8861,7 @@ def test_practice_mode_doesnt_call_a_posting_the_review_page(srv, monkeypatch):
 
 @pytest.mark.parametrize("need", ["captcha", "submit_failed"])
 def test_a_closed_tab_at_submit_waits_on_resume(srv, need):
-    """Submit pressed on the desk for a job whose tab was closed: it says to press Resume, and
+    """Submit pressed on the desk for a job whose tab was closed: it says to press Carry on, and
     waits as a job the desk page offers Resume for (not on a CAPTCHA, which has no Resume)."""
     job = srv.add_job(url=fixture_url("site/review.html"), title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
@@ -8876,7 +8876,7 @@ def test_a_closed_tab_at_submit_waits_on_resume(srv, need):
         return r
 
     r = run(go())
-    assert (r.status, r.need) == ("needs_you", "stuck") and "Press Resume" in r.reason, (r.status, r.need, r.reason)
+    assert (r.status, r.need) == ("needs_you", "stuck") and "Press Carry on" in r.reason, (r.status, r.need, r.reason)
 
 
 def test_an_emailed_code_put_in_between_jobs_gives_the_tools_back(srv, monkeypatch):
@@ -8957,7 +8957,7 @@ def test_submit_on_the_desk_isnt_pressed_in_a_tab_taken_to_another_posting(srv, 
         return r
 
     r = run(go())
-    assert posts == [] and (r.status, r.need) == ("needs_you", "stuck") and "Resume" in r.reason, (r.status, r.reason)
+    assert posts == [] and (r.status, r.need) == ("needs_you", "stuck") and "Carry on" in r.reason, (r.status, r.reason)
     assert srv.tracker().get(a["id"])["status"] != "applied"
 
 
@@ -9975,7 +9975,7 @@ def test_a_section_left_short_by_a_covered_add_button_stops_the_job_until_the_pe
     status, need, reason, log, _ = first
     assert (status, need) == ("needs_you", "stuck"), (status, reason, log)
     assert reason.startswith("Example Litho's site shows only 0 of your 1 school: the Add button is covered"), reason
-    assert "then press Resume" in reason, reason
+    assert "then press Carry on" in reason, reason
     assert not any(line.startswith("clicked") or "review page" in line for line in log), log  # (stopped on the page)
     assert any(line == "added 1 work block(s)" for line in log), log
     # the Resume with nothing added: gone on with, said, and the page pressed on (this fixture's Next goes nowhere)
@@ -11862,7 +11862,7 @@ def test_what_a_filled_page_still_needs_is_said_the_same_way_on_each_path(srv):
     assert applier._stop_for_what_is_left(run_, "", [unfilled], [{"label": "Resume/CV*"}])
     assert run_.need == "stuck" and run_.reason.startswith(
         "The form wants a file (Resume/CV*) and the profile doesn't say where yours is: ask Claude to set "
-        "documents.resume (or documents.cover_letter) in profile.yaml, then press Resume. "), run_.reason
+        "documents.resume (or documents.cover_letter) in profile.yaml, then press Carry on. "), run_.reason
     nothing = Run(2)
     assert not applier._stop_for_what_is_left(nothing, "", [], []) and nothing.status != "needs_you"
 
@@ -12312,7 +12312,7 @@ def test_a_box_the_errors_name_is_gone_back_to_once_and_only_to_be_asked(srv, mo
         # (Workday's list names the box too)
         also = ".; “Available Start Date” needs fixing" if drawn.startswith("Workday") else ""
         assert r.need == "stuck" and r.reason == (f"The page didn't move on: Available Start Date is required{also}. Fix "
-                                                  "it in the desk's browser window, then press Resume."), (r.reason, r.log)
+                                                  "it in the desk's browser window, then press Carry on."), (r.reason, r.log)
         assert went_back == (case != "readonly"), r.log
 
 
@@ -14404,7 +14404,7 @@ def test_a_history_line_holds_no_answer_code_or_password(srv, monkeypatch):
         r.reason = ("The page says \u201cFlagstaff Ridge 1987\u201d, \u201cMesa Verde Answer\u201d and \u201cNight "
                     "shift only\u201d are wrong; it sent Q7XK2P and 482913 to sam.rivera@example.com; Not-A-Real-Pass1 "
                     "d1g3stofthepassword 480-555-0123 at https://careers.acme-fab.example/reset?token=abc123def. "
-                    + "Fix them in the browser, then press Resume. " * 10)
+                    + "Fix them in the browser, then press Carry on. " * 10)
         applier._note_history(r, "needs_you", time.time() - 90, "apply", 2)
     finally:
         pipeline._MAIL_TAKEN.clear()
