@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
+import yaml
 
 from job_apply.postings import fetch_posting
 import job_apply.search as search_module
@@ -3292,6 +3293,48 @@ def test_workplace_leaves_out_only_openings_that_surely_say_another(srv, monkeyp
     assert len(full["results"]) == 5 and "other_workplace" not in full
     with pytest.raises(ToolError, match="workplace is remote, hybrid or onsite"):
         asyncio.run(server.search_company_jobs("field service", workplace="anywhere"))
+
+
+def test_within_miles_leaves_out_only_openings_surely_farther_from_home(srv, job_apply_home, monkeypatch):
+    """The design of Oct 18, F8: search_company_jobs(within_miles=) leaves out an opening every place of which is a
+    town the plugin knows and the nearest farther from the profile's home town (made up: Chandler, AZ) than asked
+    (`farther_away` counts them); one whose place it doesn't know, that names more than it places, or that is remote
+    stays, and a hybrid one is judged by its place. Results whose place it knows carry `miles` and `miles_to`. A
+    distance that isn't one, or a profile without a home town it knows, is refused in plain words."""
+    import job_apply.server as server
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    def row(title, location, **said):
+        return {"company": "Lever Co", "title": title, "location": location,
+                "url": f"https://jobs.lever.co/leverco/{title.split()[0].lower()}", **said}
+
+    async def fake(query, names, location, limit, **kw):
+        return {"results": [row("Mesa FSE", "Mesa, AZ"), row("Tucson FSE", "Tucson, AZ"),
+                            row("Remote FSE", "Las Vegas, NV", workplace="remote", workplace_source="structured"),
+                            row("Hybrid FSE", "Tucson, AZ (Hybrid)", workplace="hybrid", workplace_source="location"),
+                            row("Unsaid FSE", "2 Locations"), row("More FSE", "Tucson, AZ (+2 more)"),
+                            row("Austin FSE", "Austin, TX")],
+                "errors": {}, "browser_only": []}
+
+    monkeypatch.setattr(server, "search_companies", fake)
+    out = asyncio.run(server.search_company_jobs("field service", within_miles=25))
+    assert [r["title"] for r in out["results"]] == ["Mesa FSE", "Remote FSE", "Unsaid FSE", "More FSE", "Austin FSE"]
+    assert out["farther_away"] == 2
+    assert (out["results"][0]["miles"], out["results"][0]["miles_to"]) == (8, "Mesa, AZ")
+    assert "miles" not in out["results"][2] and "miles" not in out["results"][4]
+    out = asyncio.run(server.search_company_jobs("field service", within_miles=100))
+    assert out["farther_away"] == 0 and len(out["results"]) == 7
+    full = asyncio.run(server.search_company_jobs("field service"))
+    assert "farther_away" not in full and "miles" not in full["results"][0]
+    for bad in (0, -5, float("nan")):
+        with pytest.raises(ToolError, match="within_miles is a distance in miles"):
+            asyncio.run(server.search_company_jobs("field service", within_miles=bad))
+    profile = yaml.safe_load((job_apply_home / "profile.yaml").read_text(encoding="utf-8"))
+    del profile["personal"]["address"]["city"]
+    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(profile), encoding="utf-8")
+    with pytest.raises(ToolError, match="your profile doesn't say it: add personal.address.city"):
+        asyncio.run(server.search_company_jobs("field service", within_miles=25))
+    assert len(asyncio.run(server.search_company_jobs("field service"))["results"]) == 7  # (nothing breaks)
 
 
 # ------------------------------------------------------------------ employment type (the design of Oct 18, F6)

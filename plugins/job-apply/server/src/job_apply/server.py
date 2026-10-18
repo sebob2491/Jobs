@@ -27,6 +27,7 @@ from playwright.async_api import Error as PlaywrightError
 
 from . import config, pay
 from . import employment
+from . import places as towns
 from . import workplace as wplace
 from .ats import ATS_NAMES, detect_ats, greenhouse_form_url, shared_system, workday_parts
 from .autofill import common_questions as bank_questions
@@ -490,6 +491,24 @@ def _check_workplace(value: str | None) -> list[str]:
     return places
 
 
+def _home_for(within_miles: float | None) -> towns.Place | None:
+    """The person's home town for a within_miles a tool was given (None for none), or a ToolError in plain words: a
+    distance that isn't one, or a profile with no home town the plugin knows."""
+    if within_miles is None:
+        return None
+    if not (math.isfinite(within_miles) and 0 < within_miles <= towns.WITHIN_MOST):
+        raise ToolError(f"within_miles is a distance in miles, over 0 (10, 25, 50); {within_miles} isn't. Leave it out "
+                        "for any distance.")
+    try:
+        prof = config.Profile.load()
+    except Exception as e:
+        raise ToolError(f"within_miles measures from the home town in the profile, which doesn't read: {e}") from e
+    home, problem = towns.home(prof)
+    if home is None:
+        raise ToolError(f"{problem} Leave within_miles out to search at any distance.")
+    return home
+
+
 @tool()
 async def search_company_jobs(
     query: str,
@@ -502,6 +521,7 @@ async def search_company_jobs(
     workplace: str | None = None,
     employment_type: str | None = None,
     exclude: list[str] | None = None,
+    within_miles: float | None = None,
 ) -> dict[str, Any]:
     """Search employers' own careers sites for openings through their applicant tracking
     system's public search: Workday, Greenhouse, Lever, Eightfold, SmartRecruiters, Oracle,
@@ -535,8 +555,16 @@ async def search_company_jobs(
     exclude: words or titles to leave out (["Senior", "Call Center"]): an opening whose title has one as whole words,
     any case, is left out ("Senior" leaves out a Senior Technician, never a Seniority Clerk); `excluded_titles` counts
     them (say how many). Pass the profile's preferences.avoid_titles (`search_area`'s `avoid_titles`) by default,
-    unless the person asks to see those too; the Job Desk shows them under All, never recommended."""
+    unless the person asks to see those too; the Job Desk shows them under All, never recommended.
+    within_miles: leaves out an opening every place of which is farther than this from the person's home town
+    (personal.address.city and state in the profile), in a straight line between town centres; the plugin knows the
+    towns of Arizona and the Las Vegas and Reno areas (data/places.yaml), and nothing is looked up online. An opening
+    whose place it doesn't know ("2 Locations", a town elsewhere), that names places it can't place, or that is
+    remote always stays; a hybrid one is judged by its place. Results whose place it knows carry `miles` (whole
+    miles) and `miles_to` (the nearest town it names); `farther_away` counts what it left out. Refused, in words to
+    pass on, when the profile has no home town it knows."""
     _check_min_pay(min_pay)
+    home = _home_for(within_miles)
     places = _check_workplace(workplace)
     kinds = employment.parse_choice(employment_type)
     if kinds is None:
@@ -597,7 +625,7 @@ async def search_company_jobs(
                                             posted_within_days))
     avoid = [w for w in config.avoid_list(exclude or []) if norm(w)]  # ("Senior, Call Center": two)
     t = tracker()
-    kept, below, elsewhere, other_types, avoided = [], 0, 0, 0, 0
+    kept, below, elsewhere, other_types, avoided, farther = [], 0, 0, 0, 0, 0
     for r in out["results"]:
         if avoid and avoided_title(str(r.get("title") or ""), avoid):
             avoided += 1
@@ -622,6 +650,13 @@ async def search_company_jobs(
         if not employment.keeps(employment.types_of(said_type), kinds):
             other_types += 1  # (said, and none of the types asked for: one that doesn't say always stays)
             continue
+        if home is not None:
+            far = towns.away(home, r.get("location"), job.get("location") if job else None)
+            if far is not None:
+                r["miles"], r["miles_to"] = round(far["miles"]), far["place"]
+            if not towns.keeps(far, r.get("workplace") or "", within_miles):
+                farther += 1  # (surely farther, and not remote: an unknown place always stays)
+                continue
         kept.append(r)
     out["results"] = kept
     if min_pay:
@@ -632,6 +667,8 @@ async def search_company_jobs(
         out["other_employment_type"] = other_types
     if avoid:
         out["excluded_titles"] = avoided
+    if home is not None:
+        out["farther_away"] = farther
     out["count"] = len(out["results"])
     return out
 
