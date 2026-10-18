@@ -451,8 +451,10 @@ LIVE_FIXTURES = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "li
 
 def import_fixtures(where: Path, wanted: list[str], into: Path = LIVE_FIXTURES, replace: bool = False) -> list[str]:
     """The scrubbed pages in a run's fixtures/ folders (a zip or a folder, its groups' too) copied into the
-    tests' live fixtures: each one's files (<name>.html, its frames, <name>.expect.json). A fixture already
-    there is left as it is unless `replace`. The names copied."""
+    tests' live fixtures: each one's files (<name>.html, its frames, <name>.expect.json, and <name>.decision.json:
+    what the desk decided there, which test_live_fixtures.py decides again). A fixture already there is left as it is
+    unless `replace`: then its files are the run's alone (none left of the page it had, a frame or a decision the
+    new capture hasn't), which is how a change to what the desk decides on a page is accepted. The names copied."""
     files: dict[str, bytes] = {}
     if where.is_file() and where.suffix == ".zip":
         with zipfile.ZipFile(where) as z:
@@ -470,6 +472,8 @@ def import_fixtures(where: Path, wanted: list[str], into: Path = LIVE_FIXTURES, 
     for name in names:
         if (into / f"{name}.expect.json").exists() and not replace:
             continue
+        for old in into.glob(f"{name}.*"):
+            old.unlink()
         for fname, data in files.items():
             if fname.split(".", 1)[0] == name:
                 (into / fname).write_bytes(data)

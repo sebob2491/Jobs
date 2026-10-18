@@ -1,0 +1,29 @@
+{
+  "page": "form",
+  "next": null,
+  "captcha": false,
+  "security_asked": false,
+  "account_and_application": false,
+  "job_search": false,
+  "fields": {
+    "Accepted file format: .pdf, .doc, .docx, . tct, .rtf (file)": "filled by documents.resume",
+    "Legal First Name (text)": "filled by first_name",
+    "Legal Last Name (text)": "filled by last_name",
+    "Email (text)": "filled by email",
+    "Country code (combobox)": "filled by phone_code",
+    "Phone Number (text)": "filled by phone",
+    "Country/Region of Residence (combobox)": "filled by country",
+    "Address (text)": "filled by address1",
+    "City (text)": "filled by city",
+    "Zip/Postal Code (text)": "filled by postal",
+    "For the sole purpose of determining export licensing requirements, please provide your most recent country/region of citizenship or legal permanent residence. If your country/region is not listed please choose \"Other\". (combobox)": "asked",
+    "Do you have unrestricted right to work in the United States? (combobox)": "filled by authorized",
+    "Will you now or in the future require visa sponsorship for employment? (combobox)": "filled by sponsorship",
+    "Gender (combobox)": "filled by gender",
+    "Ethnicity (combobox)": "filled by race",
+    "Disability (combobox)": "filled by disability",
+    "Veteran (combobox)": "filled by veteran",
+    "I consent to make my profile visible for and receive communications including by email, about positions at Lam. By proceeding, I would like to be considered for roles at Lam Research and for Lam's recruitment team to contact me as follows: (combobox)": "asked",
+    "Save my answers for future applications (checkbox)": "skipped"
+  }
+}

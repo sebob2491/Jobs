@@ -1,0 +1,17 @@
+{
+  "page": "form",
+  "next": "Quick Apply",
+  "captcha": false,
+  "security_asked": false,
+  "account_and_application": false,
+  "job_search": false,
+  "fields": {
+    "Legal First Name * (text)": "filled by first_name",
+    "Legal Last Name * (text)": "filled by last_name",
+    "Email Address * (text)": "filled by email",
+    "Confirm Email * (text)": "filled by email",
+    "Primary Phone Number (text)": "filled by phone",
+    "Upload a File * Select here to upload. (file)": "filled by documents.resume",
+    "Opt in for texts to this number (radio_group)": "skipped"
+  }
+}

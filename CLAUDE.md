@@ -117,7 +117,12 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   `--against <an earlier run's>` (a week before: artifacts are kept 7 days), a system twice as slow says so.
   `--import-fixtures <zip or folder> [--companies "A,B"] [--replace]` copies the scrubbed pages a run
   stopped on into `tests/fixtures/live` (one already there stays unless replaced), so the offline tests
-  check them; look each over before committing it (the repo is public).
+  check them; look each over before committing it (the repo is public). Each page comes with its
+  `<name>.decision.json` (what the desk decided there: the page's kind, the button it would press, the
+  CAPTCHA, security-question, account and job-search reads, each box's filled/asked/skipped and rule), and
+  `test_live_fixtures.py::test_live_fixture_decides_the_same` decides it again offline, naming the page and the
+  key that changed. `--replace` is how an intended change is accepted (a run's new capture of the page); for a
+  page no run has captured again, `JOB_APPLY_REDECIDE=1` on that test writes its decisions again (look at the diff).
 - A probe of a few employers on GitHub (where the test identity's secrets are): run the live-nightly
   workflow by hand with `companies` (and `checks`, e.g. `accounts`). It runs only those, in a few minutes,
   and isn't compared or written to the issue: read its artifacts with `nightly_summary.py --artifacts`.

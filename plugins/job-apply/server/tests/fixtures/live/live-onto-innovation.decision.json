@@ -1,0 +1,30 @@
+{
+  "page": "form",
+  "next": "Next",
+  "captcha": false,
+  "security_asked": false,
+  "account_and_application": false,
+  "job_search": false,
+  "fields": {
+    "How Did You Hear About Us?* (combobox)": "filled by how_heard",
+    "Country* (listbox)": "filled by country",
+    "Country* (text)": "filled by country",
+    "First Name* (text)": "filled by first_name",
+    "Last Name* (text)": "filled by last_name",
+    "Address Line 1* (text)": "filled by address1",
+    "Address Line 2 (text)": "skipped",
+    "City* (text)": "filled by city",
+    "State* (listbox)": "filled by state",
+    "State* (text)": "filled by state",
+    "Postal Code* (text)": "filled by postal",
+    "Email* (text)": "filled by email",
+    "Phone Device Type* (listbox)": "filled by phone_type",
+    "Phone Device Type* (text)": "filled by phone_type",
+    "Country Phone Code* (combobox)": "filled by phone_code",
+    "Phone Number* (text)": "filled by phone",
+    "Phone Extension (text)": "skipped",
+    "Have you previously been employed by ONTO Innovation, Rudolph Technologies, or Nanometrics?* (radio_group)": "asked",
+    "I have a preferred name (checkbox)": "skipped",
+    "Terms and Conditions (checkbox)": "skipped"
+  }
+}

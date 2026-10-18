@@ -1,0 +1,14 @@
+{
+  "page": "form",
+  "next": "Save and Continue",
+  "captcha": false,
+  "security_asked": false,
+  "account_and_application": false,
+  "job_search": false,
+  "fields": {
+    "Select the file to attach (file)": "filled by documents.resume",
+    "Comments about the file (text)": "skipped",
+    "Select the file: REDACTED-resume.pdf (checkbox)": "skipped",
+    "Document is a resume (checkbox)": "skipped"
+  }
+}

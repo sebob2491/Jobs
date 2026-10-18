@@ -1,0 +1,13 @@
+{
+  "page": "sign_in",
+  "next": null,
+  "captcha": false,
+  "security_asked": false,
+  "account_and_application": false,
+  "job_search": false,
+  "fields": {
+    "Email Address* (text)": "filled by email",
+    "Password* (password)": "asked",
+    "Verify New Password* (password)": "asked"
+  }
+}
