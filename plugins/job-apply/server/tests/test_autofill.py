@@ -1930,10 +1930,18 @@ def test_worked_there_before_only_where_the_profile_names_the_employer_itself():
     ("APS", "Arizona Public Service", None), ("Global Foundries", "GlobalFoundries", None),
     ("Banner - University Medicine", "Banner Health", None), ("ASM Pacific Technology", "ASM International", None),
     ("Example Fab Services", "Example Fab", None),
+    # (and the second review's: short forms with legal words kept, a short name's first word, two first words)
+    ("TSMC", "Taiwan Semiconductor Manufacturing Company", None),
+    ("TSMC Arizona", "Taiwan Semiconductor Manufacturing Company", None), ("ADI", "Analog Devices, Inc.", None),
+    ("TEL", "Tokyo Electron Limited", None), ("Western Alliance Bancorporation", "Western Alliance Bank", None),
+    ("State Farm Mutual Automobile Insurance Company", "State Farm Insurance", None),
+    ("U of A", "University of Arizona", None), ("UArizona", "University of Arizona", None),
+    ("UMC", "University Medical Center of Southern Nevada", None),
+    ("UMC Southern Nevada", "University Medical Center of Southern Nevada", None),
     # two employers: No
     ("Intel", "Intelligent Fabrication", "No"), ("Arizona State University", "Arizona Public Service", "No"),
     ("American Express", "American Airlines", "No"), ("United Airlines", "United Health Group", "No"),
-    ("Example Fab Services", "Example Litho", "No"),
+    ("ASU", "APS", "No"), ("City of Las Vegas", "City of Henderson", "No"), ("Example Fab Services", "Northwind Litho", "No"),
     # the employer itself: Yes
     ("Wells Fargo & Company", "Wells Fargo", "Yes"), ("Texas Instruments Incorporated", "Texas Instruments", "Yes"),
 ])
@@ -1950,6 +1958,35 @@ def test_an_employer_whose_name_may_be_this_ones_is_asked_never_answered_no(ours
     # a "new candidate, not a current employee" box: never for someone whose job now may be there
     now = _person(work_history=[], experience={"current_company": ours})
     assert works_there_now(now, theirs) == (answer != "No")
+
+
+def test_not_on_the_staff_of_an_employer_the_persons_own_may_be_is_asked():
+    """The second review's probe: someone at "GCU" now, applying to Grand Canyon Education, was answered "I am not a
+    current Grand Canyon University employee": the choice named an employer that may be the job's, but the person's own
+    (GCU) may be the one it names. Asked. And where the person's job may be the one named, past or present."""
+    options = ["Yes", "No", "I am not a current Grand Canyon University employee"]
+    asked = "Have you notified your leader of your application? (internal candidates only)"
+    gcu = _person(work_history=[{"company": "GCU", "title": "Technician", "start": "2020-01", "end": "present"}])
+    assert _answer(asked, gcu, kind="radio_group", options=options, job={"company": "Grand Canyon Education"}) is None
+    from job_apply.autofill import _not_staff_choice
+
+    field = {"label": asked, "options": options}
+    assert _not_staff_choice(field, gcu, {"company": "Grand Canyon Education"}) is None
+    intel = _person(work_history=[{"company": "Intel", "title": "Technician", "start": "2020-01", "end": "present"}])
+    ti = {"label": "Current employees only: have you told your manager?",
+          "options": ["Yes", "No", "I am not a current TI employee"]}
+    assert _not_staff_choice(ti, intel, {"company": "Texas Instruments"}) == "I am not a current TI employee"  # (as before)
+
+
+def test_a_past_job_at_the_employer_and_one_now_that_may_be_it_is_asked():
+    """A past job at Banner Health and one now at Banner Bank, applying to Banner Health: "Yes, previously" may be
+    "currently" (Banner Bank may be Banner Health's, by the wider may-be), so it's the person's."""
+    person = _person(work_history=[{"company": "Banner Health", "title": "Technician", "start": "2015-01", "end": "2019-01"},
+                                   {"company": "Banner Bank", "title": "Teller", "start": "2019-02", "end": "present"}])
+    options = ["I am CURRENTLY employed by Banner Health", "I was PREVIOUSLY employed by Banner Health",
+               "I have NEVER been employed by Banner Health"]
+    assert _answer("Have you ever been employed with Banner Health before?", person, kind="radio_group",
+                   options=options, job={"company": "Banner Health"}) is None
 
 
 def test_a_current_company_is_an_employer_worked_for():

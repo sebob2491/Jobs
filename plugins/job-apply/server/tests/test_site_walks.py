@@ -376,7 +376,7 @@ def test_greenhouse_walk(srv, fake_ats, job_apply_home):
     desk; the marketing opt-in is never chosen."""
     settings(job_apply_home, submit_mode="dry_run")
     job = srv.add_job(url=GREENHOUSE + "/examplelitho/jobs/3003", title="Field Service Technician",
-                      company="Example Litho")["job"]
+                      company="Northwind Litho")["job"]
     desk = Desk(srv)
     applier = desk.applier
     consent = "I have read and agree to the Privacy notice and Terms of use.*"
