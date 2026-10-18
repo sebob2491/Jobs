@@ -12262,7 +12262,7 @@ def test_a_lone_box_marked_wrong_on_a_page_that_says_nothing_wrong_is_left_as_it
     assert marked["needs_input"][0]["required"]
 
 
-@pytest.mark.parametrize("drawn", ["late", "with the error"])
+@pytest.mark.parametrize("drawn", ["late", "with the error", "Workday's, with the error"])
 @pytest.mark.parametrize("case", ["asked", "readonly", "never asked", "other heading"])
 def test_a_box_the_errors_name_is_gone_back_to_once_and_only_to_be_asked(srv, monkeypatch, case, drawn):
     """The review of 0.3.165: a box taken as optional that the errors name ("Available Start Date is required.") is
@@ -12272,7 +12272,8 @@ def test_a_box_the_errors_name_is_gone_back_to_once_and_only_to_be_asked(srv, mo
     with what the page said. The same with another heading saying what's wrong ("There are 1 errors on this page": the
     second review's), the step still the same. And the same whether the heading is drawn after the press's look at the
     page ("late": 400 ms after the error) or before it ("with the error"): one drawn within the look (under load, CI's)
-    read as the page gone on, and Save and Continue was pressed again on the "new" step."""
+    read as the page gone on, and Save and Continue was pressed again on the "new" step. Workday's too, a button in
+    its heading and an "Error - Available Start Date" button for the box (the review of the fix)."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
     monkeypatch.setattr(pipeline, "STEP_SAVE_WAIT", 1)
@@ -12286,7 +12287,7 @@ def test_a_box_the_errors_name_is_gone_back_to_once_and_only_to_be_asked(srv, mo
 
         monkeypatch.setattr(srv, "autofill", autofill)
     query = {"readonly": "?readonly", "other heading": "?heading=other"}.get(case, "")
-    query += ("&" if query else "?") + ("late=400" if drawn == "late" else "late=0")
+    query += ("&" if query else "?") + {"late": "late=400", "with the error": "late=0"}.get(drawn, "late=0&workday")
     job = srv.add_job(url=fixture_url("site/errors-name-optional-box.html") + query, title="Technician",
                       company="Example Fab")["job"]
     applier = Applier(srv)
@@ -12308,9 +12309,32 @@ def test_a_box_the_errors_name_is_gone_back_to_once_and_only_to_be_asked(srv, mo
             (r.need, r.reason, r.questions, r.log)
         assert went_back, r.log
     else:
-        assert r.need == "stuck" and r.reason == ("The page didn't move on: Available Start Date is required. Fix it in "
-                                                  "the desk's browser window, then press Resume."), (r.reason, r.log)
+        # (Workday's list names the box too)
+        also = ".; “Available Start Date” needs fixing" if drawn.startswith("Workday") else ""
+        assert r.need == "stuck" and r.reason == (f"The page didn't move on: Available Start Date is required{also}. Fix "
+                                                  "it in the desk's browser window, then press Resume."), (r.reason, r.log)
         assert went_back == (case != "readonly"), r.log
+
+
+@pytest.mark.parametrize("heading, says_wrong", [
+    ("Errors Found", True), ("There are 1 errors on this page", True), ("2 Errors", True), ("Error", True),
+    ("1 error found.", True), ("There is a problem with your answers", True), ("Please correct the following", True),
+    ("Oops! Please fix the errors below", True), ("Fix the highlighted fields", True),
+    ("Error Handling Experience", False), ("Please Review Your Application", False), ("Enter Your Information", False),
+    ("Required Documents", False), ("Missing Information", False), ("Problem Solving", False),
+    ("Data Center Technician", False), ("Errors and Omissions Insurance", False), ("My Questions", False)])
+def test_a_step_is_the_same_with_or_without_a_heading_saying_whats_wrong(heading, says_wrong):
+    """The page's fingerprint (did a press move it on?) leaves out a heading that only says the step has something
+    wrong, and Workday's buttons for it ("Errors Found" in its heading, "Error - <the box>" for each), never a step's
+    own heading: "Please Review Your Application" or "Data Center Technician" is another page."""
+    page = {"url": "https://example.com/apply", "headings": ["My Questions"], "fields": 2, "questions": (),
+            "actions": ["Save and Continue"]}
+    drawn = {**page, "headings": [heading, "My Questions"], "actions": [heading, "Error - Available Start Date",
+                                                                        "Save and Continue"]}
+    assert (pipeline._fingerprint(drawn) == pipeline._fingerprint(page)) == says_wrong
+    if not says_wrong:  # (its own heading kept, whatever the error buttons beside it)
+        assert pipeline._step_headings(drawn) == (heading, "My Questions")
+        assert pipeline._fingerprint({**drawn, "headings": ["My Questions"]}) != pipeline._fingerprint(page)
 
 
 def test_a_notice_the_way_back_opened_is_agreed_and_the_step_pressed_again(srv, monkeypatch):

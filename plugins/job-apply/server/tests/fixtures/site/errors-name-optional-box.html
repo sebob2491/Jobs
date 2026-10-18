@@ -5,7 +5,8 @@
 <!-- a step whose "Save and Continue" says a box it never marked required is ("Available Start Date is required."),
      with Workday's "Errors Found" heading drawn a moment after (?heading=other: "There are 1 errors on this page").
      ?readonly: the box is read-only (never filled or asked). ?late=<ms>: the heading drawn that long after the press
-     (400 by default), or with the error at once (late=0).
+     (400 by default), or with the error at once (late=0). ?workday: drawn as Workday's is, a button in an h3 and a
+     list of "Error - <the box>" buttons (tests/fixtures/site/workday-field-alert.html).
      It never goes on: pressed counts the presses (the review of 0.3.165) -->
 <h2>My Questions</h2>
 <div id="errs"></div>
@@ -22,7 +23,11 @@
     if (!document.getElementById('ef')) {
       const said = new URLSearchParams(location.search).get('heading') === 'other' ? 'There are 1 errors on this page'
         : 'Errors Found';
-      const draw = () => document.body.insertAdjacentHTML('afterbegin', '<h2 id="ef">' + said + '</h2>');
+      const draw = () => document.body.insertAdjacentHTML('afterbegin',
+        new URLSearchParams(location.search).has('workday')
+          ? '<div id="ef"><h3><button type="button" aria-expanded="true">' + said + '</button></h3><ol><li>'
+            + '<button type="button">Error - Available Start Date</button></li></ol></div>'
+          : '<h2 id="ef">' + said + '</h2>');
       const late = Number(new URLSearchParams(location.search).get('late') ?? 400);
       if (late > 0) setTimeout(draw, late); else draw();
     }
