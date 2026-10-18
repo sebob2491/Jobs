@@ -267,11 +267,13 @@ def _alike(a: tuple[str, str, str | None], b: tuple[str, str, str | None]) -> bo
     return a[2] == b[2] or not a[2] or not b[2]
 
 
-# a requisition number in a job board's copy of a posting: "Req ID: R12345", "Job #: 4567", "JR0000002", "REQ-1234"
+# a requisition number in a job board's copy of a posting: one labelled as one ("Req ID: R12345", "Requisition 4567",
+# "Job Number: 2024-118", "Posting ID 88123", "Req # 5678"), or a bare JR or REQ number of 5 digits or more
+# ("JR0286553"); never another number its words name ("Fanuc R2000 robots": the review of 0.3.206)
 _REQ_IN_TEXT = re.compile(
-    r"(?i)(?:\brequisition|\breq)\.?\s*(?:id|no\.?|number|#)?\s*[:#]?\s*([a-z]{0,4}[-_]?\d{4,}(?:[-_]\d+)*)\b"
-    r"|\bjob\s*(?:id|no\.?|number|#)\s*[:#]?\s*([a-z]{0,4}[-_]?\d{4,}(?:[-_]\d+)*)\b"
-    r"|\b((?:jr|req|r)[-_]?\d{4,})\b")
+    r"(?i)\b(?:req(?:uisition)?\.?\s*(?:id|no\.?|number|#)|requisition|job\s*(?:id|no\.?|number|#)"
+    r"|posting\s*(?:id|no\.?|number|#))\s*[:#]?\s*([a-z]{0,4}[-_]?\d{3,}(?:[-_]\d+)*)\b"
+    r"|\b((?:jr|req)[-_]?\d{5,})\b")
 _REQ_LIKE = re.compile(r"(?i)[a-z]{0,4}[-_ #:]*\d{3,}(?:[-_]\d+)*[a-z]{0,3}")
 
 
@@ -326,16 +328,23 @@ class _Job(NamedTuple):
     aliased: bool
 
 
-def _kept_apart(own: _Job, board: _Job, alias_only: bool = False) -> str | None:
+def _kept_apart(own: _Job, own_ids: frozenset[str], board: _Job, board_ids: frozenset[str],
+                alias_only: bool = False) -> str | None:
     """Why the employer's job and a job board's copy alike it aren't made one without asking, or None when they are:
-    saved more than MERGE_DAYS apart (the employer's repost), or either begun or done (a board's copy begun may have
-    been sent in there; one done is the person's). `alias_only`: a board's copy saved now, which only becomes an alias
-    of the employer's job, whatever that one's status: it has none of its own."""
+    saved more than MERGE_DAYS apart (the employer's repost, as often as not), or the board's copy begun or done (it may
+    have been sent in there; one done is the person's), and as the tracker opens the employer's too. A board's copy
+    saved now (`alias_only`) only becomes an alias of the employer's job, which keeps its status; so where that job is
+    begun or done, or holds a job board's copy already, only when the two name the same requisition number (the review
+    of 0.3.206: another opening alike Intel's JR1 applied to, on Indeed a week later, took its "applied")."""
     if own.created is None or board.created is None or abs(own.created - board.created) > timedelta(days=MERGE_DAYS):
         return f"as they were saved more than {MERGE_DAYS} days apart"
-    for job in ([] if alias_only else [board, own]):
-        if job.status not in _UNBEGUN:
-            return f"as job {job.id} is {job.status.replace('_', ' ')}"
+    same_number = bool(own_ids & board_ids)
+    unsure = ", and no requisition number shows it's this posting"
+    for job in ([own] if alias_only else [board, own]):
+        if job.status not in _UNBEGUN and not (alias_only and same_number):
+            return f"as job {job.id} is {job.status.replace('_', ' ')}{unsure if alias_only else ''}"
+    if own.aliased and not same_number:
+        return f"as job {own.id} has a job board's copy already{unsure}"
     return None
 
 
@@ -488,33 +497,41 @@ class Tracker:
         holding a board's copy already (an alias: that copy may be this posting's); the employer's jobs for a board's
         copy. With the one it may be made one with, if any: the only one, a board's copy for the employer's posting
         (two of the employer's own are never one: they may be two openings), alike no other from this posting's side
-        (Intel's JR1 and JR2 both alike Indeed's copy: which it's a copy of can't be told). And why there's none."""
+        (Intel's JR1 and JR2 both alike Indeed's copy: which it's a copy of can't be told); or the only one naming the
+        same requisition number, which no other from this posting's side names too. And why there's none."""
         def same(a: _Job, a_ids: frozenset[str], b: _Job) -> bool:
             return a.id != b.id and _alike(a.key, b.key) and not _differ(a_ids, self._ids(b, known))
 
+        mine = [j for j in group if j.id != new.id and (j.board is None) == (new.board is None)]
         if new.board is None:
             theirs = [j for j in group if (j.board is not None or j.aliased) and same(new, new_ids, j)]
         else:
             theirs = [j for j in group if j.board is None and same(new, new_ids, j)]
         if not theirs:
             return None, theirs, ""
-        if len(theirs) == 1 and new.board is None and theirs[0].board is None:
-            return None, theirs, f"as job {theirs[0].id} is another of the employer's postings, with a job board's copy"
-        one = theirs[0]
-        rivals = [j for j in group if j.id != new.id and (j.board is None) == (new.board is None)
-                  and same(one, self._ids(one, known), j)]
-        if len(theirs) > 1 or rivals:
+        named = [j for j in theirs if new_ids & self._ids(j, known)]
+        pick = named if len(named) == 1 else theirs
+        if len(pick) == 1 and new.board is None and pick[0].board is None:
+            return None, theirs, f"as job {pick[0].id} is another of the employer's postings, with a job board's copy"
+        one = pick[0]
+        if pick is named:  # (the same number: only another naming it too is a rival)
+            rivals = [j for j in mine if new_ids & self._ids(one, known) & self._ids(j, known)]
+        else:
+            rivals = [j for j in mine if same(one, self._ids(one, known), j)]
+        if len(pick) > 1 or rivals:
             return None, theirs, "as more than one matches"
         return one, theirs, ""
 
     def _link(self, job_id: int, others: builtins.list[int], why: str, now: str) -> None:
         """Note jobs that may be one posting but aren't made one (_match, _kept_apart), each way round: the desk asks the
         person before applying to one while another is begun or done (Tracker.maybe_same). Said in the job's history
-        the first time."""
-        added = [o for o in others if self.conn.execute("INSERT OR IGNORE INTO maybe_same (job_id, other_id) VALUES "
-                                                        "(?, ?)", (job_id, o)).rowcount]
-        for other in others:
-            self.conn.execute("INSERT OR IGNORE INTO maybe_same (job_id, other_id) VALUES (?, ?)", (other, job_id))
+        the first time. Nothing written for links already there (the tracker opening with nothing new takes no write
+        lock: another session may be writing)."""
+        there = {(r[0], r[1]) for r in self.conn.execute(
+            "SELECT job_id, other_id FROM maybe_same WHERE job_id = ? OR other_id = ?", (job_id, job_id))}
+        added = [o for o in others if (job_id, o) not in there]
+        for a, b in [(job_id, o) for o in added] + [(o, job_id) for o in others if (o, job_id) not in there]:
+            self.conn.execute("INSERT OR IGNORE INTO maybe_same (job_id, other_id) VALUES (?, ?)", (a, b))
         if added:
             said = f"maybe the same as job{'s' if len(added) > 1 else ''} {', '.join(map(str, added))}: kept apart, {why}"
             self.conn.execute("INSERT INTO events (job_id, at, status, note) VALUES (?, ?, '', ?)", (job_id, now, said))
@@ -540,7 +557,7 @@ class Tracker:
                     continue
                 one, theirs, why = self._match(own, self._ids(own, known), group, known)
                 if one is not None and one.id not in done:
-                    why = _kept_apart(own, one) or ""
+                    why = _kept_apart(own, self._ids(own, known), one, self._ids(one, known)) or ""
                     if not why:
                         done |= {own.id, one.id}
                         self._merge_pair(one.id, own.id, one.board or "")
@@ -688,15 +705,24 @@ class Tracker:
                 known: dict[int, frozenset[str]]) -> tuple[_Job | None, builtins.list[_Job], str]:
         """For a posting not saved yet: the job it's made one with, if any (_match: surely the same posting; and
         _kept_apart: for the employer's posting, a board's copy untouched and saved within MERGE_DAYS; for a board's
-        copy, an employer's job saved within MERGE_DAYS, whatever its status, as it only becomes an alias); the jobs
-        it may be the same as; and why it isn't made one with them."""
+        copy, an employer's job saved within MERGE_DAYS, untouched and holding no board's copy yet, or else naming the
+        same requisition number); the jobs it may be the same as; and why it isn't made one with them."""
         key = _key(values["company"], values["title"], values["location"])
         new = _Job(0, key, board, "saved", _moment(now), False)
         new_ids = _req_ids(values["title"], values["external_id"], values["description"], values["url"], board)
         one, theirs, why = self._match(new, new_ids, postings.get((key[0], key[1]), []), known)
         if one is not None:
-            why = (_kept_apart(one, new, alias_only=True) if board else _kept_apart(new, one)) or ""
+            one_ids = self._ids(one, known)
+            why = (_kept_apart(one, one_ids, new, new_ids, alias_only=True) if board
+                   else _kept_apart(new, new_ids, one, one_ids)) or ""
         return (None if why else one), theirs, why
+
+    @_locked
+    def linked(self, job_id: int) -> builtins.list[int]:
+        """Every job noted as maybe the same posting as this one (Tracker.maybe_same), Apply anyway or not: the desk
+        never has two of them under way at once."""
+        return [r[0] for r in self.conn.execute("SELECT other_id FROM maybe_same WHERE job_id = ? ORDER BY other_id",
+                                                (job_id,))]
 
     def _join(self, job_id: int, values: dict[str, str], board: str | None, now: str) -> dict[str, Any]:
         """A posting at a new address joins the job saved from the other side that it is (upsert). The job keeps its

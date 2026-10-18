@@ -355,22 +355,51 @@ def test_the_employers_posting_joins_the_job_saved_from_indeed(job_apply_home):
 
 def test_an_indeed_posting_after_the_employers_is_kept_as_its_alias(job_apply_home):
     """Indeed's copy of a job saved from the employer's site makes no new job: its address finds that one (the desk's
-    paste, ingest_job, a search's `tracked`), which is applied for on the employer's site still."""
+    paste, ingest_job, a search's `tracked`), which is applied for on the employer's site still. Another board's copy
+    once it holds one (LinkedIn's, or another Indeed listing) is kept apart and asked about, unless it names the job's
+    requisition number (the review of 0.3.206: one way round only, it could be another opening's copy)."""
     t = Tracker()
-    job, _ = t.upsert(_intels(location=""))  # (one not saying where: alike any city's)
-    t.update(job["id"], status="ready_to_submit")
+    job, _ = t.upsert(_intels(location="", external_id="JR0286553"))  # (one not saying where: alike any city's)
     same, created = t.upsert(_indeed(salary="$25 an hour"))
     assert not created and same["id"] == job["id"] and len(t.list()) == 1
-    assert (same["url"], same["apply_url"], same["ats"], same["status"]) == (INTEL, "", "workday", "ready_to_submit")
+    assert (same["url"], same["apply_url"], same["ats"], same["status"]) == (INTEL, "", "workday", "saved")
     assert same["salary"] == "$25 an hour" and same["location"] == "Chandler, AZ"
     assert t.find_by_url(INDEED)["id"] == job["id"] and t.aliases() == {job["id"]: [INDEED]}
     assert "the same posting on Indeed" in t.events(job["id"])[-1]["note"]
     again, created = t.upsert(_indeed())
     assert not created and again["id"] == job["id"] and len(t.list()) == 1
-    # a LinkedIn copy too: another alias of the one job
     linkedin = "https://www.linkedin.com/jobs/view/3900000123/"
     also, created = t.upsert({"url": linkedin, "title": "Equipment Technician", "company": "Intel", "ats": "linkedin"})
-    assert not created and also["id"] == job["id"] and t.aliases() == {job["id"]: [INDEED, linkedin]}
+    assert created and t.aliases() == {job["id"]: [INDEED]} and _maybe(t, also["id"]) == [job["id"]]
+    assert t.events(also["id"])[-1]["note"] == (f"maybe the same as job {job['id']}: kept apart, as job {job['id']} has a "
+                                                "job board's copy already, and no requisition number shows it's this "
+                                                "posting")
+    named, created = t.upsert(_indeed(url="https://www.indeed.com/viewjob?jk=1212121212121212",
+                                      description="Job Requisition ID: JR0286553. Days."))
+    assert not created and named["id"] == job["id"]
+    t.close()
+
+
+def test_a_board_copy_takes_a_begun_or_done_jobs_status_only_naming_its_requisition_number(job_apply_home):
+    """The review of 0.3.206 (MEDIUM): Intel's JR1 applied to, and a week later Indeed's copy of another opening alike
+    it (the same title and city, no number) became its alias, and so "already marked applied". A board's copy becomes
+    the alias of an employer's job begun or done only naming its requisition number; else it's a job of its own, asked
+    about before it's applied to."""
+    t = Tracker()
+    jr1, _ = t.upsert(_intels(external_id="JR0000001"))
+    t.update(jr1["id"], status="applied")
+    other, created = t.upsert(_indeed())
+    assert created and t.get(other["id"])["status"] == "saved" and t.aliases() == {}
+    assert _maybe(t, other["id"]) == [jr1["id"]]
+    assert t.events(other["id"])[-1]["note"] == (f"maybe the same as job {jr1['id']}: kept apart, as job {jr1['id']} is "
+                                                 "applied, and no requisition number shows it's this posting")
+    begun, _ = t.upsert(_intels(url="https://careers.lamresearch.com/careers/job/7", company="Lam Research"))
+    t.update(begun["id"], status="in_progress")
+    _, created = t.upsert(_indeed(url="https://www.indeed.com/viewjob?jk=3434343434343434", company="Lam Research"))
+    assert created and t.aliases() == {}
+    copy, created = t.upsert(_indeed(url="https://www.indeed.com/viewjob?jk=5656565656565656",
+                                     description="Req ID: JR0000001. Maintain 300mm tools."))
+    assert not created and copy["id"] == jr1["id"] and copy["status"] == "applied"
     t.close()
 
 
@@ -526,6 +555,42 @@ def test_postings_whose_requisition_numbers_differ_are_different_jobs(job_apply_
     lam, created = t.upsert(_intels(url="https://careers.lamresearch.com/careers/job/4321", company="Lam Research",
                                     external_id="JR0004321"))
     assert not created and lam["id"] == same["id"]
+    # only a number labelled as one, or a bare JR or REQ number of 5 digits or more: a robot's model isn't one (the
+    # review of 0.3.206: "Fanuc R2000" read as 2000 told this pair apart)
+    robots, _ = t.upsert(_indeed(url="https://www.indeed.com/viewjob?jk=9898989898989898", company="ASML",
+                                 description="Experience with Fanuc R2000 robots and REQ-1234 lockout forms."))
+    asml, created = t.upsert(_intels(url="https://asml.example/careers/job/R12345", company="ASML", external_id="R12345"))
+    assert not created and asml["id"] == robots["id"]
+    t.close()
+
+
+def test_the_tracker_opening_with_nothing_new_writes_nothing(job_apply_home, monkeypatch):
+    """The review of 0.3.206: each open noted the jobs that may be one posting again (INSERT OR IGNORE), taking the
+    database's write lock every time, while another session may be writing. Nothing new: nothing written."""
+    import sqlite3
+
+    t = Tracker()
+    _older(t, [(INDEED, "applied", "Intel Corporation", "Equipment Technician", "Chandler, AZ", "indeed"),
+               (INTEL, "saved", "Intel", "Equipment Technician", "", "job desk"),
+               ("https://www.indeed.com/viewjob?jk=4444444444444444", "saved", "Lam Research", "Field Service Engineer",
+                "Tempe, AZ", "indeed"),
+               ("https://careers.lamresearch.com/careers/job/1", "saved", "Lam Research", "Field Service Engineer",
+                "Tempe, AZ", "")])
+    t.close()
+    Tracker().close()  # (made one, and noted as maybe the same)
+    said: list[str] = []
+    real = sqlite3.connect
+
+    def connect(*args, **kwargs):
+        conn = real(*args, **kwargs)
+        conn.set_trace_callback(said.append)
+        return conn
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    t = Tracker()
+    assert len(t.list()) == 3 and _maybe(t, 2) == [1]
+    assert any(s.lstrip().upper().startswith("SELECT") and "maybe_same" in s for s in said)  # (it looked)
+    assert [s for s in said if s.lstrip().split()[0].upper() in ("INSERT", "UPDATE", "DELETE", "REPLACE")] == []
     t.close()
 
 

@@ -2147,14 +2147,18 @@ class Applier:
 
     def _sites(self, run: Run) -> set[str]:
         """Where a job is, or may go: its employer, its posting's and application's sites, where it paused, and its
-        tab's now."""
-        job = self.srv.tracker().get(run.job_id, with_description=False) or {}
+        tab's now; and the posting, shared with every job that may be the same one (Tracker.linked: an Indeed job and
+        the employer's posting kept apart), so two of those are never under way at once (the review of 0.3.206: both
+        passed the card as each other was still saved, and both were filled)."""
+        t = self.srv.tracker()
+        job = t.get(run.job_id, with_description=False) or {}
         urls = [run.url, job.get("url"), job.get("apply_url"), f"https://{run.paused_host}/" if run.paused_host else ""]
         if run.page is not None and not run.page.is_closed():
             urls.append(run.page.url)
         sites = {self._site_key(u) for u in urls if u} - {""}
         company = norm(str(run.company or job.get("company") or ""))
-        return sites | ({f"employer:{company}"} if company else set())
+        postings = {f"posting:{j}" for j in (run.job_id, *t.linked(run.job_id))}
+        return sites | postings | ({f"employer:{company}"} if company else set())
 
     def _site_free(self, job_id: int) -> bool:
         """May this job begin now: no job under way is at its employer or on its sites (one at a time on a site: its
@@ -2874,8 +2878,18 @@ class Applier:
     def _maybe_done_elsewhere(self, run: Run) -> str | None:
         """The card's words when this job may be the same posting as one begun or applied to on another site (the
         tracker kept them apart, as it couldn't be sure: Tracker.maybe_same), until the person's Apply anyway; else None.
-        Never for one the other is only saved for."""
-        others = [o for o in self.srv.tracker().maybe_same(run.job_id) if o.get("status") in FINISHED | BEGUN]
+        Begun is the tracker's word for it, or this desk's: under way, waiting on the person (but on this card of its
+        own), at its review page, sent, or its application begun at all (the tracker says "in progress" only once its
+        page is opened: two starting together each read the other as saved, the review of 0.3.206). Never for one only
+        saved."""
+        def begun_here(job_id: int) -> bool:
+            other = self.runs.get(job_id)
+            return job_id in self._slots or other is not None and (
+                other.started or other.status in ("running", "ready", "submitted")
+                or other.status == "needs_you" and other.need != "maybe_duplicate")
+
+        others = [o for o in self.srv.tracker().maybe_same(run.job_id)
+                  if o.get("status") in FINISHED | BEGUN or begun_here(o["id"])]
         if not others:
             return None
         other = max(others, key=lambda o: (o["status"] in FINISHED, -o["id"]))
@@ -5953,6 +5967,12 @@ class Applier:
                           "off and press Submit to send it.")
             self._log(run, run.reason)
             return
+        if not by_person:
+            # Submit for me: once more, as the job that may be this one could have been begun since it was filled (a
+            # Submit the person pressed is theirs to send)
+            held = self._maybe_done_elsewhere(run)
+            if held:
+                return self._pause(run, "maybe_duplicate", held)
         if run.page is not None and not run.page.is_closed() and not self._own_place(run, run.page.url):
             # its tab was taken on to another posting: Submit there would send that one as this job
             return self._pause(run, "stuck", "Its tab has gone on to another page, so I didn't press Submit there. "

@@ -762,7 +762,10 @@ async def open_application(job_id: int | None = None, url: str | None = None) ->
     in the visible browser and make it the current job. Returns a summary of the page:
     headings, number of fields, buttons and errors.
 
-    Next steps are usually click("Apply") / click("Easy Apply"), then autofill()."""
+    Next steps are usually click("Apply") / click("Easy Apply"), then autofill().
+    `maybe_same`, when present: this job may be one already started or applied to on
+    another site (an Indeed job and the employer's posting kept apart). Ask the person
+    before applying."""
     if job_id is None and not url:
         raise ValueError("Pass job_id or url")
     target, job = url or "", None
@@ -798,6 +801,8 @@ async def open_application(job_id: int | None = None, url: str | None = None) ->
             browser.tab_jobs.pop(browser.current_tab, None)
     summary["ats"] = detect_ats(summary["url"])
     summary["submit_policy"] = _submit_policy(await browser.human_submit_ats() or summary["ats"])
+    if maybe := _maybe_same(job_id):
+        summary["maybe_same"] = {"jobs": maybe, "warning": MAYBE_SAME_SAYS}
     return summary
 
 
@@ -1175,6 +1180,19 @@ def _submit_policy(ats: str) -> str:
 
 # Tracker statuses that mean the application is no longer the desk's to send (pipeline.FINISHED, and a Skip)
 _SUBMIT_GONE = frozenset({"applied", "interviewing", "offer", "rejected", "withdrawn", "skipped"})
+# A job the tracker kept apart from one it may be the same posting as (an Indeed job and the employer's): what Claude's
+# tools say while that one is begun or applied to, as the Job Desk's card asks (the review of 0.3.206)
+MAYBE_SAME_SAYS = "may be the job already started or applied to: ask the person before applying"
+_BEGUN_OR_DONE = frozenset({"in_progress", "ready_to_submit", "applied", "interviewing", "offer", "rejected", "withdrawn"})
+
+
+def _maybe_same(job_id: int | None) -> list[dict[str, Any]]:
+    """The jobs begun or applied to that this one may be the same posting as (Tracker.maybe_same: until the person
+    said Apply anyway on the desk), each by its id, title, company and status."""
+    if job_id is None:
+        return []
+    return [{"job_id": o["id"], "title": o.get("title") or "", "company": o.get("company") or "", "status": o["status"]}
+            for o in tracker().maybe_same(job_id) if o.get("status") in _BEGUN_OR_DONE]
 
 
 @tool(drives=True)
@@ -1184,7 +1202,9 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
     Only call after showing the user the filled review page and they said to submit
     (user_confirmed=true), or when settings.submit_mode is "auto" for this ATS.
     On LinkedIn and Indeed this never clicks: it marks the job ready_to_submit and
-    the user clicks Submit in the browser; then call update_job(status="applied")."""
+    the user clicks Submit in the browser; then call update_job(status="applied").
+    A job that may be one already started or applied to on another site (`maybe_same`
+    from open_application) is never pressed without user_confirmed=true."""
     from . import desk as job_desk  # (the desk's own module imports this one)
     if job_desk._desk is not None and job_desk._desk.applier.hold_submits:
         return {"submitted": False, "reason": "The Job Desk's Troubleshooting is on, so nothing is submitted. Turn it "
@@ -1205,6 +1225,10 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
             "reason": f"{ATS_NAMES.get(ats, ats)} prohibits automated submission. Ask the user to review the "
                       "browser window and click Submit themselves, then call update_job(status='applied').",
         }
+    if (maybe := _maybe_same(job["id"])) and not user_confirmed:
+        said = "; ".join(f"job {o['job_id']} ({o['title']} at {o['company']}, {o['status'].replace('_', ' ')})"
+                         for o in maybe)
+        return {"submitted": False, "reason": f"Not pressed: this {MAYBE_SAME_SAYS} ({said}).", "maybe_same": maybe}
     if policy == "after_user_confirms" and not user_confirmed:
         return {"submitted": False, "reason": "Show the user the review page and get an explicit go-ahead first."}
     empty_required = [f["label"] for f in page["fields"]
