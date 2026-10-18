@@ -3889,6 +3889,53 @@ def test_a_us_citizen_question_with_its_yes_or_no_written_after_it_is_still_answ
     assert _answer("Are you a US citizen, yes or no, and able to obtain a security clearance?", citizen, **yes_no) is None
 
 
+def test_a_us_citizen_question_is_read_as_the_form_gives_it_and_by_the_citizen_rules_alone():
+    """The seventh review of Oct 18: the check read the label with the employer's notes taken out, so an instruction in
+    a note ("(Note: green card holders should select Yes.)") went unseen; and the other work rules read a citizen
+    question's label before the citizen rule ("Are you a US citizen? Will you require visa sponsorship?" took a
+    citizen's No, "Work Authorization: Are you a US citizen?" a permanent resident's Yes, "...(do not include permanent
+    residents)?" the U.S. person's Yes). Now the check reads the whole label and only the citizen rules read a citizen
+    question: anything beside it is left. The employer's plain word that it won't sponsor still says no more, a "Work
+    Authorization" heading is its own, and "...citizen or permanent resident?" is still the U.S. person's question."""
+    pr = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=False, us_person=True,
+               citizenship="Mexico")
+    visa = _work(authorized_to_work=True, requires_sponsorship=True, us_citizen=False, us_person=False,
+                 citizenship="India")
+    citizen = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=True, us_person=True,
+                    citizenship="United States")
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    for label in ("Are you a US citizen? (Note: green card holders should select Yes.)",
+                  "Are you a US citizen? (Please note: if you hold a green card, select Yes.)",
+                  "Are you a US citizen? We are unable to sponsor visas, so select Yes if you hold a green card.",
+                  "Are you a US citizen? (This position is not eligible for visa sponsorship; select No if you will "
+                  "need it.)",
+                  "Are you a US citizen? Will you require visa sponsorship now or in the future?",
+                  "Are you a U.S. citizen? Do you now or will you in the future require sponsorship?",
+                  "Are you a US citizen and authorized to work in the US?",
+                  "Are you a US citizen without need of sponsorship?",
+                  "Are you a US citizen? If not, sponsorship may be required.",
+                  "Are you a US citizen? If not, valid work authorization is required.",
+                  "Are you a US citizen (do not include permanent residents)?",
+                  "Are you a US citizen by birth or naturalization (not a permanent resident)?",
+                  "Are you a US citizen or do you hold an H-1B visa?"):
+        for p in (citizen, pr, visa):
+            assert _answer(label, p, **yes_no) is None, (label, p.get("work_authorization.citizenship"))
+    for label in ("Work Authorization: Are you a US citizen?", "Work Authorization Status - Are you a U.S. citizen?",
+                  "Are you a US citizen? Note: this position is not eligible for visa sponsorship.",
+                  "Are you a US citizen? (We are unable to sponsor visas for this role.)",
+                  "Are you a U.S. citizen? No visa sponsorship is available for this position.",
+                  "Are you a US citizen? We do not offer sponsorship.",
+                  "Are you a US citizen? (This position requires U.S. citizenship.)"):
+        assert [_answer(label, p, **yes_no) for p in (citizen, pr, visa)] == ["Yes", "No", "No"], label
+    for label in ("Are you a U.S. citizen or permanent resident?", "Are you a U.S. citizen or green card holder?",
+                  "Are you a US citizen, national, lawful permanent resident, refugee or asylee?"):
+        a = resolve_field(f(label, **yes_no), pr, {"company": "Acme"})
+        assert a is not None and (a.value, a.rule) == ("Yes", "us_person"), (label, a)
+        assert _answer(label, visa, **yes_no) == "No", label
+    # (nor the U.S. person's rule, where a label leaves the others out)
+    assert _answer("Do you hold U.S. citizenship (not lawful permanent residence or a green card)?", pr, **yes_no) != "Yes"
+
+
 def test_a_sponsorship_question_about_a_partner_company_is_still_the_persons():
     """"...for a partner company" names a company, not the person's partner: the person's own need, the profile's
     answer. Their partner's need stays left."""

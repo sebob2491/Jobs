@@ -551,14 +551,30 @@ _YES_NO_TAIL = re.compile(r"\s*[:,\-\u2013]?\s*\(?\s*yes\s*(?:/|or)\s*no\b\)?", 
 # employed by Acme.", "Must hold an active Secret.", "Willing to relocate (Y/N)"): left, never guessed at
 _NUMBERING = r"(?:\(?\s*(?:q\s*)?\d+[a-z]?\s*[.):\]]|[a-z][.)]|#\s*\d+[.):]?)"
 _OWN_HEADING = re.compile(rf"^\s*{_NUMBERING}?\s*(?:(?:(?:u\.?\s?s\.?\s*|united states\s+)?citizenship(?:\s+status)?|"
-                          r"required|eligibility|work eligibility)\s*(?::|\s[-\u2013\u2014]))?\s*$", re.I)
+                          r"required|eligibility|work eligibility|work authori[sz]ation(?:\s+status)?)\s*"
+                          r"(?::|\s[-\u2013\u2014]))?\s*$", re.I)
 _US_SAID = r"(?:u\.?\s?s\.?(?:\s?a\.?)?\s+|united states\s+)?"
+# (and the employer's word that it won't sponsor, alone in its sentence: "Note: this position is not eligible for visa
+# sponsorship.", "We are unable to sponsor visas for this role.", "No sponsorship is available.": the seventh review of
+# Oct 18, which found such a note read out of the label before the check, with an instruction in it)
+_SPONSORSHIP = r"(?:(?:visa|employment|immigration|work\s+visa|h-?1\s?b)\s+)?sponsorship"
+_NEGATED = (r"(?:does\s+not|doesn[\u2019']?t|do\s+not|don[\u2019']?t|cannot|can\s+not|can[\u2019']?t|will\s+not|"
+            r"won[\u2019']?t|is\s+not|isn[\u2019']?t|are\s+not|aren[\u2019']?t)")
+_NO_SPONSORSHIP_SAID = (
+    r"(?:(?:please\s+)?note\s*[:,\-\u2013]?\s*)?"
+    r"(?:(?:we|this\s+(?:position|role|job|opportunity)|the\s+(?:company|employer|position|role))\s+"
+    rf"(?:(?:is|are)\s+(?:not\s+eligible\s+for|unable\s+to\s+(?:offer|provide))\s+{_SPONSORSHIP}|"
+    rf"{_NEGATED}\s+(?:able\s+to\s+)?(?:offer|provide|support)\s+{_SPONSORSHIP}|"
+    rf"(?:(?:is|are)\s+unable\s+to|{_NEGATED}(?:\s+able\s+to)?)\s+sponsor(?:\s+(?:work\s+|employment\s+)?visas)?)|"
+    rf"no\s+{_SPONSORSHIP}\s+is\s+(?:available|offered|provided)|"
+    rf"{_SPONSORSHIP}\s+is\s+not\s+(?:available|offered|provided))"
+    r"(?:\s+for\s+this\s+(?:position|role|job|opportunity))?")
 _SAYS_NO_MORE = re.compile(
     rf"^(?:(?:this|the)\s+(?:position|role|job)\s+requires\s+{_US_SAID}citizenship|"
     rf"{_US_SAID}citizenship\s+is\s+required(?:\s+for\s+this\s+(?:position|role|job))?|"
     rf"proof\s+of\s+{_US_SAID}citizenship\s+(?:will\s+be|is|may\s+be)\s+required(?:\s+(?:at|upon)\s+hire)?|"
     r"(?:please\s+)?(?:select|choose|answer|check|mark)\s+(?:one|yes\s+or\s+no|yes\s*/\s*no)|"
-    r"\(?\s*(?:yes\s*/\s*no|y\s*/\s*n)\s*\)?|\[\s*yes\s*/\s*no\s*\])\W*$", re.I)
+    rf"\(?\s*(?:yes\s*/\s*no|y\s*/\s*n)\s*\)?|\[\s*yes\s*/\s*no\s*\]|{_NO_SPONSORSHIP_SAID})\W*$", re.I)
 # (as the normalized rules read it: "or ..." or "by ..." after "citizen", but "or not" and "or (a U.S.) national")
 _CITIZEN_GOES_ON = r"(?! (?:by\b|or\b(?! (?:not|(?:an? )?(?:u ?s )?national)\b)))"
 
@@ -582,8 +598,36 @@ def _asks_more_than_citizenship(raw_label: str) -> bool:
     told = _YES_NO_TAIL.match(rest)
     rest = rest[told.end():] if told else rest
     rest = re.sub(r"^\s*[?!.;]", "", rest)
-    rest = re.sub(r"\b(?:[A-Za-z]\.){2,}", lambda a: a.group(0).replace(".", ""), rest)  # ("U.S." ends no sentence)
-    return any(not _SAYS_NO_MORE.match(said.strip()) for said in re.findall(r"[^.?!;]+[.?!;]*", rest) if said.strip())
+    rest = _undotted(rest)
+    # (a sentence in brackets is read as itself: "(This position requires U.S. citizenship.)")
+    return any(not _SAYS_NO_MORE.match(said.strip().lstrip("([").strip())
+               for said in re.findall(r"[^.?!;]+[.?!;]*", rest) if re.search(r"\w", said))
+
+
+def _undotted(text: str) -> str:
+    """("U.S." ends no sentence)"""
+    return re.sub(r"\b(?:[A-Za-z]\.){2,}", lambda a: a.group(0).replace(".", ""), text)
+
+
+# The U.S. person's question, which starts as the citizen's and goes on to the others in its first sentence, unnegated
+# (export control's "Are you a U.S. citizen or permanent resident?", "..., national, lawful permanent resident, refugee
+# or asylee?"); never "Are you a US citizen (do not include permanent residents)?"
+_OTHER_US_PERSONS = re.compile(r"\b(?:lawful\s+permanent|permanent\s+residen\w*|green\s+card|refugee|asyl\w*|"
+                               r"protected\s+individual|us\s+person)", re.I)
+_NOT_THEM = re.compile(r"\b(?:not|n[\u2019']t|excluding|exclud\w*|except|other\s+than|without)\b(?:\W+\w+){0,4}?\W+"
+                       r"(?:lawful\s+)?(?:permanent|green\s+card|refugee|asyl)", re.I)
+
+
+def _only_the_citizen_question(raw_label: str) -> bool:
+    """Whether the label asks "Are you a U.S. citizen" and not the U.S. person's question: then only the citizen rules
+    read it, as _asks_more_than_citizenship allows, never another work rule's reading of what's around it ("Are you a
+    US citizen? Will you require visa sponsorship?" is no sponsorship question for a citizen's No, nor "Work
+    Authorization: Are you a US citizen?" an authorized person's Yes: the seventh review of Oct 18)."""
+    m = _CITIZEN_ASKED.search(re.sub(r"\s+", " ", raw_label or ""))
+    if m is None:
+        return False
+    first = re.split(r"[?.!;]", _undotted(m.group("rest")), maxsplit=1)[0]
+    return not (_OTHER_US_PERSONS.search(first) and not _NOT_THEM.search(first))
 
 
 def _us_citizen(prof: Profile, job: dict) -> Any:
@@ -1597,7 +1641,9 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("authorized", _AUTHORIZED, _authorized, None, None),
     # Only questions that ask whether you are a U.S. person: export-control wording
     # also comes with other questions, e.g. Micron's "are you a citizen of Cuba, Iran ...?"
-    ("us_person", r"^(?!.*\b(other than|another country|any (other )?country|foreign)\b).*"
+    # (never one that leaves them out: "...(not a permanent resident)?", "...(do not include permanent residents)?")
+    ("us_person", r"^(?!.*\b(other than|another country|any (other )?country|foreign)\b)"
+     r"(?!.*\b(not|excluding|exclud\w*|except|without)\b( \w+){0,4}? (lawful )?(permanent residen|green card)).*"
      r"(\bu ?s person\b|citizen.{0,80}(permanent resident|green card|refugee|asyl|protected individual))",
      _us_person, None, None),
     # (the country however it's written: "U.S.", "US", "USA"; "us" stands only where the country does, never the
@@ -2222,7 +2268,8 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
                    unmatched: list[Answer] | None = None) -> Answer | None:
     job = job or {}
     kind = field.get("kind", "text")
-    raw_label = _without_notes(field.get("label") or field.get("name") or "")
+    asked = field.get("label") or field.get("name") or ""
+    raw_label = _without_notes(asked)
     label = norm(clean_label(raw_label))
     if kind == "password":
         return None
@@ -2326,6 +2373,7 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
     if ans is None:
         # a self-identification question is its own topic's, whatever else its notice's words match
         own = _self_identification(label, field)
+        citizen_only = not own and _only_the_citizen_question(asked)
         for name, pattern, getter, max_len, kinds in ([own] if own else RULES):
             if someone_else and (name in _CONTACT_RULES or name == "employee_id"):
                 continue  # a reference's or an emergency contact's name, phone or email; a referrer's ID
@@ -2338,11 +2386,14 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
             if own or re.search(pattern, label):
                 if name in _WORK_RULES and (_OTHER_COUNTRIES.search(label) or _OTHER_THAN.search(label)):
                     return None  # another country's question: the profile's facts are the United States'
+                if citizen_only and name not in {"us_citizen", "citizenship"}:
+                    continue  # the U.S. citizen question: only its own rules read it, whatever's around it
                 if name in {"sponsorship", "no_sponsorship"} and (
                         _THEIR_FAMILY_SPONSORSHIP.search(label)
                         or _EMPLOYER_SPONSORSHIP.search(label) and not _YOUR_NEED.search(label)):
                     return None  # someone else's need, or the employer's policy: not the person's
-                if name in {"us_citizen", "citizenship"} and _asks_more_than_citizenship(raw_label) \
+                # (as the form gives it, its notes too: "(Note: green card holders should select Yes.)")
+                if name in {"us_citizen", "citizenship"} and _asks_more_than_citizenship(asked) \
                         and not (name == "citizenship" and re.search(r"citizenship|country of citizen|which country",
                                                                      label)):
                     continue  # more than citizenship asked: the next rule's (the country, where it's asked), or theirs
