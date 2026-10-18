@@ -3774,12 +3774,52 @@ def test_a_us_citizen_question_beside_another_question_anywhere_in_the_label_is_
                   "Are you a US citizen? Please select Yes or No.", "Are you a US citizen? Choose Yes or No.",
                   "Are you a US citizen? Select one.", "Are you a US citizen? Indicate below.",
                   "Are you a US citizen? State law requires us to verify eligibility.",
-                  "Are you a US citizen? If hired, you will need to provide proof of citizenship.",
+                  "Are you a US citizen? If hired, proof of citizenship will be required.",
+                  "Are you a US citizen (as required by ITAR)?",
                   "Are you a US citizen? Will be verified upon hire.",
                   "Are you a US citizen? Do not upload documents here.",
                   "Citizenship: Are you a US citizen?", "Work eligibility - Are you a US citizen?",
                   "Are you a US citizen? Proof of citizenship will be required.",
                   "Are you a U.S. citizen? U.S. citizenship is required for this position."):
+        assert (_answer(label, citizen, **yes_no), _answer(label, pr, **yes_no)) == ("Yes", "No"), label
+
+
+def test_a_us_citizen_question_with_anything_around_it_that_speaks_to_the_person_is_left():
+    """Around the citizen question only what speaks to no one keeps it answered: a request ("Confirm that you hold an
+    active security clearance."), a question in brackets, a condition on the Yes ("Select Yes only if you also hold a
+    clearance."), another requirement ("This role also requires an active Secret clearance."), a question before it
+    ended by a dash or a colon: left, a Yes there claiming what the profile doesn't say (the fifth review of Oct 18)."""
+    pr = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=False, us_person=True,
+               citizenship="Mexico")
+    citizen = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=True, us_person=True,
+                    citizenship="United States")
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    for label in ("Are you a US citizen? Confirm that you hold an active security clearance.",
+                  "Are you a US citizen? In addition, please confirm you hold an active clearance.",
+                  "Are you a US citizen? Additionally, confirm you can work on-site in Chandler.",
+                  "Are you a US citizen? Also confirm you are willing to relocate.",
+                  "Are you a US citizen? Tell us if you hold a work visa.",
+                  "Are you a US citizen? Also do you hold a clearance",
+                  "Are you a US citizen? Yes/No - and do you hold a clearance",
+                  "Are you a US citizen (and do you hold a clearance)?",
+                  "Are you a US citizen? (This position requires U.S. citizenship. Do you hold an active clearance?)",
+                  "Are you a US citizen? Please indicate below whether you hold an active security clearance.",
+                  "Are you a US citizen? Select Yes only if you can also obtain a Secret clearance.",
+                  "Are you a US citizen? Do not answer yes unless you also hold a clearance.",
+                  "Are you a US citizen? If selected, can you start within two weeks",
+                  "Are you a US citizen? This role also requires an active Secret clearance.",
+                  "Are you a US citizen? You must also be able to obtain a clearance.",
+                  "Clearance holders only. Are you a US citizen?",
+                  "Do you hold an active clearance - Are you a US citizen?",
+                  "Do you hold an active clearance: Are you a US citizen?",
+                  "Do you hold an active clearance. Are you a US citizen?",
+                  "Are you a 'US' citizen? Do you hold an active clearance?"):
+        for p in (pr, citizen):
+            assert _answer(label, p, **yes_no) is None, (label, p)
+            assert _answer(label, p) not in ("Yes", "No"), (label, p)
+    for label in ("3) Are you a US citizen?", "Q3: Are you a US citizen?", "Required: Are you a US citizen?",
+                  "Are you a US citizen? (e.g. born or naturalized)", "Are you a US citizen? Y/N",
+                  "Are you a US citizen? [Yes/No]", "Are you a US citizen? Note: we are required by ITAR to ask."):
         assert (_answer(label, citizen, **yes_no), _answer(label, pr, **yes_no)) == ("Yes", "No"), label
 
 
