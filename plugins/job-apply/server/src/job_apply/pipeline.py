@@ -1286,8 +1286,12 @@ def _fingerprint(page: dict[str, Any]) -> tuple:
     count = fields if isinstance(fields, int) else len(fields or [])
     # (which questions it shows: a click's summary says it in short, a page read lists them)
     questions = page.get("questions") if isinstance(fields, int) else questions_shown(fields or [])
-    actions = tuple(a if isinstance(a, str) else a.get("text", "") for a in page.get("actions") or [])
-    return _steady_url(page.get("url")), tuple(page.get("headings") or []), count, actions, questions
+    # (its headings and buttons less those saying what's wrong: an "Errors Found" drawn within a press's look at the
+    # page read as the page gone on, and the step was pressed again, CI's run under load; Workday's is a button in its
+    # heading, its list "Error - <the question>" buttons)
+    actions = tuple(t for t in (a if isinstance(a, str) else a.get("text", "") for a in page.get("actions") or [])
+                    if not _says_wrong(t) and not _ERROR_LINK.match(t))
+    return _steady_url(page.get("url")), _step_headings(page), count, actions, questions
 
 
 _TAILOR_SAYS = ("Waiting for a resume written for this job. In Claude Code, say \u201ctailor my resumes\u201d; the "
@@ -7734,6 +7738,29 @@ def _answers_page(data: dict[str, Any]) -> tuple:
     """The page an answer the person gave went in on (_fill_once): _page_key without an errors heading, which
     the same step shows once it's pressed with something wrong (Workday's "Errors Found")."""
     return _bare(data.get("url") or ""), tuple(h for h in data.get("headings") or [] if not _ERRORS_HEADING.match(h.strip()))
+
+
+# A heading (or the button Workday draws in one) that only says the step has something wrong: "Errors Found", "There
+# are 1 errors on this page", "Please correct the following". Never a step's own ("Error Handling Experience",
+# "Please Review Your Application", "Missing Information", "Problem Solving")
+_SAYS_WRONG = re.compile(r"^\W*(?:\d+\s+)?errors?(?:\s+found)?\W*$|\b\d+\s+errors?\b|\berrors?\s+(?:found|on (?:this|the) page)\b"
+                         r"|^\W*there (?:is|are|was|were) (?:an? |\d+ )?(?:errors?|problems?)\b"
+                         r"|^\W*(?:oops\W*)?please (?:fix|correct)\b|\b(?:fix|correct) the (?:following|errors?|highlighted)\b",
+                         re.I)
+# Workday's list of what's wrong: a button for each ("Error - Available Start Date", "Error: Email")
+_ERROR_LINK = re.compile(r"\s*error\s*[-\u2013:]", re.I)
+
+
+def _says_wrong(heading: str) -> bool:
+    """A heading that only says the step has something wrong (_SAYS_WRONG)."""
+    return bool(_SAYS_WRONG.search(heading.strip()))
+
+
+def _step_headings(data: dict[str, Any]) -> tuple[str, ...]:
+    """A page's headings without any that only says what's wrong (_SAYS_WRONG), which a step draws over itself once
+    it's pressed with something wrong: the same step whether it's drawn before the press's look at the page or after
+    it (Workday draws its "Errors Found" a moment late)."""
+    return tuple(h for h in data.get("headings") or [] if not _says_wrong(h))
 
 
 def _step_page(data: dict[str, Any]) -> tuple:
