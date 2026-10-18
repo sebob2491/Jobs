@@ -308,6 +308,28 @@ def test_a_site_that_wont_take_back_an_old_password_is_said():
     assert "won't take a password it had before" in said and "look at it before the next nightly" in said
 
 
+@pytest.mark.parametrize("after", [
+    # (run 136's: the sign-in refused after the "set", then Create Account opened and pressed)
+    (["your saved password didn't sign in, so I opened Create Account",
+      "pressed “Create Account” to create your account on Workday with your saved password"],
+     "Your saved password didn't sign in on Workday, before or after I pressed its Create Account."),
+    # (the desk now: said for what it is, no Create Account)
+    ([], "I set your saved password through Workday's password reset, and it still doesn't sign in there (it says "
+         "“Wrong email address or password”). The site may not have taken it: a reset link works once")])
+def test_a_pass_two_that_set_the_real_password_and_didnt_sign_in_leaves_the_site_unknown(after):
+    """Run 136 at KLA: pass 2 read pass 1's reset email (its link spent), said it set the real password, and the real
+    password didn't sign in after it; the probe said the site was left on the real password. It may still be on the
+    derived one: said plainly, and it fails the run."""
+    second = _rec(SIGN_IN + RESET + after[0], status="needs_you", need="sign_in", reason=after[1])
+    result = lp.reset_result(lp.RESET_TENANTS[0], WHOLE, second, True)
+    assert result["left_on"] == "unknown" and result["status"] == "fail", result
+    assert "may still be on the derived password" in result["warning"], result["warning"]
+    assert lp.failed({"reset": [result]}) == [f"KLA: {result['warning']}"]
+    said = "\n".join(lp.summary_lines({"reset": [result], "tailored": []}))
+    assert "reset KLA: FAIL (site left on an unknown password: maybe still the derived one" in said, said
+    assert "maybe still the derived one" in lp.report_markdown({"reset": [result], "tailored": []})
+
+
 def test_a_tenant_whose_password_was_never_changed_is_left_as_it_was_but_fails():
     never = _rec(SIGN_IN, status="needs_you", need="sign_in", reason="Your saved password didn't sign in on Workday, "
                  "and I couldn't find its way to a password reset.")

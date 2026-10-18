@@ -258,8 +258,13 @@ def may_have_changed(first: Mapping[str, Any]) -> bool:
 
 def left_on(first: Mapping[str, Any], second: Mapping[str, Any] | None) -> str:
     """The password a tenant is left on after the probe: "real" (pass 2 set it back or signed in with it, or pass 1
-    proved it never changed), "as found" (this run changed nothing: pass 1 never got to send the derived password,
-    and pass 2 couldn't say) or "derived?" (maybe the derived one)."""
+    proved it never changed), "unknown" (pass 2 said it set the real one back, and didn't sign in with it after: the
+    site may not have taken it, and may still be on the derived one), "as found" (this run changed nothing: pass 1 never
+    got to send the derived password, and pass 2 couldn't say) or "derived?" (maybe the derived one)."""
+    if second is not None and second["password_set"] and not second["signed_in"]:
+        # (run 136's pass 2 at KLA: the reset email it read was pass 1's, its link spent; the desk said it set the
+        # real password, the sign-in after it was refused, and the site was reported left on the real one)
+        return "unknown"
     if second is not None and (second["password_set"] or second["signed_in"] and not second["refused"]):
         return "real"
     if not pass_two_needed(first):
@@ -306,15 +311,21 @@ def reset_result(tenant: Mapping[str, str], first_rec: Mapping[str, Any] | None,
                      if not pass_two_needed(first) else "pass 2 didn't run (the probe was stopped before it)")
     left = left_on(first, second)
     warning = ""
-    if left == "derived?":
+    if left == "unknown":
+        warning = (f"Pass 2 at {name} said it set the real password back through the site's reset, but the real "
+                   "password didn't sign in after it: the site may not have taken it, so the test identity's Workday "
+                   "account there may still be on the derived password. The nightly's own reset may repair it: the "
+                   "site refuses the real saved password, and the desk resets it to that through the site's "
+                   "\u201cForgot password\u201d email.")
+    elif left == "derived?":
         warning = (f"Pass 2 failed at {name}: the test identity's Workday account there may be left on the derived "
                    "password. The nightly's own reset will repair it: the site refuses the real saved password, and "
                    "the desk resets it to that through the site's \u201cForgot password\u201d email.")
-        if second is not None and _REUSED.search(second["said"]):
-            warning += (" But the site's words say it won't take a password it had before, so that reset may be "
-                        "refused the same way: look at it before the next nightly.")
     elif left == "as found":
         notes.append("this run never sent the derived password, so it changed nothing there")
+    if warning and second is not None and _REUSED.search(second["said"]):
+        warning += (" But the site's words say it won't take a password it had before, so that reset may be "
+                    "refused the same way: look at it before the next nightly.")
     passes = [{"pass": 1, "saved": "derived", "ran": True, **first, "status": first_status[0], "status_why": first_status[1]},
               {"pass": 2, "saved": "real", "ran": second is not None, **(second or {}), "status": second_status[0],
                "status_why": second_status[1]}]
@@ -577,7 +588,9 @@ def unchecked(results: Mapping[str, Any]) -> list[str]:
 
 STATUS_WORDS = {"pass": "pass", "fail": "FAIL", "unchecked": "couldn't check this week", "not run": "not run"}
 LEFT_WORDS = {"real": "the real password", "as found": "as it was (this run never changed it)",
-              "derived?": "maybe the derived password"}
+              "derived?": "maybe the derived password",
+              "unknown": "an unknown password: maybe still the derived one, as pass 2 said it set the real one and "
+                         "didn't sign in with it after"}
 FAILED_HEADING = "Failed (the desk's: these fail the run)"
 UNCHECKED_HEADING = "Couldn't check this week (the site's or the person's: not a failure)"
 

@@ -2589,6 +2589,65 @@ def test_a_new_password_the_site_never_takes_is_left_to_the_person(srv, monkeypa
     assert "set your saved password as" not in "\n".join(r.log), r.log
 
 
+def _reset_through(monkeypatch, job_apply_home, srv, link: str) -> Run:
+    """A job whose saved password the site refuses, with the inbox watched: the reset asked for, its email's link
+    (`link`) opened, and the job run until it stops for the person or is ready."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None, others=None):
+        return pipeline.mailbox.Found(want, link, "careers.example.com", time.time()) if want == "reset" else None
+
+    monkeypatch.setattr(pipeline.mailbox, "search", inbox)
+    job = srv.add_job(url=fixture_url("site/signin-forgot.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you" and r.need != "email_code" or r.status == "ready",
+                        timeout=90, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    return run(go())
+
+
+def test_a_sign_in_refused_right_after_the_desks_own_reset_is_said_and_makes_no_account(srv, monkeypatch,
+                                                                                         job_apply_home):
+    """KLA's Workday, the reset probe's second pass (run 136): the reset's link was spent (the pass before's email), the
+    site set nothing and said nothing of it, its form went, and the desk said it had set the saved password. The sign-in
+    after it was refused, and the desk opened Create Account and pressed it, for an account that's there. A sign-in
+    refused right after the desk's own reset is said for what it is, on a card, and no Create Account is pressed."""
+    r = _reset_through(monkeypatch, job_apply_home, srv, fixture_url("site/reset-password.html") + "?token=abc&spent")
+    log = "\n".join(r.log)
+    assert "set your saved password as" in log, r.log  # (as far as the desk could tell)
+    set_at = next(i for i, line in enumerate(r.log) if line.startswith("set your saved password as"))
+    assert "pressed “Sign In” with your saved password" in r.log[set_at:], r.log
+    assert r.need == "sign_in" and r.reason.startswith("I set your saved password through"), (r.need, r.reason, r.log)
+    assert "it still doesn't sign in there (it says “Wrong email address or password" in r.reason, r.reason
+    assert "a reset link works once" in r.reason and "then press Resume" in r.reason, r.reason
+    assert "opened Create Account" not in log and "create your account" not in log, r.log
+    assert "create-account" not in r.page.url, r.page.url
+
+
+def test_a_reset_page_that_says_its_link_has_expired_is_said_not_taken_for_a_set_password(srv, monkeypatch,
+                                                                                          job_apply_home):
+    """The reset's form went once its button was pressed, and the page says the link has expired: the saved password
+    wasn't set. The desk said it was set (only the form going was looked at); it stops and says so in the site's
+    words."""
+    r = _reset_through(monkeypatch, job_apply_home, srv, fixture_url("site/reset-password.html") + "?token=abc&expired")
+    assert r.need == "sign_in" and "it says “This link has expired" in r.reason, (r.need, r.reason, r.log)
+    assert "didn't set it as the new one" in r.reason and "Forgot password" in r.reason, r.reason
+    assert "set your saved password as" not in "\n".join(r.log), r.log
+
+
 def test_a_new_account_is_signed_in_with_and_only_its_own_form_is_sent(srv, monkeypatch, job_apply_home):
     """After the desk makes the account, the site asks to sign in: the new account's sign-in is
     tried, not taken for the refused one. The header's talent-community "Sign Up" isn't the
@@ -12979,6 +13038,79 @@ def test_a_password_reset_isnt_called_overdue_while_its_mail_couldnt_be_read(srv
     c.paused_at -= pipeline.RESET_MAIL_WAIT + 600  # (the wait's own time up: the next look that finds nothing ends it)
     run(applier._pick_up_left())
     assert looked == [1, 1] and c.reset_no_mail and c.status == "queued", (c.status, c.log[-2:])
+
+
+def _waiting_on_resets(srv, monkeypatch, inbox: list) -> tuple:
+    """Two KLA jobs waiting on their password reset's email, each asked for 3 seconds before it paused, with the inbox
+    watched (`inbox`: what it holds, the newest last). The applier, the two runs, what each search asked for (want,
+    since) and the links opened in their tabs."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    monkeypatch.setattr(pipeline, "_another_employers_mail", lambda *a, **k: None)
+    asked: list = []
+
+    def search(address, password, since, senders, want, allowed_link, before=None, look_back=120, others=None):
+        asked.append((want, since))
+        return inbox[-1] if want == "reset" and inbox else None
+
+    monkeypatch.setattr(pipeline.mailbox, "search", search)
+
+    async def peek(tab, max_chars=4000):
+        return {"url": tab.url, "fields": []}, ""
+
+    monkeypatch.setattr(srv.browser, "peek", peek)
+    opened: list = []
+
+    def tab():
+        async def goto(url, **kwargs):
+            opened.append(url)
+
+        return SimpleNamespace(is_closed=lambda: False, url="https://kla.wd1.myworkdayjobs.com/Search/login", goto=goto)
+
+    url = "https://kla.wd1.myworkdayjobs.com/Search/job/Phoenix-AZ/Customer-Service-Engineer_2637545"
+    applier = Applier(srv)
+    runs = []
+    now = time.time()
+    for n in (1, 2):
+        job_id = srv.add_job(url=f"{url}?n={n}", title="Customer Service Engineer", company="KLA")["job"]["id"]
+        r = applier.runs[job_id] = Run(job_id, "Customer Service Engineer", "KLA", url=url, status="needs_you",
+                                       need="email_code", left=True, paused_at=now, page=tab())
+        r.resetting = r.reset_waited = True
+        r.reset_at = now - 3  # (its button pressed a moment before it paused)
+        runs.append(r)
+    return applier, runs, asked, opened
+
+
+def test_a_reset_email_is_looked_for_from_when_the_desk_asked_for_it(srv, monkeypatch):
+    """KLA's Workday, the reset probe's second pass a minute after the first (run 136): the newest reset email in the
+    two minutes before its pause was the first pass's, its link spent. A reset's email is looked for from when the desk
+    pressed the site's button (mailbox.search keeps to a few seconds before that), not from the pause; an emailed
+    code's still from the pause, as before."""
+    applier, (r, other), asked, opened = _waiting_on_resets(srv, monkeypatch, [])
+    run(applier._check_mail(r))
+    assert asked == [("reset", r.reset_at)] and r.reset_at < r.paused_at, (asked, r.mail_last)
+    other.resetting = False  # (waiting on a code or a confirmation link instead)
+    run(applier._check_mail(other))
+    assert asked[1:] == [("link", other.paused_at)], asked
+
+
+def test_a_reset_link_opened_once_is_never_opened_again(srv, monkeypatch):
+    """Run 136 again: the first pass's reset link, opened again, set nothing (a reset's link works once). A reset link
+    opened once, for this job or another, is passed over, and the new one waited for and opened."""
+    first_link = "https://kla.wd1.myworkdayjobs.com/Search/passwordReset?token=first"
+    inbox = [pipeline.mailbox.Found("reset", first_link, "workday.kla.com", time.time() - 2)]
+    applier, (first, second), asked, opened = _waiting_on_resets(srv, monkeypatch, inbox)
+    run(applier._check_mail(first))
+    assert opened == [first_link] and first.mail_done, (opened, first.mail_last)
+    run(applier._check_mail(second))  # the same email: its link spent, passed over
+    assert opened == [first_link] and not second.mail_done and "opened already" in second.mail_last, second.mail_last
+    second_link = "https://kla.wd1.myworkdayjobs.com/Search/passwordReset?token=second"
+    inbox.append(pipeline.mailbox.Found("reset", second_link, "workday.kla.com", time.time()))  # its own, come since
+    run(applier._check_mail(second))
+    assert opened == [first_link, second_link] and second.mail_done, second.mail_last
 
 
 def test_a_look_in_the_inbox_begun_before_another_job_took_it_isnt_used(srv, monkeypatch):
