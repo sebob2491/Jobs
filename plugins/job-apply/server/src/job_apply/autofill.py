@@ -540,15 +540,29 @@ _US_CITIZENSHIP = re.compile(r"(the )?(united states( of america)?|u ?s( ?a)?|am
 _US_WRITTEN = r"(?:u\.?\s?s\.?(?:\s?a\.?)?|united\s+states(?:\s+of\s+america)?)"
 _CITIZEN_ASKED = re.compile(rf"\bare\s+you\s+a\s+(?:{_US_WRITTEN}[\s-]*)?citizen(?:\s+of\s+the\s+{_US_WRITTEN})?"
                             r"(?P<rest>.*)$", re.I | re.S)
+# ...the same question in other words: "or not", "or (a U.S.) national"
+_SAME_QUESTION = re.compile(rf"\s*,?\s*or\s+(?:not|(?:an?\s+)?(?:{_US_WRITTEN}\s+)?national)\b", re.I)
+# ...and a following "If not" or "If no" that asks something: "If not, do you have authorization to work in the US?",
+# "If no, which country?", "If not, please list your citizenship"
+_IF_NOT_ASKS = re.compile(r"\bif\s+(?:not|no)\b[\s,]*(?:(?:do|are|can|will|would|have|did|were)\s+you\b|"
+                          r"please\b|which\b|what\b)", re.I)
+# (as the normalized rules read it: "or ..." or "by ..." after "citizen", but "or not" and "or (a U.S.) national")
+_CITIZEN_GOES_ON = r"(?! (?:by\b|or\b(?! (?:not|(?:an? )?(?:u ?s )?national)\b)))"
 
 
 def _asks_more_than_citizenship(raw_label: str) -> bool:
-    """Whether "Are you a U.S. citizen" goes on to ask more than citizenship: anything after it but the end, a "?" or
-    "*", a note in brackets ("(Yes/No)") or a new sentence ("If not, which country?"). "...and able to obtain a security
-    clearance", "...with an active clearance", "...who can work on-site" ask what citizenship alone doesn't say (the
-    review of Oct 18)."""
+    """Whether "Are you a U.S. citizen" goes on to ask more than citizenship. Only the end, a "?" or "*", a note in
+    brackets ("(Yes/No)"), a sentence that only says something ("This position requires US citizenship."), "or not" or
+    "or (a U.S.) national" ask no more. "...and able to obtain a security clearance", "...who can work on-site" or a
+    following "If not, do you have authorization to work in the US?" ask what citizenship alone doesn't say (the
+    reviews of Oct 18)."""
     m = _CITIZEN_ASKED.search(clean_label(raw_label))
-    return m is not None and not re.match(r"\s*(?:[?*!.;(]|$)", m.group("rest"))
+    if m is None:
+        return False
+    rest = m.group("rest")
+    same = _SAME_QUESTION.match(rest)
+    rest = rest[same.end():] if same else rest
+    return not re.match(r"\s*(?:[?*!.;(]|$)", rest) or bool(_IF_NOT_ASKS.search(rest))
 
 
 def _us_citizen(prof: Profile, job: dict) -> Any:
@@ -1510,7 +1524,7 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("expected_grad", r"(expected|anticipated|projected) (graduation|completion)|graduation date.{0,20}(expected|anticipated)",
      _expected_graduation, 80, None),
     ("grad_year", r"graduation (year|date)|year of graduation", _graduated, 60, None),
-    # (never a box that asks for a date: _ASKS_FOR_A_DATE)
+    # (never the signing date's box, nor one for a date to enter: _SIGNING_DATE_NAMED, _DATE_TO_ENTER)
     ("signature", r"(electronic |e )?signature|sign your (full )?name", _full_name, 80, {"text"}),
     # questions (any length)
     # the same facts asked the other way round come first
@@ -1570,8 +1584,9 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     # authorization to work in the US?" is a permanent resident's Yes, and "...by birth?" the profile doesn't say:
     # the review of Oct 18)
     # (nor one that asks more after it, as written: _asks_more_than_citizenship)
-    ("us_citizen", r"are you a (u ?s( ?a)?|united states) citizen\b(?! (or|by)\b)|"
-     r"are you a citizen of the (u ?s( ?a)?|united states)( of america)?\b(?! (or|by)\b)", _us_citizen, None, None),
+    ("us_citizen", r"are you a (u ?s( ?a)?|united states) citizen\b" + _CITIZEN_GOES_ON + "|"
+     r"are you a citizen of the (u ?s( ?a)?|united states)( of america)?\b" + _CITIZEN_GOES_ON,
+     _us_citizen, None, None),
     # "Are you an alien illegally in the United States?", "...admitted under a nonimmigrant visa?" (Axon)
     ("alien", r"^are you an? (illegal )?alien\b", lambda p, j: "No" if p.get("work_authorization.us_citizen") is True else None,
      200, {"select", "listbox", "combobox", "radio_group"}),
@@ -1592,7 +1607,7 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
      lambda p, j: "U.S. Citizen" if p.get("work_authorization.us_citizen") is True else None, None,
      {"select", "listbox", "combobox", "radio_group"}),
     # (nor, as the U.S. citizen question, one that goes on with "or ..." or "by ...": its country is no answer to it)
-    ("citizenship", r"citizenship|country of citizen|are you a (u ?s )?citizen\b(?! (or|by)\b)",
+    ("citizenship", r"citizenship|country of citizen|are you a (u ?s )?citizen\b" + _CITIZEN_GOES_ON,
      _p("work_authorization.citizenship"), None, None),
     ("clearance", r"security clearance|active clearance", _p("work_authorization.security_clearance"), None, None),
     # "do you live nearby or are you willing to relocate?": a local applicant isn't relocating
@@ -2105,19 +2120,22 @@ _OTHER_EVENT = re.compile(r"\b(conviction|criminal|offen[cs]e|incident|violation
 # with your current employer)", "...the attached offer letter", "...the date you were last employed": the review of
 # Oct 18)
 _OTHER_SIGNING = re.compile(r"\b(non ?compete|offer letter|agreements?|employed)\b")
-# A signature box that asks for a date to be entered, alone or with the name ("Enter the date beside your electronic
-# signature", "...type your full legal name and the date", "Signature and Date"), or a signing date's own box: never the
-# name. One that says the date is recorded for the person ("Signature (type your name; the date is added
-# automatically)", "Sign your full name (no dates)") is still the name's
-_ASKS_FOR_A_DATE = re.compile(r"^\W*(signature\s+)?dates?\b|\b(enter|type|write|provide|fill in|put)\b[^.;:()]{0,40}?"
-                              r"\bdates?\b|\bsignature\s*(and|&|/)\s*dates?\b", re.I)
-# A sponsorship question about the employer's policy ("Is sponsorship available for candidates who need it?") or another
-# person's need ("...required for your spouse or dependents?", "...for any family member?"): not the person's own
-_NOT_THEIR_SPONSORSHIP = re.compile(
-    r"\bsponsor\w* (is |be )?(available|offered|provided)\b|"
-    r"\b(offer|provide)s? (any )?(visa |employment |immigration )?sponsor|"
-    r"\bfor (your |his |her |their |a |any )?(spouse|partner|husband|wife|dependents?|child(ren)?|family( members?)?|"
-    r"relatives?)\b")
+# A signature box that is the signing date's ("Employment Application Signature Date", "Date of Signature") or the
+# signature's and the date's in one ("Signature and Date"), as the normalized label says; or one whose entry verb takes
+# the date ("Enter the date beside your electronic signature"), as written: never the name. One that only mentions a
+# date keeps it ("type your full name, the date is recorded automatically", "enter your full name, not the date")
+_SIGNING_DATE_NAMED = re.compile(r"\b(signature (and )?dates?|date signed|date of signature)\b")
+_DATE_TO_ENTER = re.compile(r"\b(enter|type|write|provide|fill in|put)\s+(in\s+)?(the\s+|today[’']?s\s+|a\s+)?"
+                            r"dates?\b", re.I)
+# A sponsorship question about another person's need ("...required for your spouse or dependents?", "...for any family
+# member?"), or about the employer's policy with no need of the person's in it ("Is sponsorship available for
+# candidates who need it?", "Does Acme offer sponsorship?"): not the person's own. "Will you require the company to
+# provide sponsorship?" is theirs
+_THEIR_FAMILY_SPONSORSHIP = re.compile(r"\bfor (your |his |her |their |a |any )?(spouse|partner|husband|wife|"
+                                       r"dependents?|child(ren)?|family( members?)?|relatives?)\b")
+_EMPLOYER_SPONSORSHIP = re.compile(r"\bsponsor\w* (is |be )?(available|offered|provided)\b|"
+                                   r"\b(offer|provide)s? (any )?(visa |employment |immigration )?sponsor")
+_YOUR_NEED = re.compile(r"\byou\b.{0,40}\b(require|need)")
 
 
 def _without_notes(label: str) -> str:
@@ -2257,14 +2275,18 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
     if ans is None and _NEVER_GUESS.search(label):
         return None
     section = norm(field.get("section"))
-    # (a longer label that starts with it is that date too, with its format or a note after: "Signature Date (please
-    # enter the date in MM/DD/YYYY format)"; a long question that mentions a date signed further on asks another day,
-    # as does one that names something else signed or another day: a bare "Date" by its section, any other by its
-    # own words)
+    # (a longer label whose name, before its note, says it is that date too: "Applicant Signature Date (please use
+    # MM/DD/YYYY format)", "Signature date - enter today's date"; a long question that mentions a date signed further on
+    # asks another day. So does a bare "Date" in a block about something else, and a long label whose words name
+    # something else signed or another day, "Date signed (if you signed a non-compete with your current employer)";
+    # its employment application is the form itself)
+    head = norm(re.split(r"\s+[-–—]\s+|[(:,;]", clean_label(raw_label), maxsplit=1)[0])
+    this_form = label.replace("employment application", "application")
     if ans is None and kind == "text" \
-            and (len(label) <= 45 and _SIGNED_DATE.search(label) or _SIGNED_DATE.match(label)) \
+            and (len(label) <= 45 and _SIGNED_DATE.search(label)
+                 or head != "date" and len(head) <= 45 and _SIGNED_DATE.search(head)) \
             and not (_OTHER_EVENT.search(section) if label == "date"
-                     else _OTHER_EVENT.search(label) or _OTHER_SIGNING.search(label)):
+                     else len(label) > 45 and (_OTHER_EVENT.search(this_form) or _OTHER_SIGNING.search(label))):
         return Answer(_today_for(field), "signed_date")
     someone_else = _SOMEONE_ELSE.search(f"{label} {section}") or _OTHER_PARTY_LABEL.search(label) \
         or _OTHER_PARTY_SECTION.search(section) or _ROLE_PARTY.search(norm(re.sub(r"\([^)]*\)", " ", raw_label))) \
@@ -2294,14 +2316,18 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
             if own or re.search(pattern, label):
                 if name in _WORK_RULES and (_OTHER_COUNTRIES.search(label) or _OTHER_THAN.search(label)):
                     return None  # another country's question: the profile's facts are the United States'
-                if name in {"sponsorship", "no_sponsorship"} and _NOT_THEIR_SPONSORSHIP.search(label):
-                    return None  # the employer's policy, or someone else's need: not the person's
-                if name in {"us_citizen", "citizenship"} and _asks_more_than_citizenship(raw_label):
-                    continue  # more than citizenship asked: the next rule's, or the person's
+                if name in {"sponsorship", "no_sponsorship"} and (
+                        _THEIR_FAMILY_SPONSORSHIP.search(label)
+                        or _EMPLOYER_SPONSORSHIP.search(label) and not _YOUR_NEED.search(label)):
+                    return None  # someone else's need, or the employer's policy: not the person's
+                if name in {"us_citizen", "citizenship"} and _asks_more_than_citizenship(raw_label) \
+                        and not (name == "citizenship" and re.search(r"citizenship|country of citizen|which country",
+                                                                     label)):
+                    continue  # more than citizenship asked: the next rule's (the country, where it's asked), or theirs
                 if name == "phone" and _other_kind_of_phone(label, prof):
                     return None  # a Work Phone for a mobile: the profile's number isn't that kind's
-                if name == "signature" and _ASKS_FOR_A_DATE.search(clean_label(raw_label)):
-                    return None  # a box for a date, or for a date and the name: never the name alone
+                if name == "signature" and (_SIGNING_DATE_NAMED.search(label) or _DATE_TO_ENTER.search(raw_label)):
+                    return None  # the signing date's box, or one for a date to enter: never the name
                 value = getter(prof, job, raw_label) if _reads_question(getter) else getter(prof, job)  # type: ignore[call-arg]  # these take the question too
                 if value is None or value == "":
                     return None  # recognised but the profile has no answer
@@ -2326,8 +2352,10 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
 
     # (a yes/no question drawn as a text area, as Nikon's UKG Pro draws its work-authorization questions, live run
     # 14, Oct 2026: the profile's plain Yes or No)
+    # ("Is sponsorship required...?" too, unless it asks for an explanation: "If yes, please explain.")
     yes_no_box = ans.rule in {"authorized", "sponsorship", "no_sponsorship"} and polarity(ans.value) is not None \
-        and bool(re.match(r"(are|do|will|would|can|have|is) you\b|is (visa |employment )?sponsorship\b", label))
+        and bool(re.match(r"(are|do|will|would|can|have|is) you\b", label)
+                 or re.match(r"is (visa |employment )?sponsorship\b", label) and not _EXPLAIN.search(label))
     # (and where a person lives, asked as a question in a text area: GCU's "In what city do you live?", the full run
     # of Oct 12)
     home_box = ans.rule in {"city", "home_state"} and bool(re.match(
