@@ -1313,6 +1313,7 @@ def test_the_requirement_chips_hide_only_a_job_that_says_it_fails_them(srv, job_
                 assert "a Bachelor's" in await page.get_attribute("#degree-chip", "title")
                 maybe = page.locator("li.row", has_text="Maybe Technician").locator(".chips")
                 assert "may need a security clearance" in await maybe.inner_text()
+                assert "asks a doctorate, read from the text" in await maybe.inner_text()
                 assert "may need" not in await page.locator("li.row", has_text="Cleared Technician").inner_text()
                 for value, hidden in (("no_clearance", ("Cleared Technician", "Later Technician")),
                                       ("degree", ("Technician II",)),

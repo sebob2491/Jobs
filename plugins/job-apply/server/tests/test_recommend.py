@@ -751,9 +751,15 @@ def test_a_read_postings_requirements_are_its_facts_and_an_unread_one_says_none(
             "- Active Secret clearance required.\n- Up to 50% travel.\nShift: Nights\n"
             "Preferred Qualifications:\n- Master's degree preferred.")
     facts = score_listing({"title": "Senior Equipment Technician"}, tech(), text, TODAY).to_dict()["facts"]
+    # (a degree and a clearance in its requirements' sentences: shown, never sure, the second review of the filters;
+    # only a line labelled with them is)
     assert facts == {"level": "senior", "read": True, "degree": "bachelor", "degree_or_equivalent": False,
-                     "degree_sure": True, "clearance": True, "clearance_later": False, "clearance_sure": True,
+                     "degree_sure": False, "clearance": True, "clearance_later": False, "clearance_sure": False,
                      "travel": 50, "travel_sure": True, "shift": "other", "shift_sure": True}
+    labelled = text + "\nRequired Education: Bachelor's Degree\nClearance Type: Secret"
+    facts = score_listing({"title": "Equipment Technician"}, tech(), labelled, TODAY).to_dict()["facts"]
+    assert (facts["degree"], facts["degree_sure"], facts["clearance"], facts["clearance_sure"]) == \
+        ("bachelor", True, True, True)
     later = ("Requirements:\n- Associate's degree or equivalent experience.\n- Ability to obtain a Secret clearance.\n"
              "Travel to customer sites; travel reimbursement and a 401(k) with 100% match.")
     facts = score_listing({"title": "Equipment Technician"}, tech(), later, TODAY).to_dict()["facts"]

@@ -28,7 +28,7 @@ _SAID = {
                             # (to hire, to perm: a full-time job after its contract or temp time)
                             r"\b(?:temp|contract)\s+to\s+(?:hire|perm)\b"),
     "part_time": re.compile(r"\bpart\s*time\b|\bpt\b"),
-    "contract": re.compile(r"\bcontract(?:or|ors|ed)?\b|\bcontingent\b|\b1099\b|\bfreelance\b|\bc2h\b"),
+    "contract": re.compile(r"\bcontract(?:or|ors|ed|ual)?\b|\bcontingent\b|\b1099\b|\bfreelance\b|\bc2h\b"),
     "temporary": re.compile(r"\btemp(?:orary)?\b|\bseasonal\b|\b(?:fixed|limited)\s+term\b"),
     "internship": re.compile(r"\bintern(?:ship|ships)?\b|\bco\s*op\b"),
     "per_diem": re.compile(r"\bper\s*diem\b|\bprn\b|\bas\s+needed\b"),

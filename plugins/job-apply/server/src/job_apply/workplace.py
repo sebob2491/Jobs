@@ -32,7 +32,8 @@ FIELDS = ("workplace", "workplace_source")
 _NEGATED = re.compile(r"(?i)\b(?:no|not|non)[\s-]*(?:fully\s+)?(?:remote|tele-?work|work\s*from\s*home)\b|"
                       r"\bremote(?:\s+work)?\s+(?:is\s+)?not\s+(?:available|an\s+option|possible|eligible)|"
                       r"\bnot\s+eligible\s+for\s+remote|"
-                      r"\b(?:remote(?:\s+location)?(?:\s+eligible)?|work\s*from\s*home|wfh)\s*\??\s*:\s*no\b")
+                      r"\b(?:remote(?:\s+location)?(?:\s+eligible)?|remote\s+work|tele-?work(?:\s+eligible)?|telecommute|"
+                      r"work\s*from\s*home|wfh)\s*\??\s*:\s*(?:no|not)\b")
 _OPTION = re.compile(r"(?i)\b(?:eligible|eligibility|optional|options?|friendly|possible|available|considered|"
                      r"temporar(?:y|ily)|or)\b")
 # the words of one part of a location or field, normalized: hyphens and underscores as spaces, "on site" as one word
@@ -90,7 +91,7 @@ def _said(text: str, places: bool) -> tuple[str, bool]:
     if not found:
         return "", False
     value = "hybrid" if "hybrid" in found else "remote" if "remote" in found else "onsite"
-    several = len(found - {"hybrid"}) > 1 or ("hybrid" in found and "remote" in found)
+    several = len(found) > 1  # (two ways named: "Hybrid / On-Site", "Remote/Hybrid": never sure)
     option = bool(_OPTION.search(text)) and value == "remote"
     sure = not (several or option or named or (places and value == "remote" and place))
     return value, sure

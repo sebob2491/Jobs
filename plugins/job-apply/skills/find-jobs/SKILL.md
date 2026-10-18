@@ -116,11 +116,12 @@ The goal is a short, deduplicated list of real openings saved to the tracker
    system doesn't say. Its Requirements chips (No clearance needed, No degree required
    or My degree is enough, Day shift, Travel ≤ 25%, Entry level, Not senior) hide an opening
    only when its title, or its posting once read, surely says it doesn't fit: a labelled line
-   ("Clearance Type: Secret", "Education: Bachelor's (Required)", "Shift: Nights", "Travel:
-   50%") or a requirement the posting states as one. A posting not read yet, or a clearance,
-   degree, shift or travel only mentioned in passing (its benefits, its company's blurb, its
-   duties), never hides one: a clearance read so shows as "may need a security clearance".
-   The `apply` skill takes it from there.
+   ("Clearance Type: Secret", "Minimum Education: Bachelor's Degree", "Shift: Nights", "Travel:
+   50%"), or its title. A posting not read yet, or a degree or clearance its sentences state
+   (under any heading: a posting's sections can't be told apart surely), never hides one: it
+   shows as "asks a Bachelor's, read from the text" or "may need a security clearance". So
+   read the posting before telling the user a job needs a degree or a clearance. The `apply`
+   skill takes it from there.
 
 7. **Each morning.** Offer once: "each morning: search, then whats_new". After a search
    (this skill's, or the Job Desk's Find jobs), `whats_new()` lists the openings first

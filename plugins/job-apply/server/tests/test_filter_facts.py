@@ -340,12 +340,28 @@ def _cases(cases, wrap):
     return [pytest.param(text, mine, expect, wrap, id=f"{i}") for i, (text, mine, expect) in enumerate(cases)]
 
 
+# Requirements the posting states only in its sentences: shown ("asks a Bachelor's, read from the text", "may need a
+# security clearance"), never hidden, as no section of a posting can be told apart surely (the second review of the
+# filters: only a line labelled with the requirement and its strength hides a job)
+READ_FROM_TEXT = {
+    ("Bachelor's degree in Engineering required.", "degree"), ("Master's or PhD in Chemistry required.", "degree"),
+    ("Bachelor's degree from an accredited university.", "degree"), ("Degree in Electrical Engineering.", "degree"),
+    ("SHRM-CP or PHR certification preferred. Bachelor's degree required.", "degree"),
+    ("Teach associate degree courses in nursing. Requirements: Master's degree in Nursing.", "degree"),
+    ("Must be able to obtain a Secret clearance.", "no_clearance"),
+    ("Ability to obtain a security clearance.", "no_clearance"), ("Active Secret clearance required.", "no_clearance"),
+    ("Must be able to obtain and maintain a DOE Q clearance.", "no_clearance"),
+}
+
+
 @pytest.mark.parametrize("text, mine, expect, wrap", _cases(WRAPPED, True) + _cases(WHOLE, False))
 def test_a_requirement_chip_hides_only_for_a_sure_reading(text, mine, expect, wrap):
     full = _WRAP.format(text) if wrap else text
     facts = posting_facts("Technician", requirements(full), full)
     got = _hides(facts, mine)
     for chip, should in expect.items():
+        if (text, chip) in READ_FROM_TEXT:
+            should = False
         if should is not None:
             assert got[chip] is should, (chip, facts)
 
