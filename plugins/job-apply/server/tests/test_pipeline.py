@@ -13236,31 +13236,14 @@ def test_each_job_filled_at_once_has_its_own_view_of_the_browser(srv):
     assert after is claude  # Claude's tools are on their own tab still
 
 
-def test_background_tabs_are_launched_never_to_be_throttled(srv, monkeypatch):
+def test_background_tabs_are_launched_never_to_be_throttled(srv, fake_launch):
     """Jobs filled at once work in tabs behind the one in front: the browser is launched so those run as the one in
     front does (Playwright's own defaults have these too, and its focus emulation keeps each page counted as shown: a
     headed window, a tab behind another, ran its timers and animation frames on, and a click, typing, a file chooser
     and a screenshot all worked there). Never a --disable-features of its own, which would drop Playwright's."""
     from job_apply import browser as browser_module
 
-    launched: list = []
-
-    class Chromium:
-        async def launch_persistent_context(self, **kw):
-            launched.append(kw)
-            raise browser_module.PlaywrightError("BrowserType.launch_persistent_context: Executable doesn't exist")
-
-    class Playwright:
-        chromium = Chromium()
-
-        async def stop(self):
-            pass
-
-    class Starter:
-        async def start(self):
-            return Playwright()
-
-    monkeypatch.setattr(browser_module, "async_playwright", lambda: Starter())
+    launched = fake_launch("BrowserType.launch_persistent_context: Executable doesn't exist")
     with pytest.raises(browser_module.BrowserUnavailable):
         run(browser_module.BrowserSession()._launch())
     assert launched and all(set(browser_module.BACKGROUND_TABS_RUN) <= set(kw["args"]) for kw in launched)
@@ -14907,7 +14890,7 @@ def _three_alike(srv) -> tuple[int, int, int]:
     return a, x, b
 
 
-def test_apply_anyway_clears_only_the_jobs_its_maybe_duplicate_card_named(srv, monkeypatch):
+def test_apply_anyway_clears_only_the_jobs_its_maybe_duplicate_card_named(srv, monkeypatch, fake_open):
     """The review of 0.3.206 (MEDIUM): a job alike one applied to on Indeed and one saved from LinkedIn was held on a
     card naming the Indeed job alone; the LinkedIn job was then filled (for the person's own Submit), and Apply anyway
     on the card cleared both, so the first was filled and sent with no one asked about the LinkedIn one. Apply anyway
@@ -14915,14 +14898,7 @@ def test_apply_anyway_clears_only_the_jobs_its_maybe_duplicate_card_named(srv, m
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     a, x, b = _three_alike(srv)
     applier = Applier(srv)
-    opened: list[int] = []
-
-    async def open_(self, r):  # (where its page would open)
-        opened.append(r.job_id)
-        r.status, r.reason = "ready", "Filled and waiting on the review page."
-        return False
-
-    monkeypatch.setattr(Applier, "_open", open_)
+    opened = fake_open
 
     async def go():
         applier.start()

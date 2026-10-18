@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import inspect
 import os
+import subprocess
 import sys
 import zlib
 from pathlib import Path
@@ -12,6 +13,7 @@ import yaml
 from playwright.async_api import Browser, async_playwright
 
 FIXTURES = Path(__file__).parent / "fixtures"
+SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 
 PROFILE = {
     "personal": {
@@ -315,6 +317,70 @@ def srv(job_apply_home, loop):
         if server._tracker:
             server._tracker.close()
             server._tracker = None
+
+
+@pytest.fixture
+def smoke_script(tmp_path):
+    """scripts/live_smoke.py in a process of its own, short of a browser: `smoke_script(env, *args)` runs it with
+    `args`, its --out in tmp_path, and of the test identity's values only those in `env` (its home goes in tmp_path).
+    Gives its exit code and all it printed."""
+    def smoke(env: dict, *args: str) -> tuple[int, str]:
+        clean = {k: v for k, v in os.environ.items()
+                 if not k.startswith(("LIVE_TEST_", "JOB_APPLY_SECRET_", "JOB_APPLY_LIVE_TEST_"))}
+        out = subprocess.run([sys.executable, str(SCRIPTS / "live_smoke.py"), *args, "--out", str(tmp_path / "out")],
+                             env={**clean, **env, "TMPDIR": str(tmp_path)}, capture_output=True, text=True,
+                             timeout=120)
+        return out.returncode, out.stdout + out.stderr
+
+    return smoke
+
+
+@pytest.fixture
+def fake_open(monkeypatch) -> list[int]:
+    """The Applier's _open with no page: each job (by id) as it would open, noted in the list this gives, and its pass
+    ends at once, ready on its review page."""
+    from job_apply import pipeline
+
+    opened: list[int] = []
+
+    async def open_(self, r):  # (where the application's page would open)
+        opened.append(r.job_id)
+        r.status, r.reason = "ready", "Filled and waiting on the review page."
+        return False
+
+    monkeypatch.setattr(pipeline.Applier, "_open", open_)
+    return opened
+
+
+@pytest.fixture
+def fake_launch(monkeypatch):
+    """Playwright as the desk's BrowserSession starts it, with a Chromium that won't start: `fake_launch(error)` puts
+    it in place, and each launch_persistent_context's options go in the list it gives before it raises a PlaywrightError
+    saying `error`."""
+    from job_apply import browser as browser_module
+
+    def launch(error: str) -> list[dict]:
+        launched: list[dict] = []
+
+        class Chromium:
+            async def launch_persistent_context(self, **kw):
+                launched.append(kw)
+                raise browser_module.PlaywrightError(error)
+
+        class Playwright:
+            chromium = Chromium()
+
+            async def stop(self):
+                pass
+
+        class Starter:
+            async def start(self):
+                return Playwright()
+
+        monkeypatch.setattr(browser_module, "async_playwright", lambda: Starter())
+        return launched
+
+    return launch
 
 
 def run(coro):

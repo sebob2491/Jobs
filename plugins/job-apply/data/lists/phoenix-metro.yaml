@@ -6,8 +6,8 @@
 # Same shape as data/companies.yaml. Each careers site and the system behind it was read off
 # the live pages in Oct 2026, and every `search` block was run through the plugin's own search
 # from a test machine and came back without an error. Employers with no `search` block run a
-# system the plugin can't search (or turned automated reads away): Find jobs points the person
-# to their careers page instead.
+# system the plugin can't search (or turned automated reads away), and say why (`no_search:`, which the
+# live check reports): Find jobs points the person to their careers page instead.
 
 companies:
   - name: Banner Health
@@ -72,13 +72,14 @@ companies:
     ats: unknown            # maricopa.edu answers with a Cloudflare challenge from here; reposted openings carry six-digit "Job ID"s (PeopleSoft-style), not confirmed
     az_sites: Tempe (district office), Phoenix, Mesa, Chandler, Gilbert, Glendale, Scottsdale, Avondale
     confidence: low         # careers page not seen (Cloudflare, Oct 2026)
+    no_search: maricopa.edu answers with a Cloudflare challenge (Oct 2026), so its job system was never seen
   - name: City of Phoenix
     careers_url: https://www.phoenix.gov/administration/departments/hr/careers.html
     ats: custom            # peoplesoft; job search is PeopleSoft Talent Acquisition Manager: hcmprod.phoenix.gov/psc/hcmprodtam/EMPLOYEE/COP_TAM/c/HRS_HRAM_FL.HRS_CG_SEARCH_FL.GBL?FOCUS=Applicant
     az_sites: Phoenix
     confidence: high        # live check, Oct 2026
-    # No search block: its PeopleSoft list reads with plain requests (44 openings, Oct 2026), but no
-    # address opens one posting outside the site's own clicks (deep links go back to the search).
+    # (its PeopleSoft list reads with plain requests: 44 openings, Oct 2026)
+    no_search: PeopleSoft Talent Acquisition, not a system the plugin searches; no address opens one posting outside the site's own clicks (deep links go back to the search)
   - name: Maricopa County
     careers_url: https://maricopa.wd1.myworkdayjobs.com/MC_External
     ats: workday            # maricopa.gov Human Resources page's "View Postings" links here (live check, Oct 2026)
@@ -204,6 +205,7 @@ companies:
     ats: unknown              # jobs.adp.com answered with a Cloudflare challenge (403) from here; system not seen
     az_sites: Tempe
     confidence: low
+    no_search: jobs.adp.com answers with a Cloudflare challenge (403, Oct 2026), so its job system was never seen
   - name: Robert Half
     careers_url: https://careers.roberthalf.com/global/en
     ats: workday              # careers.roberthalf.com is a Phenom front end; recruiting/branch roles apply on this Workday site
@@ -430,6 +432,7 @@ companies:
     ats: unknown              # jobs.aa.com answered 403 (Access Denied) from here; system not seen
     az_sites: Phoenix (Sky Harbor hub), Tempe
     confidence: low           # careers page not seen (403, Oct 2026)
+    no_search: jobs.aa.com answers 403 (Access Denied, Oct 2026), so its job system was never seen
   - name: Amazon
     careers_url: https://www.amazon.jobs/en/
     ats: custom               # amazon.jobs is Amazon's own job site

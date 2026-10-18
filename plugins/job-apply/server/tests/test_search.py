@@ -5,6 +5,7 @@ import asyncio
 import json
 import re
 import time
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -795,22 +796,32 @@ def test_asml_sitecore_answer_and_request():
         {"company": "ASML", "kind": "sitecore", "config": {"url": "https://www.asml.com/f?query={query}"}}]
 
 
-def test_search_tool_runs_asml_in_the_browser(srv, monkeypatch):
-    calls = []
+def captured(srv, monkeypatch, answer, body=None) -> list[SimpleNamespace]:
+    """The browser's capture_json as a board's search calls it, short of a browser: each call is noted (its url,
+    url_part, want, rewrite and rewrite_url, and `sent`: the page's own call `body` as its rewrite makes it, when a
+    body is given), and `answer` comes back."""
+    calls: list[SimpleNamespace] = []
 
-    async def fake_capture(url, url_part, timeout=25000, want=None, rewrite=None):
-        calls.append((url, url_part, want is not None, rewrite is not None))
-        return ASML_ANSWER
+    async def fake_capture(url, url_part, timeout=25000, want=None, rewrite=None, rewrite_url=None):
+        sent = rewrite(json.loads(json.dumps(body))) if body is not None else None
+        calls.append(SimpleNamespace(url=url, url_part=url_part, want=want, rewrite=rewrite, rewrite_url=rewrite_url,
+                                     sent=sent))
+        return answer
 
     monkeypatch.setattr(srv.browser, "capture_json", fake_capture)
+    return calls
+
+
+def test_search_tool_runs_asml_in_the_browser(srv, monkeypatch):
+    calls = captured(srv, monkeypatch, ASML_ANSWER)
     monkeypatch.setattr(srv, "load_companies", lambda: [
         {"name": "ASML", "search": {"sitecore": {"url": "https://www.asml.com/en/careers/find-your-job?query={query}"}}}])
     out = asyncio.run(srv.search_company_jobs("field service | customer engineer", companies=["ASML"], location="AZ"))
     assert [r["title"] for r in out["results"]] == ["Field Service Engineer - EUV"]  # Hefei is filtered out
     assert out["results"][0]["company"] == "ASML" and "needs_browser" not in out
-    assert [c[0] for c in calls] == ["https://www.asml.com/en/careers/find-your-job?query=field%20service",
-                                     "https://www.asml.com/en/careers/find-your-job?query=customer%20engineer"]
-    assert all(c[1] == "/discover/v2/" and c[2] and c[3] for c in calls)
+    assert [c.url for c in calls] == ["https://www.asml.com/en/careers/find-your-job?query=field%20service",
+                                      "https://www.asml.com/en/careers/find-your-job?query=customer%20engineer"]
+    assert all(c.url_part == "/discover/v2/" and c.want is not None and c.rewrite is not None for c in calls)
 
 
 def test_sitecore_search_pages_through_results():
@@ -937,20 +948,12 @@ def paycom_job(job_id, title, where, remote=""):
 def test_paycom_board_is_read_in_the_browser(srv, monkeypatch):
     """Ebara's Paycom API wants the session its career page sets up, so the page makes the
     call, asked for the whole board, and titles are matched here."""
-    calls = []
-
-    async def fake_capture(url, url_part, timeout=25000, want=None, rewrite=None):
-        sent = rewrite(json.loads(json.dumps(PAYCOM_PAGE_BODY)))
-        calls.append((url, url_part, sent["skip"], sent["take"]))
-        assert sent["filtersForQuery"] == PAYCOM_PAGE_BODY["filtersForQuery"]  # the rest of the page's call kept
-        return paycom_answer([
-            paycom_job(389200, "Desktop System Specialist  (32906)", "Phoenix, AZ - Phoenix, AZ"),
-            paycom_job(401000, "Field Service Associate II  (Semiconductor)  (33300)", "Chandler, AZ - Chandler, AZ 85226"),
-            paycom_job(389228, "Field Service Associate II  (Semiconductor)  (32907)", "Sherman, TX - Sherman, TX 75092"),
-            paycom_job(401001, "Field Service Technician I-III (33301)", "Phoenix, AZ - Phoenix, AZ", remote="Hybrid"),
-        ])
-
-    monkeypatch.setattr(srv.browser, "capture_json", fake_capture)
+    calls = captured(srv, monkeypatch, paycom_answer([
+        paycom_job(389200, "Desktop System Specialist  (32906)", "Phoenix, AZ - Phoenix, AZ"),
+        paycom_job(401000, "Field Service Associate II  (Semiconductor)  (33300)", "Chandler, AZ - Chandler, AZ 85226"),
+        paycom_job(389228, "Field Service Associate II  (Semiconductor)  (32907)", "Sherman, TX - Sherman, TX 75092"),
+        paycom_job(401001, "Field Service Technician I-III (33301)", "Phoenix, AZ - Phoenix, AZ", remote="Hybrid"),
+    ]), body=PAYCOM_PAGE_BODY)
     out = asyncio.run(srv.search_company_jobs("field service | customer engineer", companies=["Ebara"], location="AZ"))
     base = "https://www.paycomonline.net/v4/ats/web.php/portal/95CACB007211B4A999FBE2ED52E7762E"
     assert [(r["title"], r["location"], r["url"], r["external_id"], r["ats"]) for r in out["results"]] == [
@@ -960,7 +963,10 @@ def test_paycom_board_is_read_in_the_browser(srv, monkeypatch):
     # (the design of Oct 18, F3) Paycom's remoteType is where it's done, no longer a note (a note is a concern)
     assert (out["results"][1]["workplace"], out["results"][1]["workplace_source"]) == ("hybrid", "structured")
     assert out["results"][1]["notes"] == [] and "workplace" not in out["results"][0]
-    assert calls == [(f"{base}/career-page", "/job-posting-previews/search", 0, 100)]  # whole board, one tab
+    assert [(c.url, c.url_part, c.sent["skip"], c.sent["take"]) for c in calls] == [
+        (f"{base}/career-page", "/job-posting-previews/search", 0, 100)]  # whole board, one tab
+    # the rest of the page's call kept
+    assert all(c.sent["filtersForQuery"] == PAYCOM_PAGE_BODY["filtersForQuery"] for c in calls)
     assert not out["errors"] and out["results"][0]["company"] == "Ebara Technologies"
 
 
@@ -1120,21 +1126,16 @@ UKG_ANSWER = {"totalCount": 3, "opportunities": [
 def test_ukg_board_is_read_in_the_browser(srv, monkeypatch):
     """Nikon Precision's UKG Pro board loads its openings from its own API; the page makes
     the call, asked for the whole board, and titles are matched here."""
-    calls = []
-
-    async def fake_capture(url, url_part, timeout=25000, want=None, rewrite=None):
-        sent = rewrite(json.loads(json.dumps(UKG_PAGE_BODY)))
-        calls.append((url, url_part, sent["opportunitySearch"]["Skip"], sent["opportunitySearch"]["Top"]))
-        assert sent["matchCriteria"] == UKG_PAGE_BODY["matchCriteria"]  # the rest of the page's call kept
-        return UKG_ANSWER
-
-    monkeypatch.setattr(srv.browser, "capture_json", fake_capture)
+    calls = captured(srv, monkeypatch, UKG_ANSWER, body=UKG_PAGE_BODY)
     out = asyncio.run(srv.search_company_jobs("field service | customer engineer", companies=["Nikon"], location="AZ"))
     board = "https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a0b52-5153-4c12-ad2c-b7f3b0a74112/"
     assert [(r["title"], r["location"], r["url"], r["external_id"], r["posted"], r["ats"]) for r in out["results"]] == [
         ("Field Service Engineer", "Chandler, AZ; Phoenix, AZ", f"{board}OpportunityDetail?opportunityId=532a7dc9",
          "FIELD001451", "2026-07-10", "ukg")]  # the intern and the Oregon opening are left out
-    assert calls == [(f"{board}?q=&o=postedDateDesc", "/JobBoardView/LoadSearchResults", 0, 200)]
+    assert [(c.url, c.url_part, c.sent["opportunitySearch"]["Skip"], c.sent["opportunitySearch"]["Top"])
+            for c in calls] == [(f"{board}?q=&o=postedDateDesc", "/JobBoardView/LoadSearchResults", 0, 200)]
+    # the rest of the page's call kept
+    assert all(c.sent["matchCriteria"] == UKG_PAGE_BODY["matchCriteria"] for c in calls)
     assert not out["errors"] and out["results"][0]["company"] == "Nikon Precision"
 
 
@@ -1179,7 +1180,7 @@ def edwards_posting(title, *lines):
 def test_successfactors_search_is_read_in_the_browser(srv, monkeypatch):
     """Edwards' search answers only its page; the page's own call gets each wording. The state
     Edwards puts at the end of some titles is their location; the others' postings say it."""
-    calls, reads = [], []
+    reads = []
 
     async def fake_read(url, client=None):
         reads.append(url)
@@ -1189,15 +1190,7 @@ def test_successfactors_search_is_read_in_the_browser(srv, monkeypatch):
     monkeypatch.setattr(search_module, "read_page", fake_read)
     edwards = ("https://www.jobs.atlascopcogroup.com/search/?q=&facetFilters=%7B%22filter1%22%3A%5B%22Edwards%22%5D"
                "%2C%22mfield3%22%3A%5B%22United+States%22%5D%7D")
-
-    async def fake_capture(url, url_part, timeout=25000, want=None, rewrite=None):
-        assert not want(RMK_FACETS_BODY) and want(RMK_PAGE_BODY)  # the facet-only call is skipped
-        sent = rewrite(json.loads(json.dumps(RMK_PAGE_BODY)))
-        calls.append((url, url_part, sent["keywords"], sent["pageNumber"]))
-        assert sent["facetFilters"] == RMK_PAGE_BODY["facetFilters"]  # still Edwards, still the US
-        return RMK_ANSWER
-
-    monkeypatch.setattr(srv.browser, "capture_json", fake_capture)
+    calls = captured(srv, monkeypatch, RMK_ANSWER, body=RMK_PAGE_BODY)
     out = asyncio.run(srv.search_company_jobs("field service", companies=["Edwards"], location="AZ"))
     got = {r["title"]: r for r in out["results"]}
     assert set(got) == {"Onsite Service Engineer - AZ", "Assembly & Test Technician (Edwards Vacuum)"}  # CA left out
@@ -1208,7 +1201,10 @@ def test_successfactors_search_is_read_in_the_browser(srv, monkeypatch):
     assert (assembly["location"], assembly["notes"]) == ("Chandler, AZ", [])  # read off its posting
     # the CA and AZ titles say where they are; only the third posting is read
     assert [url.rsplit("/", 1)[-1] for url in reads] == ["172852-en_US"]
-    assert calls == [(edwards, "/services/recruiting/v1/jobs", "field service", 0)]  # 4 openings: one page
+    assert [(c.url, c.url_part, c.sent["keywords"], c.sent["pageNumber"]) for c in calls] == [
+        (edwards, "/services/recruiting/v1/jobs", "field service", 0)]  # 4 openings: one page
+    assert all(not c.want(RMK_FACETS_BODY) and c.want(RMK_PAGE_BODY) for c in calls)  # the facet-only call is skipped
+    assert all(c.sent["facetFilters"] == RMK_PAGE_BODY["facetFilters"] for c in calls)  # still Edwards, still the US
     assert not out["errors"]
 
 
@@ -1450,18 +1446,12 @@ def test_benchmark_board_is_read_in_the_browser(srv, monkeypatch):
     """Benchmark's Infor board answers its own page, 10 postings at a time: that call is asked
     for 200, and titles and places are matched here."""
     cfg_url = next(c for c in search_module.load_companies() if c["name"] == "Benchmark Electronics")["search"]["infor"]["url"]
-    calls = []
-
-    async def fake_capture(url, url_part, timeout=25000, want=None, rewrite=None, rewrite_url=None):
-        calls.append((url, url_part, rewrite_url(INFOR_CALL)))
-        return {"dataViewSet": {"pagingInfo": {"pageSize": 200, "hasNext": False}, "data": [
-            infor_card("12460", "Manufacturing Technician I", "Arizona:Mesa", "20260930"),
-            infor_card("12529", "Precision Inspector II", "Arizona:Tempe", "20261006"),
-            infor_card("12554", "Production Inspector I", "Minnesota:Rochester", "20261006"),
-            infor_card("12555", "Test Technician", "Arizona:Tempe", "20261001", link=False),  # no way to it
-            infor_card("12497", "PCB Assembler II", "ROU:BV:Ghimbav", "20261006")]}}
-
-    monkeypatch.setattr(srv.browser, "capture_json", fake_capture)
+    calls = captured(srv, monkeypatch, {"dataViewSet": {"pagingInfo": {"pageSize": 200, "hasNext": False}, "data": [
+        infor_card("12460", "Manufacturing Technician I", "Arizona:Mesa", "20260930"),
+        infor_card("12529", "Precision Inspector II", "Arizona:Tempe", "20261006"),
+        infor_card("12554", "Production Inspector I", "Minnesota:Rochester", "20261006"),
+        infor_card("12555", "Test Technician", "Arizona:Tempe", "20261001", link=False),  # no way to it
+        infor_card("12497", "PCB Assembler II", "ROU:BV:Ghimbav", "20261006")]}})
     out = asyncio.run(srv.search_company_jobs("technician | inspector", companies=["Benchmark"], location="AZ"))
     got = {r["title"]: (r["location"], r["posted"], r["url"]) for r in out["results"]}
     assert got == {  # Rochester left out; the assembler wasn't asked for
@@ -1471,7 +1461,8 @@ def test_benchmark_board_is_read_in_the_browser(srv, monkeypatch):
         "Precision Inspector II": ("Tempe, AZ", "2026-10-06", (
             "https://css-benchmark-prd.inforcloudsuite.com/hcm/Jobs/navigation/JobPosting%5BJobPostingSet%5D%281%2C12529"
             "%2C1%29.JobPostingDisplayNav?csk.HROrganization=1&csk.JobBoard=EXTERNAL&web10x=true"))}
-    assert calls == [(cfg_url, "JobPosting.JobSearchCardViewList", INFOR_CALL.replace("pagesize=10", "pagesize=200"))]
+    assert [(c.url, c.url_part, c.rewrite_url(INFOR_CALL)) for c in calls] == [
+        (cfg_url, "JobPosting.JobSearchCardViewList", INFOR_CALL.replace("pagesize=10", "pagesize=200"))]
     assert not out["errors"]
 
 

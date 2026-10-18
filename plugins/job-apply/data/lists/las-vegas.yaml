@@ -8,8 +8,8 @@
 # live pages in Oct 2026, and every `search` block was run through the plugin's own search from a
 # test machine and came back without an error; each entry's comment names Las Vegas-area IT openings
 # it found (or says there were none that day). Employers with no `search` block run a system the
-# plugin can't search (or turned automated reads away): Find jobs points the person to their careers
-# page instead. A bank, utility or hospital is here for its IT jobs in the valley, not its other work.
+# plugin can't search (or turned automated reads away), and say why (`no_search:`, which the live
+# check reports): Find jobs points the person to their careers page instead. A bank, utility or hospital is here for its IT jobs in the valley, not its other work.
 
 companies:
   # Casino resorts' corporate IT (checked Oct 2026).
@@ -113,14 +113,13 @@ companies:
     ats: jobvite              # playags.com links to this Jobvite board
     nv_sites: Las Vegas (HQ)
     confidence: medium        # page seen, Oct 2026: 19 openings, Las Vegas among their places
-    # No search block: its board lists openings as table rows opened by a script, with no link in
-    # their names, which the plugin's Jobvite reader doesn't read (its search came back empty, Oct 2026).
+    no_search: its Jobvite board lists openings as rows a script opens, with no link in their names, which the plugin's Jobvite reader doesn't read (its search came back empty, Oct 2026)
   - name: PlayStudios
     careers_url: https://jobs.dayforcehcm.com/en-US/playstudios/CANDIDATEPORTAL
     ats: custom               # dayforce; playstudios.com/careers links to this Dayforce board
     nv_sites: Las Vegas (HQ; mobile casino games)
     confidence: medium        # page seen, Oct 2026
-    # No search block: Dayforce isn't a system the plugin searches.
+    no_search: Dayforce isn't a system the plugin searches
   # Data centers, tech, and the airline headquartered here (checked Oct 2026).
   - name: Switch
     careers_url: https://www.switch.com/careers/current-openings/
@@ -134,7 +133,7 @@ companies:
     ats: custom               # Google's own job site
     nv_sites: Henderson (data center)
     confidence: medium        # page seen, Oct 2026: Data Center Technician openings in Henderson
-    # No search block: Google's job site isn't a system the plugin searches.
+    no_search: Google's own job site isn't a system the plugin searches
   - name: Allegiant Air
     careers_url: https://www.allegiantair.jobs/
     ats: lever                # allegiantair.com answered with a Cloudflare challenge; allegiantair.jobs lists its
@@ -148,7 +147,7 @@ companies:
     ats: custom               # jobs.zappos.com opens amazon.jobs' search for Zappos (an Amazon company)
     nv_sites: Las Vegas (HQ downtown)
     confidence: medium        # page seen, Oct 2026
-    # No search block: amazon.jobs' search, as the plugin runs it, can't be narrowed to Zappos.
+    no_search: amazon.jobs' search, as the plugin runs it, can't be narrowed to Zappos
   # Utilities, public agencies and schools (checked Oct 2026).
   - name: NV Energy
     careers_url: https://careers.nvenergy.com/
@@ -175,20 +174,20 @@ companies:
     ats: custom               # neogov; clarkcountynv.gov's Human Resources "Employment" page links here
     nv_sites: Las Vegas (Government Center), county-wide
     confidence: high          # live check, Oct 2026
-    # No search block: NEOGOV (governmentjobs.com) isn't a system the plugin searches.
+    no_search: NEOGOV (governmentjobs.com) isn't a system the plugin searches
   - name: City of Las Vegas
     careers_url: https://www.governmentjobs.com/careers/lasvegas
     ats: custom               # neogov; lasvegasnevada.gov/Government/Employment links here
     nv_sites: Las Vegas (City Hall)
     confidence: high          # live check, Oct 2026
-    # No search block: NEOGOV isn't a system the plugin searches.
+    no_search: NEOGOV (governmentjobs.com) isn't a system the plugin searches
   - name: City of Henderson
     careers_url: https://www.governmentjobs.com/careers/henderson
     ats: custom               # neogov; cityofhenderson.com answered 403 (Access Denied) from here; this NEOGOV page
                               # carries the City's logo
     nv_sites: Henderson
     confidence: medium        # page seen, Oct 2026
-    # No search block: NEOGOV isn't a system the plugin searches.
+    no_search: NEOGOV (governmentjobs.com) isn't a system the plugin searches
   - name: Clark County School District
     careers_url: https://www.ccsd.net/about/careers
     ats: taleo                # ccsd.net/about/careers links one Taleo career section per kind of job: 2 licensed
@@ -222,12 +221,13 @@ companies:
                               # a Cloudflare challenge from here; system not seen
     nv_sites: Las Vegas (Sunrise, MountainView and Southern Hills hospitals)
     confidence: low           # careers page not seen (Cloudflare, Oct 2026)
+    no_search: careers.hcahealthcare.com answers with a Cloudflare challenge (Oct 2026), so its job system was never seen
   - name: University Medical Center of Southern Nevada
     careers_url: https://www.governmentjobs.com/careers/umcsn
     ats: custom               # neogov; umcsn.com's "Careers at UMC" links to its NEOGOV page
     nv_sites: Las Vegas (Medical District)
     confidence: high          # live check, Oct 2026
-    # No search block: NEOGOV isn't a system the plugin searches.
+    no_search: NEOGOV (governmentjobs.com) isn't a system the plugin searches
   - name: Valley Health System
     careers_url: https://jobs.uhsinc.com/the-valley-health-system
     ats: icims                # valleyhealthsystemlv.com/careers links to UHS's Jibe site over the careers-uhsinc iCIMS portal
@@ -248,8 +248,8 @@ companies:
     ats: custom               # insightglobal.com/jobs is its own job search; insightglobal.com/locations lists Las Vegas
     nv_sites: Las Vegas, Henderson, North Las Vegas
     confidence: medium        # page seen, Oct 2026
-    # No search block: its own job search isn't one the plugin reads (its iCIMS Jibe site lists only
-    # its own staff's jobs: recruiters and account managers).
+    # (its iCIMS Jibe site lists only its own staff's jobs: recruiters and account managers)
+    no_search: insightglobal.com's own job search isn't one the plugin reads
   # Federal and defense IT around Nellis AFB and the Nevada National Security Site (checked Oct 2026).
   - name: Mission Support and Test Services (NNSS)
     careers_url: https://nnss.gov/careers/

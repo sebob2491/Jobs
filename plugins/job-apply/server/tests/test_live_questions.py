@@ -54,7 +54,7 @@ def test_the_values_the_review_page_should_show_are_noted_for_the_audit():
                                 "end": "present"}],
                       "education": [{"school": "Arizona State University", "degree": "Bachelor of Science",
                                      "start": "2016", "end": "2020"}],
-                      "others": ["Example Bank", "Example Fab"]}, values
+                      "others": ["Example Bank", "Example Data Center", "Example Fab", "Example Resorts"]}, values
     assert "example.com" not in line and "480" not in line and "Arizona Ave" not in line
 
 

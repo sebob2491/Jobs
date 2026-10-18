@@ -122,7 +122,7 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
     `LIVE_TEST_EMAIL_PASSWORD` and `LIVE_TEST_SITE_PASSWORD` in the environment (setting them up:
     `scripts/TEST_IDENTITY.md`), refuses to start without them, and masks them in all it prints
     and writes. The nightly's `accounts` check runs it once the repository has them as secrets, with
-    `--everywhere`: at every employer on the lists in `live_identity.LIST_ROLES` (about 100), a code-sending
+    `--everywhere`: at every employer on the lists in `live_identity.LIST_ROLES` (about 130), a code-sending
     system's employers in one `--parallel` group (one inbox).
   - Each check's machine audits what it wrote (`scripts/live_audit.py`): a consent the desk never gives (a newsletter,
     job alerts, a talent community, marketing, texts or calls, arbitration, at-will, a waiver), a submit, or the test

@@ -7,12 +7,14 @@ name: live-nightly
 #   - the same for HR jobs on the phoenix-metro list, as an applicant with an HR background,
 #     and for finance jobs there, as an applicant with a finance background (paused: the owner's call, Oct
 #     10, "put all finance on the back burner"; its last results stay in the issue as they were);
-#   - the search check on both lists: whether each employer's search works (how many openings
-#     it finds changes daily, and is never compared; the semiconductor list since Oct 16, 2026);
+#   - the search check on the lists in live_identity.LIST_ROLES: whether each employer's search works (how many
+#     openings it finds changes daily, and is never compared; the semiconductor list since Oct 16, 2026, the Las
+#     Vegas list since the design of Oct 18, A3);
 #   - the accounts check: the pipeline as the test identity (a clearly fake applicant with an
-#     inbox of its own; the owner's call, Oct 10) at every employer on both lists (--everywhere:
-#     the owner's call, Oct 11): it makes their accounts and reads their emailed
-#     codes, and never submits. It runs only once the repository has the test identity's three
+#     inbox of its own; the owner's call, Oct 10) at every employer with a search on the lists in
+#     live_identity.LIST_ROLES, each as its list's role (technician, HR, IT for Las Vegas; --everywhere:
+#     the owner's call, Oct 11; the ones with no search said on LIVE_SKIPPED lines): it makes their accounts and
+#     reads their emailed codes, and never submits. It runs only once the repository has the test identity's three
 #     secrets (scripts/TEST_IDENTITY.md); until then it says "not set up" and stays green.
 # The issue titled "Nightly live check" (label live-check) holds the last results in its body.
 # It gets a comment only when an employer's result changes; on a quiet night only its body's
@@ -26,8 +28,8 @@ name: live-nightly
 # last 20 runs, and the employers whose result keeps flipping. Its body is rewritten, never commented on.
 # Only runs of the default branch write to the issues: a manual run from another branch shows
 # its comparison in the job summary only.
-# The four checks (finance is paused) run at once, each on a machine of its own (a fraction of the time they took
-# one after another); the compare job then reads their logs.
+# The four checks (finance is paused) run at once, each on a machine of its own (the accounts check on four: a
+# fraction of the time they took one after another); the compare job then reads their logs.
 # A manual run can be a probe of a few employers or checks (its inputs): it runs only those, and
 # isn't compared or written to the issue; its artifacts hold the results
 # (scripts/nightly_summary.py --artifacts reads them).
@@ -154,25 +156,31 @@ jobs:
           # - check: finance
           #   args: --pipeline --fake-passwords --parallel 4 --lists phoenix-metro --role finance
           #   minutes: 30
-          - check: search  # whether each employer's search works, on both lists
-            args: --lists phoenix-metro,semiconductor-az --parallel 4
-            minutes: 30
+          - check: search  # whether each employer's search works, on the lists in live_identity.LIST_ROLES
+            args: --lists phoenix-metro,semiconductor-az,las-vegas --parallel 4
+            minutes: 40  # (about 145 employers: 30 held the 107 of the first two lists)
           # (each application goes as far as the rules let it: up to 5 minutes a round, more rounds and one Resume, the
           # owner's call, Oct 13; the minutes leave room for that)
-          # the test identity, its accounts made, at every employer on both lists (the owner's call, Oct 11), on three
-          # machines at once, four groups each (a code-sending system's employers stay in one group: one inbox); it
-          # answers an account form's security questions on the desk's card (--security-answers: the owner's call, Oct 14)
+          # the test identity, its accounts made, at every employer on the lists in live_identity.LIST_ROLES (the
+          # owner's call, Oct 11; about 130), on four machines at once, four groups each (machine M runs
+          # live_identity.arrange's groups M, M + 4, M + 8 and M + 12 of 16: a code-sending system's employers stay in
+          # one group, one inbox); it answers an account form's security questions on the desk's card
+          # (--security-answers: the owner's call, Oct 14). Eight jobs in this matrix at most, under GitHub's 20 at once
           - check: accounts
             slot: accounts-0
-            args: --pipeline --test-identity --everywhere --security-answers --parallel 4 --machine 0/3 --fixtures
+            args: --pipeline --test-identity --everywhere --security-answers --parallel 4 --machine 0/4 --fixtures
             minutes: 105
           - check: accounts
             slot: accounts-1
-            args: --pipeline --test-identity --everywhere --security-answers --parallel 4 --machine 1/3 --fixtures
+            args: --pipeline --test-identity --everywhere --security-answers --parallel 4 --machine 1/4 --fixtures
             minutes: 105
           - check: accounts
             slot: accounts-2
-            args: --pipeline --test-identity --everywhere --security-answers --parallel 4 --machine 2/3 --fixtures
+            args: --pipeline --test-identity --everywhere --security-answers --parallel 4 --machine 2/4 --fixtures
+            minutes: 105
+          - check: accounts
+            slot: accounts-3
+            args: --pipeline --test-identity --everywhere --security-answers --parallel 4 --machine 3/4 --fixtures
             minutes: 105
           # Sundays only (the "fresh" job's awkward): the pipeline check with the fake profile in an awkward shape, in
           # practice mode, never the test identity (no accounts), never --fixtures (its stops are decided again offline

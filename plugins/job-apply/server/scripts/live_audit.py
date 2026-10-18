@@ -54,6 +54,7 @@ from job_apply.pipeline import _user_name_box
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import live_compare  # (scripts/live_compare.py, beside this one)
+from live_compare import slug  # (an employer's folder in a check's)
 import live_identity  # (scripts/live_identity.py: the test identity's name and its email's mask)
 import live_profile  # (scripts/live_profile.py: the fake applicant's profile)
 
@@ -84,10 +85,6 @@ _STILL_HELD = re.compile(r"^\s*(?:present|current(?:ly)?|now|ongoing|to date)?\s
 _MONTHS = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6, "jul": 7, "aug": 8, "sep": 9, "oct": 10,
            "nov": 11, "dec": 12}
 SCHOOL_WINDOW = 300  # the chars after a school's name where its degree is read
-
-
-def slug(name: str) -> str:  # (live_smoke.py's: an employer's folder in a check's)
-    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40]
 
 
 def _input_value(m: re.Match[str]) -> str:

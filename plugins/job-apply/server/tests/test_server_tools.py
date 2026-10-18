@@ -474,37 +474,18 @@ def test_a_tick_or_a_choice_the_page_doesnt_take_isnt_reported_done(srv):
     assert values["State"] == "Arizona" and values["I accept the terms"] is False
 
 
-def test_a_browser_that_is_there_but_wont_start_isnt_swapped_for_another(monkeypatch, job_apply_home):
+def test_a_browser_that_is_there_but_wont_start_isnt_swapped_for_another(monkeypatch, job_apply_home, fake_launch):
     """Chrome's profile held by another window: Edge, without the sign-ins, isn't the answer."""
-    from playwright.async_api import Error as PlaywrightError
-
     from job_apply import browser as browser_module
 
-    tried: list[str] = []
-
-    class Chromium:
-        async def launch_persistent_context(self, **kw):
-            tried.append(kw.get("channel") or "bundled")
-            raise PlaywrightError("BrowserType.launch_persistent_context: Target page, context or browser has been "
-                                  "closed\nThe profile appears to be in use by another Chromium process")
-
-    class Playwright:
-        chromium = Chromium()
-
-        async def stop(self):
-            pass
-
-    class Start:
-        async def start(self):
-            return Playwright()
-
     monkeypatch.delenv("JOB_APPLY_CHROMIUM_PATH", raising=False)
-    monkeypatch.setattr(browser_module, "async_playwright", lambda: Start())
+    launched = fake_launch("BrowserType.launch_persistent_context: Target page, context or browser has been "
+                           "closed\nThe profile appears to be in use by another Chromium process")
     config.profile_path().write_text("settings:\n  browser_channel: chrome\n", encoding="utf-8")
     session = browser_module.BrowserSession()
     with pytest.raises(browser_module.BrowserUnavailable, match="in use"):
         asyncio.new_event_loop().run_until_complete(session._launch())
-    assert tried == ["chrome"]
+    assert [kw.get("channel") or "bundled" for kw in launched] == ["chrome"]
 
 
 @needs_browser
