@@ -3986,6 +3986,53 @@ def test_the_us_person_question_is_held_to_the_same_short_list():
         assert [_answer(label, p, **yes_no) for p in (citizen, visa)] == ["Yes", "No"], label
 
 
+def test_a_us_person_wording_the_check_doesnt_know_is_left_and_a_list_without_residents_is_no_residents_yes():
+    """The ninth review of Oct 18: the U.S. person's rule still answered, with nothing checked around it, any wording
+    the check didn't know ("Are you currently a ...", a bare label, "U.S. person" in quotes, "Is the candidate ..."),
+    and a list of the persons that leaves out the permanent residents took a permanent resident's Yes from their
+    us_person. Now the rule answers only a wording the check knows, held to its short list; a list without the
+    permanent residents gets a citizen's Yes and a non-U.S. person's No, and leaves the permanent resident's. The common
+    wordings it knows now ("currently", bare, quoted, "(Green Card)", "of the United States", "under ITAR/EAR", a
+    definition with its citation or its list) keep their answer."""
+    pr = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=False, us_person=True,
+               citizenship="Mexico")
+    visa = _work(authorized_to_work=True, requires_sponsorship=True, us_citizen=False, us_person=False,
+                 citizenship="India")
+    citizen = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=True, us_person=True,
+                    citizenship="United States")
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    for label in ("Are you currently a US citizen or permanent resident and able to obtain a security clearance?",
+                  "Are you currently a U.S. citizen or permanent resident? Do you hold an active clearance?",
+                  "U.S. citizen or permanent resident? Do you hold an active clearance?",
+                  "US citizen or green card holder willing to relocate to Phoenix",
+                  "Do you qualify as a U.S. person under ITAR, and can you obtain a security clearance?",
+                  "Are you a 'U.S. person'? Do you hold an active clearance?",
+                  'Are you a "U.S. Person" and able to work on-site in Chandler?',
+                  "Is the candidate a U.S. citizen or permanent resident with an active Secret clearance?",
+                  "Are you presently a US citizen (green card holders are not eligible)?",
+                  "Citizen or permanent resident of the US (permanent residents do not qualify for this role)?"):
+        for p in (citizen, pr, visa):
+            assert _answer(label, p, **yes_no) is None, (label, p.get("work_authorization.citizenship"))
+    for label in ("Are you a U.S. citizen or refugee/asylee?", "Are you a US citizen, national, refugee or asylee?",
+                  "Are you a US citizen or person granted asylum?"):
+        assert [_answer(label, p, **yes_no) for p in (citizen, pr, visa)] == ["Yes", None, "No"], label
+    for label in ("Are you a US Citizen or Permanent Resident (Green Card)?",
+                  "Are you a US citizen or a lawful permanent resident of the United States?",
+                  "Are you currently a U.S. citizen or permanent resident of the US?",
+                  "Are you a US citizen or permanent resident alien?",
+                  "Are you a U.S. Person under ITAR/EAR?",
+                  "Are you a U.S. Person as defined by ITAR (22 CFR 120.15)?",
+                  "Are you a U.S. person as defined by ITAR (citizen, permanent resident, protected individual)?",
+                  "Are you a U.S. Person as defined by U.S. export control laws?",
+                  "Are you a U.S. person, as defined by the Export Administration Regulations (EAR) and ITAR?",
+                  "Are you a 'U.S. person'?", "U.S. Citizen or Permanent Resident", "3) US citizen / permanent resident",
+                  "Export Control: U.S. Person"):
+        a = resolve_field(f(label, **yes_no), pr, {"company": "Acme"})
+        assert a is not None and (a.value, a.rule) == ("Yes", "us_person"), (label, a)
+        assert [_answer(label, p, **yes_no) for p in (citizen, visa)] == ["Yes", "No"], label
+    assert [_answer("Are you currently a U.S. citizen?", p, **yes_no) for p in (citizen, pr)] == ["Yes", "No"]
+
+
 def test_a_sponsorship_question_about_a_partner_company_is_still_the_persons():
     """"...for a partner company" names a company, not the person's partner: the person's own need, the profile's
     answer. Their partner's need stays left."""
