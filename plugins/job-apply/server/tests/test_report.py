@@ -516,3 +516,65 @@ def test_a_note_says_which_job_system_the_job_stopped_on(job_apply_home):
     r.url = "https://careers.acme-semi.example/apply"
     assert "at an iCIMS employer" in report.note({"id": 13, "ats": "icims"}, r, PERSON)
     assert "at an employer with its own careers site" in report.note({"id": 13, "ats": "company_site"}, r, PERSON)
+
+
+def _quoting_run(job_id: int) -> Run:
+    """A run whose page echoed an answer the person gave on a card ("Nights") in its errors, and whose log has the
+    code the inbox gave for it (482913): the desk's history keeps both out (Applier._history_hidden)."""
+    return Run(job_id, "Field Service Engineer", "Example Fab", status="needs_you", need="stuck",
+               reason="review page shows errors: Shift: Nights isn't open for this job",
+               log=["typed the code 482913 the inbox gave", "the review page shows errors"],
+               once={"Shift": "Nights"},
+               page_info={"url": "https://example.com/apply/review", "title": "Review",
+                          "errors": ["Shift: Nights isn't open for this job"]})
+
+
+def test_a_report_and_a_note_hide_what_the_desk_history_hides(srv, job_apply_home, monkeypatch):
+    """A page's error the desk quotes (its reason, the page's errors) can echo what the person typed on a card, and a log
+    line the code the inbox gave: the history keeps them out of its line, and a report and a note (filed in public) did
+    not (the review of Oct 18). The desk's Report, Claude's report_problem and the note the desk takes all hide them."""
+    import time
+
+    import httpx
+
+    from job_apply import desk as desk_module
+    from job_apply import pipeline
+    from job_apply.pipeline import Applier
+
+    job = srv.add_job(url="https://example.com/jobs/fse", title="Field Service Engineer", company="Example Fab")["job"]
+    monkeypatch.setitem(pipeline._MAIL_TAKEN, ("noreply@example.com", "482913", time.time()), job["id"])
+    r = _quoting_run(job["id"])
+    hide = Applier._history_hidden(r)
+    assert {"Nights", "482913"} <= hide
+
+    def hidden(text: str) -> None:
+        assert "Nights" not in text and "482913" not in text, text
+        assert "review page shows errors" in text, text  # (the desk's own words stay)
+
+    built = report.build(job, r, PERSON, hide=hide)
+    hidden(built["preview"])
+    hidden(parse_qs(urlsplit(built["issue_url"]).query)["body"][0])
+    hidden(report.note(job, r, PERSON, hide=hide))
+
+    # (and so do the callers: the desk's Report, Claude's report_problem, the note the desk takes on a stop)
+    d = desk_module.get_desk(srv)
+    d.applier.start = lambda: None
+    d.applier.runs[job["id"]] = r
+
+    async def go():
+        await d.start(port=0, open_browser=False)
+        try:
+            async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{d.port}", timeout=20, trust_env=False) as c:
+                said = await c.post(f"/api/job/{job['id']}/report", headers={"x-desk-token": d.token}, json={})
+                return said.json()
+        finally:
+            await d.stop()
+    try:
+        for out in (run(go()), run(srv.report_problem(job["id"]))):
+            hidden(out["preview"])
+            hidden(parse_qs(urlsplit(out["issue_url"]).query)["body"][0])
+        d.applier._take_note(r)
+        [taken] = (job_apply_home / "notes").glob("*.md")
+        hidden(taken.read_text(encoding="utf-8"))
+    finally:
+        desk_module._desk = None

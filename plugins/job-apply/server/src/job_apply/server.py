@@ -774,10 +774,13 @@ async def report_problem(job_id: int, anonymous: bool = False) -> dict[str, Any]
     out of the issue's title, its text and the saved pages. Offer it when the user would rather
     not show which job they applied for."""
     from . import desk, report
+    from .pipeline import Applier
 
     job = _job(job_id)
     run = desk._desk.applier.runs.get(job["id"]) if desk._desk is not None else None
-    return await asyncio.to_thread(report.build, job, run, anonymous=anonymous)
+    # (and what the desk's history keeps out of a line on it, the report too)
+    hide = await asyncio.to_thread(Applier._history_hidden, run) if run is not None else set()
+    return await asyncio.to_thread(report.build, job, run, anonymous=anonymous, hide=hide)
 
 
 @tool()

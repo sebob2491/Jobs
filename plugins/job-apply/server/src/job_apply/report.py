@@ -25,6 +25,7 @@ import hashlib
 import json
 import re
 import zipfile
+from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -119,6 +120,8 @@ _EMPLOYER_TAIL = re.compile(r"(the employer)(?:[\s,]+(?:" + "|".join(sorted(_COM
 _QUOTED = re.compile(r"\u201c[^\u201d]*\u201d|(?<!\w)'[^'\n]*'(?!\w)|(?<!\w)\"[^\"\n]*\"(?!\w)")
 # The profile's answer named in the desk's own words ("(yours: “No”)", "your profile's answer “X”")
 _ANSWER_SAID = re.compile(r"(yours: |your profile's answer )\u201c[^\u201d]*\u201d")
+# What a long number may be written with between its digits (fixtures._pattern's): "602.555.0142", "(602) 555-0142"
+_PHONE_APART = re.compile(r"[\s.\-()/]+")
 
 
 def _repository() -> str:
@@ -222,6 +225,27 @@ def _fields(meta: dict[str, Any]) -> list[str]:
         filled = "filled" if number or not (value is None or value == "" or is_empty_value(value)) else "empty"
         out.append(f"- {f['label']} ({f.get('kind', '?')}{', required' if f.get('required') else ''}, {filled})")
     return out
+
+
+def _hiding(scrub: Callable[[Any], str], hide: Iterable[Any]) -> Callable[[Any], str]:
+    """`scrub`, after taking out what a line of the desk's history keeps out too (`hide`: pipeline's
+    Applier._history_hidden: the answers the person gave for this application and an account form's, the codes the
+    inbox gave, the desk's secrets, the profile's words), each of 4 characters or more, as a page may write it: a
+    page's error the desk quotes ("review page shows errors: …") can echo what was typed."""
+    hidden = sorted({s for h in hide if len(str(h or "").strip()) >= 4 for s in _spellings(str(h).strip())
+                     if len(s) >= 4}, key=len, reverse=True)
+    if not hidden:
+        return scrub
+
+    def first(text: Any) -> str:
+        # (only the values a text may hold, looked for as plain words first: a pattern for each of a big profile's
+        # values, every line, took half a minute a report)
+        said = str(text or "")
+        low, digits = said.casefold(), _PHONE_APART.sub("", said)
+        near = [s for s in hidden if (s[-10:] in digits if s.isdigit() and len(s) >= 7
+                                      else all(w.rstrip(".,").casefold() in low for w in s.split()))]
+        return redact(said, near) if near else said
+    return lambda text: scrub(first(text))
 
 
 def _scrubber(secrets: list[str]) -> Callable[[Any], str]:
@@ -431,12 +455,13 @@ def _issue_url(title: str, text: str, rest: str = "the whole report is in report
 
 
 def build(job: dict[str, Any], run: Any = None, profile: config.Profile | None = None,
-          anonymous: bool = False) -> dict[str, Any]:
+          anonymous: bool = False, hide: Iterable[Any] = ()) -> dict[str, Any]:
     """Write the report for a job and return what it holds: its folder, report.zip (the text
     and the scrubbed pages, kept on this computer), the text the person sees before anything
     is filed (`preview`), and the address of a new GitHub issue with that text (`issue_url`).
     `anonymous`: the job said by its job system alone ("a Workday employer"), as a note says it,
-    with no employer, job title, address or requisition number in the issue or the saved pages."""
+    with no employer, job title, address or requisition number in the issue or the saved pages.
+    `hide`: what else its text takes out, as the desk's history does (_hiding)."""
     prof = profile or config.Profile.load()
     secrets = report_strings(prof)
     scrub = _scrubber(secrets)
@@ -452,6 +477,7 @@ def build(job: dict[str, Any], run: Any = None, profile: config.Profile | None =
         for _, meta in saved:
             urls += [meta.get("url"), *(f.get("url") for f in meta.get("frames") or [] if isinstance(f, dict))]
         scrub, secrets = _anonymous(job, run, urls, secrets, [meta for _, meta in saved])
+    scrub = _hiding(scrub, hide)  # (the text's: the saved pages stay on this computer)
     out_dir = _folder(int(job["id"]))
     pages_dir = out_dir / "pages"
     pages_dir.mkdir()
@@ -515,11 +541,12 @@ def _job_system(job: dict[str, Any], run: Any) -> tuple[str, str]:
     return ats, f"{_a(ATS_NAMES.get(ats, ats))} employer"
 
 
-def _note_scrubber(job: dict[str, Any], run: Any, prof: config.Profile) -> Callable[[Any], str]:
+def _note_scrubber(job: dict[str, Any], run: Any, prof: config.Profile,
+                   hide: Iterable[Any] = ()) -> Callable[[Any], str]:
     """`_scrubber`, and also: every address said by its job system alone ("(a Workday address)":
     its path names the job and a password reset's holds its token), and the employer applied to,
     by its name or a short form of it, called "the employer"."""
-    scrub = _scrubber(report_strings(prof))
+    scrub = _hiding(_scrubber(report_strings(prof)), hide)
     urls = [job.get("url"), job.get("apply_url"), getattr(run, "url", ""), (getattr(run, "page_info", None) or {}).get("url")]
     forms = {(f, _as_written(f, str(n or ""))) for n in (job.get("company"), getattr(run, "company", ""))
              for f in _employer_forms(str(n or ""), urls)}
@@ -539,13 +566,13 @@ def _note_scrubber(job: dict[str, Any], run: Any, prof: config.Profile) -> Calla
     return lambda text: scrub(unnamed(str(text or "")))
 
 
-def note(job: dict[str, Any], run: Any, profile: config.Profile | None = None) -> str:
+def note(job: dict[str, Any], run: Any, profile: config.Profile | None = None, hide: Iterable[Any] = ()) -> str:
     """A note on one job's stop: what the desk said, its last steps, the page it stopped on and
     its questions, with why any answer didn't go in. Notes are filed together in one public
     issue, so on top of what `build` takes out, a note holds none of the person's answers, and
     says the employer and every address by its job system only: the issue could otherwise list
-    every employer they applied to."""
-    say = _note_scrubber(job, run, profile or config.Profile.load())
+    every employer they applied to. `hide`: what else it takes out, as `build`."""
+    say = _note_scrubber(job, run, profile or config.Profile.load(), hide)
     ats, employer = _job_system(job, run)
     stop, title = getattr(run, "need", "") or getattr(run, "status", ""), job.get("title") or getattr(run, "title", "")
     lines = [
@@ -562,7 +589,8 @@ def note(job: dict[str, Any], run: Any, profile: config.Profile | None = None) -
     return "\n".join(lines) + "\n"
 
 
-def take_note(job: dict[str, Any], run: Any, profile: config.Profile | None = None) -> Path | None:
+def take_note(job: dict[str, Any], run: Any, profile: config.Profile | None = None,
+              hide: Iterable[Any] = ()) -> Path | None:
     """Keep a note on a job's stop in ~/.job-apply/notes/, once for each job, stop and reason: a
     job that stops the same way again isn't noted twice, even after the notes are cleared. The
     newest NOTES are kept. Returns the note's file, or None when this stop was noted before."""
@@ -579,7 +607,7 @@ def take_note(job: dict[str, Any], run: Any, profile: config.Profile | None = No
     if key in seen:
         return None
     path = folder / f"{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}-{int(job['id']):04d}-{key}.md"
-    path.write_text(note(job, run, profile), encoding="utf-8")
+    path.write_text(note(job, run, profile, hide), encoding="utf-8")
     seen_file.write_text(json.dumps([*seen, key][-_SEEN:]), encoding="utf-8")
     for old in _note_files()[:-NOTES]:
         old.unlink(missing_ok=True)

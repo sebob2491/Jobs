@@ -2955,7 +2955,7 @@ class Applier:
         taking it, the job still pauses and the queue goes on."""
         try:
             job = self.srv.tracker().get(run.job_id, with_description=False) or {"id": run.job_id}
-            report.take_note(job, run)
+            report.take_note(job, run, hide=self._history_hidden(run))  # (what the history keeps out, a note too)
         except Exception:
             logging.getLogger(__name__).warning("couldn't take a note on job %s's stop", run.job_id, exc_info=True)
 

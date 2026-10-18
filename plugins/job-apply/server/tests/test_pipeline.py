@@ -11277,7 +11277,7 @@ def test_answers_that_didnt_go_in_are_noted_without_the_answer(srv, job_apply_ho
 
 
 def test_a_note_that_cant_be_taken_doesnt_stop_the_pause(srv, job_apply_home, monkeypatch):
-    def broken(job, run, profile=None):
+    def broken(job, run, profile=None, hide=()):
         raise OSError("disk full")
 
     monkeypatch.setattr(pipeline.report, "take_note", broken)
