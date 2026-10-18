@@ -12451,6 +12451,9 @@ def test_a_cornerstone_posting_still_loading_is_waited_on_then_its_apply_pressed
     it's enabled, also when the button gets its words a moment after the overlay goes (&late: the review of 0.3.183);
     a page that never finishes is reloaded once, then said to be still loading."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    # (the page's button gets its words 1.5 s after the overlay goes (&late): the wait after it at its own value, not
+    # the fast tests' 0.5 s, which read the button before its words came, 1 run in 3)
+    monkeypatch.setattr(pipeline, "INDICATOR_GONE_SETTLE", 3)
     job = srv.add_job(url=fixture_url("site/csod-posting-loading.html") + query, title="Analytical Systems Superintendent",
                       company="Example Gas")["job"]
     applier = Applier(srv)
