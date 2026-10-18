@@ -36,8 +36,8 @@ from starlette.routing import Route
 
 from . import autofill, config, history, report
 from .browser import _cookie_setting
-from .pipeline import (DESK_PASSWORDS, Applier, _may_accept_notices, _may_manage_accounts, _test_identity,
-                       placed_key, question_key)
+from .pipeline import (DESK_PASSWORDS, QUEUE_NO_LOCK, Applier, _may_accept_notices, _may_manage_accounts,
+                       _test_identity, placed_key, question_key)
 from .ats import JOB_BOARDS, detect_ats, job_board
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .recommend import not_interested_in, recommend, score_listing
@@ -1111,6 +1111,8 @@ class Desk:
             # it isn't (another desk keeps it, or the folder allows no lock)
             "restored": self.applier.restored_notice(),
             "queue_note": self.applier.queue_note(),
+            # (a queue this folder can't keep is a problem, said in red; one another desk keeps is only so)
+            "queue_note_problem": self.applier.queue_note() == QUEUE_NO_LOCK,
             "counts": t.counts(),
             "notes": report.notes_count(),  # notes on the desk's stops, waiting to be filed
         }

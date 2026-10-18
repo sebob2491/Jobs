@@ -79,8 +79,12 @@ def test_the_window_has_one_name_and_so_has_i_submitted_it():
     """The review of Oct 18 (U12): the window the desk fills applications in was "the automation browser window" in
     the page's footer, "the browser window" on the cards and "the browser" in other stops. It's "the desk's browser
     window" everywhere; and the card's button the person presses after sending an application on the site themselves
-    is "I submitted it myself", never "I submitted it" or "I submitted it already"."""
+    is "I submitted it myself", never "I submitted it" or "I submitted it already". So do the reasons the form's
+    readers give for a box they couldn't fill, which the card shows beside its question."""
     said = _said(ast.parse(PIPELINE.read_text(encoding="utf-8")))
+    for name in ("browser_menus.py", "browser_dates.py", "browser_uploads.py"):
+        said += [(f"{name}:{line}", text) for line, text in
+                 _said(ast.parse((PIPELINE.parent / name).read_text(encoding="utf-8")))]
     other = [(line, text[:120]) for line, text in said
              if re.search(r"automation browser|(?<!desk's )\bbrowser window|\bin the browser\b(?! window)", text)]
     assert not other, other

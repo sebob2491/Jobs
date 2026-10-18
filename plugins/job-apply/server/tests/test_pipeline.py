@@ -12259,7 +12259,7 @@ def test_a_box_the_errors_name_is_gone_back_to_once_and_only_to_be_asked(srv, mo
         assert went_back, r.log
     else:
         assert r.need == "stuck" and r.reason == ("The page didn't move on: Available Start Date is required. Fix it in "
-                                                  "the browser, then press Resume."), (r.reason, r.log)
+                                                  "the desk's browser window, then press Resume."), (r.reason, r.log)
         assert went_back == (case != "readonly"), r.log
 
 

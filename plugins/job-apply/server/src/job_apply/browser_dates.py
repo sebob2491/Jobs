@@ -185,7 +185,7 @@ class DatesMixin:
                                    " p.removeAttribute('data-ja-date-part'); p.removeAttribute('data-ja-date-mine'); })")
         if wrong:
             shown = "/".join(str(r) or "?" for r in read)
-            raise ValueError(f"typed {digits}, but the date reads {shown}; check it in the browser")
+            raise ValueError(f"typed {digits}, but the date reads {shown}; check it in the desk's browser window")
         return "typed"
 
     async def _pick_date(self, page: Page, loc: Locator, field: dict, day: date) -> str:

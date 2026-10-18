@@ -259,7 +259,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
     </section>
     <section class="card" aria-labelledby="needs-h">
       <div class="card-head"><h2 id="needs-h">Needs you</h2><span class="pill" id="needs-count"
-        title="Every job stopped for you: the bar's Bot checks and Questions and sign-ins, its Stuck ones but those that didn't finish, and its Ready ones waiting on a Submit of your own">0</span></div>
+        title="Every job stopped for you. Among the openings the bar over the list shows, they're its Bot checks and Questions and sign-ins, the stopped ones among its Stuck, and the ones among its Ready that wait on a Submit or a check of yours">0</span></div>
       <div id="needs"></div>
     </section>
     <section class="card" aria-labelledby="work-h">
@@ -267,7 +267,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
       <div id="work"></div>
     </section>
     <section class="card" aria-labelledby="done-h">
-      <div class="card-head"><h2 id="done-h">Ready and done</h2><span class="pill info" id="done-count" hidden></span></div>
+      <div class="card-head"><h2 id="done-h">Ready and done</h2><span class="pill info" id="done-count" title="Filled to the review page: press Submit on each" hidden></span></div>
       <div id="done"></div>
       <div class="counts" id="counts"></div>
     </section>
@@ -628,12 +628,12 @@ const DONE = new Set(["applied", "interviewing", "offer", "rejected", "withdrawn
 // A job stopped on a bot check or CAPTCHA (the person's to solve: the desk never does) says so, in its row and its card
 const stopMark = (r) => r.status !== "needs_you" ? "" : r.need === "bot_check" ? "Bot check" : r.captcha || r.need === "captcha" ? "CAPTCHA" : "";
 // And every stopped job says what it waits on, one word per state, the same in its row, its card and the bar over the
-// openings (the side card's "Needs you" counts them all: the bar's Bot checks and Questions and sign-ins, its Stuck
-// ones but those that didn't finish, and its Ready ones waiting on a Submit of your own). Stuck is red, as Didn't
-// finish is; the others wait for you (yellow)
+// openings (the side card's "Needs you" counts them all; among the openings the bar shows, they're its Bot checks and
+// Questions and sign-ins, the stopped ones among its Stuck, and the ones among its Ready waiting on a Submit or a check
+// of the person's). Stuck is red, as Didn't finish is; the others wait for you (yellow)
 const NEED_PILL = {
   questions: "Questions", sign_in: "Sign in", email_code: "Emailed code", stuck: "Stuck", submit_failed: "Stuck",
-  your_submit: "Your Submit", check_submit: "Your Submit", tailor: "Waiting for a resume", restarted: "Restarted",
+  your_submit: "Your Submit", check_submit: "Check if it went in", tailor: "Waiting for a resume", restarted: "Restarted",
   maybe_duplicate: "Already begun?",
 };
 const needPill = (r) => stopMark(r) ? [stopMark(r), "warn"]
@@ -1099,7 +1099,7 @@ function renderSide() {
   const done = runs.filter((r) => r.status in DONE_ORDER).sort((a, b) => DONE_ORDER[a.status] - DONE_ORDER[b.status]);
   const ready = done.filter((r) => r.status === "ready").length;
   $("done-count").hidden = !ready;
-  $("done-count").textContent = `${ready} ready`;
+  $("done-count").textContent = `${ready} to submit`;
   const doneEntries = done.map((r) => {
     const buttons = r.status === "ready" ? jobButtons(r, ["show", "submit", "skip", "already"])
       : r.status === "failed" ? jobButtons(r, ["show", "resume", "skip", "already"])
@@ -1145,15 +1145,17 @@ function renderBank() {
 const problemSaid = (html) => "Problem: " + String(html).replace(/^(The|Your|A|This) /, (w) => w.toLowerCase());
 
 // A search's error in words: the program's own text (an HTTP status, a timeout) goes in the tooltip
-function searchWords(e) {
+function searchWords(e, otherwise = "its job list couldn't be read") {
   const t = String(e || "");
   if (/^its searches took over/.test(t)) return t;  // (the desk's words already)
-  const listed = /results are listed\)$/.test(t) ? " (the others' results are listed)" : "";
+  // (search.py's "(2 of 4 searches failed; the others' results are listed)" and "(... the earlier ones' results are
+  // listed)", server.py's browser searches' "(2 of 4 searches failed)", said only when some found openings)
+  const listed = /(results are listed|\d+ of \d+ searches failed)\)$/.test(t) ? " (the others' results are listed)" : "";
   if (/bot check/i.test(t)) return "the site showed a bot check" + listed;
   if (/maintenance/i.test(t)) return "the site is down for maintenance" + listed;
   if (/HTTP (403|429)\b/.test(t)) return "the site turned the search away" + listed;
   if (/HTTP 5\d\d\b|Timeout|ConnectError|RemoteProtocolError|didn't answer/i.test(t)) return "the site didn't answer" + listed;
-  return "its job list couldn't be read" + listed;
+  return otherwise + listed;
 }
 
 function renderHeader() {
@@ -1224,12 +1226,12 @@ function renderHeader() {
   const shownJob = reviewRound ? toSend.find((r) => r.job_id === reviewShown) : null;
   if (!botRound && !s.troubleshoot && (toSend.length || reviewRound)) notes.push({cls: "waiting", html: reviewRound && shownJob
     ? `<strong>Reviewing ${esc(shownJob.title)} (${esc(shownJob.company)}).</strong>
-       <span>${shownJob.need === "captcha" && shownJob.status !== "ready" ? "Tick its CAPTCHA in the desk's browser window and check the page, then send it, or leave it for later." : shownJob.status === "ready" ? "Check the page in the desk's browser window, then send it, or leave it for later." : "This site's Submit is yours: check the page in the desk's browser window, press it there, then press I submitted it myself here."} ${toSend.length - 1} more after this one. No other job starts meanwhile.</span>
+       <span>${shownJob.need === "captcha" && shownJob.status !== "ready" ? "Tick its CAPTCHA in the desk's browser window and check the page, then send it, or leave it for later." : shownJob.status === "ready" ? "Check the page in the desk's browser window, then send it, or leave it for later." : shownJob.need === "check_submit" ? "Its Submit was pressed and no confirmation showed, so it may have gone in: check the page in the desk's browser window, or your email, first. If it went in, press I submitted it myself here; if not, leave it for later and see its card under Needs you." : "This site's Submit is yours: check the page in the desk's browser window, press it there, then press I submitted it myself here."} ${toSend.length - 1} more after this one. No other job starts meanwhile.</span>
        ${sendable(shownJob) ? `<button class="primary" data-act="review-submit" data-review="${shownJob.job_id}">Submit this one</button>` : ""}
        <button class="${sendable(shownJob) ? "" : "primary"}" data-act="review-applied" data-review="${shownJob.job_id}">I submitted it myself</button>
        <button data-act="review-next">Next</button> <button data-act="review-stop">Stop</button>`
-    : `<strong>${toSend.length} application${toSend.length === 1 ? "" : "s"} ready for your Submit${toSend.some((r) => r.need === "captcha" && r.status !== "ready") ? ` (${toSend.filter((r) => r.need === "captcha" && r.status !== "ready").length} with a CAPTCHA to tick first)` : ""}.</strong>
-       <span>Go through them one by one: each review page comes up in the desk's browser window to check before you send it.</span>
+    : `<strong>${roundSaid(toSend)}.</strong>
+       <span>Go through them one by one: each review page comes up in the desk's browser window to check${toSend.some((r) => r.need !== "check_submit") ? " before you send it" : ""}.</span>
        <button class="primary" data-act="review-round">Review them</button>`});
   if (s.troubleshoot) notes.push({cls: "notice info", html: `<strong>Troubleshooting is on: no application is submitted.</strong>
     <span>Find jobs searches every list's employers, and only the openings where the desk doesn't go all the way yet show. The desk still makes accounts and fills each step, which the sites keep. Turn it off (under Openings) to apply for real.</span>`});
@@ -1239,7 +1241,8 @@ function renderHeader() {
   // kept here, if it isn't (another desk keeps it, or the folder allows no lock)
   if (state.restored) notes.push({cls: "waiting", html: `<strong>${esc(state.restored)}</strong>
     <button class="primary" data-act="resume">Resume queue</button>`});
-  if (state.queue_note) notes.push({cls: "notice info", html: esc(state.queue_note)});
+  if (state.queue_note) notes.push(state.queue_note_problem ? {cls: "notice bad", html: problemSaid(esc(state.queue_note))}
+    : {cls: "notice info", html: esc(state.queue_note)});
   if (state.tailoring) notes.push({cls: "waiting", html: `<strong>${state.tailoring} job${state.tailoring === 1 ? "" : "s"} waiting for a tailored resume.</strong>
     <span>In Claude Code, say \u201ctailor my resumes\u201d. Each job carries on as soon as its resume is ready.</span>`});
   if (p.missing && p.missing.length) notes.push({cls: "notice bad", html: `Problem: your profile still needs: ${esc(inWords(p.missing.map(profileField)))}. Run <code>/job-apply:setup</code> in Claude Code, or edit <code>${esc(p.path)}</code>.`});
@@ -1255,8 +1258,8 @@ function renderHeader() {
     + `in a terminal (PowerShell on Windows) run ${up.commands.map((c) => `<code>${esc(c)}</code>`).join(", then ")}, then `
     + `restart the Claude app.`});
   // problems: red, each said "Problem: ..." (yellow is only for what waits for you now)
-  if (sr.status === "failed") notes.push({cls: "notice bad", html: `Problem: the search failed (${esc(sr.error || "no reason given")}).`
-    + " Press Find jobs to try again."});
+  if (sr.status === "failed") notes.push({cls: "notice bad", html: `Problem: the search failed: <span title="${esc(sr.error || "")}">`
+    + `${esc(searchWords(sr.error, "something went wrong in it"))}</span>. Press Find jobs to try again.`});
   if (state.profile_problem) notes.push({cls: "notice bad", html: `Problem: your profile can't be read: ${esc(state.profile_problem)} Fix it and the desk picks it up again by itself.`});
   if (state.mail_problem) notes.push({cls: "notice bad", html: problemSaid(esc(state.mail_problem))});
   if (state.answers_problem) notes.push({cls: "notice bad", html: `Problem: your saved answers aren't being used: ${esc(state.answers_problem)}.`});
@@ -1302,6 +1305,17 @@ function botStep() {
   if (!next) { endRound(); return; }
   botShown = next.job_id;
   api(`/api/job/${next.job_id}/round`, {}).catch(() => { botPassed.add(next.job_id); botStep(); renderHeader(); });
+}
+
+// What the review round holds, in words: the applications ready for the person's Submit (a CAPTCHA to tick first, on
+// some), and the ones whose Submit was pressed with no confirmation, to check whether they went in (never to send again)
+function roundSaid(toSend) {
+  const checks = toSend.filter((r) => r.need === "check_submit").length, sends = toSend.length - checks;
+  const ticks = toSend.filter((r) => r.need === "captcha" && r.status !== "ready").length;
+  const plural = (n) => `application${n === 1 ? "" : "s"}`;
+  return [sends ? `${sends} ${plural(sends)} ready for your Submit${ticks ? ` (${ticks} with a CAPTCHA to tick first)` : ""}` : "",
+          checks ? `${checks} ${sends ? "" : `${plural(checks)} `}to check whether ${checks === 1 ? "it" : "they"} went in` : ""]
+    .filter(Boolean).join(", and ");
 }
 
 // The applications filled to the person's Submit, oldest first; and the round that brings each review page up in turn

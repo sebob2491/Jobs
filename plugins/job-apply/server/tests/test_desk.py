@@ -236,7 +236,8 @@ def test_the_banner_names_the_job_waited_on_and_the_profile_gaps_are_in_words(sr
     desk.search.update(status="done", at=time.time())
     job = srv.add_job(url=fixture_url("site/posting.html"), title="Field Service Engineer", company="Example Fab")["job"]
     desk.applier.runs[job["id"]] = Run(job["id"], "Field Service Engineer", "Example Fab", status="needs_you",
-                                       need="sign_in", blocking=True, reason="Sign in on Workday in the browser window.")
+                                       need="sign_in", blocking=True,
+                                       reason="Sign in on Workday in the desk's browser window.")
     monkeypatch.setattr(config.Profile, "missing_required",
                         lambda self: ["documents.resume", "work_authorization.requires_sponsorship"])
 
@@ -249,7 +250,7 @@ def test_the_banner_names_the_job_waited_on_and_the_profile_gaps_are_in_words(sr
                 await page.wait_for_selector("#notices .waiting")
                 banner = await page.inner_text("#notices .waiting")
                 assert "Field Service Engineer (Example Fab)" in banner and "Sign in on Workday" not in banner, banner
-                assert "Sign in on Workday in the browser window." in await page.inner_text("#needs")
+                assert "Sign in on Workday in the desk's browser window." in await page.inner_text("#needs")
                 # Resume beside Later: the card may ask for Resume after a password reset by hand
                 buttons = await page.locator("#needs button").all_inner_texts()
                 assert "Resume" in buttons and "Later" in buttons, buttons
@@ -4593,16 +4594,17 @@ def test_a_problem_is_red_a_tip_is_blue_and_a_wait_is_yellow(srv, job_apply_home
                     { const p = document.createElement('p'); p.style.background = `var(${v})`; document.body.append(p);
                       const c = getComputedStyle(p).backgroundColor; p.remove(); return [v, c]; }))""")
                 header = await page.inner_text("#searched")
+                failed_tip = await page.get_attribute("#notices .notice.bad [title]", "title")
                 keyless = await browser.new_page()
                 await keyless.goto(f"http://127.0.0.1:{desk.port}/")
                 await keyless.wait_for_selector("#notices .notice")
                 no_key = await keyless.eval_on_selector("#notices .notice", "n => [n.className, n.innerText]")
                 await browser.close()
-                return notices, colors, header, no_key
+                return notices, colors, header, no_key, failed_tip
         finally:
             await desk.stop()
 
-    notices, colors, header, no_key = run(go())
+    notices, colors, header, no_key, failed_tip = run(go())
     by_class: dict[str, list] = {}
     for cls, text, bg in notices:
         by_class.setdefault(cls, []).append((text, bg))
@@ -4612,7 +4614,9 @@ def test_a_problem_is_red_a_tip_is_blue_and_a_wait_is_yellow(srv, job_apply_home
     tips = by_class.get("notice info tip", [])
     assert [t for t, _ in tips if t.startswith("Fewer stops:")] and all(bg == colors["--info-bg"] for _, bg in tips), notices
     problems = [t for t, bg in by_class.get("notice bad", []) if bg == colors["--bad-bg"]]
-    assert any(t.startswith("Problem: the search failed (SearchError: HTTP 500).") for t in problems), notices
+    assert any(t.startswith("Problem: the search failed: the site didn't answer. Press Find jobs") for t in problems), \
+        notices
+    assert failed_tip == "SearchError: HTTP 500", failed_tip
     assert any(t.startswith("Problem: a line in your profile's settings does nothing") for t in problems), notices
     assert len(problems) == len(by_class["notice bad"]) and all(t.startswith("Problem: ") for t in problems), notices
     assert len({colors["--warn-bg"], colors["--info-bg"], colors["--bad-bg"]}) == 3, colors
@@ -4646,7 +4650,7 @@ def test_a_job_ready_to_submit_is_listed_first(srv, job_apply_home):
 
     order, count = run(go())
     assert order == ["Ready to submit", "Didn't finish", "Submitted", "Skipped"], order
-    assert count == ["1 ready", "pill info", "rgb(11, 87, 208)"], count
+    assert count == ["1 to submit", "pill info", "rgb(11, 87, 208)"], count
 
 
 def test_the_desks_words_name_its_buttons_and_the_window(srv, job_apply_home):
@@ -4655,7 +4659,12 @@ def test_the_desks_words_name_its_buttons_and_the_window(srv, job_apply_home):
     already" for one press; and a search's error showed as the program's "SearchError: HTTP 500"."""
     desk, jobs = _stopped_desk(srv, {"Example Fab": dict(status="needs_you", need="sign_in", blocking=True),
                                      "Example Litho": dict(status="needs_you", need="your_submit")})
-    desk.search.update(errors={"Broken Co": "SearchError: HTTP 500", "Odd Co": "SearchError: No job list from x"})
+    desk.search.update(errors={"Broken Co": "SearchError: HTTP 500", "Odd Co": "SearchError: No job list from x",
+                               # (server.py's browser searches: some of them found openings)
+                               "Part Co": "browser search: TimeoutError: Timeout 30000ms exceeded (2 of 4 searches failed)",
+                               # (search.py's)
+                               "Half Co": "SearchError: HTTP 502 from x (1 of 2 searches failed; the others' results "
+                                          "are listed)"})
 
     async def go():
         await desk.start(port=0, open_browser=False)
@@ -4680,5 +4689,96 @@ def test_the_desks_words_name_its_buttons_and_the_window(srv, job_apply_home):
     assert later == "Let the other jobs go on; this one waits in its tab until you finish it there", later
     assert applied == ["I submitted it myself"] * 2, applied
     assert errs == [["Broken Co: the site didn't answer", "SearchError: HTTP 500"],
-                    ["Odd Co: its job list couldn't be read", "SearchError: No job list from x"]], errs
+                    ["Odd Co: its job list couldn't be read", "SearchError: No job list from x"],
+                    ["Part Co: the site didn't answer (the others' results are listed)",
+                     "browser search: TimeoutError: Timeout 30000ms exceeded (2 of 4 searches failed)"],
+                    ["Half Co: the site didn't answer (the others' results are listed)",
+                     "SearchError: HTTP 502 from x (1 of 2 searches failed; the others' results are listed)"]], errs
     assert "the desk's browser window" in footer and "automation" not in footer, footer
+
+
+def test_a_submit_with_no_confirmation_is_one_to_check_never_one_to_press_again(srv, job_apply_home):
+    """The review of the Oct 18 changes: a job whose Submit the desk pressed with no confirmation after it
+    (check_submit, or one whose Submit was being pressed as the desk restarted) was labelled "Your Submit", and the
+    review round told the person to press the site's Submit: a second application. It's "Check if it went in", and the
+    round says to check the page or the email first, never to press Submit."""
+    desk, jobs = _stopped_desk(srv, {"Example Check": dict(status="needs_you", need="check_submit"),
+                                     "Example Own": dict(status="needs_you", need="your_submit")})
+    desk.applier.focus = lambda job_id: asyncio.sleep(0, True)
+    desk.applier.start_round = lambda job_id: None
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("#notices [data-act=review-round]")
+                pills = await page.eval_on_selector_all("#needs .task h3", """hs => hs.map((h) => [
+                    h.innerText, h.querySelector('.pill').innerText])""")
+                rows = await page.eval_on_selector_all("#rows .row", """rs => rs.map((r) => [
+                    r.querySelector('.meta').innerText, r.querySelector('.state .pill').innerText])""")
+                summary = await page.inner_text("#notices .waiting")
+                await page.click("#notices [data-act=review-round]")
+                said = {}
+                for _ in range(2):
+                    await page.wait_for_selector("#notices [data-act=review-next]")
+                    text = await page.inner_text("#notices .waiting")
+                    name = "Example Check" if "Example Check" in text else "Example Own"
+                    said[name] = (text, await page.locator("#notices [data-act=review-submit]").count())
+                    await page.click("#notices [data-act=review-next]")
+                    await page.wait_for_function(f"!document.querySelector('#notices').innerText.includes('Reviewing "
+                                                 f"Technician ({name})')")
+                await browser.close()
+                return pills, rows, summary, said
+        finally:
+            await desk.stop()
+
+    pills, rows, summary, said = run(go())
+    words = {"Example Check": "Check if it went in", "Example Own": "Your Submit"}
+    assert {next(n for n in words if n in h): w for h, w in pills} == words, pills
+    assert {next(n for n in words if n in m): w for m, w in rows} == words, rows
+    assert "1 application ready for your Submit, and 1 to check whether it went in." in summary, summary
+    check, own = said["Example Check"], said["Example Own"]
+    assert "may have gone in" in check[0] and "your email" in check[0] and check[1] == 0, check
+    assert "press it there" not in check[0] and "press Submit" not in check[0], check
+    assert "This site's Submit is yours" in own[0], own
+
+
+@pytest.mark.parametrize("where", ["no lock", "elsewhere"])
+def test_a_queue_this_folder_cant_keep_is_a_problem_and_one_kept_elsewhere_is_information(srv, job_apply_home,
+                                                                                         where):
+    """The review of the Oct 18 changes: "The desk can't keep its queue across a restart here" was blue, as a tip. It's
+    a problem (red, "Problem: ..."); a queue another desk keeps is only so (blue)."""
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+
+    def as_it_is() -> None:
+        if where == "no lock":
+            desk.applier.queue_unlockable = True
+        else:
+            desk.applier.queue_elsewhere = True
+    as_it_is()
+    assert desk.state()["queue_note_problem"] is (where == "no lock")
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        as_it_is()  # (the desk looks for its queue's lock as it starts)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("#notices .notice:not(.tip)")
+                said = await page.eval_on_selector_all("#notices .notice", "ns => ns.map((n) => [n.className, n.innerText])")
+                await browser.close()
+                return said
+        finally:
+            await desk.stop()
+
+    said = run(go())
+    if where == "no lock":
+        assert ["notice bad", "Problem: the desk can't keep its queue across a restart here (its folder doesn't allow "
+                "a lock)."] in said, said
+    else:
+        assert ["notice info", pipeline.QUEUE_ELSEWHERE] in said, said

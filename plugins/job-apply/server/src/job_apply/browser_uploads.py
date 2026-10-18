@@ -218,7 +218,8 @@ class UploadsMixin:
                 elif await new_box.count():
                     await new_box.last.set_input_files(str(path))
                 else:
-                    raise ValueError("pressing it opened no way to choose a file; upload it in the browser")
+                    raise ValueError("pressing it opened no way to choose a file; upload it in "
+                                     "the desk's browser window")
                 await page.wait_for_timeout(500)
             if dialog is not None and await dialog.count():  # the dialog it opened: its own Upload (or OK, Save, Done)
                 confirm = dialog.locator('button:visible, [role="button"]:visible, input[type="submit"]:visible').filter(
@@ -240,7 +241,7 @@ class UploadsMixin:
                 if await button.evaluate(shown, path.name, timeout=2000):
                     return f"uploaded {path.name}"
             await page.wait_for_timeout(500)
-        raise ValueError(f"the page didn't show {path.name} after its upload; check it in the browser")
+        raise ValueError(f"the page didn't show {path.name} after its upload; check it in the desk's browser window")
 
 
 # browser.py's own names (its waits, page scripts, helpers and exceptions) are read from it as browser.<name> when a

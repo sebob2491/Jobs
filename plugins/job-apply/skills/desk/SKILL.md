@@ -249,16 +249,20 @@ Use the desk's own words when you talk about it, and keep to them when you chang
 - Voice: headings, pills and messages are the desk speaking to the user ("Needs you", "Waiting for you in the
   desk's browser window"); buttons and switches are the user's own words ("Submit for me", "Tailor my resume for
   each job", "I submitted it myself").
-- States: one word per state, the same in an opening's row, the bar over the openings and the card: Queued, Working,
-  Questions, Sign in, Emailed code, Bot check, CAPTCHA, Stuck, Your Submit, Ready to submit, Submitted, Didn't
-  finish, Skipped.
+- States: one word per state, the same in an opening's row and its card: Queued, Working…, Questions, Sign in,
+  Emailed code, Bot check, CAPTCHA, Stuck, Your Submit (the site's own Submit is the user's), Check if it went in
+  (Submit was pressed and no confirmation showed: never "press Submit"), Waiting for a resume, Restarted, Already
+  begun?, Waiting for you (any other stop), Ready to submit, Submitted, Didn't finish, Skipped. The bar over the
+  openings groups them: Not started, Working, Bot checks, Questions and sign-ins, Stuck, Ready, Done (and Any, New,
+  Not interested).
 - Color: yellow means something waits for the user now; blue is information (a tip, an update); red is a problem
   (its text starts "Problem: "); green is done or safe; grey is neutral.
 - A message says what happened, then what to press, in two sentences. The browser the desk fills applications in
   is "the desk's browser window", and a site's applicant system is a "job system (Workday, say)", never an "ATS".
-- A count beside a word means the same set wherever that word appears: "Needs you" counts every job stopped for
-  the user: the bar's Bot checks and Questions and sign-ins, its Stuck ones but those that didn't finish, and its
-  Ready ones waiting on a Submit of the user's own.
+- A count beside a word means the same set wherever that word appears. "Needs you" (the side card, and the page's
+  title) counts every job stopped for the user; among the openings the bar shows, those are its Bot checks and
+  Questions and sign-ins, the stopped ones among its Stuck, and the ones among its Ready that wait on a Submit or a
+  check of the user's. "N to submit" in Ready and done's head counts its Ready to submit cards.
 
 ## Steps
 
