@@ -84,6 +84,12 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   - Add `--pipeline --fake-passwords --parallel 4` to drive the Job Desk pipeline. The full run takes about 6 minutes.
   - Add `--lists phoenix-metro` to check another list, and `--role hr` (or `--role finance`) to look
     for HR (or finance) jobs as an applicant with that background (the default is technician jobs).
+  - Add `--profile-shape awkward` (with `--pipeline`; never `--test-identity` or `--fixtures`) to apply with the fake
+    profile in an awkward shape (`live_profile.awkward`: its job with no end date, two coursework entries at one school
+    with `degree: ""`, a GED, a second phone). The nightly runs it on Sundays as the `awkward` check (artifact
+    `shape-awkward`, never compared with the last run nor written to an issue), and its shapes job prints
+    `nightly_summary.py --compare-shapes <live-pipeline> <shape-awkward>` in the run's summary: the employers where the
+    awkward profile got less far than the plain one, and the values audit's warnings only it drew.
   - Add `--save-postings <dir>` (the search check, not `--pipeline`) to save each job system's first posting API
     answer, scrubbed, as `<dir>/<system>.json`: the form of the posting readers' fixtures (`tests/fixtures/postings`,
     made up today). Look one over before it replaces a made-up one (the repo is public).

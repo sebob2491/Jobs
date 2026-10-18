@@ -165,6 +165,8 @@ def page_findings(where: str, text: str, profile: dict[str, Any]) -> Iterator[st
                 yield f"{where}: the review page shows a school to {shown}; the profile's end {', '.join(ends)}"
     levels = {str(lv) for lv in profile.get("levels") or []}
     levels |= {k for e in schools if e.get("degree") for k in [degree_key(str(e["degree"]))] if k}
+    if "ged" in levels:  # (degree_key reads a page's "GED" and "High School Diploma or GED" as high_school's)
+        levels.add("high_school")
     for school in sorted({str(e["school"]) for e in schools if e.get("school")}):
         for at in re.finditer(re.escape(school), text):
             label = _DEGREE.search(text[at.end():at.end() + SCHOOL_WINDOW])  # (the first Degree after it is its own)

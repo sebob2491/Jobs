@@ -131,12 +131,15 @@ def resume_pdf(profile: Mapping[str, Any]) -> bytes:
         (13, "Experience"),
     ]
     for job in profile.get("work_history") or []:
+        # (a job still held with no end date, the awkward profile's `current: true`: "to present", never "to None")
+        end = job.get("end") or ("present" if job.get("current") is True else "")
         lines.append((10, f"{job.get('title')}, {job.get('company')}, {job.get('location')} "
-                          f"({job.get('start')} to {job.get('end')})"))
+                          f"({job.get('start')} to {end})"))
     lines += [(10, ""), (13, "Education")]
     for school in profile.get("education_history") or []:
-        lines.append((10, f"{school.get('degree')}, {school.get('major')}, {school.get('school')} "
-                          f"({school.get('start')} to {school.get('end')})"))
+        # (coursework, the awkward profile's `degree: ""`: no degree written, as none was earned)
+        said = ", ".join(str(school[k]) for k in ("degree", "major", "school") if school.get(k) not in (None, ""))
+        lines.append((10, f"{said} ({school.get('start')} to {school.get('end')})"))
     return tiny_pdf(lines)
 
 
