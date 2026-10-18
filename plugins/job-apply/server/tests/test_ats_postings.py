@@ -1,10 +1,13 @@
+import asyncio
 import json
 
+import httpx
 from conftest import FIXTURES
 
 from job_apply.ats import (csod_parts, detect_ats, greenhouse_form_url, greenhouse_parts, lever_parts, linkedin_job_id,
                            workday_parts)
-from job_apply.postings import finalize, html_to_text, parse_html, place_in_text, public_apply_url
+from job_apply.postings import (Posting, fetch_posting, finalize, html_to_text, parse_html, place_in_text,
+                                public_apply_url)
 
 
 def test_detect_ats():
@@ -385,3 +388,172 @@ def test_a_microdata_postings_text_is_its_whole_scope_and_its_own_properties():
                .replace('<meta itemprop="addressRegion" content="AZ">', ""))
     page = sf_career_page(country).replace("<footer>", '<div class="joblayouttoken">Phoenix AZ</div><footer>')
     assert parse_html(page, url).location == "Phoenix, AZ"
+
+
+# The posting readers' answers (tests/fixtures/postings/<system>.json): each job system's posting API answer, in its
+# own shape, with what the desk should read from it ("expect"). The ones here are made up; scripts/live_smoke.py
+# --save-postings <dir> records each system's first answer in a search check, scrubbed, in the same form, to replace
+# one with once it's looked over (the repo is public). The review of Oct 18 (T5): Workday's reader serves 54 of the 149
+# listed employers and had no offline test.
+POSTINGS = FIXTURES / "postings"
+# each job system's reader (postings._fetch_with's), and the parse_method of a posting it read
+READERS = {"workday": ("_fetch_workday", "workday-api"), "greenhouse": ("_fetch_greenhouse", "greenhouse-api"),
+           "lever": ("_fetch_lever", "lever-api"), "smartrecruiters": ("_fetch_smartrecruiters", "smartrecruiters-api"),
+           "oracle_hcm": ("_fetch_oracle", "oracle-api"), "csod": ("_fetch_csod", "csod-api")}
+
+
+def replay_posting(fixture: dict) -> Posting:
+    """The posting fetch_posting reads at fixture["posting_url"], every request answered from fixture["answers"] (a
+    JSON answer, or a page's HTML): a request the fixture has no answer for fails the test."""
+    answers = fixture["answers"]
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        body = answers.get(str(request.url))
+        if body is None:
+            raise AssertionError(f"no answer in the fixture for {request.url}")
+        return httpx.Response(200, html=body) if isinstance(body, str) else httpx.Response(200, json=body)
+
+    async def go() -> Posting:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await fetch_posting(fixture["posting_url"], client=client)
+
+    return asyncio.run(go())
+
+
+def check_posting(posting: Posting, fixture: dict) -> None:
+    """The posting read is the fixture's expect: its title, place, text (each phrase in it) and apply link at least."""
+    expect = fixture["expect"]
+    assert {"title", "location", "text", "apply_url"} <= set(expect), sorted(expect)
+    assert (posting.parse_method, posting.ats) == (READERS[fixture["system"]][1], fixture["system"]), posting
+    for key, want in expect.items():
+        if key == "text":
+            missing = [phrase for phrase in want if phrase not in posting.description]
+            assert not missing, (missing, posting.description)
+        else:
+            assert getattr(posting, key) == want, (key, getattr(posting, key))
+
+
+def posting_fixture(system: str) -> dict:
+    return json.loads((POSTINGS / f"{system}.json").read_text(encoding="utf-8"))
+
+
+def test_every_posting_reader_has_a_fixture():
+    """A job system's reader added to postings.py gets a fixture (and a test) of its own."""
+    import job_apply.postings as postings
+
+    fetchers = {name for name in vars(postings) if name.startswith("_fetch_") and name != "_fetch_with"}
+    assert fetchers == {fetcher for fetcher, _ in READERS.values()}, fetchers
+    assert sorted(p.stem for p in POSTINGS.glob("*.json")) == sorted(READERS)
+    for system in READERS:
+        assert posting_fixture(system)["system"] == system
+
+
+def test_a_workday_posting_is_read_from_its_json_api():
+    """Workday's reader (its cxs API): the title, both places, the text as lines and the posting's external address.
+    Without the employer's name or an external address in the answer, the tenant's name and the posting's own address."""
+    fixture = posting_fixture("workday")
+    posting = replay_posting(fixture)
+    check_posting(posting, fixture)
+    assert not posting.warnings, posting.warnings
+    unnamed = json.loads(json.dumps(fixture))
+    for answer in unnamed["answers"].values():
+        del answer["hiringOrganization"]
+        del answer["jobPostingInfo"]["externalUrl"]
+    posting = replay_posting(unnamed)
+    assert (posting.company, posting.apply_url) == ("examplefab", fixture["posting_url"]), posting
+
+
+def test_a_greenhouse_posting_is_read_from_its_board_api():
+    """Greenhouse's reader: the text (escaped once more in the answer) and the application's questions under it, and
+    Greenhouse's own page for applying, not the employer's embedding one."""
+    fixture = posting_fixture("greenhouse")
+    posting = replay_posting(fixture)
+    check_posting(posting, fixture)
+    assert posting.description.count("\n- ") == 3, posting.description  # (the degree, two questions: no empty label)
+
+
+def test_a_lever_posting_is_read_from_its_postings_api():
+    fixture = posting_fixture("lever")
+    check_posting(replay_posting(fixture), fixture)
+
+
+def test_a_smartrecruiters_posting_is_read_from_its_api():
+    fixture = posting_fixture("smartrecruiters")
+    posting = replay_posting(fixture)
+    check_posting(posting, fixture)
+    assert "Additional Information" not in posting.description  # (a section without text)
+
+
+def test_an_oracle_posting_is_read_from_its_requisition_api():
+    fixture = posting_fixture("oracle_hcm")
+    check_posting(replay_posting(fixture), fixture)
+
+
+def test_a_cornerstone_posting_is_read_with_its_pages_token():
+    """Cornerstone's reader: the page's anonymous token, then the requisition service; a place named twice, once; and
+    a posting that takes no applications says so."""
+    fixture = posting_fixture("csod")
+    posting = replay_posting(fixture)
+    check_posting(posting, fixture)
+    assert posting.warnings == ["Cornerstone says this posting takes no applications now."], posting.warnings
+
+
+SAVE_RUN = """
+import asyncio, json, sys
+from pathlib import Path
+sys.path.insert(0, "scripts")
+import httpx
+import live_smoke
+
+answers = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+
+def answer(request):
+    body = answers.get(str(request.url))
+    return httpx.Response(404) if body is None else httpx.Response(200, json=body)
+
+real = httpx.AsyncClient
+httpx.AsyncClient = lambda **kw: real(**{"transport": httpx.MockTransport(answer), **kw})
+live_smoke.SAVE_POSTINGS = Path(sys.argv[1])
+
+async def main():
+    for url in sys.argv[3:]:
+        print("RESULT", (await live_smoke.read_posting(url)).title)
+
+asyncio.run(main())
+"""
+
+
+def test_the_live_check_saves_each_systems_first_posting_answer_scrubbed(tmp_path):
+    """live_smoke.py --save-postings: the search check's first posting of each job system read from its API, saved in
+    the fixtures' form (scrubbed, keys naming a person left out), reads offline as the desk read it live; a second
+    posting of the system leaves it be. Run in a process of its own: live_smoke sets the environment it runs in."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    workday, smart = posting_fixture("workday"), posting_fixture("smartrecruiters")
+    (first_api, first), = workday["answers"].items()
+    second = json.loads(json.dumps(first).replace("Equipment Technician II", "Etch Technician"))
+    (sr_api, sr), = smart["answers"].items()
+    said = ("<p>Questions? Ask someone@gmail.com or call 602-431" "-0188, or Testy McTestface on the night crew.</p>"
+            + "<p>Keep the made-up chillers cold.</p>" * 8)
+    sr = {**sr, "creator": {"name": "Pat Example"},
+          "jobAd": {"sections": {"jobDescription": {"title": "Job Description", "text": said}}}}
+    stand_in = {first_api: first, first_api.replace("_R0001234", "_R0005678"): second, sr_api: sr}
+    (tmp_path / "answers.json").write_text(json.dumps(stand_in), encoding="utf-8")
+    urls = [workday["posting_url"], workday["posting_url"].replace("_R0001234", "_R0005678"), smart["posting_url"]]
+    out = subprocess.run([sys.executable, "-c", SAVE_RUN, str(tmp_path / "saved"), str(tmp_path / "answers.json"), *urls],
+                         cwd=Path(__file__).parent.parent, capture_output=True, text=True, encoding="utf-8", timeout=120)
+    lines = [x[len("RESULT "):] for x in out.stdout.splitlines() if x.startswith("RESULT ")]
+    assert lines == ["Equipment Technician II", "Etch Technician", "Facilities Technician"], \
+        out.stdout[-2000:] + out.stderr[-3000:]
+    assert sorted(p.name for p in (tmp_path / "saved").iterdir()) == ["smartrecruiters.json", "workday.json"]
+    saved = json.loads((tmp_path / "saved" / "workday.json").read_text(encoding="utf-8"))
+    assert saved["posting_url"] == workday["posting_url"] and saved["expect"]["title"] == "Equipment Technician II"
+    check_posting(replay_posting(saved), saved)
+    saved_sr = json.loads((tmp_path / "saved" / "smartrecruiters.json").read_text(encoding="utf-8"))
+    check_posting(replay_posting(saved_sr), saved_sr)
+    text = json.dumps(saved_sr)
+    for gone in ("creator", "Pat Example", "someone@gmail.com", "602-431", "McTestface"):
+        assert gone not in text, gone
+    assert "someone@example.com" in text and "REDACTED" in text

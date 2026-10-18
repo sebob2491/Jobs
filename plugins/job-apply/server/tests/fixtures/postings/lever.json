@@ -1,0 +1,32 @@
+{
+  "system": "lever",
+  "note": "Made up, in the shape of Lever's postings API (api.lever.co/v0/postings/<company>/<id>). live_smoke.py --save-postings records a real one.",
+  "posting_url": "https://jobs.lever.co/examplefab/0a1b2c3d-1111-2222-3333-444455556666",
+  "answers": {
+    "https://api.lever.co/v0/postings/examplefab/0a1b2c3d-1111-2222-3333-444455556666": {
+      "additionalPlain": "This made-up role needs a U.S. person under export rules.\n",
+      "additional": "<div>This made-up role needs a U.S. person under export rules.</div>",
+      "categories": {"commitment": "Full-time", "department": "Field Service", "location": "Mesa, AZ", "team": "Installs", "allLocations": ["Mesa, AZ"]},
+      "createdAt": 1791000000000,
+      "descriptionPlain": "Install and service the example lithography tools at customer sites.\n",
+      "description": "<div>Install and service the example lithography tools at customer sites.</div>",
+      "id": "0a1b2c3d-1111-2222-3333-444455556666",
+      "lists": [{"text": "Requirements", "content": "<li>Three years of field service work</li><li>Travel up to half the time</li>"}],
+      "text": "Field Service Engineer",
+      "country": "US",
+      "workplaceType": "onsite",
+      "hostedUrl": "https://jobs.lever.co/examplefab/0a1b2c3d-1111-2222-3333-444455556666",
+      "applyUrl": "https://jobs.lever.co/examplefab/0a1b2c3d-1111-2222-3333-444455556666/apply"
+    }
+  },
+  "expect": {
+    "title": "Field Service Engineer",
+    "company": "examplefab",
+    "location": "Mesa, AZ",
+    "apply_url": "https://jobs.lever.co/examplefab/0a1b2c3d-1111-2222-3333-444455556666/apply",
+    "external_id": "0a1b2c3d-1111-2222-3333-444455556666",
+    "employment_type": "Full-time",
+    "text": ["Install and service the example lithography tools", "Requirements", "- Three years of field service work",
+             "needs a U.S. person under export rules"]
+  }
+}

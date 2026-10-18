@@ -1,0 +1,46 @@
+{
+  "system": "smartrecruiters",
+  "note": "Made up, in the shape of SmartRecruiters' posting API (api.smartrecruiters.com/v1/companies/<company>/postings/<id>). live_smoke.py --save-postings records a real one.",
+  "posting_url": "https://jobs.smartrecruiters.com/ExampleFab/7440000012345-facilities-technician",
+  "answers": {
+    "https://api.smartrecruiters.com/v1/companies/ExampleFab/postings/7440000012345": {
+      "id": "7440000012345",
+      "name": "Facilities Technician",
+      "uuid": "00000000-0000-4000-8000-000000000001",
+      "jobAdId": "00000000-0000-4000-8000-000000000002",
+      "defaultJobAd": true,
+      "refNumber": "REF-0777",
+      "company": {"identifier": "ExampleFab", "name": "Example Fab"},
+      "releasedDate": "2026-10-09T15:20:00.000Z",
+      "location": {"city": "Gilbert", "region": "AZ", "country": "us", "remote": false, "fullLocation": "Gilbert, AZ, United States"},
+      "industry": {"id": "semiconductors", "label": "Semiconductors"},
+      "department": {"id": "3001", "label": "Facilities"},
+      "function": {"id": "engineering", "label": "Engineering"},
+      "typeOfEmployment": {"id": "permanent", "label": "Full-time"},
+      "experienceLevel": {"id": "associate", "label": "Associate"},
+      "customField": [],
+      "jobAd": {
+        "sections": {
+          "companyDescription": {"title": "Company Description", "text": "<p>Example Fab makes made-up chips.</p>"},
+          "jobDescription": {"title": "Job Description", "text": "<p>Look after the made-up fab's chillers and scrubbers.</p>"},
+          "qualifications": {"title": "Qualifications", "text": "<ul><li>An HVAC certificate</li></ul>"},
+          "additionalInformation": {"title": "Additional Information", "text": ""}
+        }
+      },
+      "active": true,
+      "visibility": "PUBLIC",
+      "applyUrl": "https://jobs.smartrecruiters.com/oneclick-ui/company/ExampleFab/publication/00000000-0000-4000-8000-000000000002"
+    }
+  },
+  "expect": {
+    "title": "Facilities Technician",
+    "company": "Example Fab",
+    "location": "Gilbert, AZ, US",
+    "apply_url": "https://jobs.smartrecruiters.com/oneclick-ui/company/ExampleFab/publication/00000000-0000-4000-8000-000000000002",
+    "external_id": "REF-0777",
+    "employment_type": "Full-time",
+    "posted_at": "2026-10-09",
+    "text": ["Job Description", "Look after the made-up fab's chillers and scrubbers.", "- An HVAC certificate",
+             "Example Fab makes made-up chips."]
+  }
+}

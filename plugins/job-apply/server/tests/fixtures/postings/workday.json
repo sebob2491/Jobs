@@ -1,0 +1,42 @@
+{
+  "system": "workday",
+  "note": "Made up, in the shape of Workday's posting API (/wday/cxs/<tenant>/<site>/job/...). live_smoke.py --save-postings records a real one.",
+  "posting_url": "https://examplefab.wd1.myworkdayjobs.com/en-US/External/job/Phoenix-AZ/Equipment-Technician-II_R0001234",
+  "answers": {
+    "https://examplefab.wd1.myworkdayjobs.com/wday/cxs/examplefab/External/job/Phoenix-AZ/Equipment-Technician-II_R0001234": {
+      "jobPostingInfo": {
+        "id": "0a1b2c3d4e5f",
+        "title": "Equipment Technician II",
+        "jobDescription": "<p><b>About the role</b></p><p>Keep the example fab's etch and deposition tools running on a rotating 12-hour shift.</p><p><b>What you bring</b></p><ul><li>Two years of hands-on work with vacuum equipment</li><li>An associate degree in electronics, or the same in experience</li></ul>",
+        "location": "Phoenix, AZ",
+        "additionalLocations": ["Chandler, AZ"],
+        "postedOn": "Posted 3 Days Ago",
+        "startDate": "2026-10-12",
+        "timeType": "Full time",
+        "jobReqId": "R0001234",
+        "jobPostingId": "Equipment-Technician-II_R0001234",
+        "jobPostingSiteId": "External",
+        "country": {"descriptor": "United States of America", "id": "country-us-0001"},
+        "canApply": true,
+        "posted": true,
+        "includeResumeParsing": true,
+        "jobRequisitionLocation": {"descriptor": "Phoenix, AZ", "country": {"descriptor": "United States of America", "alpha2Code": "US"}},
+        "externalUrl": "https://examplefab.wd1.myworkdayjobs.com/External/job/Phoenix-AZ/Equipment-Technician-II_R0001234",
+        "questionnaireId": "q-0001"
+      },
+      "hiringOrganization": {"name": "Example Fab", "url": ""},
+      "similarJobs": [],
+      "userAuthenticated": false
+    }
+  },
+  "expect": {
+    "title": "Equipment Technician II",
+    "company": "Example Fab",
+    "location": "Phoenix, AZ; Chandler, AZ",
+    "apply_url": "https://examplefab.wd1.myworkdayjobs.com/External/job/Phoenix-AZ/Equipment-Technician-II_R0001234",
+    "external_id": "R0001234",
+    "employment_type": "Full time",
+    "posted_at": "2026-10-12",
+    "text": ["About the role", "rotating 12-hour shift", "- Two years of hands-on work with vacuum equipment"]
+  }
+}

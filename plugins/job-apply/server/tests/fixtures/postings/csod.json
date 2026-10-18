@@ -1,0 +1,30 @@
+{
+  "system": "csod",
+  "note": "Made up, in the shape of Cornerstone OnDemand's posting page (only its csod.context kept) and its job-requisition API. live_smoke.py --save-postings records a real one.",
+  "posting_url": "https://examplefab.csod.com/ux/ats/careersite/1/home/requisition/1001?c=examplefab",
+  "answers": {
+    "https://examplefab.csod.com/ux/ats/careersite/1/home/requisition/1001?c=examplefab": "<html><head><script>csod.context={\"token\": \"anon-token-1\", \"cultureID\": 1, \"endpoints\": {\"cloud\": \"https://us.api.csod.com/\"}};</script></head><body><div id=\"root\"></div></body></html>",
+    "https://examplefab.csod.com/services/x/job-requisition/v2/requisitions/1001/jobDetails?cultureId=1": {
+      "data": {
+        "requisitionId": 1001,
+        "displayTitle": "Gas Plant Operator",
+        "externalDescription": "<p>Run the made-up air separation plant and keep its logs.</p><p>Walk the plant each shift, read its gauges, and call out anything that drifts. Fill the made-up cylinders and load the trucks that take them to customers.</p><ul><li>A forklift card helps</li></ul>",
+        "primaryLocation": {"city": "Casa Grande", "state": "AZ", "country": "US"},
+        "additionalLocations": [{"city": "Casa Grande", "state": "AZ", "country": "US"}, {"city": "Eloy", "state": "AZ", "country": "US"}],
+        "openDate": "2026-10-11T00:00:00",
+        "allowApply": false
+      },
+      "status": "Success",
+      "timeStamp": "2026-10-18T12:00:00Z"
+    }
+  },
+  "expect": {
+    "title": "Gas Plant Operator",
+    "company": "examplefab",
+    "location": "Casa Grande, AZ; Eloy, AZ",
+    "apply_url": "https://examplefab.csod.com/ux/ats/careersite/1/home/requisition/1001?c=examplefab",
+    "external_id": "1001",
+    "posted_at": "2026-10-11",
+    "text": ["Run the made-up air separation plant and keep its logs.", "- A forklift card helps"]
+  }
+}
