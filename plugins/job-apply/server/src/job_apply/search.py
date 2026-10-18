@@ -324,30 +324,51 @@ def _place_states(place: str) -> list[str]:
 _LEVEL_LETTER = {"i", "v", "x"}
 
 
+def _own_titles() -> list[str]:
+    """The job titles the profile names (preferences.titles); none when it doesn't read."""
+    try:
+        return [t for t in (str(t).strip() for t in config.listed(config.Profile.load().get("preferences.titles"))) if t]
+    except ValueError:
+        return []
+
+
+# words a person might leave out, the first not in their job titles given as the example in a refusal
+_AVOID_EXAMPLES = ("Senior", "Intern", "Call Center", "Night Shift", "Driver")
+
+
+def _avoid_clash(avoid: list[str], titles: list[str]) -> None:
+    """A ValueError, in plain words, when one of the titles to leave out is in a job title the person looks for
+    (`titles`, theirs; the plugin's own when they have none): every one of those jobs would be left out."""
+    targets = titles or DEFAULT_TITLES
+    for word in avoid:
+        if mine := next((t for t in targets if avoided_title(t, [word])), None):
+            example = next((e for e in _AVOID_EXAMPLES
+                            if not any(avoided_title(t, [e]) for t in targets) and e.casefold() != word.casefold()),
+                           "another word")
+            whose, them = ("a job title you look for", "your job titles") if titles else \
+                ("one of the plugin's default job titles (you have none of your own)", "them")
+            raise ValueError(f"“{word}” is in “{mine}”, {whose}: every one of those jobs would be left out. Leave out "
+                             f"a word that isn't in {them}, such as {example}")
+
+
 def _avoid_checked(avoid_titles: list[str], titles: list[str] | None) -> list[str]:
     """Titles to leave out as the person gave them (config.avoid_list: "Senior, Call Center" is two), refused in
-    plain words when one would leave out what they look for (it's in one of their job titles, `titles` or the
-    profile's, or the plugin's own when they have none) or nearly everything (one letter), or when there are too many
-    or one is too long."""
+    plain words when one would leave out what they look for (_avoid_clash: `titles`, or the profile's) or nearly
+    everything (one letter), when one has no Latin letters to match, or when there are too many or one is too long."""
     avoid = config.avoid_list(avoid_titles)
     if len(avoid) > 20 or any(len(a) > 60 for a in avoid):
         raise ValueError("A few words or titles to leave out, each a few words such as Senior or Call Center")
-    if titles is None:
-        try:
-            titles = [str(t).strip() for t in config.listed(config.Profile.load().get("preferences.titles"))]
-        except ValueError:
-            titles = []
-    targets = [t for t in titles if t] or DEFAULT_TITLES
     for word in avoid:
         words = _title_words(word)
+        if not words and any(c.isalpha() for c in word):  # ("Менеджер": norm() keeps Latin letters only)
+            raise ValueError(f"“{word}” has no Latin letters: titles to leave out are matched in Latin letters only "
+                             "(A to Z, accents or not), such as Senior or Técnico")
         if not words:  # (only signs: no word a title could have)
             raise ValueError(f"“{word}” has no word to leave out: a word or a few, such as Senior or Call Center")
         if len(words) == 1 and not words.isdigit() and words not in _LEVEL_LETTER:
             raise ValueError(f"“{word}” is a single letter, in nearly every job title: leave out a word or a few, "
                              "such as Senior or Call Center")
-        if mine := next((t for t in targets if avoided_title(t, [word])), None):
-            raise ValueError(f"“{word}” is in “{mine}”, a job title you look for: every one of those jobs would be "
-                             "left out. Leave out a word that isn't in your job titles, such as Senior")
+    _avoid_clash(avoid, _own_titles() if titles is None else titles)
     return avoid
 
 
@@ -372,6 +393,12 @@ def set_search_area(places: list[str] | None = None, lists: list[str] | None = N
             raise ValueError("One job title each: add the others one at a time")
     if avoid_titles is not None:
         avoid = _avoid_checked(avoid_titles, named)
+    elif named is not None:  # (new job titles, against the titles to leave out the profile has: one in them refused)
+        try:
+            kept_avoid = config.Profile.load().avoid_titles
+        except ValueError:
+            kept_avoid = []
+        _avoid_clash(kept_avoid, named)
     if places is not None:
         kept = list(dict.fromkeys(" ".join(str(p).split()) for p in places if str(p).strip()))
         if len(kept) > 12 or any(len(p) > 80 for p in kept):

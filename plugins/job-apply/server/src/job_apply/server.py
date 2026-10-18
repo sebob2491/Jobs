@@ -315,9 +315,9 @@ async def search_area(places: list[str] | None = None, lists: list[str] | None =
     area = set_search_area(places=places, lists=lists, titles=titles, avoid_titles=avoid_titles)
     from . import desk
 
-    if desk._desk is not None and (places, lists, titles) == (None, None, None):
-        desk._desk.avoid_again()  # (only the titles to leave out: the openings found stay, scored again)
-    elif desk._desk is not None:  # (an open desk's openings were found elsewhere: Find jobs searches again)
+    # (an open desk's openings were found and scored for others, the titles to leave out among them: Find jobs
+    # searches again)
+    if desk._desk is not None:
         desk._desk._forget_openings()
     return area
 

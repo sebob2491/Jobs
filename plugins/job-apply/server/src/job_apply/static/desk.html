@@ -2112,11 +2112,10 @@ $("area-form").addEventListener("submit", (e) => {
   areaAdd("places", $("area-place-new").value);
   areaAdd("avoid_titles", $("area-avoid-new").value);
   $("area-title-new").value = $("area-place-new").value = $("area-avoid-new").value = "";
-  // only what changed: an unchanged list isn't written to the profile (an empty one not added to it), and the titles
-  // to leave out alone score the openings found again (the desk keeps them) rather than searching again
+  // only what changed: an unchanged list isn't written to the profile (an empty one not added to it). Any change,
+  // the titles to leave out among them, clears the openings found, and Find jobs searches again
   const changed = Object.fromEntries(Object.entries(areaDraft).filter(([k, v]) =>
     JSON.stringify(v) !== JSON.stringify((areaWas || {})[k])));
-  const onlyAvoid = Object.keys(changed).length > 0 && Object.keys(changed).every((k) => k === "avoid_titles");
   const said = $("area-error");
   act(async () => {
     try {
@@ -2130,7 +2129,7 @@ $("area-form").addEventListener("submit", (e) => {
     }
     areaDraft = areaWas = null;
     $("area").close();
-    if (!onlyAvoid) await api("/api/search", {});
+    await api("/api/search", {});
   });
 });
 

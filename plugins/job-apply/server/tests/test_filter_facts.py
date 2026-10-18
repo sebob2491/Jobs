@@ -662,6 +662,11 @@ SPONSORSHIP = [
   "applicants for work visas.", True),
  ("Please note this role is not eligible for sponsorship.", True),
  ("Visa sponsorship is unavailable for this position.", True),
+ # (the second review of F7: "requiring", and who need not or should not apply)
+ ("Candidates requiring visa sponsorship are not eligible.", True),
+ ("Candidates requiring visa sponsorship now or in the future are not eligible for this role.", True),
+ ("Applicants requiring sponsorship should not apply.", True),
+ ("Candidates who require visa sponsorship need not apply.", True),
  ("We may sponsor qualified candidates.", False),
  ("Visa sponsorship available.", False),
  ("Sponsorship available for the right candidate.", False),
@@ -726,6 +731,16 @@ SPONSORSHIP = [
  ("Relocation assistance is not available; visa sponsorship is available.", False),
  ("Clearance Sponsorship: No", False),
  ("Relocation Sponsorship: No", False),
+ # (the second review of F7: a need for sponsorship not held against anyone, sponsorship limited to some, a
+ # "however", and a track that isn't the job)
+ ("Your need for sponsorship will not be considered in hiring decisions.", False),
+ ("A candidate's need for visa sponsorship will not be considered a negative factor.", False),
+ ("Visa sponsorship is not available to contractors; employees hired directly receive sponsorship.", False),
+ ("We cannot sponsor new visas; however, we will consider candidates on existing visas.", False),
+ ("We will not consider candidates who require sponsorship any less favorably.", False),
+ ("Applicants who need sponsorship are not eligible for the expedited interview track.", False),
+ ("Interns are not eligible for sponsorship; full-time employees receive visa sponsorship.", False),
+ ("Applicants who will need sponsorship are welcome and will be considered.", False),
 ]
 
 

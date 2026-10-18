@@ -831,37 +831,6 @@ def test_a_title_to_leave_out_folds_accents_and_reads_a_short_word_as_the_whole(
     assert norm("Técnico") == "t cnico"  # (unchanged for the answer rules)
 
 
-def test_titles_to_leave_out_changed_alone_score_the_openings_again_and_keep_the_rest():
-    """The review of F4: a change to only the titles to leave out scores the openings found again (avoid_again)
-    rather than forgetting them: the old concern and points out, the new in, held and blocked as they were, the parts
-    still summing to the score, and `recommended` said anew."""
-    from job_apply.recommend import avoid_again
-
-    listing = {"title": "Senior Equipment Technician", "location": "Phoenix, AZ", "posted": "2026-10-01"}
-    before = score_listing(listing, tech(), today=TODAY).to_dict()
-    assert before["recommended"] and not before["avoided"]
-    left = avoid_again(before, listing["title"], ["Call Center", "senior"])
-    assert left["avoided"] == "senior" and not left["recommended"] and left["score"] == before["score"] - 25
-    assert left["concerns"][-1] == "title has “senior”, which you leave out"
-    assert sum(p["points"] for p in left["parts"]) == left["score"]
-    assert left == score_listing(listing, tech(preferences={**tech().get("preferences"),
-                                                             "avoid_titles": ["Call Center", "senior"]}),
-                                 today=TODAY).to_dict() | {"parts": left["parts"], "concerns": left["concerns"]}
-    back = avoid_again(left, listing["title"], ["Lead"])
-    assert back == before | {"avoided": ""}  # (as it was)
-    held = avoid_again({**before, "held": True, "recommended": False}, listing["title"], [])
-    assert held["held"] and not held["recommended"]
-    # a fit kept within 0 to 100 is kept so again, its parts summing to it
-    low = avoid_again({"score": 10, "reasons": [], "concerns": [], "blocked": False, "held": False,
-                       "parts": [{"why": "start", "points": 50}, {"why": "internship", "points": -40}]},
-                      "Senior Intern", ["Senior"])
-    assert low["score"] == 0 and sum(p["points"] for p in low["parts"]) == 0
-    assert avoid_again(low, "Senior Intern", [])["score"] == 10
-    # a fit saved before scores had parts: its score alone
-    old = avoid_again({"score": 70, "reasons": [], "concerns": [], "blocked": False}, "Senior Tech", ["Senior"])
-    assert old["score"] == 45 and not old["recommended"] and "parts" not in old
-
-
 # ------------------------------------------------------------------ sponsorship offered (the design of Oct 18, F7)
 
 # a made-up posting (no fixture says it yet), its second requirement the employer's word on sponsorship

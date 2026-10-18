@@ -197,8 +197,11 @@ _NO_SPONSORSHIP = re.compile(
     rf"{_SPONSOR_NOUN}(?!\s+from\b)|"
     rf"\bmust\s+not\s+(?:now\s+or\s+in\s+the\s+future\s+|currently\s+or\s+in\s+the\s+future\s+)?(?:require|need)\s+"
     rf"(?:any\s+)?{_SPONSOR_NOUN}|"
-    rf"\b(?:require|need)(?:s|ing)?\s+(?:[\w-]+\s+){{0,6}}?{_SPONSOR_NOUN}[^.;]{{0,60}}?\b(?:will\s+not\s+be\s+"
-    rf"considered|(?:are|is)\s+(?:not\s+eligible|ineligible)|need\s+not\s+apply|should\s+not\s+apply|cannot\s+be\s+"
+    # ("Applicants requiring sponsorship will not be considered", "...are not eligible for this role"; not "...are not
+    # eligible for the expedited interview track")
+    rf"\b(?:requir(?:e|es|ing)|need(?:s|ing)?)\s+(?:[\w-]+\s+){{0,6}}?{_SPONSOR_NOUN}[^.;]{{0,60}}?\b(?:will\s+not\s+"
+    rf"be\s+considered|(?:are|is)\s+(?:not\s+eligible|ineligible)(?!\s+for\s+(?!(?:this|the)\s+(?:position|role|job|"
+    rf"opening|opportunity)\b|employment\b|hire\b))|need\s+not\s+apply|should\s+not\s+apply|cannot\s+be\s+"
     rf"considered)")
 # a line labelled with it: "Visa Sponsorship: No", "Sponsorship Available: None", "Visa Sponsorship Offered? No"
 _SPONSORSHIP_LINE = re.compile(r"(?im)^[ \t*•·-]*(?:visa\s+|immigration\s+|h-?1-?b\s+)?sponsorship(?:\s+(?:available|"
@@ -226,8 +229,14 @@ _VISA_CONTEXT = re.compile(rf"{_VISA.pattern}|\bsponsorship\b|\bauthori[sz]|\bem
 _SPONSOR_HEDGE = re.compile(r"\b(?:may|might|could|possibly|potentially|case[- ]by[- ]case|unless|except|generally|"
                             r"typically|usually|in\s+most\s+cases|not\s+always|some\s+(?:positions|roles|cases)|"
                             r"certain\s+(?:positions|roles|cases)|preferred|preferably|ideally|a\s+plus|transfers?|"
-                            r"but|(?:is|are)\s+eligible|will\s+sponsor|we\s+sponsor|(?<!no )(?<!no visa )(?<!no h-1b )(?<!no h1b )"
-                            r"(?<!no immigration )sponsorship\s+is\s+available)\b|\?")
+                            r"but|however|(?:is|are)\s+eligible|will\s+sponsor|we\s+sponsor|"
+                            # (a need for one not held against anyone, sponsorship limited to some: "...will not be
+                            # considered a negative factor", "...in hiring decisions", "...any less favorably", "...not
+                            # available to contractors; employees hired directly receive sponsorship")
+                            r"factors?|negative\w*|against|in\s+(?:hiring|employment|our)\s+decisions?|"
+                            r"less\s+favou?rabl\w*|any\s+less|contractors?|receives?\s+(?:visa\s+)?sponsorship|"
+                            r"(?<!no )(?<!no visa )(?<!no h-1b )(?<!no h1b )(?<!no immigration )sponsorship\s+is\s+"
+                            r"available)\b|\?")
 
 
 def _sponsors_else(sentence: str, m: re.Match[str]) -> bool:
@@ -332,32 +341,6 @@ def target_titles(prof: Profile) -> list[str]:
 
 AVOIDED = "which you leave out"  # (said in each concern and part a title to leave out makes)
 AVOID_POINTS = 25
-
-
-def avoid_again(fit: dict[str, Any], title: str, avoid: list[str]) -> dict[str, Any]:
-    """An opening's fit (Fit.to_dict()) with the titles to leave out as they are now (the What and where window
-    changed only those): the old one's concern and points taken out, the new one's put in, its score kept within 0
-    to 100 again and `recommended` said anew. Everything else in it (held, blocked, its other parts) stays."""
-    parts = fit.get("parts")
-    old = sum(int(p.get("points") or 0) for p in parts or [] if AVOIDED in str(p.get("why")))
-    kept = [p for p in parts or [] if AVOIDED not in str(p.get("why")) and p.get("why") != "kept within 0 to 100"]
-    concerns = [c for c in fit.get("concerns") or [] if AVOIDED not in str(c)]
-    hit = avoided_title(title, avoid)
-    said = f"title has “{hit}”, {AVOIDED}"
-    if hit:
-        kept.append({"why": said, "points": -AVOID_POINTS})
-        concerns.append(said)
-    # (parts sum to the score; a fit saved before scores had parts has only its score)
-    score = sum(int(p.get("points") or 0) for p in kept) if isinstance(parts, list) \
-        else int(fit.get("score") or 0) - old - (AVOID_POINTS if hit else 0)
-    within = max(0, min(100, score))
-    if isinstance(parts, list) and within != score:
-        kept.append({"why": "kept within 0 to 100", "points": within - score})
-    out = {**fit, "score": within, "concerns": concerns, "avoided": hit or ""}
-    if isinstance(parts, list):
-        out["parts"] = kept
-    out["recommended"] = not fit.get("blocked") and not fit.get("held") and not hit and within >= RECOMMEND_AT
-    return out
 
 
 def target_query(prof: Profile) -> str:
