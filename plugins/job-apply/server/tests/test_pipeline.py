@@ -2743,10 +2743,11 @@ def test_a_reset_email_whose_link_was_opened_already_is_said_never_taken_for_no_
     assert "opened Create Account" not in log and "create your account" not in log, r.log
 
 
-def test_a_password_saved_since_the_reset_is_refused_the_ordinary_way(srv, monkeypatch):
-    """The review of 0.3.209: what a reset leaves on the job (the desk set the saved password there, or opened its
-    link: no Create Account on a refusal) holds for that password only. Days later the person saves another, and the
-    site refuses it: the ordinary path's, its Create Account."""
+def test_a_password_saved_since_the_reset_is_refused_without_its_card_and_makes_no_account(srv, monkeypatch):
+    """The review of 0.3.209: what a reset leaves on the job's card (the desk set the saved password there, or opened
+    its link) holds for that password only: the person saves another, and the site refuses it, said the ordinary way.
+    The re-review: but the account is there all the same (Run.account_known), so never a Create Account for the job,
+    as the cards' "or another, and save that one on the desk" led to. A job with no reset still gets one."""
     import hashlib
 
     saved_password(monkeypatch)
@@ -2761,9 +2762,12 @@ def test_a_password_saved_since_the_reset_is_refused_the_ordinary_way(srv, monke
     assert run(applier._sign_in(same, data, {"submitted": 1, "settled": 1})) == "refused"
     since = Run(2, "FSE", "Example Fab", sign_in_tries=2,
                 sign_in_key=hashlib.sha256(b"the-password-the-reset-set").hexdigest())  # (another saved since)
-    since.reset_set = since.reset_opened = True
-    assert run(applier._sign_in(since, data, {"submitted": 1})) == "create_account"
-    assert not (since.reset_set or since.reset_opened)
+    since.reset_set = since.reset_opened = since.account_known = True
+    assert run(applier._sign_in(since, data, {"submitted": 1})) == "refused"
+    assert not (since.reset_set or since.reset_opened) and since.account_known
+    fresh = Run(3, "FSE", "Example Fab", sign_in_tries=2,
+                sign_in_key=hashlib.sha256(b"the-password-the-reset-set").hexdigest())
+    assert run(applier._sign_in(fresh, data, {"submitted": 1})) == "create_account"
 
 
 def test_a_new_account_is_signed_in_with_and_only_its_own_form_is_sent(srv, monkeypatch, job_apply_home):

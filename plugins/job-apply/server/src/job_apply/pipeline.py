@@ -879,6 +879,10 @@ class Run:
     # the reset email found was one whose link was opened already (_link_opened): an email came, so its wait running
     # out is said on a card, never taken for "no email: no account there"
     reset_spent: bool = False
+    # ...and, for the job, whatever password is saved since: the site emailed a reset for the account, or the desk set or
+    # opened one, so the account is there and never gets a Create Account (the re-review of 0.3.209: a password saved
+    # since cleared the flags above, and its refusal pressed Create Account). Never cleared for the job
+    account_known: bool = False
     # the card for a spent reset link was shown: its Resume goes back to the sign-in and tries the saved password, which
     # the person may have set through a new email's link in their own browser (the review of 0.3.209: on the same spent
     # page, the card came back on every Resume)
@@ -1021,7 +1025,7 @@ class Run:
         return {**{k: v for k, v in self.__dict__.items() if k not in ("page", "tab_mark", "desk_at", "desk_code", "cookies_asked", "resetting",
                                                                         "reset_asked", "reset_from", "reset_waited",
                                                                         "reset_at", "reset_set", "reset_opened",
-                                                                        "reset_spent", "reset_spent_said",
+                                                                        "reset_spent", "reset_spent_said", "account_known",
                                                                         "reset_no_mail", "reopened_elsewhere", "reopened", "sign_in_tries", "sign_in_key",
                                                                         "accounts_tried", "account_made", "account_in", "account_page",
                                                                         "account_finished", "verifying", "verify_resent", "mail_looks", "mail_last",
@@ -2708,11 +2712,11 @@ class Applier:
         if found.kind == "reset" and _link_opened(found.value):
             # a reset's link works once: one opened already (for this job or another) sets nothing. The new one is
             # waited for; and should none come, its wait running out is said, never taken for no email at all
-            run.reset_spent = True
+            run.reset_spent = run.account_known = True
             run.mail_last += "; not used: that reset link was opened already"
             return
         if found.kind == "reset" and found.received < asked - RESET_CLOCK_SKEW:
-            run.reset_spent = True
+            run.reset_spent = run.account_known = True
             run.mail_last += "; not used: it came well before the reset was asked for, an earlier reset's"
             return
         if found.kind == "reset" and found.received < asked and time.time() - asked < RESET_FRESH_WAIT:
@@ -2733,7 +2737,7 @@ class Applier:
             elif found.kind == "reset":  # its page sets the new password: opened in the job's own tab
                 if run.page is None or run.page.is_closed():
                     return
-                run.reset_opened = True  # (the account is there: a refused sign-in after this makes none)
+                run.reset_opened = run.account_known = True  # (the account is there: a refused sign-in makes none)
                 await run.page.goto(found.value, wait_until="domcontentloaded", timeout=45000)
                 run.mail_done = True
                 self._log(run, f"opened the password reset link from your email ({_sent_from(found)})")
@@ -3307,7 +3311,7 @@ class Applier:
                     # or an earlier reset's): an email came, so the account is there, and it's never "no email: no
                     # account there, make one". Left where it is: a new reset's link opened in the tab is set on Resume
                     run.reset_no_mail = run.reset_spent = False
-                    run.reset_opened = True
+                    run.reset_opened = run.account_known = True
                     await self._bring_forward(run)
                     site = _site(run, data)
                     return self._pause(run, "sign_in", f"{site} emailed you a password reset, but its link is one the desk "
@@ -5766,7 +5770,7 @@ class Applier:
                         seen=after)
             return "paused"
         run.resetting = False
-        run.reset_set = True
+        run.reset_set = run.account_known = True
         self._log(run, f"set your saved password as {site}'s new one")
         return "set"
 
@@ -6038,7 +6042,8 @@ class Applier:
             # saved password through the site's own reset, or opened its link: the account is there
             # (_drive says so).
             if (create is None or tried.get("create_account", 0) >= 2 or run.accounts_tried
-                    or reset_first and _forgot_action(actions) or run.reset_set or run.reset_opened):
+                    or reset_first and _forgot_action(actions) or run.reset_set or run.reset_opened
+                    or run.account_known):
                 return "refused"
             try:
                 await srv.click(create["id"])
