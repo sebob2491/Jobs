@@ -1447,6 +1447,13 @@ def test_with_accept_notices_the_desk_agrees_to_an_ai_notice_and_an_attestation(
     assert went["files"] == [{"label": "Resume", "name": "resume.pdf"}], went["files"]
     assert {(a["label"], a["value"]) for a in went["answers"]} >= {("First name", "Sam"),
                                                                    ("Country of Residence", "United States")}, went
+    # and each kept in the words its rules read (Run.agreed, for the live check's audit: T2), never shown
+    assert [(a["what"], a["heading"], a["button"]) for a in r.agreed] == [
+        ("notice", NOTICE, "I Agree"), ("attestation", r.agreed[1]["heading"], "I Agree")]
+    assert "artificial intelligence" in r.agreed[0]["words"] and r.agreed[1]["heading"].startswith("Terms and Conditions")
+    assert "I certify that the information" in r.agreed[1]["words"] and r.agreed[1]["words"].endswith("\nI Agree")
+    assert all(len(a["sha"]) == 40 and len(a["words"]) <= pipeline.AGREED_WORDS for a in r.agreed)
+    assert "agreed" not in r.public() and "artificial intelligence" not in json.dumps(r.public())
 
 
 @pytest.mark.parametrize("notice, settings", [("privacy", {}), ("other", {}), ("privacy", {"accept_notices": False}),

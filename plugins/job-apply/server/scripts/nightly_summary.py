@@ -674,7 +674,9 @@ def import_fixtures(where: Path, wanted: list[str], into: Path = LIVE_FIXTURES, 
     return copied
 
 
-SLOWER = 2.0  # a job system's middle time this many times an earlier run's is said (the review of Oct 15)
+# a job system's middle time this many times an earlier run's is said (the review of Oct 15): the factor the nightly's
+# comment says an employer's own slower by (live_compare.slower)
+SLOWER = live_compare.SLOWER
 SLOWER_FLOOR = 30  # seconds: a system that took less than this in the middle isn't said, however much slower
 
 

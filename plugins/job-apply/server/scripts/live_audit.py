@@ -7,6 +7,9 @@ fails, one ::error:: line a finding, where the run broke a rule the product keep
   - consents: a log line saying the desk agreed to, ticked, pressed, chose or accepted something that names
     a newsletter, job alerts, a talent community, marketing, texts or automated calls, arbitration, at-will
     employment or a waiver, which are never the desk's to give;
+  - agreements: the words of each notice, terms gate, attestation or account box the desk agreed to (each round's
+    "agreed": pipeline.Run.agreed, scrubbed by live_smoke.py) read again for a legal waiver, an arbitration
+    agreement or a sign-up in so many words (never._never_for_them, AGREED_KINDS), wherever in them it sits;
   - submitting: a round whose status is "submitted" (the live check never submits: JOB_APPLY_NEVER_SUBMIT);
   - secrets: the test identity's email and passwords (LIVE_TEST_EMAIL, LIVE_TEST_EMAIL_PASSWORD and
     LIVE_TEST_SITE_PASSWORD, read from the environment as the check's machine has them) in any file the
@@ -20,6 +23,12 @@ the profile's (never a failure: the test identity's entries saved at a tenant by
 they're corrected): a job or school from or to a date the profile doesn't give, a degree beside the profile's
 school of a level the profile doesn't have (the "never overstate" rule), or another role's employer.
 
+It reads every box each employer's saved page holds (pipeline/<employer>/snapshot.json), one ::warning:: line a box
+holding one of the applicant's own details (the phone, the email, the zip code, the street, the LinkedIn address or
+the full name: live_profile.py's fake profile, never the artifact's) that the desk's own rules
+(autofill.resolve_field) wouldn't put there: the profile's phone in an "Employee ID" box. And one ::warning:: line an
+employer the check stopped short of its review page without saving the page it stopped on.
+
 And it reads the search check's postings (its LIVE_RESULT records), one ::warning:: line a job system whose
 postings were read without their title, their place or their text, or not read at all.
 """
@@ -27,17 +36,24 @@ postings were read without their title, their place or their text, or not read a
 from __future__ import annotations
 
 import argparse
+import copy
 import html
+import json
 import os
 import re
 import sys
 from pathlib import Path
 from typing import Any, Iterator
 
-from job_apply.autofill import degree_key
+from job_apply.autofill import degree_key, resolve_field
+from job_apply.config import Profile
+from job_apply.never import ANYWHERE, _never_for_them
+from job_apply.pipeline import _user_name_box
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import live_compare  # (scripts/live_compare.py, beside this one)
+import live_identity  # (scripts/live_identity.py: the test identity's name and its email's mask)
+import live_profile  # (scripts/live_profile.py: the fake applicant's profile)
 
 SECRETS = ("LIVE_TEST_EMAIL", "LIVE_TEST_EMAIL_PASSWORD", "LIVE_TEST_SITE_PASSWORD")
 MAX_FILE = 50 * 1024 * 1024
@@ -195,6 +211,139 @@ def record_findings(check: str, rec: dict[str, Any]) -> Iterator[str]:
                 yield f"{check}/{name}: an emailed code in the log: {text[:200]}"
             if _ANSWER.search(text):
                 yield f"{check}/{name}: a security answer in the log"
+    yield from agreement_findings(check, rec)
+
+
+# What the words of an agreement the desk made are read for again: what's never agreed to for the person wherever in a
+# long notice it sits (never.ANYWHERE: a legal waiver, an arbitration agreement, a sign-up in so many words). Not every
+# kind: an employer's privacy notice names its practices (its affiliates, its marketing, its cookies) and the other
+# positions it may suggest, which the desk's paths read only where a notice says what it is (its heading, its
+# opening), and read anywhere they'd fail every night's audit on a plain privacy notice. A terms gate's words are its
+# whole page's (pipeline._terms_gate reads them for a waiver): a careers site's "Join our Talent Community" in its
+# footer is no part of what the gate agrees to
+AGREED_KINDS = ANYWHERE
+_GATE_KINDS = frozenset({"arbitration", "waiver"})
+_AGREED_SAYS = {"arbitration": "names arbitration", "waiver": "waives a right", "signs up": "signs the applicant up"}
+
+
+def agreements(rec: dict[str, Any]) -> list[dict[str, Any]]:
+    """What the desk agreed to for the applicant at one employer, in the words its rules read (each round's "agreed":
+    live_smoke.py's agreed_words of pipeline.Run.agreed)."""
+    return [a for rnd in rec.get("rounds") or [] if isinstance(rnd, dict)
+            for a in rnd.get("agreed") or [] if isinstance(a, dict)]
+
+
+def agreement_findings(check: str, rec: dict[str, Any]) -> Iterator[str]:
+    """Each agreement whose words hold what's never agreed to for the person (AGREED_KINDS), one line each."""
+    name = str(rec.get("company") or "?")
+    for a in agreements(rec):
+        heading, button = " ".join(str(a.get("heading") or "").split()), str(a.get("button") or "")
+        kinds = _GATE_KINDS if a.get("what") == "terms gate" else AGREED_KINDS
+        kind = _never_for_them("\n".join((heading, button, str(a.get("words") or ""))), only=kinds)
+        if kind:
+            said = heading or button or "a notice"
+            said = said if len(said) <= 80 else said[:79] + "…"
+            yield f'{check}/{name}: agreed to "{said}" which {_AGREED_SAYS.get(kind, kind)}'
+
+
+# The applicant's own details a box may hold (live_profile.FAKE_PROFILE's, and the test identity's name and its email's
+# mask, as a run writes them: never read from the artifact), each told by its shape (personal_value)
+_PERSONAL = live_profile.FAKE_PROFILE["personal"]
+_PHONE_DIGITS = re.sub(r"\D", "", _PERSONAL["phone"])
+_FULL_NAMES = {f"{_PERSONAL['first_name']} {_PERSONAL['last_name']}".casefold(),
+               f"{live_identity.FIRST_NAME} {live_identity.LAST_NAME}".casefold()}
+_STREET = str(_PERSONAL["address"]["line1"]).casefold()
+_ZIP = re.compile(re.escape(str(_PERSONAL["address"]["postal_code"])) + r"(?:-\d{4})?")
+_LINKEDIN = re.sub(r"^https?://(?:www\.)?", "", str(_PERSONAL["linkedin_url"])).casefold()
+_NOT_A_BOX = {"password", "file", "checkbox", "radio", "checkbox_group", "radio_group"}
+
+
+def personal_value(value: Any) -> str | None:
+    """Which of the applicant's own details a box's value is: "phone", "email", "zip code", "street", "LinkedIn
+    address" or "full name"; None for anything else."""
+    s = " ".join(str(value or "").split())
+    if not s:
+        return None
+    digits = re.sub(r"\D", "", s)
+    if re.fullmatch(r"[\d\s()+.-]+", s) and digits in (_PHONE_DIGITS, "1" + _PHONE_DIGITS):
+        return "phone"
+    if live_profile.FAKE_EMAIL_SHAPE.fullmatch(s) or s == live_identity.EMAIL_MASK:
+        return "email"
+    if _ZIP.fullmatch(s):
+        return "zip code"
+    if s.casefold().rstrip(".") == _STREET:
+        return "street"
+    if _LINKEDIN in s.casefold():
+        return "LinkedIn address"
+    if s.casefold() in _FULL_NAMES:
+        return "full name"
+    return None
+
+
+def box_findings(where: str, fields: list[Any], profile: Profile) -> Iterator[str]:
+    """Each box holding one of the applicant's own details (personal_value) where the desk's own rules
+    (autofill.resolve_field, by the box's label and kind) wouldn't put that detail: the profile's phone in an
+    "Employee ID" box, its name in a reference's. One line each."""
+    for f in fields:
+        if not isinstance(f, dict) or f.get("kind") in _NOT_A_BOX or not isinstance(f.get("value"), str):
+            continue
+        what = personal_value(f["value"])
+        if what is None:
+            continue
+        label = " ".join(str(f.get("label") or "").split())
+        # (by its label and kind, and what else the form reader saw of it: its section, its autocomplete, as the desk
+        # read it: Schwab's "Number" box is a phone's by its autocomplete, tel-national; never its value)
+        seen = {k: v for k, v in f.items() if k not in ("id", "value")}
+        try:
+            answer = resolve_field({**seen, "label": label, "kind": f.get("kind") or "text"}, profile)
+        except Exception:  # (a rule that can't read a box so bare: not the desk's answer either)
+            answer = None
+        if what == "email" and _user_name_box({"label": label}):
+            continue  # (an account's user name: the desk puts the email in it, pipeline._sign_in)
+        if answer is None or personal_value(answer.value) != what:
+            yield f'{where}: box "{label[:80]}" holds the profile\'s {what}'
+
+
+def _saved_pages(folders: list[Path], name: str) -> dict[str, Path]:
+    """Each employer's saved file `name` (pipeline/<employer>/<name>, in a shard's folder too), by its folder's name."""
+    return {p.parent.name: p for folder in folders for p in folder.rglob(name)
+            if p.is_file() and p.parent.parent.name == "pipeline"}
+
+
+def boxes_findings(check: str, records: dict[str, dict[str, Any]], folders: list[Path]) -> list[str]:
+    """box_findings over every employer's saved page (its snapshot.json's boxes), against the fake profile."""
+    snapshots = _saved_pages(folders, "snapshot.json")
+    profile = Profile(copy.deepcopy(live_profile.FAKE_PROFILE))
+    out: list[str] = []
+    for name in records:
+        path = snapshots.get(slug(name))
+        if path is None:
+            continue
+        try:
+            fields = json.loads(path.read_text(encoding="utf-8")).get("fields") or []
+        except (OSError, ValueError, AttributeError):
+            continue
+        out += box_findings(f"{check}/{name}", fields, profile)
+    return out
+
+
+def stop_pages(check: str, records: dict[str, dict[str, Any]], folders: list[Path]) -> tuple[int, int, list[str]]:
+    """The employers the check stopped short of their review page (their last round not "ready"), how many of them had
+    the page they stopped on saved (pipeline/<employer>/page.html, with no snapshot_error), and a line for each that
+    hadn't: (saved, stops, lines)."""
+    pages = _saved_pages(folders, "page.html")
+    saved, stops, lines = 0, 0, []
+    for name, rec in records.items():
+        rounds = rec.get("rounds") or []
+        if not rounds or (rounds[-1] or {}).get("status") == "ready":
+            continue
+        stops += 1
+        if slug(name) in pages and not rec.get("snapshot_error"):
+            saved += 1
+        else:
+            lines.append(f"{check}/{name}: the page it stopped on wasn't saved"
+                         + (f" ({str(rec['snapshot_error'])[:120]})" if rec.get("snapshot_error") else ""))
+    return saved, stops, lines
 
 
 def log_findings(check: str, text: str) -> list[str]:
@@ -286,20 +435,31 @@ def main(argv: list[str] | None = None) -> int:
     secrets = {name: os.environ.get(name, "") for name in SECRETS}
     files = pages = 0
     values: list[str] = []
+    folders: list[Path] = []
     for folder in args.folder:
         if not folder.is_dir():
             print(f"::warning::{folder.as_posix()}: no such folder")
             continue
+        folders.append(folder)
         files += sum(1 for _ in _texts(folder))
         findings += folder_findings(folder, secrets)
         pages += sum(1 for _ in review_pages(read, folder))
         values += values_findings(checks[0] if len(checks) == 1 else "values", read, folder)
+    boxes: list[str] = []
+    saved_stops = stops = 0
+    if folders:
+        boxes = boxes_findings(checks[0] if len(checks) == 1 else "boxes", read, folders)
+        saved_stops, stops, unsaved = stop_pages(checks[0] if len(checks) == 1 else "pages", read, folders)
+        boxes += unsaved
     for finding in findings:
         print(f"::error::{finding}")
-    for finding in values + postings:
+    for finding in values + boxes + postings:
         print(f"::warning::{finding}")
     said = (f"values: {len(values)} not the profile's" if values else "values: as the profile's") + \
         f" ({pages} review page{'' if pages == 1 else 's'} read)"
+    said += f"; agreements: {sum(len(agreements(rec)) for rec in read.values())} re-read"
+    if folders:
+        said += f"; pages: {saved_stops} of {stops} stops saved"
     if searched:
         said += (f"; postings: {short_reads} of {searched} not read whole" if short_reads
                  else f"; postings: all {searched} read whole")

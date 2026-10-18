@@ -453,7 +453,7 @@ def test_a_ready_rows_detail_is_its_title_and_the_saved_outcomes_are_grouped():
     assert lc.read_state(body) == state
     assert len(body) < 52_000, len(body)  # (run 102's real body: 55,444 characters in the old shape, 42,207 in this)
     saved = _saved(body)
-    assert saved["version"] == 2
+    assert saved["version"] == 3 and saved["forms"] == {}  # (no review page's form noted: an older live_smoke's)
     assert len(body.split(lc.STATE_MARK, 1)[1]) < 8_000  # the saved outcomes (12k for run 102 in the old shape)
     assert saved["outcomes"]["search"] == {"works": sorted((f"Employer {i}" for i in range(68)), key=str.lower)}
     assert set(saved["outcomes"]["pipeline"]) == {"ready", "needs_you stuck"} and saved["reached"] == {}
@@ -683,8 +683,12 @@ def test_the_trend_body_fits_githubs_size_with_sixty_runs_of_four_checks():
         trend = lc.add_run(trend, current, at=f"2026-{8 + run // 28:02d}-{run % 28 + 1:02d} 10:17 UTC", seconds=seconds,
                            run_url=f"https://github.com/sebob2491/Jobs/actions/runs/{39068637558 + run}")
     assert len(trend.letters) == 4 and all(len(found) == 110 for found in trend.letters.values())
+    # and the apply checks' employers' last ten runs' seconds (for the comment's Slower: 7k of it here)
+    assert set(trend.seconds) == {"pipeline", "hr", "accounts"} and all(
+        len(found) == 110 and all(len(took) == lc.TREND_SECONDS for took in found.values())
+        for found in trend.seconds.values())
     body = lc.render_trend(trend)
-    assert len(body) < 50_000, len(body)
+    assert len(body) < 56_000, len(body)
     assert lc.read_trend(body) == trend  # (all of it: sixty runs, every count and letter)
     assert "and 90 more (`scripts/nightly_summary.py --trend` names them all)" in body
     smaller = lc.render_trend(trend, limit=40_000)
@@ -735,3 +739,71 @@ def test_the_workflow_keeps_the_trend_issue_apart_from_the_issue():
     fresh = flow["jobs"]["fresh"]["steps"][0]["run"]
     assert "--label live-check" in fresh and f'select(.title == "{lc.ISSUE_TITLE}")' in fresh
     assert "live-trends" not in fresh
+
+
+# --- the compare's three alarms (the audit of Oct 18): a review page's form, an employer's time, the bot checks ---
+
+REVIEW = [{"id": "a", "kind": "text", "label": "Legal Name", "value": "Testy McTestface"},
+          {"id": "b", "kind": "text", "label": "Phone Number", "value": "480-555-0199"},
+          {"id": "c", "kind": "select", "label": "Degree", "value": "Bachelor's"}]
+
+
+def test_a_review_page_whose_form_changed_is_said_and_never_counted_as_went_backwards(tmp_path, clock):
+    """An employer still at its review page whose form there asks something new (form_shape: its boxes' labels and
+    kinds, never their values) is a "Form changed" line in the comment, and the workflow comments for it alone; it
+    isn't a step back. The forms are saved in the state's version 3; a version 2 body still reads (no forms yet)."""
+    asm = lc.form_shape(REVIEW)
+    assert asm == lc.form_shape([{**f, "value": "other"} for f in reversed(REVIEW)])  # (its values and order: the same)
+    more = lc.form_shape(REVIEW + [{"id": "d", "kind": "radio_group", "label": "Are you 18 or older?"},
+                                   {"id": "e", "kind": "text", "label": "Desired Pay"}])
+    night1 = [pipeline_rec("ASM", form=asm), pipeline_rec("KLA", "needs_you", "stuck", form=asm)]
+    body, comment, _ = _run(tmp_path, [], night1, [search_rec("USAA")])
+    assert comment is None and lc.read_forms(body) == {"pipeline": {"ASM": asm}}  # (at the review page alone)
+    assert lc._saved(body)["version"] == 3
+    issue = {"number": 7, "title": "Nightly live check", "state": "OPEN", "body": body}
+    night2 = [pipeline_rec("ASM", form=more), pipeline_rec("KLA", "needs_you", "stuck", form=more)]
+    body, comment, outputs = _run(tmp_path, [issue], night2, [search_rec("USAA")])
+    assert outputs["changes"] == "1" and outputs["went_back"] == "0"
+    assert "- Form changed at ASM (pipeline, still `ready`): 3 → 5 boxes, +2" in comment
+    assert comment.startswith("No result changed since the last nightly live check") and "Went backwards" not in comment
+    assert lc.read_forms(body) == {"pipeline": {"ASM": more}}
+    issue["body"] = body
+    _, comment, outputs = _run(tmp_path, [issue], night2, [search_rec("USAA")])  # (the same form: nothing to say)
+    assert comment is None and outputs["changes"] == "0"
+    v2 = json.dumps({"version": 2, "outcomes": {"pipeline": {"ready": ["ASM"]}}})
+    assert lc.read_forms(f"{lc.STATE_MARK}\n```json\n{v2}\n```\n") == {}
+
+
+def test_an_employer_twice_as_slow_as_usual_is_said(tmp_path, clock):
+    """The trend keeps each apply check's employers' last ten runs' seconds; one that took twice its usual (their
+    median) and 60 s or more is a "Slower" line in the comment. A fast employer twice as slow (under 60 s) isn't."""
+    trend = None
+    for day in range(3):
+        trend = lc.add_run(trend, {"pipeline": {"ASM": Result("ready"), "KLA": Result("ready")}}, at=f"run {day}",
+                           seconds={"pipeline": {"ASM": 40.0 + day, "KLA": 20.0}})
+    assert trend.seconds == {"pipeline": {"ASM": [40, 41, 42], "KLA": [20, 20, 20]}}
+    assert lc.read_trend(lc.render_trend(trend)).seconds == trend.seconds  # (saved and read back)
+    trend_issue = {"number": 70, "title": TREND, "state": "OPEN", "body": lc.render_trend(trend)}
+    body, _, _ = _run(tmp_path, [], [pipeline_rec("ASM"), pipeline_rec("KLA")])
+    issue = {"number": 7, "title": "Nightly live check", "state": "OPEN", "body": body}
+    night = [pipeline_rec("ASM", seconds=95.0), pipeline_rec("KLA", seconds=50.0)]
+    new_trend, _, comment, outputs = _trend_run(tmp_path, [trend_issue], night, [search_rec("USAA")], issues=[issue])
+    assert outputs["changes"] == "1"
+    assert "- Slower at ASM (pipeline): 95 s, its usual 41 s" in comment and "KLA" not in comment
+    assert lc.read_trend(new_trend).seconds["pipeline"] == {"ASM": [40, 41, 42, 95], "KLA": [20, 20, 20, 50]}
+
+
+def test_bot_checks_up_at_many_employers_open_the_comment(tmp_path, clock):
+    """A CAPTCHA come up at a job system's employers reads as many "expected" lines: the comment opens with one line
+    that says so, when the employers stopped by a bot check or a CAPTCHA are 5 or more and twice the last run's."""
+    names = [f"Employer {i}" for i in range(8)]
+    night1 = [pipeline_rec(n) for n in names[:6]] + [pipeline_rec(n, "needs_you", "bot_check") for n in names[6:]]
+    body, _, _ = _run(tmp_path, [], night1)
+    issue = {"number": 7, "title": "Nightly live check", "state": "OPEN", "body": body}
+    night2 = [pipeline_rec(n, "needs_you", "captcha") for n in names[:3]] + \
+        [pipeline_rec(n, "needs_you", "bot_check") for n in names[3:]]
+    _, comment, _ = _run(tmp_path, [issue], night2)
+    assert comment.startswith("**Bot checks up**: 8 employers (last run 2) stopped at a bot check or a CAPTCHA.")
+    night3 = [pipeline_rec(n) for n in names[:4]] + [pipeline_rec(n, "needs_you", "captcha") for n in names[4:]]
+    _, comment, _ = _run(tmp_path, [issue], night3)  # (4 of them: fewer than 5)
+    assert "Bot checks up" not in comment

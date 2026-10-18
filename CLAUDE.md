@@ -90,6 +90,11 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   - Each check's machine audits what it wrote (`scripts/live_audit.py`): a consent the desk never gives (a newsletter,
     job alerts, a talent community, marketing, texts or calls, arbitration, at-will, a waiver), a submit, or the test
     identity's secrets, an emailed code or a security answer in a file fail that job with an `::error::` line each.
+    So does an agreement whose words (each round's `agreed`: the notice, terms page, attestation or account box the
+    desk agreed to, `pipeline.Run.agreed`, scrubbed; also `agreed.json` beside the saved page) hold a waiver, an
+    arbitration agreement or a sign-up in so many words. A box on a saved page holding the fake applicant's phone,
+    email, zip, street, LinkedIn or full name where `autofill.resolve_field` wouldn't put it, and a stop whose page
+    wasn't saved, are `::warning::` lines.
     Its values check reads each review page reached against the profile the check applied with (a job or school
     from or to a date the profile doesn't give, a degree of a level it doesn't have, another role's employer): a
     `::warning::` line each, never a failure; `nightly_summary.py --artifacts <folder>` prints them too. The pages the
@@ -97,7 +102,10 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
     On the search check's machine, one `::warning::` line a job system whose postings came back without a title,
     a place or their text (the search check reads each as the desk reads a pasted link).
   - Compare a run with the previous one per employer. A changed outcome is the signal. The nightly's changes comment opens with
-    **Went backwards** when an employer the last run took to its review page no longer gets there (the regression alarm).
+    **Went backwards** when an employer the last run took to its review page no longer gets there (the regression alarm),
+    after **Bot checks up** when bot checks and CAPTCHAs stopped 5 employers or more, twice the last run's; it ends with
+    **Form changed** (an employer still at its review page whose boxes there changed) and **Slower** (twice its median
+    of the last 10 runs, and 60 s or more), which write a comment by themselves.
   - The nightly's compare job (`scripts/live_compare.py`) writes two issues: "Nightly live check" (label `live-check`,
     #54: the last run's tables, and a comment when an outcome changed) and "Nightly live trends" (label `live-trends`,
     never `live-check`: the last 60 runs' counts per check and median seconds, each employer's last 20 runs as letters,
