@@ -113,6 +113,19 @@ def test_pipeline_outcome_is_where_it_ended():
         Result("no postings", "no postings found")
 
 
+def test_a_rounds_stop_code_goes_before_its_reason():
+    """T1 (the review of Oct 18): a round's stop code (pipeline.STOP_CODES) leads its reason in the detail, where
+    nightly_summary.py sorts by it; never compared, and a round from before the codes reads as it did."""
+    rec = pipeline_rec("KLA", "needs_you", "stuck", "The page didn't move on.")
+    rec["rounds"][-1]["code"] = "step_not_saved"
+    assert lc.pipeline_outcome(rec) == Result("needs_you stuck",
+                                              "Field Service Engineer · [step_not_saved] The page didn't move on.")
+    rec["rounds"][-1]["code"] = "site_down"  # (whatever the words: the employer's last outcome is kept)
+    assert lc.pipeline_outcome(rec).outcome == lc.SITE_DOWN
+    rec["rounds"][-1]["code"] = "Not a code!"  # (nothing but a code's letters goes into the detail)
+    assert lc.pipeline_outcome(rec).detail == "Field Service Engineer · The page didn't move on."
+
+
 def test_search_outcome_ignores_how_many_openings_there_are():
     assert lc.search_outcome(search_rec("USAA", az=5)) == Result("works", "5 in AZ")
     assert lc.search_outcome(search_rec("USAA", az=0, any_=3)) == Result("works", "none in AZ, 3 anywhere")

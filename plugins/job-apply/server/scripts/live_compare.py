@@ -19,7 +19,8 @@ grow). The nightly workflow (.github/workflows/live-nightly.yml) reads and write
 The outcomes:
   pipeline  (live_smoke.py --pipeline): where the Job Desk's pipeline ended, the report's
             "Ended" and "Waiting on": "ready", "needs_you sign_in", "needs_you stuck",
-            "failed", "no postings" (the search found none) or "crash".
+            "failed", "no postings" (the search found none) or "crash". A stop's detail starts its reason with
+            its stop code ("[step_not_saved] The page didn't move on..."): nightly_summary.py sorts by it.
   hr        (live_smoke.py --pipeline --lists phoenix-metro --role hr): the same, for HR jobs on
             the Phoenix list, as an applicant with an HR background.
   finance   (... --role finance): the same, for finance jobs, as a finance applicant.
@@ -104,6 +105,7 @@ SITE_DOWN = "site down"
 # No search here has found none anywhere since the broader words came (run 114), so it doesn't flip from night to night
 EMPTY = "empty"
 _DOWN = re.compile(r"\bdown for maintenance\b", re.I)
+_CODE = re.compile(r"[a-z_]{1,40}")  # a round's stop code (pipeline.STOP_CODES), put before its reason in the detail
 
 
 def pipeline_outcome(rec: dict[str, Any]) -> Result:
@@ -116,12 +118,14 @@ def pipeline_outcome(rec: dict[str, Any]) -> Result:
         note = rec.get("note") or ""
         return Result(SITE_DOWN if _DOWN.search(note) else "no postings", note)
     last = rounds[-1]
-    if last.get("need") == "stuck" and _DOWN.search(last.get("reason") or ""):
-        return Result(SITE_DOWN, _join(title, last.get("reason")))
+    code = last.get("code") if isinstance(last.get("code"), str) and _CODE.fullmatch(last["code"]) else ""
+    reason = f"[{code}] {last.get('reason') or ''}".strip() if code else last.get("reason")
+    if code == "site_down" or last.get("need") == "stuck" and _DOWN.search(last.get("reason") or ""):
+        return Result(SITE_DOWN, _join(title, reason))
     outcome = " ".join(p for p in (last.get("status") or "unknown", last.get("need") or "") if p)
     if outcome == "ready":  # the review page: its one sentence says what the outcome says, on two hundred rows
         return Result(outcome, title)
-    return Result(outcome, _join(title, last.get("reason")))
+    return Result(outcome, _join(title, reason))
 
 
 _PARTLY = re.compile(r"\(\d+ of \d+ searches failed\)")  # server.search_company_jobs: others answered

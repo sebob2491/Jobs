@@ -116,6 +116,18 @@ jobs:
       - name: Every part of the suite passed
         run: test "${{ needs.tests.result }}" = success
 
+  windows-all:
+    # The Windows parts as one check, by this name ("windows"), as server is for Linux (A4, the review of Oct 18). Not
+    # required yet: the weekly flake report (scripts/flake_rate.py) says the Windows-only rate, and once it stays under
+    # about 2% for four weeks, the owner can add this check to main's ruleset.
+    name: windows
+    needs: windows
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every part of the suite passed on Windows
+        run: test "${{ needs.windows.result }}" = success
+
   plugin:
     name: plugin manifests
     runs-on: ubuntu-latest

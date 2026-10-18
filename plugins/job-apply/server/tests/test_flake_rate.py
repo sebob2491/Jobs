@@ -79,3 +79,50 @@ def test_a_log_github_wont_give_is_counted_not_the_end_of_the_report():
     out = fr.report(found, since)
     assert "1 failed job's log couldn't be read: windows (Python 3.13, part 2/2) (GitHub said: gh api " in out, out
     assert "HTTP 410: Gone" in out, out
+
+
+def test_each_job_family_is_tabled_and_the_windows_only_rate_said():
+    """A4 (the review of Oct 18): each job family's runs, failed jobs and failed tests, and the runs that failed on
+    Windows alone (a Windows part failed while every Linux part of that attempt passed) as a rate. Run 1 failed on
+    Windows only; run 2 on Linux and Windows both (not Windows-only); run 3 passed everywhere. The aggregate checks
+    ("server (Python ...)", "windows") repeat their parts and aren't counted."""
+    runs = {"workflow_runs": [{"id": n, "head_sha": sha, "run_attempt": 1, "conclusion": c}
+                              for n, sha, c in ((1, "a", "failure"), (2, "b", "failure"), (3, "c", "success"))]}
+
+    def jobs(linux, windows):
+        return {"jobs": [{"id": 0, "name": "tests (Python 3.13, part 1/6)", "conclusion": linux},
+                         {"id": 0, "name": "server (Python 3.13)", "conclusion": linux},
+                         {"id": 0, "name": "windows (Python 3.13, part 2/4)", "conclusion": windows},
+                         {"id": 0, "name": "windows", "conclusion": windows},
+                         {"id": 0, "name": "plugin manifests", "conclusion": "success"}]}
+
+    answers = {"repos/o/r/actions/workflows/tests.yml/runs?created=%3E%3D2026-10-09&per_page=100&page=1": runs,
+               "repos/o/r/actions/runs/1/attempts/1/jobs?per_page=100": jobs("success", "failure"),
+               "repos/o/r/actions/runs/2/attempts/1/jobs?per_page=100": jobs("failure", "failure"),
+               "repos/o/r/actions/runs/3/attempts/1/jobs?per_page=100": jobs("success", "success")}
+    logs = iter(["FAILED tests/test_desk.py::test_a_windows_path - UnicodeDecodeError\n",
+                 "FAILED tests/test_search.py::test_a_board_page - KeyError: 'x'\n",
+                 "FAILED tests/test_desk.py::test_a_windows_path - UnicodeDecodeError\n"])
+
+    def api(path):
+        return next(logs) if path.endswith("/logs") else answers[path]
+
+    since = datetime.date(2026, 10, 9)
+    found = fr.tally("o/r", since, api=api)
+    assert found["families"] == {
+        "tests": {"runs": 3, "failed_jobs": 1, "tests": ["tests/test_search.py::test_a_board_page"]},
+        "windows": {"runs": 3, "failed_jobs": 2, "tests": ["tests/test_desk.py::test_a_windows_path"]},
+        "plugin manifests": {"runs": 3, "failed_jobs": 0, "tests": []}}
+    assert found["windows_only"] == 1 and found["jobs_failed"] == 3
+    assert round(fr.windows_rate(found), 1) == 33.3
+    out = fr.report(found, since)
+    assert "| tests | 3 | 1 | — | `test_a_board_page` |" in out, out
+    assert "| windows | 3 | 2 | 1 | `test_a_windows_path` |" in out, out
+    assert "| plugin manifests | 3 | 0 | — | — |" in out, out
+    assert "Windows-only rate: 1 of 3 runs (33.3%). `windows` can be made a required check once this stays under " \
+           "about 2% for four weeks." in out, out
+    # (a week without Windows runs says no rate; one with no failure still has its table)
+    assert fr.windows_rate({"families": {"tests": {"runs": 2}}}) is None
+    quiet = fr.report({"runs": 1, "jobs_failed": 0, "failures": {}, "windows_only": 0,
+                       "families": {"windows": {"runs": 1, "failed_jobs": 0, "tests": []}}}, since)
+    assert "Windows-only rate: 0 of 1 run (0.0%)" in quiet and quiet.endswith("No test failed."), quiet

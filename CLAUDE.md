@@ -57,13 +57,16 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
     Each part starts its slow tests first (`JOB_APPLY_SLOW_FIRST=1` with `--maxschedchunk=1`), so none
     is left running alone at the end. A test that takes 20 s or more in a part's `--durations` list
     gets the mark.
-  - CI also runs it on Windows, in four parts (`windows (Python 3.13, part n/4)`), the owner's platform. Those checks
-    aren't required (a failure doesn't block the merge), so look at them yourself. Windows reads and
+  - CI also runs it on Windows, in four parts (`windows (Python 3.13, part n/4)`, and `windows` for all four), the
+    owner's platform. Those checks aren't required (a failure doesn't block the merge), so look at them yourself.
+    Windows reads and
     writes text as cp1252 unless told otherwise: give every text file `encoding="utf-8"`, tests too.
     Build paths with pathlib (`as_posix()` for a relative path shown, `Path.as_uri()` for `file://`).
   - The `weekly` workflow (Mondays, or by hand) audits the lock's packages (pip-audit: a finding fails it) and
     lists the week's failed tests in its summary, flakes first (`scripts/flake_rate.py`: a test that failed on a
-    commit whose tests passed in another run or attempt).
+    commit whose tests passed in another run or attempt), then each job family's runs, failed jobs and tests, and
+    the Windows-only rate (runs that failed on Windows alone). `windows` can be made a required check once that
+    rate stays under about 2% for four weeks (the owner's call).
 - Live checks against real employer sites: `uv run python scripts/live_smoke.py`.
   - Add `--pipeline --fake-passwords --parallel 4` to drive the Job Desk pipeline. The full run takes about 6 minutes.
   - Add `--lists phoenix-metro` to check another list, and `--role hr` (or `--role finance`) to look
@@ -106,7 +109,8 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   at the review page in an earlier run, not in the last, with the date each last got there; and `desk_handled.yaml`'s
   drift from the last run's accounts check), `--check accounts`
   (one line per employer), `--changes` (the last run's changes, sorted: "look at" first, likely the desk's; then a site's or the
-  rules'; then the better), `--tables` (Where It Stands' employer
+  rules'; then the better: by each stop's code, `pipeline.STOP_CODES`, which every `_pause` names and `why()`
+  places; by the reason's words only in a comment from before the codes), `--tables` (Where It Stands' employer
   tables), `--artifacts <zip or folder> --companies "A,B"` (each employer's rounds, questions with their
   choices, and the page where it stopped). Use it instead of reading the issue's body or a run's logs.
   `--trend [N]` (from the trend issue: the last N runs, 14 by default, newest first: each check's reached/total and
@@ -123,6 +127,10 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   `test_live_fixtures.py::test_live_fixture_decides_the_same` decides it again offline, naming the page and the
   key that changed. `--replace` is how an intended change is accepted (a run's new capture of the page); for a
   page no run has captured again, `JOB_APPLY_REDECIDE=1` on that test writes its decisions again (look at the diff).
+  `--digest` writes the nightly issue's "Needs a person" comment from a run's files, or nothing: the compare job
+  (and the weekly probes' job) posts it only when an employer went backwards, a check didn't finish, one
+  `desk_handled.yaml` lists was out of "all the way" for two runs, the test inbox refused its login or a probe found a
+  desk failure. `--changes` reads the newest changes comment, past a digest posted after it.
 - A probe of a few employers on GitHub (where the test identity's secrets are): run the live-nightly
   workflow by hand with `companies` (and `checks`, e.g. `accounts`). It runs only those, in a few minutes,
   and isn't compared or written to the issue: read its artifacts with `nightly_summary.py --artifacts`.

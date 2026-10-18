@@ -1080,7 +1080,7 @@ function renderSide() {
     else if (r.need === "maybe_duplicate") body = jobButtons(r, ["apply_anyway", "skip"]);
     else body = jobButtons(r, ["show", "resume", "skip", "already"]);
     const key = `${r.job_id}:${r.need}:${(r.questions || []).map((q) => q.label).join("|")}`;
-    return {key, html: `<div class="task ${r.blocking ? "hands" : ""}">${head}${wentPanel(r)}${body}</div>`};
+    return {key, html: `<div class="task ${r.blocking ? "hands" : ""}" data-code="${esc(r.code || "")}">${head}${wentPanel(r)}${body}</div>`};
   });
   if (!needEntries.length) needEntries.push({key: "none", html: `<div class="empty">Nothing right now.</div>`});
   patch($("needs"), needEntries);

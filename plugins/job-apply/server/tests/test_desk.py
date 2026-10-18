@@ -2238,8 +2238,9 @@ def test_jobs_stopped_on_a_bot_check_or_captcha_are_marked_and_a_forms_captcha_i
     names = ["Example Fab", "Example Litho", "Example Etch", "Example Optics"]
     jobs = [srv.add_job(url=f"https://example.com/job/{i}", title="Technician", company=c)["job"]
             for i, c in enumerate(names)]
-    shapes = [dict(need="bot_check", left=True), dict(need="sign_in", captcha=True),
-              dict(need="captcha", captcha=True), dict(need="questions")]
+    shapes = [dict(need="bot_check", left=True, code="bot_check"),
+              dict(need="sign_in", captcha=True, code="account_captcha"),
+              dict(need="captcha", captcha=True, code="captcha"), dict(need="questions", code="questions")]
     for i, (job, name, shape) in enumerate(zip(jobs, names, shapes)):
         r = Run(job["id"], "Technician", name, status="needs_you", reason="Waiting.", **shape)
         r.paused_at = 1000.0 + i
@@ -2265,6 +2266,9 @@ def test_jobs_stopped_on_a_bot_check_or_captcha_are_marked_and_a_forms_captcha_i
                 assert "Bot check" in marked["Example Fab"] and "CAPTCHA" in marked["Example Litho"], marks
                 assert "CAPTCHA" in marked["Example Etch"], marks
                 assert "CAPTCHA" not in marked["Example Optics"] and "Bot check" not in marked["Example Optics"], marks
+                # each card says its stop's code (T1, the review of Oct 18: nothing shown, for a test or a look)
+                codes = await page.eval_on_selector_all("#needs .task", "ts => ts.map((t) => t.dataset.code)")
+                assert sorted(codes) == ["account_captcha", "bot_check", "captcha", "questions"], codes
                 assert "1 application ready for your Submit (1 with a CAPTCHA to tick first)" in await page.inner_text("#notices")
                 assert not sent
                 await page.click("#notices [data-act=review-round]")
@@ -2798,7 +2802,7 @@ def test_after_a_restart_the_jobs_never_begun_are_queued_again_paused_and_the_be
         passes.append(r.job_id)
         if not restarted and r.job_id == a:
             return self._pause(r, "stuck", "The review page shows errors: Phone is invalid. Fix them in the browser, "
-                               "then press Submit.")
+                               "then press Submit.", code="review_errors")
         if not restarted and r.job_id == b:
             await asyncio.Event().wait()  # under way as the desk restarts
         r.status, r.reason = "ready", "Filled and waiting on the review page."
