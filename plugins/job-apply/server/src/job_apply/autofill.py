@@ -553,8 +553,7 @@ _YES_NO_TAIL = re.compile(r"\s*[:,\-\u2013]?\s*\(?\s*yes\s*(?:/|or)\s*no\b\)?", 
 _NUMBERING = r"(?:\(?\s*(?:q\s*)?\d+[a-z]?\s*[.):\]]|[a-z][.)]|#\s*\d+[.):]?)"
 _OWN_HEADING = re.compile(rf"^\s*{_NUMBERING}?\s*(?:(?:(?:u\.?\s?s\.?\s*|united states\s+)?citizenship(?:\s+status)?|"
                           r"(?:u\.?\s?s\.?\s*|united states\s+)person(?:\s+status)?|export\s+controls?|"
-                          r"required|eligibility|(?:work|employment)\s+eligibility|work authori[sz]ation(?:\s+status)?|"
-                          rf"(?:legally\s+)?authori[sz]ed\s+to\s+work(?:\s+in\s+the\s+{_US_WRITTEN})?)\s*"
+                          r"required|eligibility|(?:work|employment)\s+eligibility|work authori[sz]ation(?:\s+status)?)\s*"
                           r"(?::|\s[-\u2013\u2014]))?\s*$", re.I)
 _US_SAID = r"(?:u\.?\s?s\.?(?:\s?a\.?)?\s+|united states\s+)?"
 # (and the employer's word that it won't sponsor, alone in its sentence: "Note: this position is not eligible for visa
@@ -666,6 +665,8 @@ _BARE_ASKED = re.compile(rf"(?:^|(?<=[:.)\]?])|(?<=\s[-\u2013\u2014]))\s*(?:(?:{
 # A list of the persons that names those a permanent resident is among, or the U.S. person by name: otherwise ("Are you a
 # U.S. citizen or refugee/asylee?") the profile's us_person says nothing of them (_among_the_named)
 _NAMES_RESIDENTS = re.compile(r"permanent\s+residen|green\s+card|\bus\s+person\b", re.I)
+# ...after another question, or a short phrase before a colon or a dash: never answered as one (_OWN_HEADING's are)
+_ANOTHER_HEAD = re.compile(r"\?\s*$|^[^?:]{1,60}(?::|\s[-\u2013\u2014])\s*$")
 # Which rules read each question (_citizen_question)
 _ASKED_BY = {"us_citizen": {"us_citizen", "citizenship"}, "us_person": {"us_person"}}
 
@@ -683,9 +684,10 @@ def _citizen_question(raw_label: str) -> str:
         if _US_PERSON_ASKED.search(text):
             return "us_person"
         bare = _BARE_ASKED.search(text)
-        # (or after another question: "Legally authorized to work? U.S. citizen?" is the citizen's too, never one Yes
-        # for both; left)
-        if bare is None or not (_OWN_HEADING.match(text[:bare.start()]) or text[:bare.start()].rstrip().endswith("?")):
+        # (or after another question, or a short phrase of its own: "Legally authorized to work? U.S. citizen?",
+        # "Authorized to work in the US: U.S. citizen?" are the citizen's too, never one Yes for both; left, as no
+        # heading of the question's own is before it: the eleventh review of Oct 18)
+        if bare is None or not (_OWN_HEADING.match(text[:bare.start()]) or _ANOTHER_HEAD.search(text[:bare.start()])):
             return ""
         # (a bare "U.S. Citizen?" after "Work Authorization:" is the citizen's, never the work authorization rule's
         # Yes: the tenth review of Oct 18)

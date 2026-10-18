@@ -4065,6 +4065,10 @@ def test_a_bare_citizen_question_and_a_us_person_heading_are_read_as_the_questio
     assert _answer("Are you a US citizen? This position requires access to export-controlled information.", pr,
                    **yes_no) == "No"
     assert _answer("Are you a US citizen? (Green card holders: answer Yes)", pr, **yes_no) is None
+    # (the eleventh review: "Authorized to work in the US" is a question, no heading: a visa holder's No would deny it)
+    for label in ("Legally authorized to work in the US: Are you a US citizen?",
+                  "Legally authorized to work in the US - U.S. citizen or permanent resident"):
+        assert _answer(label, visa, **yes_no) != "No", label
 
 
 def test_a_sponsorship_question_about_a_partner_company_is_still_the_persons():
