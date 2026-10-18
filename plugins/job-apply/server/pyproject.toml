@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-xdist>=3.5", "ruff>=0.16", "mypy>=2.4", "types-PyYAML>=6.0", "types-Markdown>=3.5"]
+dev = ["pytest>=8", "pytest-xdist>=3.5", "pytest-cov>=6", "ruff>=0.16", "mypy>=2.4", "types-PyYAML>=6.0", "types-Markdown>=3.5"]
 
 [project.scripts]
 job-apply-mcp = "job_apply.server:main"
