@@ -12262,14 +12262,17 @@ def test_a_lone_box_marked_wrong_on_a_page_that_says_nothing_wrong_is_left_as_it
     assert marked["needs_input"][0]["required"]
 
 
+@pytest.mark.parametrize("drawn", ["late", "with the error"])
 @pytest.mark.parametrize("case", ["asked", "readonly", "never asked", "other heading"])
-def test_a_box_the_errors_name_is_gone_back_to_once_and_only_to_be_asked(srv, monkeypatch, case):
+def test_a_box_the_errors_name_is_gone_back_to_once_and_only_to_be_asked(srv, monkeypatch, case, drawn):
     """The review of 0.3.165: a box taken as optional that the errors name ("Available Start Date is required.") is
     gone back to once a step, where it's asked ("asked"), the step the same with Workday's "Errors Found" heading drawn
     after. Never for a read-only box, which is never filled or asked ("readonly"), and a box the form's pass doesn't ask
     after all ("never asked": one autofill leaves to the page) isn't pressed again for: both stop after the one press,
     with what the page said. The same with another heading saying what's wrong ("There are 1 errors on this page": the
-    second review's), the step still the same."""
+    second review's), the step still the same. And the same whether the heading is drawn after the press's look at the
+    page ("late": 400 ms after the error) or before it ("with the error"): one drawn within the look (under load, CI's)
+    read as the page gone on, and Save and Continue was pressed again on the "new" step."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
     monkeypatch.setattr(pipeline, "STEP_SAVE_WAIT", 1)
@@ -12283,6 +12286,7 @@ def test_a_box_the_errors_name_is_gone_back_to_once_and_only_to_be_asked(srv, mo
 
         monkeypatch.setattr(srv, "autofill", autofill)
     query = {"readonly": "?readonly", "other heading": "?heading=other"}.get(case, "")
+    query += ("&" if query else "?") + ("late=400" if drawn == "late" else "late=0")
     job = srv.add_job(url=fixture_url("site/errors-name-optional-box.html") + query, title="Technician",
                       company="Example Fab")["job"]
     applier = Applier(srv)

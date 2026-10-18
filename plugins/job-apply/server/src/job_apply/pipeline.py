@@ -1287,7 +1287,9 @@ def _fingerprint(page: dict[str, Any]) -> tuple:
     # (which questions it shows: a click's summary says it in short, a page read lists them)
     questions = page.get("questions") if isinstance(fields, int) else questions_shown(fields or [])
     actions = tuple(a if isinstance(a, str) else a.get("text", "") for a in page.get("actions") or [])
-    return _steady_url(page.get("url")), tuple(page.get("headings") or []), count, actions, questions
+    # (its headings less one saying what's wrong: an "Errors Found" drawn within a press's look at the page read as the
+    # page gone on, and the step was pressed again, CI's run under load)
+    return _steady_url(page.get("url")), _step_headings(page), count, actions, questions
 
 
 _TAILOR_SAYS = ("Waiting for a resume written for this job. In Claude Code, say \u201ctailor my resumes\u201d; the "
@@ -7736,11 +7738,17 @@ def _answers_page(data: dict[str, Any]) -> tuple:
     return _bare(data.get("url") or ""), tuple(h for h in data.get("headings") or [] if not _ERRORS_HEADING.match(h.strip()))
 
 
+def _step_headings(data: dict[str, Any]) -> tuple[str, ...]:
+    """A page's headings without any that says what's wrong ("Errors Found", "There are 2 errors on this page": the
+    review of 0.3.165), which a step draws over itself once it's pressed with something wrong: the same step whether
+    it's drawn before the press's look at the page or after it (Workday draws its "Errors Found" a moment late)."""
+    return tuple(h for h in data.get("headings") or [] if not _ERRORS_HEADING.match(h.strip()) and not _errorish(h))
+
+
 def _step_page(data: dict[str, Any]) -> tuple:
     """A step, as it is before and after it's pressed with something wrong: its bare address and headings, without
-    any heading that says what's wrong ("Errors Found", "There are 2 errors on this page": the review of 0.3.165)."""
-    return _bare(data.get("url") or ""), tuple(h for h in data.get("headings") or []
-                                               if not _ERRORS_HEADING.match(h.strip()) and not _errorish(h))
+    any heading that says what's wrong (_step_headings)."""
+    return _bare(data.get("url") or ""), _step_headings(data)
 
 
 def _code_only_submit(data: dict[str, Any]) -> dict[str, Any] | None:
