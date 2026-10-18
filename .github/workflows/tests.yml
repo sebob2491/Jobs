@@ -17,8 +17,8 @@ jobs:
   tests:
     # the suite in six parts on separate machines (tests/conftest.py splits it by test id): two parts took
     # 10 to 15 minutes each by Oct 2026, the wait on every pull request, and four took 5 to 6 (the review of Oct 18).
-    # 12 jobs here, 4 on Windows (off the merge's path, so still four parts) and the manifests' make 17, under the 20
-    # jobs the free plan runs at once.
+    # 12 jobs here, 4 on Windows (off the merge's path, so still four parts), the manifests' and the three install
+    # checks make 20, the jobs the free plan runs at once.
     name: tests (Python ${{ matrix.python }}, part ${{ matrix.part }}/6)
     runs-on: ubuntu-latest
     # (each part takes a few minutes; a browser that hangs would otherwise hold the runner for the six hours
@@ -129,3 +129,40 @@ jobs:
       - run: claude plugin validate --strict .
       - run: claude plugin validate --strict plugins/job-apply
       - run: claude plugin validate --strict plugins/dev-kit
+
+  install:
+    # The plugin as a person gets it (the review of Oct 18): `claude plugin marketplace add` this checkout and
+    # `claude plugin install job-apply@sebob-jobs` in a temporary home (the CLI needs no login for these), then the
+    # installed copy's MCP server started the way its .mcp.json says (uv run --frozen --project ... job-apply-mcp),
+    # asked over stdio for its tools (exactly those server.py registers), then job-apply-doctor --json, which on a
+    # clean machine must find nothing wrong but the missing job-apply folder, profile and resume (and on Windows the
+    # UV_PYTHON_INSTALL_DIR the one-step installer sets). A drift in plugin.json, .mcp.json or pyproject's scripts,
+    # or a server that won't start on 3.10, 3.13 or Windows, fails it. Not a check main's ruleset requires.
+    name: install and start (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-latest, python: "3.10"}
+          - {os: ubuntu-latest, python: "3.13"}
+          - {os: windows-latest, python: "3.13"}
+    defaults:
+      run:
+        shell: bash
+        working-directory: plugins/job-apply/server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+          cache-dependency-glob: plugins/job-apply/server/uv.lock
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install -g @anthropic-ai/claude-code
+      # (stdlib only: --no-project leaves the checkout's own environment unmade, so the installed copy's is the one
+      # uv makes, as on a person's computer)
+      - run: uv run --no-project python scripts/mcp_handshake.py --install --doctor

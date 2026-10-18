@@ -136,6 +136,9 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   The workflow queues runs, never two at once (one inbox). A routine dispatches the daily run instead of the
   schedule; a scheduled run that comes within 12 hours of a full run skips itself.
 - Plugin manifests: `claude plugin validate --strict .`, plus the same for each plugin folder.
+- The plugin as a person installs it: `uv run --no-project python scripts/mcp_handshake.py --install --doctor`
+  (CI's `install and start` jobs): installs it with the claude CLI in a temporary home, starts its MCP server as
+  `.mcp.json` says and lists its tools, then runs the doctor. Without `--install` it checks this checkout's folder.
 
 ## Development practices
 
