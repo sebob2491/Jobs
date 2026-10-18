@@ -308,6 +308,39 @@ def test_a_site_that_wont_take_back_an_old_password_is_said():
     assert "won't take a password it had before" in said and "look at it before the next nightly" in said
 
 
+@pytest.mark.parametrize("after", [
+    # (run 136's: the sign-in refused after the "set", then Create Account opened and pressed)
+    (["your saved password didn't sign in, so I opened Create Account",
+      "pressed “Create Account” to create your account on Workday with your saved password"],
+     "Your saved password didn't sign in on Workday, before or after I pressed its Create Account."),
+    # (the desk now: said for what it is, no Create Account)
+    ([], "I set your saved password through Workday's password reset, and it still doesn't sign in there (it says "
+         "“Wrong email address or password”). The site may not have taken it: a reset link works once")])
+def test_a_pass_two_that_set_the_real_password_and_didnt_sign_in_leaves_the_site_unknown(after):
+    """Run 136 at KLA: pass 2 read pass 1's reset email (its link spent), said it set the real password, and the real
+    password didn't sign in after it; the probe said the site was left on the real password. It may still be on the
+    derived one: said plainly, and it fails the run."""
+    second = _rec(SIGN_IN + RESET + after[0], status="needs_you", need="sign_in", reason=after[1])
+    result = lp.reset_result(lp.RESET_TENANTS[0], WHOLE, second, True)
+    assert result["left_on"] == "unknown" and result["status"] == "fail", result
+    assert "may still be on the derived password" in result["warning"], result["warning"]
+    assert lp.failed({"reset": [result]}) == [f"KLA: {result['warning']}"]
+    said = "\n".join(lp.summary_lines({"reset": [result], "tailored": []}))
+    assert "reset KLA: FAIL (site left on an unknown password: maybe still the derived one" in said, said
+    assert "maybe still the derived one" in lp.report_markdown({"reset": [result], "tailored": []})
+    assert "never signed in with it after that (it ended needs_you sign_in)" in result["warning"], result["warning"]
+
+
+def test_a_pass_two_that_broke_off_right_after_setting_the_password_says_so():
+    """The review of 0.3.209: a pass 2 that crashed (or was stopped) right after it said it set the real password was
+    said to have been refused by the site ("the real password didn't sign in after it"). It's said for what's known."""
+    broke = _rec(SIGN_IN + RESET[:3], status="needs_you", need="sign_in", crash="TimeoutError: still running")
+    result = lp.reset_result(lp.RESET_TENANTS[0], WHOLE, broke, True)
+    assert result["left_on"] == "unknown" and result["status"] == "fail", result
+    assert "the run broke off before any sign-in" in result["warning"], result["warning"]
+    assert "didn't sign in" not in result["warning"] and "may still be on the derived password" in result["warning"]
+
+
 def test_a_tenant_whose_password_was_never_changed_is_left_as_it_was_but_fails():
     never = _rec(SIGN_IN, status="needs_you", need="sign_in", reason="Your saved password didn't sign in on Workday, "
                  "and I couldn't find its way to a password reset.")
@@ -439,8 +472,8 @@ def test_a_tailored_probe_that_never_got_to_the_review_page_couldnt_check(rec, s
         f"NXP Semiconductors, tailored resume: {result['detail']}"]
 
 
-def test_nxp_waits_for_the_desk_fix_and_asm_stays():
-    assert [e["name"] for e in lp.TAILORED_EMPLOYERS] == ["ASM (ASM America)"]
+def test_the_tailored_probe_runs_at_asm_and_at_nxp_whose_account_keeps_its_last_resume():
+    assert [e["name"] for e in lp.TAILORED_EMPLOYERS] == ["ASM (ASM America)", "NXP Semiconductors"]
 
 
 def test_live_smoke_drops_the_tailored_resume_into_the_jobs_folder(tmp_path):
@@ -468,8 +501,21 @@ def test_live_smoke_drops_the_tailored_resume_into_the_jobs_folder(tmp_path):
                          text=True, timeout=120)
     assert out.returncode == 0, out.stderr
     said = json.loads(out.stdout.strip().splitlines()[-1])
-    assert said["out"] == {"file": lp.TAILORED_NAME, "pages": 1, "picked": lp.TAILORED_NAME}, said
-    assert (Path(said["folder"]) / lp.TAILORED_NAME).read_bytes().startswith(b"%PDF") and said["note"] and said["for"]
+    today = lp.tailored_name()  # (the run's own name, new each day)
+    assert said["out"] == {"file": today, "pages": 1, "picked": today}, said
+    assert (Path(said["folder"]) / today).read_bytes().startswith(b"%PDF") and said["note"] and said["for"]
+
+
+def test_the_tailored_resume_has_a_new_name_each_day_that_the_desk_still_takes_for_a_resume(tmp_path):
+    """A Workday account keeps the resume of its last application (NXP's): with one name every week, last week's kept
+    file would show this week's name whether or not the desk replaced it. A new name each day tells them apart, and
+    it still ends in "Resume", which the desk's chooser takes (autofill.tailored_document)."""
+    import datetime as dt
+    from job_apply.autofill import tailored_document
+    one, two = lp.tailored_name(dt.date(2026, 10, 18)), lp.tailored_name(dt.date(2026, 10, 25))
+    assert one == "Jobdesk_Test_Tailored_Probe_20261018_Resume.pdf" and one != two
+    (tmp_path / one).write_bytes(b"%PDF-1.4 tailored")
+    assert tailored_document({"folder": str(tmp_path)}, "resume") == str(tmp_path / one)
 
 
 # --- live_smoke.py's switches, short of a browser --------------------------------------------------------------------
@@ -576,7 +622,8 @@ def test_the_probes_run_one_at_a_time_and_pass_two_only_where_it_may_be_needed(t
     monkeypatch.setattr(lp, "run_one", stand_in)
     assert lp.main(["--out", str(out)]) == 1  # (Hitachi's pass 1: refused, and no reset asked for)
     assert calls == [("reset-kla-1", True, False), ("reset-kla-2", False, False),
-                     ("reset-hitachi-high-tech-america-1", True, False), ("tailored-asm-asm-america", False, True)]
+                     ("reset-hitachi-high-tech-america-1", True, False), ("tailored-asm-asm-america", False, True),
+                     ("tailored-nxp-semiconductors", False, True)]
     printed = capsys.readouterr().out
     assert "pass 2 not needed (the site's password was never changed)" in printed
     assert "Weekly probes (reset, tailored) as the test identity (<test-email>)" in printed
@@ -641,8 +688,8 @@ def _run(out: Path, folder: str, rec, page: str = "") -> None:
 @pytest.fixture
 def probes_out(tmp_path):
     """A probes run's folder: KLA's two passes whole; Hitachi's pass 1 refused with no way to a reset (no pass 2: the
-    desk's failure); the tailored resume on ASM's review page; and NXP's showing the resume its account kept (read
-    only where a test puts NXP back among the tailored employers: with_nxp)."""
+    desk's failure); the tailored resume on ASM's review page; and NXP's showing the resume its account kept (the desk's
+    failure)."""
     out = tmp_path / "live-probes"
     whole = SIGN_IN + RESET + APPLICATION
     _run(out, "reset-kla-1", _rec(whole))
@@ -658,13 +705,7 @@ def probes_out(tmp_path):
     return out
 
 
-@pytest.fixture
-def with_nxp(monkeypatch):
-    """NXP back among the tailored employers (as it will be with the desk fix), its kept resume on its review page."""
-    monkeypatch.setattr(lp, "TAILORED_EMPLOYERS", (*lp.TAILORED_EMPLOYERS, NXP))
-
-
-def test_the_report_is_written_from_the_runs_there(probes_out, capsys, with_nxp):
+def test_the_report_is_written_from_the_runs_there(probes_out, capsys):
     assert lp.main(["--out", str(probes_out), "--report-only"]) == 1  # (Hitachi's and NXP's: the desk's)
     printed = capsys.readouterr().out
     results = json.loads((probes_out / "probes.json").read_text(encoding="utf-8"))
@@ -690,7 +731,7 @@ def test_the_report_is_written_from_the_runs_there(probes_out, capsys, with_nxp)
 
 def test_what_couldnt_be_checked_is_said_under_its_own_heading_and_the_run_stays_green(tmp_path, capsys):
     """A week where the sites stopped every probe (a bot check before KLA's sign-in, both passes; Workday's "Something
-    went wrong" after Hitachi refused; no posting at ASM): each said in the live check's words, under its own heading
+    went wrong" after Hitachi refused; no posting at ASM or NXP): each said in the live check's words, under its own heading
     in the summary and the artifact, and the run passes (exit 0)."""
     out = tmp_path / "live-probes"
     _run(out, "reset-kla-1", BOT_CHECK)
@@ -699,21 +740,24 @@ def test_what_couldnt_be_checked_is_said_under_its_own_heading_and_the_run_stays
          company="Hitachi High-Tech America", reason="Workday said “Something went wrong” again and asked for "
                                                      "the page to be refreshed. That's the site's own trouble"))
     _run(out, "tailored-asm-asm-america", {"company": "ASM (ASM America)", "note": "no postings found"})
+    _run(out, "tailored-nxp-semiconductors", {"company": "NXP Semiconductors", "note": "no postings found"})
     assert lp.main(["--out", str(out), "--report-only"]) == 0
     results = json.loads((out / "probes.json").read_text(encoding="utf-8"))
     assert results["failed"] == [] and [r["status"] for r in [*results["reset"], *results["tailored"]]] == [
-        "unchecked"] * 3
+        "unchecked"] * 4
     assert results["unchecked"] == [
         "KLA, pass 1: " + lp.outcome_words(BOT_CHECK), "KLA, pass 2: " + lp.outcome_words(BOT_CHECK),
         "Hitachi High-Tech America, pass 1: needs_you stuck · Workday said “Something went wrong” again and "
         "asked for the page to be refreshed. That's the site's own trouble",
         "ASM (ASM America), tailored resume: no tailored resume in the job's folder (the run never got to make it: no "
-        "postings · no postings found)"]
+        "postings · no postings found)",
+        "NXP Semiconductors, tailored resume: no tailored resume in the job's folder (the run never got to make it: "
+        "no postings · no postings found)"]
     report = (out / "report.md").read_text(encoding="utf-8")
-    assert f"### {lp.FAILED_HEADING}: 0" in report and f"### {lp.UNCHECKED_HEADING}: 4" in report
+    assert f"### {lp.FAILED_HEADING}: 0" in report and f"### {lp.UNCHECKED_HEADING}: 5" in report
     assert "- KLA, pass 1: needs_you bot_check · The site is checking" in report
     printed = capsys.readouterr().out
-    assert f"{lp.UNCHECKED_HEADING}: 4" in printed and "reset KLA: couldn't check this week (site left on as it was" \
+    assert f"{lp.UNCHECKED_HEADING}: 5" in printed and "reset KLA: couldn't check this week (site left on as it was" \
                                                        in printed
     assert "WARNING" not in printed  # (pass 1 never sent the derived password: nothing to restore)
 
@@ -741,7 +785,7 @@ def test_a_run_stopped_at_its_time_is_said(tmp_path):
     assert results["reset"][0]["left_on"] == "derived?"  # (pass 2 never ran: said, plainly)
 
 
-def test_nightly_summary_reads_the_probes_from_a_folder_or_a_zip(probes_out, tmp_path, capsys, with_nxp):
+def test_nightly_summary_reads_the_probes_from_a_folder_or_a_zip(probes_out, tmp_path, capsys):
     lp.main(["--out", str(probes_out), "--report-only"])
     capsys.readouterr()
     assert ns.main(["--probes", str(probes_out)]) == 0

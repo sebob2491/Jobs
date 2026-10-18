@@ -39,6 +39,7 @@ from .ats import detect_ats
 from .autofill import choose_option, choose_place, date_form, is_empty_value, norm, polarity
 from .formjs import (ADD_UNWATCH_JS, ADD_WATCH_JS, ADDED_BLOCKS_JS, CHALLENGE_JS, CLICK_CHOICE_JS, COVERED_JS,
                      DAY_CELL_JS, ELEMENT_INFO_JS, ENTRIES_JS, EXTRACT_JS, FIELD_OPTIONS_JS, PEEK_JS,
+                     KEPT_DELETE_JS, KEPT_ROWS_JS, KEPT_STATE_JS,
                      LOST_BOXES_JS, MARK_OPTIONS_JS, NOTICE_OVER_JS, OPEN_MENU_JS, OPEN_PICKERS_JS, OUTSIDE_CLICK_JS,
                      QUIET_JS, SHOWN_VALUE_JS,
                      UNKEPT_DELETE_JS, UNKEPT_FORGET_JS, UNKEPT_PRESSED_SHOWN_JS, UNKEPT_SHOWN_JS, UPLOAD_NOT_KEPT_JS,
@@ -1387,6 +1388,55 @@ class BrowserSession:
             with contextlib.suppress(PlaywrightError):
                 if not await pressed.evaluate(UNKEPT_PRESSED_SHOWN_JS):
                     return "gone"
+        return "pressed"
+
+    async def kept_upload_state(self, box_id: str) -> str:
+        """An upload box showing a file, before the file tailored for this job goes in place of one kept from before
+        (Applier._replace_kept): "mine" where the desk sent a file into it itself, "other" where what it shows isn't in
+        Workday's list of files (never touched), "" otherwise; "gone" with the box gone (KEPT_STATE_JS). "unread" where
+        the box is there but didn't answer in three tries (a slow page, a loaded machine): never taken for a box gone,
+        whose kept file would go to the employer unreplaced (the re-review of 0.3.209)."""
+        for _ in range(3):
+            async with self._lock:
+                page = await self.page()
+                try:
+                    box = self._locator(page, box_id)
+                    if not await box.count():
+                        return "gone"
+                    return str(await box.evaluate(KEPT_STATE_JS, timeout=3000) or "")
+                except PlaywrightTimeout:
+                    pass
+                except (PlaywrightError, KeyError):
+                    return "gone"
+            await asyncio.sleep(0.5)
+        return "unread"
+
+    async def delete_kept_upload(self, box_id: str, name: str) -> str:
+        """Press the Delete of a file an upload box shows as kept from before (Workday keeps an account's last resume in
+        its "Resume/CV" upload), for the file tailored for this job to go in its place: only that file's own Delete in
+        Workday's list (KEPT_DELETE_JS), past the same check as every press the desk makes. `name`: the file's name as
+        the box shows it, "" where it shows only that a file is there. "deleted" once the list shows that file in fewer
+        items than before (KEPT_ROWS_JS: never by its Delete alone going, as a list drawn again does, nor by its name gone
+        from the page), "pressed" when it doesn't (a site that asks first, turned down), "" when there was no such
+        Delete to press."""
+        async with self._lock:
+            page = await self.page()
+            try:
+                frame = self._frame_for(page, box_id)
+                if not await self._locator(page, box_id).evaluate(KEPT_DELETE_JS, name, timeout=3000):
+                    return ""
+                before = int(await frame.evaluate(KEPT_ROWS_JS, name))
+                button = frame.locator('[data-ja-kept-delete="1"]').first
+                self._check_clickable(await button.evaluate(ELEMENT_INFO_JS, timeout=3000), page.url)
+                await button.click(timeout=5000)
+            except (SubmitBlocked, KeyError, PlaywrightError, PlaywrightTimeout):
+                return ""
+        for _ in range(12):  # (a site's delete takes a moment: waited on with the browser free for the desk's looks)
+            await asyncio.sleep(0.5)
+            async with self._lock:
+                with contextlib.suppress(PlaywrightError):
+                    if int(await frame.evaluate(KEPT_ROWS_JS, name)) < before:
+                        return "deleted"
         return "pressed"
 
     async def upload_state(self, name: str) -> str:

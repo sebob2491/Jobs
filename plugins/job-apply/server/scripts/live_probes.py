@@ -70,13 +70,14 @@ RESET_TENANTS: tuple[dict[str, str], ...] = (
                                                  "try every night, its mail from Workday's own senders"},
 )
 # Employers whose review page shows the file the application took: Greenhouse's (the form itself, a fresh upload
-# every application). NXP Semiconductors' Workday (nxp.wd3, the test identity's account: "Resume/CV <file>
-# successfully uploaded") comes back with the desk fix it waits on: a resume a Workday account kept from its last
-# application is replaced when the job has a tailored one (the form reader reads the kept file as the box's value,
-# and autofill leaves a filled box alone, so the review page shows the profile's resume there)
+# every application), and NXP Semiconductors' Workday (nxp.wd3, the test identity's account: "Resume/CV <file>
+# successfully uploaded"), whose account keeps the resume of its last application: the desk replaces it with the one
+# tailored for the job (0.3.209), so the review page must show the tailored file there too
 TAILORED_EMPLOYERS: tuple[dict[str, str], ...] = (
     {"name": "ASM (ASM America)", "why": "Greenhouse: no account, a fresh upload every application, and its review "
                                          "page is the filled form, the attached file's name on it"},
+    {"name": "NXP Semiconductors", "why": "Workday: its account keeps the resume of its last application, which "
+                                          "the desk replaces with the tailored one (0.3.209)"},
 )
 PROBES = ("reset", "tailored")
 
@@ -257,8 +258,13 @@ def may_have_changed(first: Mapping[str, Any]) -> bool:
 
 def left_on(first: Mapping[str, Any], second: Mapping[str, Any] | None) -> str:
     """The password a tenant is left on after the probe: "real" (pass 2 set it back or signed in with it, or pass 1
-    proved it never changed), "as found" (this run changed nothing: pass 1 never got to send the derived password,
-    and pass 2 couldn't say) or "derived?" (maybe the derived one)."""
+    proved it never changed), "unknown" (pass 2 said it set the real one back, and never signed in with it after that:
+    refused, or the run stopped first; the site may still be on the derived one), "as found" (this run changed nothing:
+    pass 1 never got to send the derived password, and pass 2 couldn't say) or "derived?" (maybe the derived one)."""
+    if second is not None and second["password_set"] and not second["signed_in"]:
+        # (run 136's pass 2 at KLA: the reset email it read was pass 1's, its link spent; the desk said it set the
+        # real password, the sign-in after it was refused, and the site was reported left on the real one)
+        return "unknown"
     if second is not None and (second["password_set"] or second["signed_in"] and not second["refused"]):
         return "real"
     if not pass_two_needed(first):
@@ -305,15 +311,23 @@ def reset_result(tenant: Mapping[str, str], first_rec: Mapping[str, Any] | None,
                      if not pass_two_needed(first) else "pass 2 didn't run (the probe was stopped before it)")
     left = left_on(first, second)
     warning = ""
-    if left == "derived?":
+    if left == "unknown" and second is not None:  # (always: left_on's "unknown" is pass 2's)
+        after =("the run broke off before any sign-in" if second["crashed"] else
+                 f"it ended {second['ended']}")
+        warning = (f"Pass 2 at {name} said it set the real password back through the site's reset, and never signed "
+                   f"in with it after that ({after}): the site may not have taken it, so the test identity's Workday "
+                   "account there may still be on the derived password. The nightly's own reset may repair it: the "
+                   "site refuses the real saved password, and the desk resets it to that through the site's "
+                   "\u201cForgot password\u201d email.")
+    elif left == "derived?":
         warning = (f"Pass 2 failed at {name}: the test identity's Workday account there may be left on the derived "
                    "password. The nightly's own reset will repair it: the site refuses the real saved password, and "
                    "the desk resets it to that through the site's \u201cForgot password\u201d email.")
-        if second is not None and _REUSED.search(second["said"]):
-            warning += (" But the site's words say it won't take a password it had before, so that reset may be "
-                        "refused the same way: look at it before the next nightly.")
     elif left == "as found":
         notes.append("this run never sent the derived password, so it changed nothing there")
+    if warning and second is not None and _REUSED.search(second["said"]):
+        warning += (" But the site's words say it won't take a password it had before, so that reset may be "
+                    "refused the same way: look at it before the next nightly.")
     passes = [{"pass": 1, "saved": "derived", "ran": True, **first, "status": first_status[0], "status_why": first_status[1]},
               {"pass": 2, "saved": "real", "ran": second is not None, **(second or {}), "status": second_status[0],
                "status_why": second_status[1]}]
@@ -326,6 +340,13 @@ def reset_result(tenant: Mapping[str, str], first_rec: Mapping[str, Any] | None,
 # --- the tailored resume --------------------------------------------------------------------------------------------
 
 TAILORED_NAME = "Jobdesk_Test_Tailored_Probe_Resume.pdf"  # (its stem ends in "resume": autofill.tailored_document's)
+
+
+def tailored_name(day: datetime.date | None = None) -> str:
+    """The tailored test resume's name for a run: a new one each day ("Jobdesk_Test_Tailored_Probe_20261018_Resume.pdf"),
+    so a Workday account that kept last week's (NXP's) is told from this week's, and the review page showing the name
+    means the desk put this one in, not that it left last week's (the kept-resume review of Oct 18)."""
+    return f"{Path(TAILORED_NAME).stem[:-len('_Resume')]}_{(day or datetime.date.today()):%Y%m%d}_Resume.pdf"
 TAILORED_NOTE = ("TAILORED TEST RESUME, made by the Job Desk's weekly probe (scripts/live_probes.py) to see that the "
                  "application takes it. Not a real applicant; nothing in it is true.")
 _FILE_NAME = re.compile(r"[\w().-]*\w\.(?:pdf|docx?|rtf|txt)\b", re.I)
@@ -576,7 +597,9 @@ def unchecked(results: Mapping[str, Any]) -> list[str]:
 
 STATUS_WORDS = {"pass": "pass", "fail": "FAIL", "unchecked": "couldn't check this week", "not run": "not run"}
 LEFT_WORDS = {"real": "the real password", "as found": "as it was (this run never changed it)",
-              "derived?": "maybe the derived password"}
+              "derived?": "maybe the derived password",
+              "unknown": "an unknown password: maybe still the derived one, as pass 2 said it set the real one and "
+                         "never signed in with it after that"}
 FAILED_HEADING = "Failed (the desk's: these fail the run)"
 UNCHECKED_HEADING = "Couldn't check this week (the site's or the person's: not a failure)"
 
@@ -648,7 +671,7 @@ def report_markdown(results: Mapping[str, Any]) -> str:
                 lines.append(f"  - **{_cell(r['warning'])}**")
         lines.append("")
     if results.get("tailored"):
-        lines += ["### Tailored resume", "", f"The job's folder held a tailored test resume ({TAILORED_NAME}); the "
+        lines += ["### Tailored resume", "", f"The job's folder held a tailored test resume (Jobdesk_Test_Tailored_Probe_<day>_Resume.pdf, a new name each day); the "
                   f"profile's is {live_identity.RESUME_NAME}.", "",
                   "| Employer | Files the review page shows | Result | Detail |", "|---|---|---|---|"]
         for r in results["tailored"]:

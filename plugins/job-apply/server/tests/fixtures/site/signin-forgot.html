@@ -8,7 +8,9 @@
      reset" and a "Sign In" button that opens the form, and ?alone asks for the password only, the email shown
      beside it ("Signing in as ..."). ?late=<ms>: the saved password is the account's, and the site takes that long
      to sign in, its form still on show meanwhile (Intel's and TEL's Workday, nightly live check Oct 11). ?slowforgot:
-     its "Forgot your password?" goes to the reset page a moment after the click (a script's navigation) -->
+     its "Forgot your password?" goes to the reset page a moment after the click (a script's navigation). ?session: it
+     says the session has expired (a site whose password change ends every session), the password reset all the same -->
+
 <h2>Sign In</h2>
 <form id="signin" novalidate>
   <label for="em">Email Address</label><input id="em" type="email" required>
@@ -21,6 +23,7 @@
 <script>
   const q = new URLSearchParams(location.search);
   const reset = q.get('pw');
+  if (q.has('session')) document.getElementById('err').textContent = 'Your session has expired. Please sign in again.';
   if (reset && q.has('alone')) {
     document.getElementById('em').parentNode.insertBefore(document.createTextNode('Signing in as sam.rivera@example.com'),
                                                           document.getElementById('em'));

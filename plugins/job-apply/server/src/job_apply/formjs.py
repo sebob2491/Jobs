@@ -1329,6 +1329,95 @@ UNKEPT_FORGET_JS = r"""
 }
 """
 
+# What a resume (or cover letter) box shows, as Workday lists it: the box's own part of the page (as the form reader reads
+# what it shows, uploadedNear: the wrappers around it up to one holding another form control or another file box, and
+# the first holding Workday's file items), and in it the items Workday lists each file in (data-automation-id
+# "file-upload-item", its name in "file-upload-item-name", "Successfully Uploaded!"). Only Workday's: that's where an
+# account's last resume is kept (NXP's, the weekly probe of Oct 2026). Another site's list of stored files may be the
+# person's own file library, where a Delete takes the file off their account: never touched (Applier._replace_kept).
+# The body of the scripts below, run on the box (`el`)
+_KEPT_ITEMS = r"""
+  const shown = (x) => x.getClientRects().length > 0 && getComputedStyle(x).visibility !== 'hidden';
+  const txt = (x) => (x.innerText || x.textContent || '').replace(/\s+/g, ' ').trim();
+  const ITEM = '[data-automation-id="file-upload-item"]';
+  const NAME = '[data-automation-id="file-upload-item-name"]';
+  const UPLOADED = /\bsuccessfully uploaded\b|\bupload(?:ed)? (?:completed? )?successfully\b|\bfile upload completed\b/i;
+  let area = null;
+  for (let n = el.parentElement, d = 0; n && n !== document.body && d < 6; n = n.parentElement, d++) {
+    if ([...n.querySelectorAll('input, select, textarea')].some((x) => x !== el && x.type !== 'hidden'
+        && (x.type === 'file' || x.getClientRects().length > 0))) break;
+    area = n;
+    if (n.querySelector(ITEM)) break;
+  }
+  const items = area ? [...area.querySelectorAll(ITEM)].filter(shown) : [];
+  // (a file's name: its item's own name, within three levels of it)
+  const nameOf = (item) => {
+    const names = [...item.querySelectorAll(NAME)].filter((n) => {
+      let d = 0;
+      for (let p = n.parentElement; p && p !== item; p = p.parentElement) d++;
+      return d < 3;
+    });
+    return names.length === 1 ? txt(names[0]) : names.length ? null : '';
+  };
+"""
+
+# An upload box showing a file, before the file tailored for this job goes in place of one kept from before
+# (Applier._replace_kept): "mine" where the desk sent a file into this box itself (its own upload, never one kept from
+# before, whatever its name), "other" where the files it shows aren't in Workday's list (_KEPT_ITEMS: never touched), ""
+# otherwise. Never "there" by a name alone: every tailored resume is named <First>_<Last>_Resume.pdf, so a file kept
+# from the last application at the same employer has the name of this job's tailored one
+KEPT_STATE_JS = "(el) => {" + _KEPT_ITEMS + r"""
+  if (el.__jaUploaded) return 'mine';
+  return items.length ? '' : 'other';
+}
+"""
+
+# The Delete (or Remove) of the file a box shows as kept from before, run on the box, for the file tailored for this job
+# to go in its place: in Workday's list alone (_KEPT_ITEMS), its own item: the one with the file's name (`name`), or,
+# where the box shows no name (''), the box's one item, which says it's uploaded. Only as 0.3.153's Delete is: the item
+# its own row (no box, no form and no other file's name in it, at most 300 characters), and in it the one control that
+# says it deletes or removes (never one naming another file, "Delete other.pdf"), shown, and only deleting (never a
+# form's submit button, a reset, or a link to another page). Never a control outside it: a saved block's Delete, a
+# section's Remove, another file's. Marks it data-ja-kept-delete; true when there was one
+KEPT_DELETE_JS = "(el, name) => {" + _KEPT_ITEMS + r"""
+  document.querySelectorAll('[data-ja-kept-delete]').forEach((x) => x.removeAttribute('data-ja-kept-delete'));
+  const said = (x) => [x.getAttribute('aria-label') || '', x.getAttribute('title') || '', txt(x)]
+    .map((t) => t.trim()).filter(Boolean);
+  const DELETES = /^(?:delete|remove)(?: (?:the )?(?:file|resume|cv|document|cover letter|attachment))?$/i;
+  const NAMING = /^(?:delete|remove)(?: file)?:?\s+(.+)$/i;
+  const named = (t) => { const m = !DELETES.test(t) && NAMING.exec(t); return m ? m[1].trim() : ''; };
+  const deletes = (x) => {
+    const words = said(x);
+    if (words.some((t) => named(t) && named(t) !== name)) return false;  // (another file's, or another thing's)
+    return words.some((t) => DELETES.test(t) || !!name && named(t) === name);
+  };
+  const only = (x) => x.tagName === 'A' ? /^(?:#.*|javascript:.*)?$/i.test((x.getAttribute('href') || '').trim())
+    : x.tagName === 'BUTTON' ? !x.form || x.type === 'button' : x.tagName !== 'INPUT';
+  const rows = items.filter((item) => nameOf(item) === name);
+  // (no name: the box's one item, saying it's uploaded; a name: the one item with it)
+  if (rows.length !== 1 || !name && (items.length !== 1 || !UPLOADED.test(txt(rows[0])))) return false;
+  const row = rows[0];
+  if (txt(row).length > 300 || row.querySelector('input, select, textarea, form')) return false;
+  const found = [...row.querySelectorAll('a, button, [role="button"]')].filter((x) => shown(x) && deletes(x));
+  if (found.length !== 1 || !only(found[0])) return false;
+  found[0].setAttribute('data-ja-kept-delete', '1');
+  return true;
+}
+"""
+
+# After that Delete, in the box's frame: how many of Workday's file items show that file (its name, or with none, no name
+# and "uploaded"). The file is gone once there are fewer than before the press: never by its Delete alone going (a page
+# that draws its list again), nor by its name gone from the page (a note may name it)
+KEPT_ROWS_JS = r"""(name) => {
+  const shown = (x) => x.getClientRects().length > 0 && getComputedStyle(x).visibility !== 'hidden';
+  const txt = (x) => (x.innerText || x.textContent || '').replace(/\s+/g, ' ').trim();
+  const UPLOADED = /\bsuccessfully uploaded\b|\bupload(?:ed)? (?:completed? )?successfully\b|\bfile upload completed\b/i;
+  return [...document.querySelectorAll('[data-automation-id="file-upload-item"]')].filter(shown).filter((item) => {
+    const names = [...item.querySelectorAll('[data-automation-id="file-upload-item-name"]')].map(txt);
+    return name ? names.includes(name) : !names.some(Boolean) && UPLOADED.test(txt(item));
+  }).length;
+}"""
+
 # Text boxes the page marks invalid while they show a value: shown, editable, not a menu's
 # box, and not the one the person is typing in.
 LOST_BOXES_JS = r"""

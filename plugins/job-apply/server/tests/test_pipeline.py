@@ -2553,6 +2553,9 @@ def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch
     assert "reset" in wanted
     assert "opened Create Account" not in log and "created your account" not in log, log
     assert not waits  # (the reset form has two password boxes, but it isn't a Create Account form drawing its application)
+    # (signed in: what the reset left on the job is spent, and a refusal after this is the ordinary one: the review of
+    # 0.3.209)
+    assert not (r.reset_set or getattr(r, "reset_opened", True)), (r.reset_set, getattr(r, "reset_opened", None))
 
 
 def test_a_new_password_the_site_never_takes_is_left_to_the_person(srv, monkeypatch, job_apply_home):
@@ -2587,6 +2590,184 @@ def test_a_new_password_the_site_never_takes_is_left_to_the_person(srv, monkeypa
     r = run(go())
     assert r.need == "sign_in" and "didn't take it as the new one" in r.reason, (r.need, r.reason, r.log)
     assert "set your saved password as" not in "\n".join(r.log), r.log
+
+
+def _reset_through(monkeypatch, job_apply_home, srv, link: str, resumes: int = 0) -> Run:
+    """A job whose saved password the site refuses, with the inbox watched: the reset asked for, its email's link
+    (`link`) opened, and the job run until it stops for the person or is ready; then `resumes` times, the person's
+    Resume and the same again (the log says what each stop said: "stopped: ...")."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None, others=None):
+        return pipeline.mailbox.Found(want, link, "careers.example.com", time.time()) if want == "reset" else None
+
+    monkeypatch.setattr(pipeline.mailbox, "search", inbox)
+    job = srv.add_job(url=fixture_url("site/signin-forgot.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you" and r.need != "email_code" or r.status == "ready",
+                        timeout=90, about=state(r))
+            for _ in range(resumes):
+                r.log.append(f"stopped: {r.reason}")
+                applier.resume(job["id"])
+                await until(lambda: r.status not in ("queued", "running"), timeout=90, about=state(r))
+                await until(lambda: r.status == "needs_you" and r.need != "email_code" or r.status == "ready",
+                            timeout=90, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    return run(go())
+
+
+def test_a_sign_in_refused_right_after_the_desks_own_reset_is_said_and_makes_no_account(srv, monkeypatch,
+                                                                                         job_apply_home):
+    """KLA's Workday, the reset probe's second pass (run 136): the reset's link was spent (the pass before's email), the
+    site set nothing and said nothing of it, its form went, and the desk said it had set the saved password. The sign-in
+    after it was refused, and the desk opened Create Account and pressed it, for an account that's there. A sign-in
+    refused right after the desk's own reset is said for what it is, on a card, and no Create Account is pressed."""
+    r = _reset_through(monkeypatch, job_apply_home, srv, fixture_url("site/reset-password.html") + "?token=abc&spent")
+    log = "\n".join(r.log)
+    assert "set your saved password as" in log, r.log  # (as far as the desk could tell)
+    set_at = next(i for i, line in enumerate(r.log) if line.startswith("set your saved password as"))
+    assert "pressed “Sign In” with your saved password" in r.log[set_at:], r.log
+    assert r.need == "sign_in" and r.reason.startswith("I set your saved password through"), (r.need, r.reason, r.log)
+    assert "it still doesn't sign in there (it says “Wrong email address or password" in r.reason, r.reason
+    assert "a reset link works once" in r.reason and "then press Resume" in r.reason, r.reason
+    assert "opened Create Account" not in log and "create your account" not in log, r.log
+    assert "create-account" not in r.page.url, r.page.url
+
+
+def test_a_reset_page_that_says_its_link_has_expired_is_said_not_taken_for_a_set_password(srv, monkeypatch,
+                                                                                          job_apply_home):
+    """The reset's form went once its button was pressed, and the page says the link has expired: the saved password
+    wasn't set. The desk said it was set (only the form going was looked at); it stops and says so in the site's
+    words."""
+    r = _reset_through(monkeypatch, job_apply_home, srv, fixture_url("site/reset-password.html") + "?token=abc&expired")
+    assert r.need == "sign_in" and "it says “This link has expired" in r.reason, (r.need, r.reason, r.log)
+    assert "didn't set it as the new one" in r.reason and "Forgot password" in r.reason, r.reason
+    assert "set your saved password as" not in "\n".join(r.log), r.log
+
+
+def test_a_reset_link_that_says_its_spent_as_it_opens_is_said_and_makes_no_account(srv, monkeypatch, job_apply_home):
+    """The review of 0.3.209: a spent reset link whose page says so as it opens (no new-password boxes, "This link has
+    expired") was read only after a press there never was: the job stopped on "couldn't find the button", or went on to
+    the sign-in and Create Account. Its words are read as it opens, and said."""
+    r = _reset_through(monkeypatch, job_apply_home, srv, fixture_url("site/reset-password.html") + "?token=abc&gone")
+    log = "\n".join(r.log)
+    assert r.need == "sign_in" and r.reason.startswith("The password reset link from your email opened on "), \
+        (r.need, r.reason, r.log)
+    assert "saying “This link has expired" in r.reason and "couldn't find the button" not in r.reason, r.reason
+    assert "set your saved password as" not in log and "opened Create Account" not in log, r.log
+    assert "create your account" not in log, r.log
+
+
+def test_resume_on_a_spent_reset_links_card_goes_back_to_the_sign_in(srv, monkeypatch, job_apply_home):
+    """The re-review of 0.3.209: the card for a spent reset link asks the person to set the password through a new
+    email's link, which opens in their own browser; the desk's tab stayed on the spent page, so every Resume read it
+    again and said the same card. Resume goes back to the sign-in and tries the saved password once; refused there,
+    it's said, and never a Create Account."""
+    r = _reset_through(monkeypatch, job_apply_home, srv, fixture_url("site/reset-password.html") + "?token=abc&gone",
+                       resumes=1)
+    log = "\n".join(r.log)
+    first = next(i for i, line in enumerate(r.log) if line.startswith("stopped: The password reset link from your email"))
+    assert "pressed “Sign In” with your saved password" in r.log[first:], r.log
+    assert r.need == "sign_in" and r.reason.startswith("Your saved password still doesn't sign in on"), \
+        (r.need, r.reason, r.log)
+    assert "opened Create Account" not in log and "create your account" not in log, r.log
+
+
+def test_a_sign_in_refused_after_the_reset_link_opened_makes_no_account(srv, monkeypatch, job_apply_home):
+    """The review of 0.3.209: a reset link that goes on to the sign-in at once, saying nothing (spent, or the site's way
+    with one), and the saved password still refused there: the account is there (the site emailed its reset), so no
+    Create Account; a card says what happened."""
+    r = _reset_through(monkeypatch, job_apply_home, srv, fixture_url("site/reset-password.html") + "?token=abc&straight")
+    log = "\n".join(r.log)
+    assert "opened the password reset link from your email" in log and "set your saved password as" not in log, r.log
+    assert r.need == "sign_in" and r.reason.startswith("Your saved password still doesn't sign in on"), \
+        (r.need, r.reason, r.log)
+    assert "after its password reset (it says “Wrong email address or password" in r.reason, r.reason
+    assert "a reset link works once" in r.reason and "then press Resume" in r.reason, r.reason
+    assert "opened Create Account" not in log and "create your account" not in log, r.log
+
+
+def test_a_session_expired_note_after_a_reset_that_went_in_is_no_refusal(srv, monkeypatch, job_apply_home):
+    """The review of 0.3.209: a site whose password change ends every session goes on to its sign-in saying "Your
+    session has expired. Please sign in again.": read as the reset's refusal, the desk stopped. The password is set, and
+    the desk signs in with it."""
+    r = _reset_through(monkeypatch, job_apply_home, srv,
+                       fixture_url("site/reset-password.html") + "?token=abc&then=session")
+    log = "\n".join(r.log)
+    assert "set your saved password as" in log and "didn't set it" not in (r.reason or ""), (r.reason, r.log)
+    assert r.seen_form and not any(w in r.url for w in ("signin", "reset", "forgot")), (r.url, r.reason, r.log)
+
+
+def test_a_reset_email_whose_link_was_opened_already_is_said_never_taken_for_no_email(srv, monkeypatch,
+                                                                                      job_apply_home):
+    """The review of 0.3.209: a site that sends the same reset link again (or an earlier reset's email, its link opened
+    already) had it passed over until the wait ran out, which then read as no email at all: "no password reset email
+    came ... so I went back to make an account there". An email came, so the account is there: a card says so."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "RESET_MAIL_WAIT", 4)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    link = fixture_url("site/reset-password.html") + "?token=sent-again"
+    watched_inbox(monkeypatch, reset_link=link)
+    pipeline._take_code(("careers.example.com", link, time.time()), 999)  # (opened already: another job's reset)
+    job = srv.add_job(url=fixture_url("site/signin-forgot.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you" and r.need != "email_code" or r.status == "ready",
+                        timeout=60, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    log = "\n".join(r.log)
+    assert r.need == "sign_in" and "but its link is one the desk opened already" in r.reason, (r.need, r.reason, r.log)
+    assert "no password reset email came" not in log and "opened the password reset link" not in log, r.log
+    assert "opened Create Account" not in log and "create your account" not in log, r.log
+
+
+def test_a_password_saved_since_the_reset_is_refused_without_its_card_and_makes_no_account(srv, monkeypatch):
+    """The review of 0.3.209: what a reset leaves on the job's card (the desk set the saved password there, or opened
+    its link) holds for that password only: the person saves another, and the site refuses it, said the ordinary way.
+    The re-review: but the account is there all the same (Run.account_known), so never a Create Account for the job,
+    as the cards' "or another, and save that one on the desk" led to. A job with no reset still gets one."""
+    import hashlib
+
+    saved_password(monkeypatch)
+    run(srv.open_application(url=fixture_url("jsonld_posting.html")))
+    page = run(srv.browser.page())
+    run(page.goto(fixture_url("site/signin-forgot.html")))
+    data = run(srv.inspect_form(include_dropdown_options=False))
+    applier = Applier(srv)
+    same = Run(1, "FSE", "Example Fab", sign_in_tries=2,
+               sign_in_key=hashlib.sha256(b"not-a-real-password").hexdigest())  # (the saved one: the reset's)
+    same.reset_set = same.reset_opened = True
+    assert run(applier._sign_in(same, data, {"submitted": 1, "settled": 1})) == "refused"
+    since = Run(2, "FSE", "Example Fab", sign_in_tries=2,
+                sign_in_key=hashlib.sha256(b"the-password-the-reset-set").hexdigest())  # (another saved since)
+    since.reset_set = since.reset_opened = since.account_known = True
+    assert run(applier._sign_in(since, data, {"submitted": 1})) == "refused"
+    assert not (since.reset_set or since.reset_opened) and since.account_known
+    fresh = Run(3, "FSE", "Example Fab", sign_in_tries=2,
+                sign_in_key=hashlib.sha256(b"the-password-the-reset-set").hexdigest())
+    assert run(applier._sign_in(fresh, data, {"submitted": 1})) == "create_account"
 
 
 def test_a_new_account_is_signed_in_with_and_only_its_own_form_is_sent(srv, monkeypatch, job_apply_home):
@@ -2917,6 +3098,280 @@ def test_a_resume_the_page_shows_but_never_kept_is_said_not_typed_around(srv, mo
             (r.reason, deletes)
     assert "page didn't move on" not in r.reason and not again, (r.reason, r.log)
     assert not any("required box(es) again" in line for line in r.log), r.log
+
+
+def kept_resume_run(srv, query="", tailored="Sam_Rivera_Resume.pdf", letter=None, before=None, resume=False,
+                    auto_submit=False, between=None):
+    """A job on the Workday-like My Experience page whose "Resume/CV" upload keeps the account's last resume
+    (2024-resume.pdf), with a resume tailored for it in its folder (`tailored`: its name, or None) and a cover letter
+    (`letter`). `before`: the job's run as it was (Run's fields), and `resume`: gone on with by the person's Resume
+    rather than queued; `between`: what the person does once it stops (a coroutine on the run), before it's looked at
+    again. The run, and what the page counted (KEPT_COUNTED)."""
+    job = srv.add_job(url=fixture_url("site/workday-kept-resume.html") + query, title="Equipment Technician",
+                      company="Example Fab")["job"]
+    folder = Path(srv.tracker().get(job["id"])["folder"])
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in (tailored, letter):
+        if name:
+            (folder / name).write_bytes(b"%PDF-1.4\n")
+    applier = Applier(srv)
+    applier.auto_submit = auto_submit
+    if before is not None:
+        applier.runs[job["id"]] = Run(job["id"], "Equipment Technician", "Example Fab", **before)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.resume(job["id"]) if resume else applier.enqueue(job["id"], submit=auto_submit)
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            if between is not None:
+                await between(applier, r)
+                await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate(KEPT_COUNTED)
+        finally:
+            await applier.stop()
+
+    return run(go())
+
+
+# What the page counted: the kept file's Deletes pressed and gone, the files sent into the resume's box, and the same of
+# the cover letter's; and the Deletes of what's never to be pressed
+KEPT_COUNTED = ("() => Object.fromEntries(['presses', 'deletes', 'uploads', 'coverDeletes', 'plainDeletes', "
+                "'letterPresses', 'letterDeletes', 'letterUploads']"
+                ".map((k) => [k, JSON.parse(sessionStorage.getItem(k) || 'null')]))")
+REPLACED = "replaced the resume kept from before with the one tailored for this job"
+
+
+@pytest.mark.parametrize("query,tailored", [("", "Sam_Rivera_Resume.pdf"), ("?redraw", "Sam_Rivera_Resume.pdf"),
+                                            ("?unnamed", "Sam_Rivera_Resume.pdf"), ("", "resume.pdf"),
+                                            ("?kept=Sam_Rivera_Resume.pdf", "Sam_Rivera_Resume.pdf"),
+                                            ("?toast", "Sam_Rivera_Resume.pdf")])
+def test_a_resume_kept_from_before_gives_way_to_the_one_tailored_for_the_job(srv, monkeypatch, query, tailored):
+    """NXP's Workday (the weekly probe, Oct 2026): an account that applied there before finds its last resume kept in
+    My Experience's "Resume/CV" upload. The desk read the box as filled and left it, so the employer got the old resume,
+    not the one tailored for the job. The kept file is deleted with its own Delete and the tailored one uploaded, said
+    in the log; once a job, so a page that draws the old name again (?redraw: saved and drawn again) isn't deleted
+    from again. A row that shows no name (?unnamed) can't say what it holds: replaced all the same, once. A tailored
+    resume.pdf is no file the page shows already for being inside the kept file's name (2024-resume.pdf). The review of
+    0.3.209: a kept file of the tailored one's own name (every tailored resume is <First>_<Last>_Resume.pdf, so the last
+    application's at the same employer has it) is replaced as any other; and a Delete that leaves a note naming the
+    file (?toast) has deleted it, its item gone."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    r, counted = kept_resume_run(srv, query, tailored)
+    assert "review.html" in r.url, (r.url, r.reason, r.log)
+    assert (counted["deletes"], counted["uploads"]) == (1, [tailored]), (counted, r.log)
+    assert r.log.count(REPLACED) == 1, r.log
+    # (?redraw: the page, drawn again with the old name, was gone through again)
+    assert r.log.count("clicked “Save and Continue”") == (2 if query == "?redraw" else 1), r.log
+
+
+@pytest.mark.parametrize("query,tailored", [("", None), ("?plain", "Sam_Rivera_Resume.pdf")])
+def test_a_resume_kept_from_before_stays_with_none_tailored_for_the_job(srv, monkeypatch, query, tailored):
+    """With no resume tailored for the job, a resume the site kept from before stays as it is (as the profile's
+    would): nothing deleted, nothing uploaded beside it. So does one outside Workday's list of files (?plain, the review
+    of 0.3.209: another site's list of stored files may be the person's own file library, where a Delete takes the file
+    off their account), tailored resume or not, and nothing is said of it."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    r, counted = kept_resume_run(srv, query, tailored)
+    assert "review.html" in r.url, (r.url, r.reason, r.log)
+    assert (counted["presses"], counted["deletes"], counted["plainDeletes"], counted["uploads"]) == (None,) * 4, \
+        (counted, r.log)
+    assert not any("kept from before" in line for line in r.log), r.log
+
+
+@pytest.mark.parametrize("query", ["?stuck", "?cover", "?submit", "?rerender"])
+def test_a_resume_kept_from_before_that_wont_go_is_the_persons(srv, monkeypatch, query):
+    """The kept resume's Delete asks first (?stuck: turned down), or the box keeps a cover letter beside it (?cover:
+    which is the old resume isn't sure), or its Delete would send the form (?submit), or draws the list again with the
+    file still in it (?rerender, the review of 0.3.209: its Delete gone isn't the file gone): the tailored resume is
+    never uploaded beside the old one (the employer would get two). The person's, on a card saying what to do; nothing
+    deleted, nothing sent."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    r, counted = kept_resume_run(srv, query)
+    assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
+    assert (counted["deletes"], counted["uploads"], counted["coverDeletes"]) == (None,) * 3, (counted, r.log)
+    assert counted["presses"] == (1 if query in ("?stuck", "?rerender") else None), counted
+    assert run(r.page.evaluate("() => window.sent")) is False
+    assert "Sam_Rivera_Resume.pdf" in r.reason and "then press Resume" in r.reason, r.reason
+    if query == "?cover":
+        assert "files kept from before (2024-resume.pdf, 2024-cover-letter.pdf)" in r.reason \
+            and "which is your old resume" in r.reason, r.reason
+    else:
+        assert "still has the resume kept from before (2024-resume.pdf), and I couldn't delete it" in r.reason \
+            and "two resumes" in r.reason, r.reason
+    assert REPLACED not in r.log, r.log
+
+
+def test_a_tailored_resume_the_fill_didnt_send_is_never_said_replaced(srv, monkeypatch):
+    """The review of 0.3.209: the kept file deleted, the fill found the tailored file's name on the page (a note naming
+    the deleted Old_Sam_Rivera_Resume.pdf holds Sam_Rivera_Resume.pdf) and sent nothing, yet the log said "replaced".
+    Only a file the fill sent itself is: here, the box is the person's to put it in, on a card."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    r, counted = kept_resume_run(srv, "?toast&kept=Old_Sam_Rivera_Resume.pdf")
+    assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
+    assert (counted["deletes"], counted["uploads"]) == (1, None), (counted, r.log)
+    assert "I deleted the resume Example Fab's site kept from before (Old_Sam_Rivera_Resume.pdf) to put in the one " \
+        "tailored for this job, and it didn't go in" in r.reason, r.reason
+    assert REPLACED not in r.log, r.log
+
+
+@pytest.mark.parametrize("how", ["resume", "restart", "pressed before", "carried on"])
+def test_a_file_in_an_application_the_person_has_had_is_theirs(srv, monkeypatch, how):
+    """The review of 0.3.209: once the person has had the application in their hands (their Resume after a stop, or
+    after a restart of the desk, whose job goes on only by it; or a Submit pressed before), a file in its upload may be
+    one they put there themselves (My_Own_Pick_final.pdf). It's never deleted, nor anything uploaded beside it: left as
+    it is, and said. So is one the desk went on with by itself after they may have worked in its tab (Run.in_their_hands,
+    the re-review: Submit for me sent the tailored file in place of theirs)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    before = {"resume": {"status": "needs_you", "need": "stuck"},
+              "restart": {"status": "needs_you", "need": "restarted", "left_at_restart": True, "started": True},
+              "pressed before": {"pressed_before": True},
+              "carried on": {"status": "needs_you", "need": "bot_check", "left": True, "started": True,
+                             "in_their_hands": True}}[how]
+    r, counted = kept_resume_run(srv, "?kept=My_Own_Pick_final.pdf", before=before,
+                                 resume=how in ("resume", "restart"), auto_submit=how == "carried on")
+    assert "review.html" in r.url, (r.url, r.reason, r.log)
+    assert (counted["presses"], counted["deletes"], counted["uploads"]) == (None,) * 3, (counted, r.log)
+    assert r.log.count("left the resume in its “Resume/CV” upload as it is (My_Own_Pick_final.pdf), not the one "
+                       "tailored for this job: you've had this application in your hands, so what's in it is yours") \
+        == 1, r.log
+    assert REPLACED not in r.log, r.log
+
+
+def test_the_desk_going_on_with_a_job_the_person_may_have_worked_in_says_so(srv, monkeypatch):
+    """The re-review of 0.3.209: a job the desk goes on with, begun, without the person's Resume, where they may have
+    worked in its tab meanwhile, is marked so (Run.in_their_hands), and a file in its upload stays theirs: the queue
+    picking it up by itself past its pause, their Undo of its Skip, Apply on it again. A job never begun, or queued
+    afresh, isn't."""
+    from types import SimpleNamespace
+
+    from job_apply.desk import Desk
+
+    jobs = [srv.add_job(url=f"https://{n}.example/job", title="FSE", company=n.title())["job"]["id"] for n in "abcde"]
+    applier = Applier(srv)
+    monkeypatch.setattr(srv.browser, "lost", lambda tab: "")
+
+    async def past(r):
+        return True
+
+    applier._past_pause = past
+    tab = SimpleNamespace(is_closed=lambda: False, url="https://a.example/apply")
+    left = applier.runs[jobs[0]] = Run(jobs[0], "FSE", "A", status="needs_you", need="bot_check", left=True, page=tab,
+                                       started=True)
+    run(applier._pick_up_left())
+    assert left.status == "queued" and left.in_their_hands, (left.status, left.log)
+
+    for job_id in jobs[1:3]:
+        applier.enqueue(job_id)
+    applier.runs[jobs[1]].started = True  # (begun: its tab was theirs before the Skip)
+    for job_id in jobs[1:3]:
+        run(applier.skip(job_id))
+        run(applier.unskip(job_id))
+    assert [applier.runs[j].in_their_hands for j in jobs[1:3]] == [True, False]
+
+    desk = Desk(srv)
+    desk.applier = applier
+    applier.runs[jobs[3]] = Run(jobs[3], "FSE", "D", status="needs_you", need="stuck", started=True)
+    assert desk.apply(urls=[], job_ids=[jobs[3], jobs[4]], submit=False)[0] == [jobs[3], jobs[4]]
+    assert [applier.runs[j].in_their_hands for j in jobs[3:]] == [True, False]
+
+    # (the re-review: a questions card answered on the desk, its tab the person's while the card was up)
+    asked = srv.add_job(url="https://f.example/job", title="FSE", company="F")["job"]["id"]
+    q = applier.runs[asked] = Run(asked, "FSE", "F", status="needs_you", need="questions", started=True,
+                                  questions=[{"label": "Shift preference?", "kind": "text", "id": "q1"}])
+    desk.answer(asked, [{"label": "Shift preference?", "value": "Days", "remember": False}])
+    assert q.in_their_hands and q.status == "queued", (q.status, q.log)
+
+
+@pytest.mark.parametrize("slow", [1, 3])
+def test_a_kept_files_box_that_reads_slowly_is_never_taken_for_one_gone(srv, monkeypatch, slow):
+    """The re-review of 0.3.209: the box's read timing out on a loaded machine was taken for the box gone, so the kept
+    resume stayed, unsettled, and Submit for me sent it (the likely flake of the draft test). A read that answers on a
+    later try replaces it as ever; one that never answers is the person's, on a card: nothing deleted, nothing sent."""
+    from playwright.async_api import TimeoutError as PlaywrightTimeout
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    real, tries = srv.browser._locator, []
+
+    def locator(page, box_id):
+        loc = real(page, box_id)
+
+        class Slow:
+            def __getattr__(self, name):
+                return getattr(loc, name)
+
+            async def evaluate(self, script, *args, **kwargs):
+                if script == browser_module.KEPT_STATE_JS and len(tries) < slow:
+                    tries.append(1)
+                    raise PlaywrightTimeout("Timeout 3000ms exceeded.")
+                return await loc.evaluate(script, *args, **kwargs)
+
+        return Slow()
+
+    monkeypatch.setattr(srv.browser, "_locator", locator)
+    r, counted = kept_resume_run(srv, auto_submit=True)
+    if slow < 3:
+        assert (r.status, counted["deletes"], counted["uploads"]) == ("submitted", 1, ["Sam_Rivera_Resume.pdf"]), \
+            (r.status, r.reason, counted, r.log)
+        assert REPLACED in r.log, r.log
+    else:
+        assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason, r.log)
+        assert (counted["presses"], counted["deletes"], counted["uploads"]) == (None,) * 3, (counted, r.log)
+        assert "the page was too slow for me to read it" in r.reason and "Sam_Rivera_Resume.pdf" in r.reason, r.reason
+        assert run(r.page.evaluate("() => window.sent")) is False
+
+
+@pytest.mark.parametrize("checked", [True, False])
+def test_a_drafts_resume_replaced_holds_submit_for_me(srv, monkeypatch, checked):
+    """The review of 0.3.209: a saved draft's resume replaced with the tailored one is a change to its answers, whether
+    they were being re-checked (`checked`) or not (a stop where the person may have changed its boxes, the queue gone on
+    by itself): Submit for me leaves it on its review page for the person to check, and the job's "What went in" says
+    what changed. The re-check says nothing of the box replaced ("they match your profile" of a page whose only answer
+    the desk replaced)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    r, counted = kept_resume_run(srv, before={"draft": True, "draft_off": not checked}, auto_submit=True)
+    assert (r.status, counted["deletes"], counted["uploads"]) == ("ready", 1, ["Sam_Rivera_Resume.pdf"]), \
+        (r.status, r.reason, counted, r.log)
+    assert REPLACED in r.log and r.draft_changed, r.log
+    assert "Submit for me left it for you" in r.reason, r.reason
+    assert any("2024-resume.pdf" in line for line in r.public()["went_in"]["changed"]), r.public()["went_in"]
+    assert not any("they match your profile" in line for line in r.log), r.log
+
+
+def test_a_cover_letter_kept_from_before_gives_way_to_the_one_tailored_for_the_job(srv, monkeypatch):
+    """The review of 0.3.209, end to end: the job's folder holds a resume and a cover letter tailored for it, and
+    My Experience keeps a file from before in each upload: each is deleted with its own Delete and the tailored one
+    sent into its own box."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    r, counted = kept_resume_run(srv, "?letter", letter="Sam_Rivera_Cover_Letter.pdf")
+    assert "review.html" in r.url, (r.url, r.reason, r.log)
+    assert ({k: counted[k] for k in ("deletes", "uploads", "letterDeletes", "letterUploads")}
+            == {"deletes": 1, "uploads": ["Sam_Rivera_Resume.pdf"], "letterDeletes": 1,
+                "letterUploads": ["Sam_Rivera_Cover_Letter.pdf"]}), (counted, r.log)
+    assert REPLACED in r.log, r.log
+    assert "replaced the cover letter kept from before with the one tailored for this job" in r.log, r.log
+
+
+def test_a_second_kept_file_that_wont_go_is_said_once_the_first_is_past(srv, monkeypatch):
+    """The review of 0.3.209: two kept files whose Deletes won't go (a resume's and a cover letter's, each asking
+    first). The card says the resume's; the cover letter's Delete is neither pressed nor its box settled, so the next
+    pass says it: after the person's Resume, it's theirs (left as it is, and said)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    seen = {}
+
+    async def on_resume(applier, r):
+        seen.update(need=r.need, reason=r.reason, settled=set(r.kept_replaced),
+                    letter=await r.page.evaluate("() => sessionStorage.getItem('letterPresses')"))
+        applier.resume(r.job_id)
+
+    r, counted = kept_resume_run(srv, "?letter&stuck&letterstuck", letter="Sam_Rivera_Cover_Letter.pdf",
+                                 between=on_resume)
+    assert seen["need"] == "stuck" and "still has the resume kept from before" in seen["reason"], seen
+    assert (seen["letter"], seen["settled"]) == (None, {"resume"}), seen
+    assert "review.html" in r.url, (r.url, r.reason, r.log)
+    assert "left the cover letter in its “Cover Letter” upload as it is (2024-cover-letter.pdf), not the one tailored " \
+        "for this job: you've had this application in your hands, so what's in it is yours" in r.log, r.log
+    assert (counted["letterPresses"], counted["letterUploads"], counted["uploads"]) == (None,) * 3, counted
 
 
 def test_a_box_the_page_says_is_wrong_showing_what_it_wrote_itself_takes_the_profiles_answer(srv, monkeypatch):
@@ -12899,6 +13354,169 @@ def test_a_password_reset_isnt_called_overdue_while_its_mail_couldnt_be_read(srv
     c.paused_at -= pipeline.RESET_MAIL_WAIT + 600  # (the wait's own time up: the next look that finds nothing ends it)
     run(applier._pick_up_left())
     assert looked == [1, 1] and c.reset_no_mail and c.status == "queued", (c.status, c.log[-2:])
+
+
+def _waiting_on_resets(srv, monkeypatch, inbox: list) -> tuple:
+    """Two KLA jobs waiting on their password reset's email, each asked for 3 seconds before it paused, with the inbox
+    watched (`inbox`: what it holds, the newest last). The applier, the two runs, what each search asked for (want,
+    since) and the links opened in their tabs."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    monkeypatch.setattr(pipeline, "_another_employers_mail", lambda *a, **k: None)
+    asked: list = []
+
+    def search(address, password, since, senders, want, allowed_link, before=None, look_back=120, others=None):
+        asked.append((want, since))
+        return inbox[-1] if want == "reset" and inbox else None
+
+    monkeypatch.setattr(pipeline.mailbox, "search", search)
+
+    async def peek(tab, max_chars=4000):
+        return {"url": tab.url, "fields": []}, ""
+
+    monkeypatch.setattr(srv.browser, "peek", peek)
+    opened: list = []
+
+    def tab():
+        async def goto(url, **kwargs):
+            opened.append(url)
+
+        return SimpleNamespace(is_closed=lambda: False, url="https://kla.wd1.myworkdayjobs.com/Search/login", goto=goto)
+
+    url = "https://kla.wd1.myworkdayjobs.com/Search/job/Phoenix-AZ/Customer-Service-Engineer_2637545"
+    applier = Applier(srv)
+    runs = []
+    now = time.time()
+    for n in (1, 2):
+        job_id = srv.add_job(url=f"{url}?n={n}", title="Customer Service Engineer", company="KLA")["job"]["id"]
+        r = applier.runs[job_id] = Run(job_id, "Customer Service Engineer", "KLA", url=url, status="needs_you",
+                                       need="email_code", left=True, paused_at=now, page=tab())
+        r.resetting = r.reset_waited = True
+        r.reset_at = now - 3  # (its button pressed a moment before it paused)
+        runs.append(r)
+    return applier, runs, asked, opened
+
+
+def test_a_reset_email_is_looked_for_from_when_the_desk_asked_for_it(srv, monkeypatch):
+    """KLA's Workday, the reset probe's second pass a minute after the first (run 136): the newest reset email in the
+    two minutes before its pause was the first pass's, its link spent. A reset's email is looked for from when the desk
+    pressed the site's button (mailbox.search keeps to a few seconds before that), not from the pause; an emailed
+    code's still from the pause, as before."""
+    applier, (r, other), asked, opened = _waiting_on_resets(srv, monkeypatch, [])
+    run(applier._check_mail(r))
+    assert asked == [("reset", r.reset_at)] and r.reset_at < r.paused_at, (asked, r.mail_last)
+    other.resetting = False  # (waiting on a code or a confirmation link instead)
+    run(applier._check_mail(other))
+    assert asked[1:] == [("link", other.paused_at)], asked
+
+
+def test_a_reset_link_opened_once_is_never_opened_again(srv, monkeypatch):
+    """Run 136 again: the first pass's reset link, opened again, set nothing (a reset's link works once). A reset link
+    opened once, for this job or another, is passed over, and the new one waited for and opened."""
+    first_link = "https://kla.wd1.myworkdayjobs.com/Search/passwordReset?token=first"
+    inbox: list = []
+    applier, (first, second), asked, opened = _waiting_on_resets(srv, monkeypatch, inbox)
+    inbox.append(pipeline.mailbox.Found("reset", first_link, "workday.kla.com", first.reset_at + 1))
+    run(applier._check_mail(first))
+    assert opened == [first_link] and first.mail_done, (opened, first.mail_last)
+    run(applier._check_mail(second))  # the same email: its link spent, passed over
+    assert opened == [first_link] and not second.mail_done and "opened already" in second.mail_last, second.mail_last
+    second_link = "https://kla.wd1.myworkdayjobs.com/Search/passwordReset?token=second"
+    inbox.append(pipeline.mailbox.Found("reset", second_link, "workday.kla.com", time.time()))  # its own, come since
+    run(applier._check_mail(second))
+    assert opened == [first_link, second_link] and second.mail_done, second.mail_last
+
+
+def test_a_reset_email_from_before_the_request_waits_a_moment_for_a_newer_one(srv, monkeypatch):
+    """The review of 0.3.209: a reset's email is looked for as far back as a code's (the two clocks can be apart), and
+    one from before the desk asked for the reset, by this computer's clock, may be an earlier reset's, its link spent
+    (run 136: the first pass's, opened again, set nothing). One from a little before is this one's with the clocks apart:
+    a newer one is waited for a moment, and used when it comes. One from further back (RESET_CLOCK_SKEW) is an earlier
+    reset's: never opened, however long nothing newer comes (the re-review: after the wait it was), and its link was the
+    account's, so the wait running out is said, never taken for no email (reset_spent)."""
+    inbox: list = []
+    applier, (r, _), asked, opened = _waiting_on_resets(srv, monkeypatch, inbox)
+    stale = "https://kla.wd1.myworkdayjobs.com/Search/passwordReset?token=stale"
+    inbox.append(pipeline.mailbox.Found("reset", stale, "workday.kla.com", r.reset_at - 60))
+    run(applier._check_mail(r))
+    assert opened == [] and not r.mail_done and "an earlier reset's" in r.mail_last, r.mail_last
+    r.reset_at -= pipeline.RESET_FRESH_WAIT  # (the moment gone by, and nothing newer)
+    inbox[-1] = pipeline.mailbox.Found("reset", stale, "workday.kla.com", r.reset_at - 60)
+    run(applier._check_mail(r))
+    assert opened == [] and not r.mail_done and r.reset_spent, (opened, r.mail_last)
+    r.reset_at += pipeline.RESET_FRESH_WAIT
+    near = "https://kla.wd1.myworkdayjobs.com/Search/passwordReset?token=near"
+    inbox.append(pipeline.mailbox.Found("reset", near, "workday.kla.com", r.reset_at - 20))
+    run(applier._check_mail(r))
+    assert opened == [] and not r.mail_done and "a newer one is waited for" in r.mail_last, r.mail_last
+    fresh = "https://kla.wd1.myworkdayjobs.com/Search/passwordReset?token=fresh"
+    inbox.append(pipeline.mailbox.Found("reset", fresh, "workday.kla.com", r.reset_at + 4))
+    run(applier._check_mail(r))
+    assert opened == [fresh] and r.mail_done, (opened, r.mail_last)
+
+
+def test_a_reset_email_that_looks_early_by_this_computers_clock_is_used_after_the_wait(srv, monkeypatch):
+    """The review of 0.3.209: with this computer's clock 40 seconds fast, the reset email the site sent for this request
+    arrived "before" it, by the mail service's clock, and 15 seconds back missed it. With nothing newer in
+    RESET_FRESH_WAIT, it's the one: opened."""
+    inbox: list = []
+    applier, (r, _), asked, opened = _waiting_on_resets(srv, monkeypatch, inbox)
+    link = "https://kla.wd1.myworkdayjobs.com/Search/passwordReset?token=skewed"
+    inbox.append(pipeline.mailbox.Found("reset", link, "workday.kla.com", r.reset_at - 40))
+    run(applier._check_mail(r))
+    assert opened == [] and not r.mail_done, r.mail_last  # (a newer one waited for a moment)
+    r.reset_at -= pipeline.RESET_FRESH_WAIT  # (that moment gone by, and nothing newer)
+    run(applier._check_mail(r))
+    assert opened == [link] and r.mail_done, (opened, r.mail_last)
+
+
+@pytest.mark.parametrize("said, refused", [
+    # a reset that went in, and the page after it (the review of 0.3.209): no refusal
+    ("Sign In\nYour session has expired. Please sign in again.", False),
+    ("Your session expired due to inactivity. Sign in to continue.", False),
+    ("Sign In\nFor security, all sessions were ended. Session expired - please log in again with your new password",
+     False),
+    ("Sign In\nEmail Address\nPassword\nForgot your password?\nPasswords must not match your last 5 passwords", False),
+    ("Sign In\nCreate Account\nRequests for reasonable accommodation: link below. Offers expired after 7 days", False),
+    ("Must hold a valid, non-expired driver's license", False),
+    ("Invalid email address or password", False),
+    ("Invalid request", False),
+    ("Your password has expired", False),  # (a reset's own form: a new one is wanted)
+    ("Your password has been reset. This link has expired.", False),  # (it says the password is reset)
+    # the link spent, or the password one the site had before
+    ("This link has expired. Request a new password reset from the sign-in page.", True),
+    ("The password reset link is invalid or has expired.", True),
+    ("Invalid Password Reset Request", True),
+    ("This password reset request is no longer valid.", True),
+    ("Your password reset token has expired", True),
+    ("The link you clicked has already been used.", True),
+    ("This reset link is no longer active.", True),
+    ("Sorry, this link is not valid anymore.", True),
+    ("The password reset has timed out. Please request a new one.", True),
+    ("Error: Password was recently used.", True),
+    ("You can't reuse a recent password.", True),
+    ("You cannot use a password that you have used before.", True),
+    ("Password cannot be the same as your previous 5 passwords.", True),
+    ("New password must be different from your current password.", True),
+    # (the re-review: help that only says what to do if it were, and three more refusals)
+    ("If this link has expired, request a new password reset from the sign-in page.", False),
+    ("Note: the link may be invalid in some mail apps; copy it into your browser.", False),
+    ("The new password cannot be the same as a previous password.", True),
+    ("This request has expired.", True),
+    ("Password Reset Failed", True)])
+def test_what_a_reset_page_says_of_a_password_it_didnt_set(said, refused):
+    """Only words said of a link, a token, a reset or a password, and never the site's password rules shown beside its
+    boxes (but in an alert: test_a_reset_alert_that_says_the_rules_is_a_refusal)."""
+    assert bool(pipeline._reset_refused({}, said)) == refused, pipeline._reset_refused({}, said)
+
+
+def test_a_reset_alert_that_says_the_rules_is_a_refusal():
+    rules = "Passwords must not match your last 5 passwords"
+    assert pipeline._reset_refused({"errors": [rules]}, "") == rules
+    assert pipeline._reset_refused({"headings": [rules]}, rules) == ""
 
 
 def test_a_look_in_the_inbox_begun_before_another_job_took_it_isnt_used(srv, monkeypatch):

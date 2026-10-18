@@ -879,6 +879,9 @@ class Desk:
             notes["not_interested"] = left_out
         queued, refused = [], []
         for job_id in ids:
+            begun = self.applier.runs.get(job_id)
+            if begun is not None and begun.started and begun.status not in ("queued", "running"):
+                begun.in_their_hands = True  # (Apply on a job begun before: its tab may hold what they did in it)
             try:
                 self.applier.enqueue(job_id, submit=submit)
                 queued.append(job_id)
@@ -968,6 +971,8 @@ class Desk:
                 except (ValueError, OSError) as e:
                     problem = f"Couldn't remember your answers ({e}); they're used for this application only."
             run.once[question_key(label)] = value
+        if run.started:
+            run.in_their_hands = True  # (its tab may hold what they did while its card was up: a file kept there is theirs)
         self.applier.go_on_for(self.applier.enqueue(job_id, submit=run.submit, front=True))
         self.applier.pressed.add(job_id)  # (answered on its card: it goes even while the queue is paused)
         return problem

@@ -535,6 +535,197 @@ def _yn(path: str, invert: bool = False) -> Getter:
     return g
 
 
+_US_CITIZENSHIP = re.compile(r"(the )?(united states( of america)?|u ?s( ?a)?|american?)")
+# The U.S. citizen question as the label writes it, and what follows it
+_US_WRITTEN = r"(?:u\.?\s?s\.?(?:\s?a\.?)?|united\s+states(?:\s+of\s+america)?)"
+_ARE_YOU = r"\bare\s+you\s+(?:currently\s+|presently\s+|now\s+)?an?\s+"  # ("Are you currently a ...": the ninth review)
+_CITIZEN_ASKED = re.compile(rf"{_ARE_YOU}(?:{_US_WRITTEN}[\s-]*)?citizen(?:\s+of\s+the\s+{_US_WRITTEN})?"
+                            r"(?P<rest>.*)$", re.I | re.S)
+# ...the same question in other words: "or not", "or (a U.S.) national"
+_SAME_QUESTION = re.compile(rf"\s*,?\s*\(?\s*or\s+(?:not|(?:an?\s+)?(?:{_US_WRITTEN}\s+)?national)\b\s*\)?", re.I)
+# ...and the answers it takes, written after it: "Are you a US citizen: Yes/No", "..., yes or no?"
+_YES_NO_TAIL = re.compile(r"\s*[:,\-\u2013]?\s*\(?\s*yes\s*(?:/|or)\s*no\b\)?", re.I)
+# ...and around it, only what's on this list (the reviews of Oct 18): before it a numbering or a heading of its own
+# ("3)", "Q3:", "Citizenship:", "U.S. Citizenship -"); after it its end, the answers it takes, and a few sentences that
+# say no more than it ("This position requires US citizenship.", "Proof of citizenship will be required.", "Please
+# select Yes or No."). Anything else beside it may change what its Yes or No would say ("Select Yes if currently
+# employed by Acme.", "Must hold an active Secret.", "Willing to relocate (Y/N)"): left, never guessed at
+_NUMBERING = r"(?:\(?\s*(?:q\s*)?\d+[a-z]?\s*[.):\]]|[a-z][.)]|#\s*\d+[.):]?)"
+_OWN_HEADING = re.compile(rf"^\s*{_NUMBERING}?\s*(?:(?:(?:u\.?\s?s\.?\s*|united states\s+)?citizenship(?:\s+status)?|"
+                          r"(?:u\.?\s?s\.?\s*|united states\s+)person(?:\s+status)?|export\s+controls?|"
+                          r"required|eligibility|(?:work|employment)\s+eligibility|work authori[sz]ation(?:\s+status)?)\s*"
+                          r"(?::|\s[-\u2013\u2014]))?\s*$", re.I)
+_US_SAID = r"(?:u\.?\s?s\.?(?:\s?a\.?)?\s+|united states\s+)?"
+# (and the employer's word that it won't sponsor, alone in its sentence: "Note: this position is not eligible for visa
+# sponsorship.", "We are unable to sponsor visas for this role.", "No sponsorship is available.": the seventh review of
+# Oct 18, which found such a note read out of the label before the check, with an instruction in it)
+_SPONSORSHIP = r"(?:(?:visa|employment|immigration|work\s+visa|h-?1\s?b)\s+)?sponsorship"
+_NEGATED = (r"(?:does\s+not|doesn[\u2019']?t|do\s+not|don[\u2019']?t|cannot|can\s+not|can[\u2019']?t|will\s+not|"
+            r"won[\u2019']?t|is\s+not|isn[\u2019']?t|are\s+not|aren[\u2019']?t)")
+_NO_SPONSORSHIP_SAID = (
+    r"(?:(?:please\s+)?note\s*[:,\-\u2013]?\s*)?"
+    r"(?:(?:we|this\s+(?:position|role|job|opportunity)|the\s+(?:company|employer|position|role))\s+"
+    rf"(?:(?:is|are)\s+(?:not\s+eligible\s+for|unable\s+to\s+(?:offer|provide))\s+{_SPONSORSHIP}|"
+    rf"{_NEGATED}\s+(?:able\s+to\s+)?(?:offer|provide|support)\s+{_SPONSORSHIP}|"
+    rf"(?:(?:is|are)\s+unable\s+to|{_NEGATED}(?:\s+able\s+to)?)\s+sponsor(?:\s+(?:work\s+|employment\s+)?visas)?)|"
+    rf"no\s+{_SPONSORSHIP}\s+is\s+(?:available|offered|provided)|"
+    rf"{_SPONSORSHIP}\s+is\s+not\s+(?:available|offered|provided))"
+    r"(?:\s+for\s+this\s+(?:position|role|job|opportunity))?")
+_SAYS_NO_MORE = re.compile(
+    rf"^(?:(?:this|the)\s+(?:position|role|job)\s+requires\s+{_US_SAID}citizenship|"
+    rf"{_US_SAID}citizenship\s+is\s+required(?:\s+for\s+this\s+(?:position|role|job))?|"
+    rf"proof\s+of\s+{_US_SAID}citizenship\s+(?:will\s+be|is|may\s+be)\s+required(?:\s+(?:at|upon)\s+hire)?|"
+    r"(?:please\s+)?(?:select|choose|answer|check|mark)\s+(?:one|yes\s+or\s+no|yes\s*/\s*no)|"
+    rf"\(?\s*(?:yes\s*/\s*no|y\s*/\s*n)\s*\)?|\[\s*yes\s*/\s*no\s*\]|{_NO_SPONSORSHIP_SAID}|"
+    r"(?:this|the)\s+(?:position|role|job)\s+requires\s+access\s+to\s+export[-\s]controlled\s+(?:information|"
+    r"technology|technical\s+data|data|items))\W*$", re.I)
+# (as the normalized rules read it: "or ..." or "by ..." after "citizen", but "or not" and "or (a U.S.) national")
+_CITIZEN_GOES_ON = r"(?! (?:by\b|or\b(?! (?:not|(?:an? )?(?:u ?s )?national)\b)))"
+
+
+def _asks_more_than_citizenship(raw_label: str, persons: bool = False) -> bool:
+    """Whether the label holds anything beside "Are you a U.S. citizen" that isn't on the short list of what says no
+    more (_OWN_HEADING before it; after it its end, the answers it takes, "or not", "(or a US national)", and
+    _SAYS_NO_MORE's sentences). Anything else, a question, a condition, a request or another requirement ("Select Yes
+    if currently employed by Acme.", "This role requires an active TS/SCI.", "Do you hold a valid work visa? Are you a
+    US citizen?"), may change what its Yes or No would say: left for the person, never guessed at (the reviews of
+    Oct 18). A citizen question the check can't place is left where the label asks anything else. With `persons`, the
+    U.S. person's question, held to the same list: "Are you a U.S. person", or the citizen question with the others
+    named after it (_PERSONS_AFTER), and nothing more ("...or permanent resident and able to obtain a clearance?",
+    "Are you a U.S. citizen (permanent residents do not qualify)?": the eighth review of Oct 18)."""
+    text = re.sub(r"\s+", " ", re.sub(r"\(required\)|\*", " ", raw_label or "", flags=re.I)).strip()
+    m = citizen = _CITIZEN_ASKED.search(text)
+    if persons and m is None:
+        m = _US_PERSON_ASKED.search(text)
+        if m is None and (m := _BARE_ASKED.search(text)) is not None and m.group("citizen"):
+            citizen = m
+    if m is None:
+        return text.count("?") > 1 or bool(re.search(r"\b(are|do|can|will|have)\s+you\b", text, re.I))
+    if not _OWN_HEADING.match(text[:m.start()]):
+        return True
+    rest = m.group("rest")
+    if persons:
+        rest = _undotted(rest)
+        named = (_PERSONS_AFTER if citizen else _PERSON_DEFINED).match(rest)
+        if citizen and named is None:
+            return True  # (the citizen's question alone: never the U.S. person's to answer)
+        rest = rest[named.end():] if named else rest
+    else:
+        same = _SAME_QUESTION.match(rest)
+        rest = rest[same.end():] if same else rest
+    told = _YES_NO_TAIL.match(rest)
+    rest = rest[told.end():] if told else rest
+    rest = re.sub(r"^\s*[?!.;]", "", rest)
+    rest = _undotted(rest)
+    if persons and (said := _PERSON_DEFINED.match(rest)):
+        rest = rest[said.end():]  # (its persons or its definition after its "?": "Are you a U.S. Person? (U.S. citizen, ...)")
+    # (a sentence in brackets is read as itself: "(This position requires U.S. citizenship.)")
+    return any(not _SAYS_NO_MORE.match(said.strip().lstrip("([").strip())
+               for said in re.findall(r"[^.?!;]+[.?!;]*", rest) if re.search(r"\w", said))
+
+
+def _undotted(text: str) -> str:
+    """("U.S." ends no sentence)"""
+    return re.sub(r"\b(?:[A-Za-z]\.){2,}", lambda a: a.group(0).replace(".", ""), text)
+
+
+# The U.S. person's question, which starts as the citizen's and goes on to the others in its first sentence, unnegated
+# (export control's "Are you a U.S. citizen or permanent resident?", "..., national, lawful permanent resident, refugee
+# or asylee?"); never "Are you a US citizen (do not include permanent residents)?"
+_OTHER_US_PERSONS = re.compile(r"\b(?:lawful\s+permanent|permanent\s+residen\w*|green\s+card|refugee|asyl\w*|"
+                               r"protected\s+individual|us\s+person)", re.I)
+_NOT_THEM = re.compile(r"\b(?:not|n[\u2019']t|excluding|exclud\w*|except|other\s+than|without)\b(?:\W+\w+){0,4}?\W+"
+                       r"(?:lawful\s+)?(?:permanent|green\s+card|refugee|asyl)", re.I)
+
+
+# ...as it names them, once "U.S." has lost its dots: "..., national, lawful permanent resident, refugee or asylee", "...or
+# green card holder (as defined by 8 U.S.C. 1324b(a)(3))"; and "Are you a U.S. person", with the same said of it
+_PERSON_NAMED = (r"(?:an?\s+)?(?:other\s+)?(?:us\s+|usa\s+|united\s+states\s+)?(?:citizen|national|(?:lawful\s+|"
+                 r"legal\s+)?permanent\s+residen(?:t|ce)(?:\s+alien)?|green\s+card(?:\s+holder)?|refugee|asylee|"
+                 r"(?:person\s+)?granted\s+asylum|protected\s+individual|person)s?"
+                 r"(?:\s+of\s+the\s+(?:us|usa|united\s+states(?:\s+of\s+america)?))?")
+_CITE = (r"(?:8\s+usc\s*(?:\u00a7\s*)?1324b(?:\s*\(\w+\))*|22\s+cfr\s*(?:\u00a7\s*)?120(?:\.\d+)*|"
+         r"15\s+cfr\s*(?:\u00a7\s*)?772(?:\.\d+)*)")
+_RULES_NAMED = (r"(?:(?:the\s+)?(?:itar|ear)(?:\s*/\s*(?:itar|ear))?|(?:the\s+)?(?:us\s+)?(?:export\s+control|export\s+"
+                r"administration|international\s+traffic\s+in\s+arms)\s+(?:laws?(?:\s+and\s+regulations?)?|"
+                rf"regulations?)(?:\s*\((?:ear|itar)\))?|{_CITE})")
+_DEFINITION = (rf"(?:as\s+(?:that\s+term\s+is\s+)?defined\s+(?:by|in|under)|under)\s+{_RULES_NAMED}(?:\s*(?:and|or|/)\s*{_RULES_NAMED})?"
+               rf"(?:\s*\(\s*{_CITE}\s*\))?")
+_PERSON_ITEM = rf"{_PERSON_NAMED}(?:\s*,?\s*{_DEFINITION})?"
+_JOINED = r"(?:\s*,\s*(?:or\s+|and/or\s+)?|\s*/\s*|\s+(?:or|and/or)\s+)"
+_PERSONS_IN_BRACKETS = rf"\s*\(\s*(?:{_PERSON_ITEM}(?:{_JOINED}{_PERSON_ITEM})*|{_DEFINITION})\s*\)"
+_PERSONS_AFTER = re.compile(rf"(?:{_JOINED}{_PERSON_ITEM}(?:{_PERSONS_IN_BRACKETS})?)+(?:\s*,?\s*{_DEFINITION})?", re.I)
+_PERSON_DEFINED = re.compile(rf"(?:{_PERSONS_IN_BRACKETS}|\s*,?\s*{_DEFINITION}){{0,2}}", re.I)
+_QUOTED = "[\"'\u201c\u201d\u2018\u2019]?"
+_US_PERSON_ASKED = re.compile(rf"{_ARE_YOU}{_QUOTED}{_US_WRITTEN}[\s-]*person\b{_QUOTED}(?P<rest>.*)$", re.I | re.S)
+# ...and either as a bare label, alone or after its own heading or numbering ("U.S. Citizen or Permanent Resident",
+# "Export Control: U.S. Person"; the ninth review: one the check didn't know was answered with nothing checked around it)
+_BARE_ASKED = re.compile(rf"(?:^|(?<=[:.)\]?])|(?<=\s[-\u2013\u2014]))\s*(?:(?:{_US_WRITTEN}\s+)?(?P<citizen>citizen)\b|"
+                         rf"{_QUOTED}{_US_WRITTEN}[\s-]*person\b{_QUOTED})(?P<rest>.*)$", re.I | re.S)
+# A list of the persons that names those a permanent resident is among, or the U.S. person by name: otherwise ("Are you a
+# U.S. citizen or refugee/asylee?") the profile's us_person says nothing of them (_among_the_named)
+_NAMES_RESIDENTS = re.compile(r"permanent\s+residen|green\s+card|\bus\s+person\b", re.I)
+# ...after another question, or a short phrase before a colon or a dash: never answered as one (_OWN_HEADING's are)
+_ANOTHER_HEAD = re.compile(r"\?\s*$|^[^?:]{1,60}(?::|\s[-\u2013\u2014])\s*$")
+# Which rules read each question (_citizen_question)
+_ASKED_BY = {"us_citizen": {"us_citizen", "citizenship"}, "us_person": {"us_person"}}
+
+
+def _citizen_question(raw_label: str) -> str:
+    """Which U.S. question the label asks: "us_citizen" for "Are you a U.S. citizen", "us_person" for the U.S. person's
+    ("Are you a U.S. person", or the citizen question going on to the others in its first sentence, unnegated), "" for
+    neither. Only that question's own rules read the label (_ASKED_BY), held to the short list of what says no more
+    (_asks_more_than_citizenship), never another work rule's reading of what's around it ("Are you a US citizen? Will
+    you require visa sponsorship?" is no sponsorship question for a citizen's No, nor "Work Authorization: Are you a US
+    citizen?" an authorized person's Yes: the seventh and eighth reviews of Oct 18)."""
+    text = re.sub(r"\s+", " ", raw_label or "")
+    m = _CITIZEN_ASKED.search(text)
+    if m is None:
+        if _US_PERSON_ASKED.search(text):
+            return "us_person"
+        bare = _BARE_ASKED.search(text)
+        # (or after another question, or a short phrase of its own: "Legally authorized to work? U.S. citizen?",
+        # "Authorized to work in the US: U.S. citizen?" are the citizen's too, never one Yes for both; left, as no
+        # heading of the question's own is before it: the eleventh review of Oct 18)
+        if bare is None or not (_OWN_HEADING.match(text[:bare.start()]) or _ANOTHER_HEAD.search(text[:bare.start()])):
+            return ""
+        # (a bare "U.S. Citizen?" after "Work Authorization:" is the citizen's, never the work authorization rule's
+        # Yes: the tenth review of Oct 18)
+        return "us_citizen" if bare.group("citizen") and not _PERSONS_AFTER.match(_undotted(bare.group("rest"))) \
+            else "us_person"
+    first = re.split(r"[?.!;]", _undotted(m.group("rest")), maxsplit=1)[0]
+    return "us_person" if _OTHER_US_PERSONS.search(first) and not _NOT_THEM.search(first) else "us_citizen"
+
+
+def _from_the_question(raw_label: str) -> str:
+    """The label from the U.S. citizen's or person's question on, without its heading ("U.S. Person: Are you a U.S.
+    citizen, refugee or asylee?" names no permanent residents: the tenth review of Oct 18)."""
+    text = re.sub(r"\s+", " ", raw_label or "")
+    for asked in (_CITIZEN_ASKED, _US_PERSON_ASKED):
+        if (m := asked.search(text)) is not None:
+            return text[m.start():]
+    bare = _BARE_ASKED.search(text)
+    return text[bare.start():] if bare is not None and _OWN_HEADING.match(text[:bare.start()]) else text
+
+
+def _among_the_named(prof: Profile, job: dict) -> Any:
+    """The U.S. person's question naming only some of them, never the permanent residents ("Are you a U.S. citizen,
+    national, refugee or asylee?"): a citizen's Yes, and No for one who is no U.S. person at all; a permanent resident's
+    is left (the ninth review of Oct 18: their us_person said Yes)."""
+    if prof.get("work_authorization.us_citizen") is True:
+        return "Yes"
+    return "No" if prof.get("work_authorization.us_person") is False else None
+
+
+def _us_citizen(prof: Profile, job: dict) -> Any:
+    """Whether the person is a U.S. citizen: the profile's us_citizen, or where it doesn't say, a citizenship that is
+    the United States. Another country's citizenship says nothing of a second, U.S. one: left."""
+    said = _yn("work_authorization.us_citizen")(prof, job)
+    if said is not None:
+        return said
+    return "Yes" if _US_CITIZENSHIP.fullmatch(norm(prof.get("work_authorization.citizenship"))) else None
+
+
 def _authorized(prof: Profile, job: dict) -> Any:
     """Authorized and needing no sponsorship means authorized for any employer, which is
     what forms that also offer "for my current employer" (ASM) are asking."""
@@ -1485,6 +1676,7 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("expected_grad", r"(expected|anticipated|projected) (graduation|completion)|graduation date.{0,20}(expected|anticipated)",
      _expected_graduation, 80, None),
     ("grad_year", r"graduation (year|date)|year of graduation", _graduated, 60, None),
+    # (never the signing date's box, nor one for a date to enter: _SIGNING_DATE_NAMED, _DATE_TO_ENTER)
     ("signature", r"(electronic |e )?signature|sign your (full )?name", _full_name, 80, {"text"}),
     # questions (any length)
     # the same facts asked the other way round come first
@@ -1536,11 +1728,20 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("authorized", _AUTHORIZED, _authorized, None, None),
     # Only questions that ask whether you are a U.S. person: export-control wording
     # also comes with other questions, e.g. Micron's "are you a citizen of Cuba, Iran ...?"
-    ("us_person", r"^(?!.*\b(other than|another country|any (other )?country|foreign)\b).*"
+    # (never one that leaves them out: "...(not a permanent resident)?", "...(do not include permanent residents)?")
+    ("us_person", r"^(?!.*\b(other than|another country|any (other )?country|foreign)\b)"
+     r"(?!.*\b(not|excluding|exclud\w*|except|without)\b( \w+){0,4}? (lawful )?(permanent residen|green card)).*"
      r"(\bu ?s person\b|citizen.{0,80}(permanent resident|green card|refugee|asyl|protected individual))",
      _us_person, None, None),
-    ("us_citizen", r"are you a (u s|united states) citizen\b|are you a citizen of the (u s|united states)( of america)?$",
-     _yn("work_authorization.us_citizen"), None, None),
+    # (the country however it's written: "U.S.", "US", "USA"; "us" stands only where the country does, never the
+    # pronoun's "join us". Never a question that goes on with "or ..." or "by ...": "Are you a US citizen or do you have
+    # authorization to work in the US?" is a permanent resident's Yes, and "...by birth?" the profile doesn't say:
+    # the review of Oct 18)
+    # (nor one that asks more after it, as written: _asks_more_than_citizenship)
+    ("us_citizen", r"are you ((currently|presently|now) )?a (u ?s( ?a)?|united states) citizen\b" + _CITIZEN_GOES_ON + "|"
+     r"are you ((currently|presently|now) )?a citizen of the (u ?s( ?a)?|united states)( of america)?\b"
+     + _CITIZEN_GOES_ON,
+     _us_citizen, None, None),
     # "Are you an alien illegally in the United States?", "...admitted under a nonimmigrant visa?" (Axon)
     ("alien", r"^are you an? (illegal )?alien\b", lambda p, j: "No" if p.get("work_authorization.us_citizen") is True else None,
      200, {"select", "listbox", "combobox", "radio_group"}),
@@ -1560,7 +1761,9 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
      r"\b(applies|describes|option)\b.{0,20}\b(you|yours?)\b",
      lambda p, j: "U.S. Citizen" if p.get("work_authorization.us_citizen") is True else None, None,
      {"select", "listbox", "combobox", "radio_group"}),
-    ("citizenship", r"citizenship|country of citizen|are you a (u ?s )?citizen", _p("work_authorization.citizenship"), None, None),
+    # (nor, as the U.S. citizen question, one that goes on with "or ..." or "by ...": its country is no answer to it)
+    ("citizenship", r"citizenship|country of citizen|are you a (u ?s )?citizen\b" + _CITIZEN_GOES_ON,
+     _p("work_authorization.citizenship"), None, None),
     ("clearance", r"security clearance|active clearance", _p("work_authorization.security_clearance"), None, None),
     # "do you live nearby or are you willing to relocate?": a local applicant isn't relocating
     ("local_or_relocate", r"(located|live|living|reside|residing|based|commut).{0,60}relocat|relocat.{0,60}(located|live|living|reside|residing|commut)",
@@ -2068,6 +2271,27 @@ _OTHER_DOCUMENT = re.compile(r"\b(degree|diploma|transcripts?|certificat\w*|lice
 # A date box asking when something else happened, not the date a form is signed
 _OTHER_EVENT = re.compile(r"\b(conviction|criminal|offen[cs]e|incident|violation|accident|military|service|discharge|"
                           r"availability|available|employment|education|experience|history|birth|licen[cs]e|certif\w*)\b")
+# A signing date label's words about something else signed, or another day ("Date signed (if you signed a non-compete
+# with your current employer)", "...the attached offer letter", "...the date you were last employed": the review of
+# Oct 18)
+_OTHER_SIGNING = re.compile(r"\b(non ?compete|offer letter|agreements?|employed)\b")
+# A signature box that is the signing date's ("Employment Application Signature Date", "Date of Signature") or the
+# signature's and the date's in one ("Signature and Date"), as the normalized label says; or one whose entry verb takes
+# the date ("Enter the date beside your electronic signature"), as written: never the name. One that only mentions a
+# date keeps it ("type your full name, the date is recorded automatically", "enter your full name, not the date")
+_SIGNING_DATE_NAMED = re.compile(r"\b(signature (and )?dates?|date signed|date of signature)\b")
+_DATE_TO_ENTER = re.compile(r"\b(enter|type|write|provide|fill in|put)\s+(in\s+)?(the\s+|a\s+)?(today[’']?s\s+|"
+                            r"current\s+)?dates?\b", re.I)
+# A sponsorship question about another person's need ("...required for your spouse or dependents?", "...for any family
+# member?"), or about the employer's policy with no need of the person's in it ("Is sponsorship available for
+# candidates who need it?", "Does Acme offer sponsorship?"): not the person's own. "Will you require the company to
+# provide sponsorship?" is theirs
+_THEIR_FAMILY_SPONSORSHIP = re.compile(r"\bfor (any of )?(your |his |her |their |a |any )?(domestic )?(spouse|partner(?! (compan|organi|firm|"
+                                       r"site|location|agenc|employer|facilit))|husband|wife|dependents?|child(ren)?|"
+                                       r"family( members?)?|relatives?)\b")
+_EMPLOYER_SPONSORSHIP = re.compile(r"\bsponsor\w* (is |be )?(available|offered|provided)\b|"
+                                   r"\b(offer|provide)s? (any )?(visa |employment |immigration )?sponsor")
+_YOUR_NEED = re.compile(r"\byou\b.{0,40}\b(require|need)|\b(require|need)\w*\b.{0,60}\bfor you\b")
 
 
 def _without_notes(label: str) -> str:
@@ -2132,7 +2356,8 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
                    unmatched: list[Answer] | None = None) -> Answer | None:
     job = job or {}
     kind = field.get("kind", "text")
-    raw_label = _without_notes(field.get("label") or field.get("name") or "")
+    asked = field.get("label") or field.get("name") or ""
+    raw_label = _without_notes(asked)
     label = norm(clean_label(raw_label))
     if kind == "password":
         return None
@@ -2196,18 +2421,29 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
     if kind == "checkbox":
         # Single checkboxes are usually consents/attestations: leave for a person,
         # except ones the user pre-approved in the answer bank.
+        # (only a yes ticks one, and a no unticks it: an answer that is neither, "Decline to self-identify" for a
+        # veteran's box or "Maybe" for relocating, is no yes, and ticking it says what the person never said: the
+        # mutation pass of Oct 18)
         ans = _answer_bank(prof, raw_label, job)
-        if ans is not None:
-            pol = polarity(ans.value)
-            return Answer(pol if pol is not None else bool(ans.value), ans.rule)
-        return None
+        pol = polarity(ans.value) if ans is not None else None
+        return Answer(pol, ans.rule) if ans is not None and pol is not None else None
 
     ans = _answer_bank(prof, raw_label, job)
     if ans is None and _NEVER_GUESS.search(label):
         return None
     section = norm(field.get("section"))
-    if ans is None and kind == "text" and len(label) <= 45 and _SIGNED_DATE.search(label) \
-            and not (label == "date" and _OTHER_EVENT.search(section)):
+    # (a longer label whose name, before its note, says it is that date too: "Applicant Signature Date (please use
+    # MM/DD/YYYY format)", "Signature date - enter today's date"; a long question that mentions a date signed further on
+    # asks another day. So does a bare "Date" in a block about something else, and a long label whose words name
+    # something else signed or another day, "Date signed (if you signed a non-compete with your current employer)";
+    # its employment application is the form itself)
+    head = norm(re.split(r"\s+[-–—]\s+|[(:,;]", clean_label(raw_label), maxsplit=1)[0])
+    this_form = label.replace("employment application", "application")
+    if ans is None and kind == "text" \
+            and (len(label) <= 45 and _SIGNED_DATE.search(label)
+                 or head != "date" and len(head) <= 45 and _SIGNED_DATE.search(head)) \
+            and not (_OTHER_EVENT.search(section) if label == "date"
+                     else len(label) > 45 and (_OTHER_EVENT.search(this_form) or _OTHER_SIGNING.search(label))):
         return Answer(_today_for(field), "signed_date")
     someone_else = _SOMEONE_ELSE.search(f"{label} {section}") or _OTHER_PARTY_LABEL.search(label) \
         or _OTHER_PARTY_SECTION.search(section) or _ROLE_PARTY.search(norm(re.sub(r"\([^)]*\)", " ", raw_label))) \
@@ -2217,13 +2453,15 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
         # Taleo's "Closest Metropolitan City": its Region list is cities (Kforce's, live run 12, Oct 2026: Anthem,
         # Bisbee, ... Chandler): the profile's city, not its state, which the list doesn't have
         city = prof.get("personal.address.city")
-        if city:
-            ans = Answer(city, "personal.address.city")
+        if not city:
+            return None  # (never the state the rules below would give: the list is cities)
+        ans = Answer(city, "personal.address.city")
     if ans is None and kind == "checkbox_group" and (none := _plans_none(field, prof)):
         return Answer(none, "background.plans")  # (one of its own choices, as it reads)
     if ans is None:
         # a self-identification question is its own topic's, whatever else its notice's words match
         own = _self_identification(label, field)
+        asked_as = "" if own else _citizen_question(asked)
         for name, pattern, getter, max_len, kinds in ([own] if own else RULES):
             if someone_else and (name in _CONTACT_RULES or name == "employee_id"):
                 continue  # a reference's or an emergency contact's name, phone or email; a referrer's ID
@@ -2236,8 +2474,25 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
             if own or re.search(pattern, label):
                 if name in _WORK_RULES and (_OTHER_COUNTRIES.search(label) or _OTHER_THAN.search(label)):
                     return None  # another country's question: the profile's facts are the United States'
+                if asked_as and name not in _ASKED_BY[asked_as]:
+                    continue  # the U.S. citizen's or person's question: only its own rules read it, whatever's around it
+                if name == "us_person" and (asked_as != "us_person" or _asks_more_than_citizenship(asked, persons=True)):
+                    continue  # more than the U.S. person's question asked, or a wording the check doesn't know: theirs
+                if name == "us_person" and not _NAMES_RESIDENTS.search(_undotted(_from_the_question(asked))):
+                    getter = _among_the_named  # (a list that leaves out the permanent residents)
+                if name in {"sponsorship", "no_sponsorship"} and (
+                        _THEIR_FAMILY_SPONSORSHIP.search(label)
+                        or _EMPLOYER_SPONSORSHIP.search(label) and not _YOUR_NEED.search(label)):
+                    return None  # someone else's need, or the employer's policy: not the person's
+                # (as the form gives it, its notes too: "(Note: green card holders should select Yes.)")
+                if name in {"us_citizen", "citizenship"} and _asks_more_than_citizenship(asked) \
+                        and not (name == "citizenship" and re.search(r"citizenship|country of citizen|which country",
+                                                                     label)):
+                    continue  # more than citizenship asked: the next rule's (the country, where it's asked), or theirs
                 if name == "phone" and _other_kind_of_phone(label, prof):
                     return None  # a Work Phone for a mobile: the profile's number isn't that kind's
+                if name == "signature" and (_SIGNING_DATE_NAMED.search(label) or _DATE_TO_ENTER.search(raw_label)):
+                    return None  # the signing date's box, or one for a date to enter: never the name
                 value = getter(prof, job, raw_label) if _reads_question(getter) else getter(prof, job)  # type: ignore[call-arg]  # these take the question too
                 if value is None or value == "":
                     return None  # recognised but the profile has no answer
@@ -2262,8 +2517,11 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
 
     # (a yes/no question drawn as a text area, as Nikon's UKG Pro draws its work-authorization questions, live run
     # 14, Oct 2026: the profile's plain Yes or No)
+    # ("Is sponsorship required...?" too, unless it asks for an explanation: "If yes, please explain.")
     yes_no_box = ans.rule in {"authorized", "sponsorship", "no_sponsorship"} and polarity(ans.value) is not None \
-        and bool(re.match(r"(are|do|will|would|can|have|is) you\b", label))
+        and bool(re.match(r"(are|do|will|would|can|have|is) you\b", label)
+                 or re.match(r"is (visa |employment )?sponsorship\b", label) and not _EXPLAIN.search(label)
+                 and not re.search(r"\b(specify|which|what (type|kind))\b", label))
     # (and where a person lives, asked as a question in a text area: GCU's "In what city do you live?", the full run
     # of Oct 12)
     home_box = ans.rule in {"city", "home_state"} and bool(re.match(
@@ -2878,6 +3136,51 @@ def _differs(f: dict, prof: Profile, job: dict | None, file_inputs: int, blocks:
         if choose_option(given, [said], exact_only=True) is not None:
             return None
     return ans
+
+
+_DOCUMENT_RULES = {"documents.resume": "resume", "documents.cover_letter": "cover_letter"}
+
+
+def kept_documents(fields: list[dict], prof: Profile, job: dict | None) -> list[dict]:
+    """The resume and cover letter boxes that show a file, where this job's folder has one tailored for it
+    (tailored_document): a file kept from before, unless the desk put it there itself (Applier._replace_kept says).
+    Workday keeps an account's last resume in My Experience's "Resume/CV" upload (NXP's, the weekly probe of Oct 2026),
+    and the form reader reads that box as the kept file's name (or as "uploaded"), so plan_autofill left it as it was
+    and the employer got the old resume, not the one made for the job. A file of the tailored one's name is no sign it's
+    that one: every tailored resume is named <First>_<Last>_Resume.pdf (render_document), so the last application's at
+    the same employer has this one's name too. Each {"id", "kind" ("resume" or "cover_letter"), "where" (the box's own
+    name, for the person), "shown" (the names of the files it shows, none where it shows only that a file is there),
+    "tailored" (the file's path), "unsure"}: unsure where which file is the old one there isn't sure (it shows several,
+    or the box is for a resume and a cover letter both). Only a box whose own words (its label, else its section) name
+    that document, and that resolve_field fills with it: never one for another document as well (a transcript, a
+    certificate), an unnamed page's one upload, nor one that reads the resume to fill the form in. With no tailored file
+    for the job, none: a kept file stays as it is (the profile's resume too)."""
+    fields = _with_context([f for f in fields if not f.get("aside")])
+    file_inputs = sum(1 for f in fields if f.get("kind") == "file")
+    out: list[dict] = []
+    for f in fields:
+        if f.get("kind") != "file" or f.get("disabled") or is_empty_value(f.get("value")):
+            continue
+        ans = resolve_field(f, prof, job, file_inputs)
+        kind = _DOCUMENT_RULES.get(ans.rule) if ans is not None and ans.value != SKIP else None
+        tailored = tailored_document(job or {}, kind) if kind else None
+        if kind is None or not tailored:
+            continue
+        label, section = clean_label(f.get("label") or ""), clean_label(f.get("section") or "")
+        if _OTHER_DOCUMENT.search(norm(f"{label} {section}")):
+            continue
+        # (the words that name a document: the box's label, else its section, as Workday's "Upload a file" under
+        # "Resume/CV")
+        own = next((w for w in (label, section) if re.search(r"resume|cv|curriculum|cover", norm(w))), "")
+        resume, cover = bool(re.search(r"resume|cv|curriculum", norm(own))), "cover" in norm(own)
+        if not (cover if kind == "cover_letter" else resume):
+            continue
+        said = str(f.get("value")).strip()
+        # (what the form reader read: the files' names, joined, or "uploaded" where the page names none)
+        shown = [] if said.lower() == "uploaded" else [s.strip() for s in said.split(", ") if s.strip()]
+        out.append({"id": f["id"], "kind": kind, "where": own, "shown": shown, "tailored": tailored,
+                    "unsure": len(shown) > 1 or (resume and cover)})
+    return out
 
 
 def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, overwrite: bool = False,

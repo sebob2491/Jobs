@@ -787,6 +787,72 @@ def test_only_the_resumes_own_delete_is_pressed_for_it_to_go_up_again(srv, tmp_p
         assert run(srv.browser.upload_state("resume.pdf")) == "kept"
 
 
+@pytest.mark.parametrize("query,said", [("", "deleted"), ("unnamed", "deleted"), ("cover", "deleted"),
+                                        ("stuck", "pressed"), ("submit", "")])
+def test_only_the_kept_files_own_delete_is_pressed_for_the_tailored_one(srv, tmp_path, query, said):
+    """NXP's Workday (the weekly probe): an account's last resume kept in My Experience's "Resume/CV" upload, read as
+    the file's name, makes way for the one tailored for the job. Only that file's own Delete, in its own item of
+    Workday's list, is pressed: never the cover letter's beside it (?cover); with no name shown (?unnamed), the box's one
+    item's; never one that sends the form (?submit). A Delete that asks first is turned down by the browser (?stuck),
+    and said as pressed with the file still there. The box the desk then sends a file into is its own."""
+    run(srv.browser.goto(fixture_url("site/workday-kept-resume.html") + f"?{query}"))
+    box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["kind"] == "file")
+    name = "" if "unnamed" in query else "2024-resume.pdf"
+    shown = "uploaded" if not name else "2024-resume.pdf, 2024-cover-letter.pdf" if query == "cover" else name
+    assert (box["value"], box.get("section")) == (shown, "Resume/CV"), box
+    assert run(srv.browser.kept_upload_state(box["id"])) == ""
+    assert run(srv.browser.delete_kept_upload(box["id"], name)) == said
+    page = run(srv.browser.page())
+    counted = run(page.evaluate("() => [sessionStorage.getItem('deletes'), sessionStorage.getItem('coverDeletes'), "
+                                "window.sent]"))
+    assert counted == ["1" if said == "deleted" else None, None, False], counted
+    body = run(page.inner_text("body"))
+    assert ("2024-cover-letter.pdf" in body) is (query == "cover"), body
+    assert (name in body and "Successfully Uploaded!" in body) is (said != "deleted"), body
+    if query:
+        return
+    tailored = tmp_path / "Sam_Rivera_Resume.pdf"
+    tailored.write_bytes(b"%PDF-1.4 test")
+    box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["kind"] == "file")
+    assert not box.get("value"), box
+    run(srv.fill_form([{"id": box["id"], "value": str(tailored)}]))
+    assert run(srv.browser.kept_upload_state(box["id"])) == "mine"
+
+
+@pytest.mark.parametrize("query,said", [("toast", "deleted"), ("rerender", "pressed"), ("unnamed&card", ""),
+                                        ("unnamed&section", ""), ("hidden", "")])
+def test_never_a_delete_but_the_kept_files_own_and_only_its_item_gone_is_deleted(srv, query, said):
+    """The review of 0.3.209. The file is deleted once its own item is gone from Workday's list: a Delete that leaves a
+    note naming the file (?toast) has deleted it; one that draws the list again with the file still in it (?rerender)
+    hasn't, though the Delete pressed is gone. And never a Delete outside the file's own item: a saved block's Delete
+    beside the upload, its item's own control no Delete (?card); a Remove of the whole section, its item with no control
+    (?section); another item's Remove, the file's own Delete hidden (?hidden)."""
+    run(srv.browser.goto(fixture_url("site/workday-kept-resume.html") + f"?{query}"))
+    box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["kind"] == "file")
+    name = "" if "unnamed" in query else "2024-resume.pdf"
+    assert box["value"] == (name or "uploaded"), box
+    assert run(srv.browser.delete_kept_upload(box["id"], name)) == said
+    page = run(srv.browser.page())
+    counted = run(page.evaluate("() => ['deletes', 'cardDeletes', 'sectionRemoves', 'otherRemoves']"
+                                ".map((k) => sessionStorage.getItem(k))"))
+    assert counted == ["1" if said == "deleted" else None, None, None, None], counted
+    items = run(page.evaluate("() => document.querySelectorAll('#rs-files [data-automation-id=\"file-upload-item\"]')"
+                              ".length"))
+    assert items == (0 if said == "deleted" else 2 if query == "hidden" else 1), items
+
+
+def test_a_file_kept_outside_workdays_list_is_never_deleted(srv):
+    """The review of 0.3.209: another site's list of stored files may be the person's own file library, where a Delete
+    takes the file off their account. A kept file the box shows outside Workday's list of files (a plain row, its name
+    and a Delete) is never pressed for: "other"."""
+    run(srv.browser.goto(fixture_url("site/workday-kept-resume.html") + "?plain"))
+    box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["kind"] == "file")
+    assert box["value"] == "2024-resume.pdf", box
+    assert run(srv.browser.kept_upload_state(box["id"])) == "other"
+    assert run(srv.browser.delete_kept_upload(box["id"], "2024-resume.pdf")) == ""
+    assert run(run(srv.browser.page()).evaluate("() => sessionStorage.getItem('plainDeletes')")) is None
+
+
 def test_a_dialog_that_isnt_an_uploads_alone_is_never_pressed(srv, tmp_path):
     """The review of the open upload dialog's press: an application drawn as a dialog, its resume box beside a name
     box and a "Save" that sends it, would have been sent (around the guard every press goes through). Only a dialog

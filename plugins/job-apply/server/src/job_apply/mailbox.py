@@ -4,7 +4,8 @@ Used only with an app password the person saved on the Job Desk (``email_passwor
 only while a job waits on an emailed code or link. The inbox is opened read-only and mail
 is fetched with BODY.PEEK, so nothing is marked read or changed. Only mail that arrived
 after the desk began waiting, from the job site it's waiting on (its own domain or its job
-system's), is looked at, and only the code or link is kept from it. The inbox first, and its
+system's), is looked at, and only the code or link is kept from it (a password reset's, from
+when the desk asked for it). The inbox first, and its
 Spam (Junk) folder when the inbox has nothing: a site's first mail to an address sometimes lands
 there (BrassRing's own page says to look there), and it's the same code from the same sender.
 """
@@ -52,7 +53,10 @@ ATS_MAIL_DOMAINS = {
 _REFUSED = re.compile(r"authenticationfailed|authentication failed|invalid credentials|login failed|"
                       r"incorrect (?:username|password)|bad credentials", re.I)
 _BUSY = re.compile(r"unavailable|temporar|try again|later|throttl|too many|limit|overquota|server ?bug", re.I)
-LOOK_BACK = 120  # seconds before the wait began: a code sent just as the page asked for it
+# seconds before the wait began: a code sent just as the page asked for it; and, for a password reset's email (`since`
+# is when the desk asked for it), the mail service's clock and this computer's apart (the pipeline prefers one that
+# came after: RESET_FRESH_WAIT)
+LOOK_BACK = 120
 NEWEST = 30  # messages looked at per check, newest first
 
 _CODE_WORDS = re.compile(r"verification|one[- ]time|passcode|security code|\bcode\b|\bpin\b|\botp\b", re.I)

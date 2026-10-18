@@ -641,6 +641,53 @@ def test_a_box_that_imports_the_resume_is_left_beside_the_one_that_attaches_it()
     assert [f["id"] for f in alone["to_fill"]] == ["1"]
 
 
+def test_a_file_kept_from_before_gives_way_only_to_one_tailored_for_the_job(tmp_path):
+    """NXP's Workday (the weekly probe, Oct 2026): an account's last resume kept in My Experience's "Resume/CV" upload
+    was read as the box's value, so it was left there and the employer got the old resume, not the one tailored for
+    the job. A resume or cover letter box showing a file of another name than the job's tailored one is said kept from
+    before (for the desk to replace); with no tailored file, none is (a kept file stays, the profile's resume too)."""
+    from job_apply import autofill
+
+    folder = tmp_path / "job"
+    folder.mkdir()
+    job = {"folder": str(folder)}
+    box = {"id": "r", "kind": "file", "label": "Upload a file (5MB max)", "section": "Resume/CV",
+           "value": "resume-2025.pdf"}
+    cover = {"id": "c", "kind": "file", "label": "Cover Letter", "value": "cover-letter-2025.pdf"}
+    assert autofill.kept_documents([box, cover], prof(), job) == []
+    (folder / "Sam_Rivera_Resume.pdf").write_bytes(b"%PDF-1.4\n")
+    resume = str(folder / "Sam_Rivera_Resume.pdf")
+    assert autofill.kept_documents([box, cover], prof(), job) == [
+        {"id": "r", "kind": "resume", "where": "Resume/CV", "shown": ["resume-2025.pdf"], "tailored": resume,
+         "unsure": False}]  # (no cover letter tailored: the kept one stays)
+    (folder / "Sam_Rivera_Cover_Letter.pdf").write_bytes(b"%PDF-1.4\n")
+    assert [(k["id"], k["kind"], k["tailored"]) for k in autofill.kept_documents([box, cover], prof(), job)] == [
+        ("r", "resume", resume), ("c", "cover_letter", str(folder / "Sam_Rivera_Cover_Letter.pdf"))]
+    # nothing there: nothing to replace
+    for shown in ("", None):
+        assert autofill.kept_documents([{**box, "value": shown}], prof(), job) == [], shown
+    # a file of the tailored one's name is no sign it's that one (the review of 0.3.209): every tailored resume is named
+    # <First>_<Last>_Resume.pdf, so the last application's at the same employer has it too. Whether the desk put it there
+    # is the desk's to say (Applier._replace_kept)
+    [kept] = autofill.kept_documents([{**box, "value": "Sam_Rivera_Resume.pdf"}], prof(), job)
+    assert (kept["shown"], kept["unsure"]) == (["Sam_Rivera_Resume.pdf"], False)
+    # a box that shows only that a file is there: replaced; several files, or a box for a resume and a cover letter
+    # both: which is the old resume isn't sure
+    [kept] = autofill.kept_documents([{**box, "value": "uploaded"}], prof(), job)
+    assert (kept["shown"], kept["unsure"]) == ([], False)
+    [kept] = autofill.kept_documents([{**box, "value": "resume-2025.pdf, cover-letter-2025.pdf"}], prof(), job)
+    assert (kept["shown"], kept["unsure"]) == (["resume-2025.pdf", "cover-letter-2025.pdf"], True)
+    [kept] = autofill.kept_documents([{**box, "section": "Resume/CV and Cover Letter"}], prof(), job)
+    assert (kept["kind"], kept["unsure"]) == ("resume", True)
+    # never a box for another document (a transcript, a certificate), nor a page's one unnamed upload, nor one that
+    # reads the resume to fill the form in
+    for other in ({"label": "Transcripts", "section": ""}, {"label": "Upload", "section": "Certifications"},
+                  {"label": "Resume and transcripts", "section": ""}, {"label": "Attachments", "section": ""}):
+        assert autofill.kept_documents([{**box, **other}], prof(), job) == [], other
+    assert [k["id"] for k in autofill.kept_documents(
+        [{**box, "id": "i", "label": "Import your profile from resume", "section": ""}, box], prof(), job)] == ["r"]
+
+
 def test_a_signed_forms_date_is_today_in_the_boxes_it_asks_for(job_apply_home):
     """Workday's disability self-identification (CC-305) is signed with a Name and a Date in
     Month / Day / Year boxes."""
@@ -3436,3 +3483,671 @@ def test_a_persons_no_for_a_lone_box_leaves_it_unticked():
         p = Profile({"answers": [{"match": "reliable transportation", "answer": said}]})
         a = resolve_field(f("I have reliable transportation", "checkbox"), p)
         assert a is not None and a.value is ticked, said
+
+
+# The wrong answers the mutation pass found (Oct 18)
+
+
+def test_a_lone_box_is_ticked_only_by_a_yes_never_by_a_decline_or_a_maybe():
+    """A single box the person's own answer names was ticked for any answer but a no: "Decline to self-identify"
+    ticked "I identify as a protected veteran", and "Maybe" ticked "I am willing to relocate". Only an answer that
+    reads as a yes ticks it; a decline, "Prefer not to say", "Maybe", "Only if required" or anything else that reads
+    as neither yes nor no leaves it."""
+    for match, label in (("veteran", "I identify as a protected veteran"), ("disabilit", "I have a disability"),
+                         ("relocat", "I am willing to relocate")):
+        for said in ("Decline to self-identify", "Prefer not to say", "Maybe", "Only if required", "Not applicable"):
+            p = Profile({"answers": [{"match": match, "answer": said}]})
+            a = resolve_field(f(label, "checkbox"), p)
+            assert a is None or a.value is False, (label, said, a)
+            assert not plan_autofill([f(label, "checkbox")], p)["to_fill"], (label, said)
+        p = Profile({"answers": [{"match": match, "answer": "Yes"}]})
+        assert resolve_field(f(label, "checkbox"), p).value is True, label
+
+
+def test_a_long_signature_date_label_gets_todays_date_never_the_name():
+    """"Signature Date (please enter the date in MM/DD/YYYY format)" is the signing date as "Signature Date" is:
+    today. Over 45 characters it went to the signature rule, and the person's name went into the date box. A label
+    that names a date is never the signature box; a long question that mentions a date signed further on still gets
+    no date, and "Signature" alone is still the name."""
+    from datetime import date
+
+    today, p = date.today().strftime("%m/%d/%Y"), prof()
+    for label in ("Signature Date (please enter the date in MM/DD/YYYY format)",
+                  "Signature date - enter today's date as MM/DD/YYYY",
+                  "Signature Date: Please enter the date you are signing this form"):
+        a = resolve_field(f(label), p)
+        assert a is not None and (a.value, a.rule) == (today, "signed_date"), (label, a)
+    assert resolve_field(f("Electronic Signature Date"), p).value == today  # (a short one, wherever it says so)
+    named = resolve_field(f("Enter the date beside your electronic signature (MM/DD/YYYY)"), p)
+    assert named is None or named.rule != "signature", named
+    assert resolve_field(f("If you have previously signed an agreement with us, enter the date signed"), p) is None
+    for label in ("Signature", "Please sign your full name"):
+        assert resolve_field(f(label), p).value == "Sam Rivera", label
+
+
+def test_a_us_citizen_question_written_without_dots_is_the_us_citizen_question():
+    """"Are you a US Citizen?" is the U.S. citizen question as "Are you a U.S. citizen?" is: the profile's Yes in a
+    text box or among Yes and No. It was read as the citizenship question ("United States" in a box, nothing among
+    Yes and No). "Us" the pronoun is never the country."""
+    p = Profile({"work_authorization": {"us_citizen": True, "citizenship": "United States"}})
+    for label in ("Are you a US Citizen?", "Are you a USA citizen?", "Are you a citizen of the US?",
+                  "Are you a United States citizen?"):
+        assert _answer(label, p) == "Yes", label
+        assert _answer(label, p, kind="radio_group", options=["Yes", "No"]) == "Yes", label
+    for label in ("Are you willing to join us?", "Tell us about your citizenship"):
+        a = resolve_field(f(label), p, {"company": "Acme"})
+        assert a is None or a.rule != "us_citizen", (label, a)
+
+
+def test_a_closest_city_box_with_no_city_in_the_profile_gets_nothing_not_the_state():
+    """Kforce's "Closest Metropolitan City" Region takes the profile's city; a profile without one leaves it, never
+    its state ("Arizona" went into the box)."""
+    p = Profile({"personal": {"address": {"state": "AZ", "country": "United States"}}})
+    assert resolve_field(f("Region", section="Closest Metropolitan City"), p) is None
+    region = f("Region", "select", section="Closest Metropolitan City", options=["Not Specified", "Anthem", "Arizona"])
+    assert resolve_field(region, p) is None
+
+
+def test_is_sponsorship_required_drawn_as_a_text_area_takes_the_profiles_no():
+    """Nikon's sponsorship text area takes the profile's plain No however the question starts: "Is sponsorship
+    required for you to work in the US?" was left (only "are/do/will/... you" questions were read as yes or no)."""
+    p = Profile({"work_authorization": {"authorized_to_work": True, "requires_sponsorship": False}})
+    assert _answer("Is sponsorship required for you to work in the US?", p, kind="textarea") == "No"
+    assert _answer("Is visa sponsorship needed for you?", p, kind="textarea") == "No"
+    assert _answer("Is employment sponsorship required for you?", p, kind="textarea") == "No"
+    assert _answer("Visa sponsorship needed (explain)", p, kind="textarea") is None
+
+
+# A review of those fixes (Oct 18)
+
+
+def _work(**said):
+    return Profile({"work_authorization": said})
+
+
+def test_a_us_citizen_question_that_goes_on_with_or_or_by_is_never_answered_as_citizenship_alone():
+    """"Are you a US citizen or do you have authorization to work in the US?" is true for a permanent resident or a
+    visa holder allowed to work, but the citizen rule read only its start and answered No for them (with "U.S." too).
+    "...by birth?" asks what the profile never says. Both are left to the other rules or the person, never a No nor
+    the citizenship's country; the question alone, "(Yes/No)" and a note after it are still the citizen question, and
+    "US citizen or permanent resident" still the U.S. person's."""
+    pr = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=False, us_person=True,
+               citizenship="Mexico")
+    visa = _work(authorized_to_work=True, requires_sponsorship=True, us_citizen=False, us_person=False,
+                 citizenship="India")
+    citizen = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=True, us_person=True,
+                    citizenship="United States")
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    for us in ("US", "U.S."):
+        for rest in ("or do you have authorization to work in the US?", "or do you hold a valid work visa?",
+                     "or do you have an EAD?", "or otherwise able to work in the US without restriction?",
+                     "or can you provide proof of work eligibility?"):
+            label = f"Are you a {us} citizen {rest}"
+            for p in (pr, visa):
+                for said in (_answer(label, p, **yes_no), _answer(label, p)):
+                    assert said not in ("No", "Mexico", "India"), (label, said)
+        for p in (citizen, pr):
+            assert _answer(f"Are you a {us} citizen by birth?", p, **yes_no) is None, us
+            assert _answer(f"Are you a {us} citizen by birth?", p) is None, us
+        assert _answer(f"Are you a {us} citizen?", citizen, **yes_no) == "Yes"
+        assert _answer(f"Are you a {us} citizen? (Yes/No)", pr) == "No"
+        assert _answer(f"Are you a {us} citizen? This position requires US citizenship.", citizen) == "Yes"
+        a = resolve_field(f(f"Are you a {us} citizen or permanent resident?", **yes_no), pr, {"company": "Acme"})
+        assert a is not None and (a.value, a.rule) == ("Yes", "us_person"), a
+
+
+def test_a_us_citizen_question_that_asks_more_than_citizenship_is_left():
+    """The U.S. citizen question is answered only where nothing after it asks more: the label ends there, or goes on
+    with a "?", a note in brackets ("(Yes/No)") or a sentence that only says something ("This position requires US
+    citizenship."). "...and able to obtain a security clearance", "...eligible for a security clearance", "...with an
+    active clearance" or "...who can work on-site" ask what citizenship alone doesn't say (a citizen's Yes claimed them
+    all): left, in any spelling."""
+    citizen = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=True, us_person=True,
+                    citizenship="United States")
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    for us in ("US", "U.S.", "USA"):
+        for rest in ("and able to obtain a security clearance?", "eligible for a security clearance?",
+                     "with an active clearance?", "who can work on-site?"):
+            label = f"Are you a {us} citizen {rest}"
+            assert _answer(label, citizen, **yes_no) is None, label
+            assert _answer(label, citizen) is None, label
+        for label in (f"Are you a {us} citizen?", f"Are you a {us} citizen? (Yes/No)",
+                      f"Are you a {us} citizen? This position requires US citizenship.",
+                      f"Are you a citizen of the {us}?"):
+            assert _answer(label, citizen) == "Yes", label
+            assert _answer(label, citizen, **yes_no) == "Yes", label
+
+
+def test_a_signature_box_that_says_the_date_is_recorded_gets_the_name_and_one_that_asks_for_a_date_doesnt():
+    """A signature box that says the date is added for the person ("Signature (type your name; the date is added
+    automatically)", "Sign your full name (no dates)") takes the name, as before. One that asks for a date to be
+    entered ("Enter the date beside your electronic signature"), or for a signature and a date in one box, never
+    does."""
+    p = prof()
+    for label in ("Signature (type your name; the date is added automatically)",
+                  "Signature (type your full name; today's date will be recorded)",
+                  "Signature of Applicant (type full name). Date will be captured upon submission.",
+                  "Signature: Type your name. Dates are recorded automatically.", "Sign your full name (no dates)"):
+        a = resolve_field(f(label), p)
+        assert a is not None and (a.value, a.rule) == ("Sam Rivera", "signature"), (label, a)
+    for label in ("Enter the date beside your electronic signature (MM/DD/YYYY)", "Signature and Date",
+                  "Applicant Signature & Date", "Signature/Date"):
+        a = resolve_field(f(label), p)
+        assert a is None or a.rule != "signature", (label, a)
+
+
+def test_a_long_date_signed_label_that_names_another_day_gets_no_date():
+    """A long label that starts with "Date signed" or "Signature date" but asks when something else was signed or
+    happened (a non-compete, an offer letter, a military discharge, the last day employed) gets no date, nor the name;
+    one about this form's own signing still gets today."""
+    from datetime import date
+
+    p = prof()
+    for label in ("Date signed (if you signed a non-compete with your current employer)",
+                  "Date signed - Please enter the date you signed the attached offer letter",
+                  "Signature date: enter the date of your military discharge",
+                  "Signature date of your current non-compete agreement, if any",
+                  "Date Signed (enter the date you signed this application, or the date you were last employed)"):
+        assert resolve_field(f(label), p) is None, label
+    a = resolve_field(f("Signature Date (date you signed the self-identification form)"), p)
+    assert a is not None and a.value == date.today().strftime("%m/%d/%Y"), a
+
+
+def test_a_sponsorship_question_about_someone_else_or_the_employers_policy_is_left():
+    """"Is sponsorship available for candidates who need it?" asks the employer's policy, and "...required for your
+    spouse or dependents?" or "...for any family member?" someone else's need: never the person's own No, in a text
+    area, a text box or a list."""
+    p = _work(authorized_to_work=True, requires_sponsorship=False)
+    for label in ("Is sponsorship available for candidates who need it?",
+                  "Is employment sponsorship required for any family member?",
+                  "Is sponsorship required for your spouse or dependents?",
+                  "Will you require sponsorship for your spouse?"):
+        for kind in ("textarea", "text"):
+            assert _answer(label, p, kind=kind) is None, (label, kind)
+        assert _answer(label, p, kind="radio_group", options=["Yes", "No"]) is None, label
+    assert _answer("Will you require sponsorship?", p, kind="radio_group", options=["Yes", "No"]) == "No"
+
+
+def test_a_profile_whose_citizenship_is_the_united_states_answers_the_us_citizen_question():
+    """A profile that says its citizenship is the United States, but not us_citizen, answers "Are you a US Citizen?"
+    Yes (it gave the country, "United States", in a text box and nothing among Yes and No). Another country's
+    citizenship says nothing of a second, U.S. one: left."""
+    p = _work(citizenship="United States")
+    assert _answer("Are you a US Citizen?", p) == "Yes"
+    assert _answer("Are you a U.S. citizen?", p, kind="radio_group", options=["Yes", "No"]) == "Yes"
+    assert _answer("Are you a US Citizen?", _work(citizenship="Mexico")) is None
+    assert _answer("Are you a US Citizen?", _work(us_citizen=False, citizenship="United States")) == "No"
+
+
+# A re-review of those checks (Oct 18): each had reached too far
+
+
+def test_a_us_citizen_question_followed_by_an_if_not_question_is_left():
+    """"Are you a US citizen? If not, do you have authorization to work in the US?" asks a second question the
+    citizenship alone doesn't answer (a permanent resident's No would deny the authorization): left, as are "If no,
+    do you have an EAD?", the same on a new line, and "If not, please list your citizenship" / "If not, which country?"
+    (a text box there takes the citizenship's country, as before). A sentence that only says something, "or not" and
+    "or (US) national" are still the citizen question; and a label asking for the country of citizenship still gets
+    it, whatever it asks in brackets."""
+    pr = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=False, us_person=True,
+               citizenship="Mexico")
+    citizen = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=True, us_person=True,
+                    citizenship="United States")
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    for label in ("Are you a US citizen? If not, do you have authorization to work in the US?",
+                  "Are you a U.S. citizen? If not, do you have authorization to work in the U.S.?",
+                  "Are you a US citizen? If not, do you hold a valid work visa?",
+                  "Are you a US citizen? If no, do you have an EAD?",
+                  "Are you a US citizen?\nIf not, do you have authorization to work in the US?",
+                  "Are you a US citizen? If not, please list your citizenship",
+                  "Are you a citizen of the US? If not, which country?"):
+        for p in (pr, citizen):
+            assert _answer(label, p, **yes_no) is None, label
+            assert _answer(label, p) not in ("Yes", "No"), label
+    for label in ("Are you a US citizen? This position requires US citizenship.",
+                  "Are you a US citizen? Note: we cannot sponsor visas.", "Are you a U.S. citizen or not?",
+                  "Are you a US citizen or not?", "Are you a U.S. citizen or national?",
+                  "Are you a US citizen (or a US national)?"):
+        assert (_answer(label, citizen, **yes_no), _answer(label, pr, **yes_no)) == ("Yes", "No"), label
+    assert _answer("Country of citizenship (are you a citizen of more than one country?)", pr) == "Mexico"
+
+
+def test_a_us_citizen_question_with_another_question_after_it_is_left_however_that_one_is_put():
+    """A second question after "Are you a US citizen?", however it opens ("If you are not a US citizen, do you...",
+    "Otherwise, ...", "Non-citizens: ...", "Do you hold an active security clearance?", "If yes, ..."), or a request
+    ("If not, list your visa type."): a Yes or No there would answer it too, a permanent resident's No denying the work
+    authorization they have, a citizen's Yes claiming a clearance the profile doesn't hold. Left; a sentence that only
+    says something is still the citizen question (the third review of Oct 18)."""
+    pr = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=False, us_person=True,
+               citizenship="Mexico")
+    visa = _work(authorized_to_work=True, requires_sponsorship=True, us_citizen=False, citizenship="India")
+    citizen = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=True, us_person=True,
+                    citizenship="United States")
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    for label in ("Are you a US citizen? If you are not a US citizen, do you have authorization to work in the US?",
+                  "Are you a US citizen? If you are not, do you hold a valid work visa?",
+                  "Are you a US citizen? If not a US citizen, do you hold a valid work visa?",
+                  "Are you a US citizen? If not - do you hold a valid work visa?",
+                  "Are you a US citizen? If not: do you have an EAD?",
+                  "Are you a US citizen? If not, then do you hold a valid work visa?",
+                  "Are you a US citizen? Otherwise, do you hold a valid work visa?",
+                  "Are you a US citizen? Non-citizens: do you hold a valid work visa?",
+                  "Are you a US citizen? If no, is your work visa valid for this role?",
+                  "Are you a U.S. citizen? If not, does your visa allow you to work for us?",
+                  "Are you a US citizen? Do you hold an active security clearance?",
+                  "Are you a US citizen? If yes, do you hold an active clearance?",
+                  "Are you a U.S. citizen? Have you ever held a security clearance?",
+                  "Are you a US citizen? Are you willing to obtain a clearance?",
+                  "Are you a US citizen? Can you work on-site in Chandler?",
+                  "Are you a US citizen? If not, list your visa type.",
+                  "Are you a US citizen? If no, indicate your current visa status."):
+        for p in (pr, visa, citizen):
+            assert _answer(label, p, **yes_no) is None, (label, p)
+            assert _answer(label, p) not in ("Yes", "No"), (label, p)
+    for label in ("Are you a US citizen? This position requires US citizenship.",
+                  "Are you a US citizen? Note: we cannot sponsor visas."):
+        assert (_answer(label, citizen, **yes_no), _answer(label, pr, **yes_no)) == ("Yes", "No"), label
+
+
+def test_a_us_citizen_question_beside_another_question_anywhere_in_the_label_is_left():
+    """The whole label is read: a second question after a statement ("This role requires it. If not, do you hold a
+    valid work visa?"), one before the citizen question ("Do you hold a valid work visa? Are you a US citizen?") or in
+    its own sentence ("Can you work on-site in Chandler, and are you a US citizen?") would be answered by its Yes or
+    No too: left. Notes and words on how to answer around it ask nothing: still the citizen question (the fourth
+    review of Oct 18)."""
+    pr = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=False, us_person=True,
+               citizenship="Mexico")
+    visa = _work(authorized_to_work=True, requires_sponsorship=True, us_citizen=False, citizenship="India")
+    citizen = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=True, us_person=True,
+                    citizenship="United States")
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    for label in ("Are you a US citizen? Yes or No. If not, do you have authorization to work in the US?",
+                  "Are you a US citizen? This role requires it. If not, do you hold a valid work visa?",
+                  "Are you a US citizen? Note: ITAR applies. Do you hold an active security clearance?",
+                  "Are you a US citizen? This position requires citizenship. Can you obtain a clearance?",
+                  "Do you hold an active security clearance? Are you a US citizen?",
+                  "Do you hold a valid work visa? Are you a US citizen?",
+                  "Are you willing to relocate? Are you a US citizen?",
+                  "Can you work on-site in Chandler, and are you a US citizen?",
+                  "Have you ever held a clearance, and are you a U.S. citizen?",
+                  "Are you a US citizen? Answer Yes or No. If no, which visa do you hold?"):
+        for p in (pr, visa, citizen):
+            assert _answer(label, p, **yes_no) is None, (label, p)
+            assert _answer(label, p) not in ("Yes", "No"), (label, p)
+    # (only what's on the short list beside it: still the citizen question)
+    for label in ("Are you a US citizen? Please select Yes or No.", "Are you a US citizen? Choose Yes or No.",
+                  "Are you a US citizen? Select one.", "Citizenship: Are you a US citizen?",
+                  "U.S. Citizenship - Are you a U.S. citizen?", "Are you a US citizen? Proof of citizenship will be required.",
+                  "Are you a U.S. citizen? U.S. citizenship is required for this position.",
+                  "Are you a US citizen? This position requires US citizenship."):
+        assert (_answer(label, citizen, **yes_no), _answer(label, pr, **yes_no)) == ("Yes", "No"), label
+
+
+def test_a_us_citizen_question_beside_anything_off_the_short_list_is_left_for_the_person():
+    """Beside the citizen question only a numbering or a heading of its own, the answers it takes and a few sentences
+    that say no more than it keep it answered. Anything else, however harmless it looks ("Please note that ...",
+    "Indicate below.", "If hired, proof of citizenship will be required."), is left for the person: a list of what may
+    change a Yes's meaning never ends ("Select Yes if currently employed by Acme.", "Must hold an active Secret.",
+    "Willing to relocate (Y/N)": the sixth review of Oct 18)."""
+    pr = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=False, us_person=True,
+               citizenship="Mexico")
+    citizen = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=True, us_person=True,
+                    citizenship="United States")
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    for label in ("Are you a US citizen? Select Yes if currently employed by Acme.",
+                  "Are you a US citizen? Answer Yes if eligible for a Secret.",
+                  "Are you a US citizen? Answer Yes when holding an active TS/SCI.",
+                  "Are you a US citizen? Select Yes only for current Secret holders.",
+                  "Are you a US citizen? Willing to relocate (Y/N)", "Willing to relocate: Are you a US citizen?",
+                  "Are you a US citizen? This role requires an active TS/SCI with polygraph.",
+                  "Are you a US citizen? Must hold an active Secret.",
+                  "Are you a US citizen? Applicants must be US citizens with an active Secret.",
+                  "Are you a US citizen? Relocation to Phoenix is required.",
+                  "Are you a US citizen? A bachelor's degree is required for this role.",
+                  "TS/SCI required: Are you a US citizen?",
+                  "Are you a U.S. citizen? Please note that this position requires U.S. citizenship.",
+                  "Are you a US citizen? Indicate below.", "Are you a US citizen? State law requires us to verify eligibility.",
+                  "Are you a US citizen? If hired, proof of citizenship will be required.",
+                  "Are you a US citizen? Will be verified upon hire.", "Are you a US citizen (as required by ITAR)?",
+                  "Are you a US citizen? (e.g. born or naturalized)"):
+        for p in (pr, citizen):
+            assert _answer(label, p, **yes_no) is None, (label, p)
+    for label in ("3) Are you a US citizen?", "Q3: Are you a US citizen?", "Required: Are you a US citizen?",
+                  "Are you a US citizen? Y/N", "Are you a US citizen? [Yes/No]", "Are you a US citizen (yes/no)?",
+                  "Are you a U.S. citizen or not?", "Are you a US citizen (or a US national)?"):
+        assert (_answer(label, citizen, **yes_no), _answer(label, pr, **yes_no)) == ("Yes", "No"), label
+
+
+def test_a_us_citizen_question_with_anything_around_it_that_speaks_to_the_person_is_left():
+    """Around the citizen question only what speaks to no one keeps it answered: a request ("Confirm that you hold an
+    active security clearance."), a question in brackets, a condition on the Yes ("Select Yes only if you also hold a
+    clearance."), another requirement ("This role also requires an active Secret clearance."), a question before it
+    ended by a dash or a colon: left, a Yes there claiming what the profile doesn't say (the fifth review of Oct 18)."""
+    pr = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=False, us_person=True,
+               citizenship="Mexico")
+    citizen = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=True, us_person=True,
+                    citizenship="United States")
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    for label in ("Are you a US citizen? Confirm that you hold an active security clearance.",
+                  "Are you a US citizen? In addition, please confirm you hold an active clearance.",
+                  "Are you a US citizen? Additionally, confirm you can work on-site in Chandler.",
+                  "Are you a US citizen? Also confirm you are willing to relocate.",
+                  "Are you a US citizen? Tell us if you hold a work visa.",
+                  "Are you a US citizen? Also do you hold a clearance",
+                  "Are you a US citizen? Yes/No - and do you hold a clearance",
+                  "Are you a US citizen (and do you hold a clearance)?",
+                  "Are you a US citizen? (This position requires U.S. citizenship. Do you hold an active clearance?)",
+                  "Are you a US citizen? Please indicate below whether you hold an active security clearance.",
+                  "Are you a US citizen? Select Yes only if you can also obtain a Secret clearance.",
+                  "Are you a US citizen? Do not answer yes unless you also hold a clearance.",
+                  "Are you a US citizen? If selected, can you start within two weeks",
+                  "Are you a US citizen? This role also requires an active Secret clearance.",
+                  "Are you a US citizen? You must also be able to obtain a clearance.",
+                  "Clearance holders only. Are you a US citizen?",
+                  "Do you hold an active clearance - Are you a US citizen?",
+                  "Do you hold an active clearance: Are you a US citizen?",
+                  "Do you hold an active clearance. Are you a US citizen?",
+                  "Are you a 'US' citizen? Do you hold an active clearance?"):
+        for p in (pr, citizen):
+            assert _answer(label, p, **yes_no) is None, (label, p)
+            assert _answer(label, p) not in ("Yes", "No"), (label, p)
+    for label in ("3) Are you a US citizen?", "Q3: Are you a US citizen?", "Are you a US citizen? Y/N",
+                  "Are you a US citizen? [Yes/No]"):
+        assert (_answer(label, citizen, **yes_no), _answer(label, pr, **yes_no)) == ("Yes", "No"), label
+
+
+def test_the_smaller_sponsorship_and_signature_wordings_of_the_third_review():
+    """"E-Signature (enter the current date)" asks for the date: never the name. "...for any of your dependents" and
+    "...for your domestic partner" are another person's sponsorship; "Will Acme be required to provide sponsorship for
+    you?" is the person's own need; and an "Is sponsorship required?" text area that asks which visa is left."""
+    citizen = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=True)
+    assert _answer("E-Signature (enter the current date)") != "Sam Rivera"  # (_person's name)
+    assert _answer("E-Signature") == "Sam Rivera"
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    for label in ("Is sponsorship required for any of your dependents to work in the US?",
+                  "Will you require sponsorship for your domestic partner?"):
+        assert _answer(label, citizen, **yes_no) is None, label
+        assert _answer(label, citizen, kind="textarea") is None, label
+    for label in ("Will Acme be required to provide sponsorship for you?",
+                  "Would the company need to provide visa sponsorship for you to work here?"):
+        assert _answer(label, citizen, **yes_no) == "No", label
+    for label in ("Is sponsorship required? If yes, please specify the visa type.",
+                  "Is sponsorship required? If yes, which visa?"):
+        assert _answer(label, citizen, kind="textarea") is None, label
+
+
+def test_a_us_citizen_question_with_its_yes_or_no_written_after_it_is_still_answered():
+    """"Are you a US citizen: Yes/No" and "..., yes or no?" name the answers the question takes, nothing more: the
+    citizen question, in every spelling, as "U.S." was before the reviews of Oct 18. One that goes on past them still
+    asks more."""
+    pr = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=False, citizenship="Mexico")
+    citizen = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=True, citizenship="United States")
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    for label in ("Are you a US citizen: Yes/No", "Are you a U.S. citizen: Yes/No", "Are you a US citizen, yes or no?",
+                  "Are you a U.S. citizen - Yes / No", "Are you a USA citizen (yes/no)?"):
+        assert (_answer(label, citizen, **yes_no), _answer(label, pr, **yes_no)) == ("Yes", "No"), label
+    assert _answer("Are you a US citizen, yes or no, and able to obtain a security clearance?", citizen, **yes_no) is None
+
+
+def test_a_us_citizen_question_is_read_as_the_form_gives_it_and_by_the_citizen_rules_alone():
+    """The seventh review of Oct 18: the check read the label with the employer's notes taken out, so an instruction in
+    a note ("(Note: green card holders should select Yes.)") went unseen; and the other work rules read a citizen
+    question's label before the citizen rule ("Are you a US citizen? Will you require visa sponsorship?" took a
+    citizen's No, "Work Authorization: Are you a US citizen?" a permanent resident's Yes, "...(do not include permanent
+    residents)?" the U.S. person's Yes). Now the check reads the whole label and only the citizen rules read a citizen
+    question: anything beside it is left. The employer's plain word that it won't sponsor still says no more, a "Work
+    Authorization" heading is its own, and "...citizen or permanent resident?" is still the U.S. person's question."""
+    pr = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=False, us_person=True,
+               citizenship="Mexico")
+    visa = _work(authorized_to_work=True, requires_sponsorship=True, us_citizen=False, us_person=False,
+                 citizenship="India")
+    citizen = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=True, us_person=True,
+                    citizenship="United States")
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    for label in ("Are you a US citizen? (Note: green card holders should select Yes.)",
+                  "Are you a US citizen? (Please note: if you hold a green card, select Yes.)",
+                  "Are you a US citizen? We are unable to sponsor visas, so select Yes if you hold a green card.",
+                  "Are you a US citizen? (This position is not eligible for visa sponsorship; select No if you will "
+                  "need it.)",
+                  "Are you a US citizen? Will you require visa sponsorship now or in the future?",
+                  "Are you a U.S. citizen? Do you now or will you in the future require sponsorship?",
+                  "Are you a US citizen and authorized to work in the US?",
+                  "Are you a US citizen without need of sponsorship?",
+                  "Are you a US citizen? If not, sponsorship may be required.",
+                  "Are you a US citizen? If not, valid work authorization is required.",
+                  "Are you a US citizen (do not include permanent residents)?",
+                  "Are you a US citizen by birth or naturalization (not a permanent resident)?",
+                  "Are you a US citizen or do you hold an H-1B visa?"):
+        for p in (citizen, pr, visa):
+            assert _answer(label, p, **yes_no) is None, (label, p.get("work_authorization.citizenship"))
+    for label in ("Work Authorization: Are you a US citizen?", "Work Authorization Status - Are you a U.S. citizen?",
+                  "Are you a US citizen? Note: this position is not eligible for visa sponsorship.",
+                  "Are you a US citizen? (We are unable to sponsor visas for this role.)",
+                  "Are you a U.S. citizen? No visa sponsorship is available for this position.",
+                  "Are you a US citizen? We do not offer sponsorship.",
+                  "Are you a US citizen? (This position requires U.S. citizenship.)"):
+        assert [_answer(label, p, **yes_no) for p in (citizen, pr, visa)] == ["Yes", "No", "No"], label
+    for label in ("Are you a U.S. citizen or permanent resident?", "Are you a U.S. citizen or green card holder?",
+                  "Are you a US citizen, national, lawful permanent resident, refugee or asylee?"):
+        a = resolve_field(f(label, **yes_no), pr, {"company": "Acme"})
+        assert a is not None and (a.value, a.rule) == ("Yes", "us_person"), (label, a)
+        assert _answer(label, visa, **yes_no) == "No", label
+    # (nor the U.S. person's rule, where a label leaves the others out)
+    assert _answer("Do you hold U.S. citizenship (not lawful permanent residence or a green card)?", pr, **yes_no) != "Yes"
+
+
+def test_the_us_person_question_is_held_to_the_same_short_list():
+    """The eighth review of Oct 18: the U.S. person's rule answered its whole label, whatever was around the question,
+    on main too: a citizen-only question that names permanent residents to rule them out took a permanent resident's
+    Yes, and the question with a clearance, a move or on-site work beside it a Yes for them all. Now the U.S. person's
+    question is answered only as "Are you a U.S. person" or the citizen question with the others named after it, with
+    nothing beside it but what the citizen question allows; the rest are left."""
+    pr = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=False, us_person=True,
+               citizenship="Mexico")
+    visa = _work(authorized_to_work=True, requires_sponsorship=True, us_citizen=False, us_person=False,
+                 citizenship="India")
+    citizen = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=True, us_person=True,
+                    citizenship="United States")
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    for label in ("Are you a U.S. citizen (permanent residents do not qualify)?",
+                  "Are you a US citizen (green card holders are not eligible)?",
+                  "Are you a US citizen (permanent residents should answer No)?",
+                  "Are you a US citizen (permanent residents: answer No)?",
+                  "Are you a US citizen (as opposed to a permanent resident)?",
+                  "Are you a US citizen (rather than a green card holder)?",
+                  "Are you a US citizen, since permanent residents cannot obtain this clearance?",
+                  "Are you a US citizen, permanent residents excluded?",
+                  "Are you a US citizen (refugees and asylees do not qualify)?",
+                  "Are you a U.S. citizen or permanent resident and able to obtain a security clearance?",
+                  "Are you a US citizen or permanent resident, and do you hold an active clearance?",
+                  "Are you a US citizen or permanent resident? Do you hold an active clearance?",
+                  "Are you a US citizen or permanent resident? Select Yes only if you also hold a TS/SCI.",
+                  "Are you a US citizen or permanent resident? (Note: answer Yes only if you also hold a clearance)",
+                  "Are you a US citizen or green card holder willing to relocate to Phoenix?",
+                  "Are you a US citizen or permanent resident who can work on-site in Chandler?",
+                  "Do you hold an active clearance? Are you a US citizen or permanent resident?",
+                  "Are you legally authorized to work in the US (are you a US citizen or permanent resident)?",
+                  "Are you a U.S. person? Do you hold an active clearance?"):
+        for p in (citizen, pr, visa):
+            assert _answer(label, p, **yes_no) is None, (label, p.get("work_authorization.citizenship"))
+    for label in ("Are you a U.S. citizen or permanent resident?", "Are you a U.S. citizen or green card holder?",
+                  "Are you a US citizen, national, lawful permanent resident, refugee or asylee?",
+                  "Are you a U.S. citizen or lawful permanent resident (green card holder)?",
+                  "Are you a U.S. citizen, U.S. national, or lawful permanent resident? (Yes/No)",
+                  "Export Control: Are you a U.S. citizen or permanent resident?",
+                  "Are you a U.S. person?", "Are you a U.S. person as defined by the International Traffic in Arms "
+                  "Regulations (ITAR)?",
+                  "Are you a U.S. Person (U.S. citizen, U.S. permanent resident, refugee, asylee, or protected "
+                  "individual as defined by 8 U.S.C. 1324b(a)(3))?",
+                  "Are you a US citizen, permanent resident, or protected individual as defined by 8 U.S.C. "
+                  "1324b(a)(3)? Note: this position is not eligible for visa sponsorship."):
+        a = resolve_field(f(label, **yes_no), pr, {"company": "Acme"})
+        assert a is not None and (a.value, a.rule) == ("Yes", "us_person"), (label, a)
+        assert [_answer(label, p, **yes_no) for p in (citizen, visa)] == ["Yes", "No"], label
+
+
+def test_a_us_person_wording_the_check_doesnt_know_is_left_and_a_list_without_residents_is_no_residents_yes():
+    """The ninth review of Oct 18: the U.S. person's rule still answered, with nothing checked around it, any wording
+    the check didn't know ("Are you currently a ...", a bare label, "U.S. person" in quotes, "Is the candidate ..."),
+    and a list of the persons that leaves out the permanent residents took a permanent resident's Yes from their
+    us_person. Now the rule answers only a wording the check knows, held to its short list; a list without the
+    permanent residents gets a citizen's Yes and a non-U.S. person's No, and leaves the permanent resident's. The common
+    wordings it knows now ("currently", bare, quoted, "(Green Card)", "of the United States", "under ITAR/EAR", a
+    definition with its citation or its list) keep their answer."""
+    pr = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=False, us_person=True,
+               citizenship="Mexico")
+    visa = _work(authorized_to_work=True, requires_sponsorship=True, us_citizen=False, us_person=False,
+                 citizenship="India")
+    citizen = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=True, us_person=True,
+                    citizenship="United States")
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    for label in ("Are you currently a US citizen or permanent resident and able to obtain a security clearance?",
+                  "Are you currently a U.S. citizen or permanent resident? Do you hold an active clearance?",
+                  "U.S. citizen or permanent resident? Do you hold an active clearance?",
+                  "US citizen or green card holder willing to relocate to Phoenix",
+                  "Do you qualify as a U.S. person under ITAR, and can you obtain a security clearance?",
+                  "Are you a 'U.S. person'? Do you hold an active clearance?",
+                  'Are you a "U.S. Person" and able to work on-site in Chandler?',
+                  "Is the candidate a U.S. citizen or permanent resident with an active Secret clearance?",
+                  "Are you presently a US citizen (green card holders are not eligible)?",
+                  "Citizen or permanent resident of the US (permanent residents do not qualify for this role)?"):
+        for p in (citizen, pr, visa):
+            assert _answer(label, p, **yes_no) is None, (label, p.get("work_authorization.citizenship"))
+    for label in ("Are you a U.S. citizen or refugee/asylee?", "Are you a US citizen, national, refugee or asylee?",
+                  "Are you a US citizen or person granted asylum?"):
+        assert [_answer(label, p, **yes_no) for p in (citizen, pr, visa)] == ["Yes", None, "No"], label
+    for label in ("Are you a US Citizen or Permanent Resident (Green Card)?",
+                  "Are you a US citizen or a lawful permanent resident of the United States?",
+                  "Are you currently a U.S. citizen or permanent resident of the US?",
+                  "Are you a US citizen or permanent resident alien?",
+                  "Are you a U.S. Person under ITAR/EAR?",
+                  "Are you a U.S. Person as defined by ITAR (22 CFR 120.15)?",
+                  "Are you a U.S. person as defined by ITAR (citizen, permanent resident, protected individual)?",
+                  "Are you a U.S. Person as defined by U.S. export control laws?",
+                  "Are you a U.S. person, as defined by the Export Administration Regulations (EAR) and ITAR?",
+                  "Are you a 'U.S. person'?", "U.S. Citizen or Permanent Resident", "3) US citizen / permanent resident",
+                  "Export Control: U.S. Person"):
+        a = resolve_field(f(label, **yes_no), pr, {"company": "Acme"})
+        assert a is not None and (a.value, a.rule) == ("Yes", "us_person"), (label, a)
+        assert [_answer(label, p, **yes_no) for p in (citizen, visa)] == ["Yes", "No"], label
+    assert [_answer("Are you currently a U.S. citizen?", p, **yes_no) for p in (citizen, pr)] == ["Yes", "No"]
+
+
+def test_a_bare_citizen_question_and_a_us_person_heading_are_read_as_the_question_they_head():
+    """The tenth review of Oct 18 (on main too): a bare "U.S. Citizen?" after "Work Authorization:" took the work
+    authorization rule's Yes, claiming citizenship for a permanent resident or a visa holder; and a "U.S. Person"
+    heading made a list without the permanent residents look like one that names them, so they got Yes. Now the bare
+    citizen question is the citizen rules' (left where they can't read it), and the persons named are read from the
+    question on. Its persons or its definition after its "?", and "This position requires access to export-controlled
+    information.", say no more."""
+    pr = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=False, us_person=True,
+               citizenship="Mexico")
+    visa = _work(authorized_to_work=True, requires_sponsorship=True, us_citizen=False, us_person=False,
+                 citizenship="India")
+    citizen = _work(authorized_to_work=True, requires_sponsorship=False, us_citizen=True, us_person=True,
+                    citizenship="United States")
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    for label in ("Work Authorization: U.S. Citizen?", "Work Authorization: US Citizen (Y/N)",
+                  "Work Authorization Status: U.S. Citizen?", "Employment Eligibility - US Citizen?",
+                  "Authorized to work in the US: U.S. citizen?", "Legally authorized to work? U.S. citizen?"):
+        for p in (pr, visa):
+            assert _answer(label, p, **yes_no) != "Yes", label
+    for label in ("U.S. Person: Are you a U.S. citizen, refugee or asylee?",
+                  "U.S. Person Status - Are you a US citizen or refugee?"):
+        assert [_answer(label, p, **yes_no) for p in (citizen, pr, visa)] == ["Yes", None, "No"], label
+    for label in ("Are you a U.S. Person? (U.S. citizen, lawful permanent resident, refugee or asylee)",
+                  "Are you a U.S. citizen or permanent resident? (Green card holder)",
+                  "Are you a U.S. person? This position requires access to export-controlled technology.",
+                  "Are you a U.S. person as that term is defined in the EAR?"):
+        a = resolve_field(f(label, **yes_no), pr, {"company": "Acme"})
+        assert a is not None and (a.value, a.rule) == ("Yes", "us_person"), (label, a)
+        assert [_answer(label, p, **yes_no) for p in (citizen, visa)] == ["Yes", "No"], label
+    assert _answer("Are you a US citizen? This position requires access to export-controlled information.", pr,
+                   **yes_no) == "No"
+    assert _answer("Are you a US citizen? (Green card holders: answer Yes)", pr, **yes_no) is None
+    # (the eleventh review: "Authorized to work in the US" is a question, no heading: a visa holder's No would deny it)
+    for label in ("Legally authorized to work in the US: Are you a US citizen?",
+                  "Legally authorized to work in the US - U.S. citizen or permanent resident"):
+        assert _answer(label, visa, **yes_no) != "No", label
+
+
+def test_a_sponsorship_question_about_a_partner_company_is_still_the_persons():
+    """"...for a partner company" names a company, not the person's partner: the person's own need, the profile's
+    answer. Their partner's need stays left."""
+    p = _work(authorized_to_work=True, requires_sponsorship=False)
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    assert _answer("Will you require visa sponsorship to work for a partner company?", p, **yes_no) == "No"
+    assert _answer("Will you require visa sponsorship to work for a partner organization of Acme?", p, **yes_no) == "No"
+    assert _answer("Will you require visa sponsorship for your partner?", p, **yes_no) is None
+
+
+def test_a_signature_box_is_refused_only_for_a_signing_date_or_a_date_to_enter():
+    """A box named for the signing date ("Employment Application Signature Date", "Applicant Signature Date (please use
+    MM/DD/YYYY format)") gets today, never the name; one that asks for a date to be entered ("Enter the date beside your
+    electronic signature"), or the signature and the date in one ("Signature and Date"), is left. One that only
+    mentions a date keeps the name: "...type your full name, the date is recorded automatically", "...enter your full
+    name, not the date", "...no date needed", "...type your name to sign and date this application"."""
+    from datetime import date
+
+    today, p = date.today().strftime("%m/%d/%Y"), prof()
+    for label in ("Employment Application Signature Date", "Certification Signature Date",
+                  "E-Signature Date of employment agreement", "Applicant Signature Date (please use MM/DD/YYYY format)",
+                  "Candidate Signature Date (please enter as MM/DD/YYYY)",
+                  "Employee Signature Date - format MM/DD/YYYY, e.g. 10/18/2026",
+                  "Electronic Signature Date (Employment Application)"):
+        a = resolve_field(f(label), p)
+        assert a is not None and (a.value, a.rule) == (today, "signed_date"), (label, a)
+    for label in ("Electronic Signature (type your full name, the date is recorded automatically)",
+                  "Signature (enter your full name, not the date)",
+                  "Electronic Signature (enter the full name you use, no date needed)",
+                  "Electronic Signature - type your name to sign and date this application"):
+        a = resolve_field(f(label), p)
+        assert a is not None and (a.value, a.rule) == ("Sam Rivera", "signature"), (label, a)
+    for label in ("Signature and Date", "Applicant Signature & Date",
+                  "Enter the date beside your electronic signature (MM/DD/YYYY)"):
+        assert resolve_field(f(label), p) is None, label
+
+
+def test_a_short_signing_date_label_that_names_a_form_still_gets_today():
+    """Only a long label (over 45 characters) is read for another day signed: a short one that names the form it signs
+    ("Applicant Certification - Date Signed", "Date Signed (Applicant Agreement)", "Signature Date (Employment
+    Application)", "Today's Date (Employment History)") gets today, as before."""
+    from datetime import date
+
+    today, p = date.today().strftime("%m/%d/%Y"), prof()
+    for label in ("Applicant Certification - Date Signed", "Date Signed (Applicant Agreement)",
+                  "Signature Date (Employment Application)", "Today's Date (Employment History)"):
+        a = resolve_field(f(label), p)
+        assert a is not None and (a.value, a.rule) == (today, "signed_date"), (label, a)
+
+
+def test_a_sponsorship_question_the_person_requires_is_theirs_whatever_the_employer_provides():
+    """"Will you require the company to provide visa sponsorship?" asks the person's need, though it names the
+    employer providing it, as does "Will you require sponsorship? Sponsorship is available for this role.": the
+    profile's answer. Only a question about the employer's policy with no need of the person's in it ("Is sponsorship
+    available for candidates who need it?", "Does Acme offer sponsorship?") is left."""
+    p = _work(authorized_to_work=True, requires_sponsorship=False)
+    yes_no = {"kind": "radio_group", "options": ["Yes", "No"]}
+    for label in ("Will you now or in the future require Acme to provide sponsorship for an employment visa?",
+                  "Will you require the company to provide visa sponsorship?",
+                  "Will you now or in the future require us to provide immigration sponsorship?",
+                  "Will you need the employer to offer visa sponsorship now or in the future?",
+                  "Will you need sponsorship provided by the company now or in the future?",
+                  "Will you require sponsorship? Sponsorship is available for this role.",
+                  "Will you require sponsorship? We offer sponsorship for qualified candidates."):
+        assert _answer(label, p, **yes_no) == "No", label
+    for label in ("Is sponsorship available for candidates who need it?", "Does Acme offer sponsorship?"):
+        assert _answer(label, p, **yes_no) is None, label
+        assert _answer(label, p) is None, label
+
+
+def test_an_is_sponsorship_text_area_that_asks_for_an_explanation_is_left():
+    """"Is sponsorship required for you to work in the US?" in a text area takes the profile's No; one that asks for an
+    explanation or a description ("If yes, please explain.", "Please describe your current immigration status.",
+    "Explain.") is the person's to write."""
+    p = _work(authorized_to_work=True, requires_sponsorship=False)
+    assert _answer("Is sponsorship required for you to work in the US?", p, kind="textarea") == "No"
+    for label in ("Is sponsorship required? If yes, please explain.",
+                  "Is sponsorship required? Please describe your current immigration status.",
+                  "Is sponsorship required? Explain."):
+        assert _answer(label, p, kind="textarea") is None, label

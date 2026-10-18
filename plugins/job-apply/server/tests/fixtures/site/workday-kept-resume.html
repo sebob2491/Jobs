@@ -1,0 +1,172 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Workday-style My Experience (a resume kept from before)</title></head>
+<body>
+<!-- like NXP's Workday (the weekly probe, Oct 2026): an account that applied there before finds its last resume kept in
+     My Experience's "Resume/CV" upload, listed below the box as Workday lists each file (an item with its name, its
+     size, "Successfully Uploaded!" and a Delete). The desk read the box as filled and left it, so the employer got the
+     old resume, not the one tailored for the job. A file sent into the box is listed the same way (the box empties after
+     each upload, as Workday's does). Counted in sessionStorage: the files sent (uploads, their names), the kept file's
+     Deletes pressed (presses) and those that went (deletes). Save and Continue goes on to the review page once the
+     list has a file.
+     ?kept=<name>: the kept file's name (2024-resume.pdf); a tailored resume is named <First>_<Last>_Resume.pdf for
+     every job, so the last application's has this one's name too.
+     ?stuck: the kept file's Delete asks first (a confirm() the browser turns down: the file stays).
+     ?redraw: the page lists the kept file on every load, whatever was deleted (a site that draws the account's file
+     again), and its first Save and Continue saves and draws the page again; the second goes on.
+     ?unnamed: the kept file's item has no name, only "Successfully Uploaded!" and its Delete.
+     ?cover: a cover letter kept beside it in the same list (2024-cover-letter.pdf), its own Delete counted
+     (coverDeletes).
+     ?submit: the kept file's Delete is a button with no type, in a form, so it sends the form (window.sent).
+     ?toast: the kept file's Delete leaves a note naming the file.
+     ?rerender: the kept file's Delete draws the list again, the file still in it (a page that redraws on a press).
+     ?card: a saved experience shown as a card with a Delete of its own (no boxes in it) beside the upload, and the kept
+     item's own control a "Trash" (counted: cardDeletes). ?section: a Remove for the whole Resume/CV section, and the
+     kept item has no control of its own (sectionRemoves). ?hidden: the kept item's own Delete hidden, another item (a
+     file still uploading) with a Remove beside it (otherRemoves).
+     ?plain: the kept file isn't in Workday's list: a plain row with its name and a Delete (another site's list of
+     stored files, which may be the person's own: plainDeletes).
+     ?letter: a Cover Letter section too, with its own box and a cover letter kept from before (2024-cover-letter.pdf):
+     its Delete pressed (letterPresses), gone (letterDeletes), and the files sent into it (letterUploads); ?letterstuck:
+     its Delete asks first. -->
+<div data-automation-id="progressBarActiveStep">My Experience</div>
+<h2>My Experience</h2>
+
+<div id="holder">
+<div data-automation-id="resumeSection" role="group" aria-labelledby="rs-title">
+  <h3 id="rs-title">Resume/CV</h3>
+  <div data-automation-id="formField-resume">
+    <label id="rs-label">Upload a file (5MB max)<abbr title="required">*</abbr></label>
+    <div data-automation-id="file-upload-drop-zone">Drop files here or
+      <button type="button" data-automation-id="select-files">Select files</button>
+      <input type="file" data-automation-id="file-upload-input-ref" id="rs-input" aria-labelledby="rs-label">
+    </div>
+    <div id="rs-files"></div>
+  </div>
+</div>
+</div>
+
+<div data-automation-id="coverLetterSection" role="group" aria-labelledby="cl-title" id="letter" hidden>
+  <h3 id="cl-title">Cover Letter</h3>
+  <div data-automation-id="formField-coverLetter">
+    <label id="cl-label">Upload a file (5MB max)</label>
+    <div data-automation-id="file-upload-drop-zone">Drop files here or
+      <button type="button" data-automation-id="select-files">Select files</button>
+      <input type="file" data-automation-id="file-upload-input-ref" id="cl-input" aria-labelledby="cl-label">
+    </div>
+    <div id="cl-files"></div>
+  </div>
+</div>
+
+<button type="button" data-automation-id="pageFooterNextButton" id="next">Save and Continue</button>
+
+<script>
+  const q = new URLSearchParams(location.search);
+  if (!q.has('letter')) document.getElementById('letter').remove();  // (a file box is read hidden or not)
+  window.sent = false;
+  const count = (key) => sessionStorage.setItem(key, String(Number(sessionStorage.getItem(key) || 0) + 1));
+  const sent = (key, name) => sessionStorage.setItem(key, JSON.stringify([...JSON.parse(sessionStorage.getItem(key)
+    || '[]'), name]));
+  const files = document.getElementById('rs-files');
+  const keptName = q.get('kept') || '2024-resume.pdf';
+  if (q.has('submit')) {  // (the upload inside a form, its Delete a button with no type)
+    const form = document.createElement('form');
+    form.addEventListener('submit', (e) => { e.preventDefault(); window.sent = true; });
+    const holder = document.getElementById('holder');
+    form.appendChild(holder.firstElementChild);
+    holder.appendChild(form);
+  }
+
+  // one file in a list, as Workday's: its name, its size, "Successfully Uploaded!" and a Delete (an icon)
+  function item(list, name, size, onDelete) {
+    const row = document.createElement('div');
+    row.setAttribute('data-automation-id', 'file-upload-item');
+    row.innerHTML = (name ? `<div data-automation-id="file-upload-item-name">${name}</div>` : '')
+      + `<div>${size}</div><div data-automation-id="file-upload-successful">Successfully Uploaded!</div>`
+      + '<button type="button" data-automation-id="delete-file" aria-label="Delete file">'
+      + '<svg width="12" height="12" aria-hidden="true"><rect width="12" height="12"></rect></svg></button>';
+    row.querySelector('button').addEventListener('click', () => onDelete(row));
+    list.appendChild(row);
+    return row;
+  }
+
+  // the resume kept from the account's last application
+  function drawKept() {
+    if (q.has('plain')) {
+      files.innerHTML = `<div class="stored"><span class="file-name">${keptName}</span> `
+        + '<button type="button" class="plain-del">Delete</button></div>';
+      files.querySelector('.plain-del').addEventListener('click', () => { files.innerHTML = ''; count('plainDeletes'); });
+      return null;
+    }
+    return item(files, q.has('unnamed') ? '' : keptName, '84.12 KB', (row) => {
+      count('presses');
+      if (q.has('stuck') && !confirm('Delete this file?')) return;
+      if (q.has('rerender')) {  // (drawn again, the file still there)
+        row.remove();
+        drawKept();
+        return;
+      }
+      row.remove();
+      count('deletes');
+      if (q.has('toast')) document.querySelector('h2').insertAdjacentHTML('afterend', `<p>${keptName} was deleted</p>`);
+    });
+  }
+  const kept = sessionStorage.getItem('deletes') && !q.has('redraw') ? null : drawKept();
+  if (kept && q.has('submit')) kept.querySelector('button').removeAttribute('type');
+  if (kept && q.has('card')) {
+    kept.querySelector('button').setAttribute('aria-label', 'Trash');
+    document.getElementById('holder').insertAdjacentHTML('afterbegin', '<div class="saved-card"><b>Equipment '
+      + 'Technician, Example Fab</b> 2019 to 2023 <button type="button" id="card-del">Delete</button></div>');
+    document.getElementById('card-del').addEventListener('click', () => count('cardDeletes'));
+  }
+  if (kept && q.has('section')) {
+    kept.querySelector('button').remove();
+    document.getElementById('rs-title').insertAdjacentHTML('afterend', '<button type="button" id="sec">Remove</button>');
+    document.getElementById('sec').addEventListener('click', () => count('sectionRemoves'));
+  }
+  if (kept && q.has('hidden')) {
+    kept.querySelector('button').style.display = 'none';
+    files.insertAdjacentHTML('beforeend', '<div data-automation-id="file-upload-item"><div>Uploading…</div>'
+      + '<button type="button" aria-label="Remove" id="other">x</button></div>');
+    document.getElementById('other').addEventListener('click', () => count('otherRemoves'));
+  }
+  if (q.has('cover')) item(files, '2024-cover-letter.pdf', '41.50 KB', (row) => { row.remove(); count('coverDeletes'); });
+
+  document.getElementById('rs-input').addEventListener('change', (e) => {
+    for (const f of e.target.files) {
+      item(files, f.name, `${(f.size / 1024).toFixed(2)} KB`, (row) => row.remove());
+      sent('uploads', f.name);
+    }
+    e.target.value = '';
+  });
+
+  // ?letter: the cover letter's own upload, its file kept from before too
+  if (q.has('letter')) {
+    const letters = document.getElementById('cl-files');
+    document.getElementById('letter').hidden = false;
+    item(letters, '2024-cover-letter.pdf', '41.50 KB', (row) => {
+      count('letterPresses');
+      if (q.has('letterstuck') && !confirm('Delete this file?')) return;
+      row.remove();
+      count('letterDeletes');
+    });
+    document.getElementById('cl-input').addEventListener('change', (e) => {
+      for (const f of e.target.files) {
+        item(letters, f.name, `${(f.size / 1024).toFixed(2)} KB`, (row) => row.remove());
+        sent('letterUploads', f.name);
+      }
+      e.target.value = '';
+    });
+  }
+
+  document.getElementById('next').addEventListener('click', () => {
+    if (q.has('redraw') && !sessionStorage.getItem('saved')) {  // (saved, and the page drawn again)
+      sessionStorage.setItem('saved', '1');
+      location.reload();
+      return;
+    }
+    if (files.children.length) location.href = 'review.html';
+  });
+</script>
+</body>
+</html>

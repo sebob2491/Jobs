@@ -40,7 +40,7 @@ from . import config, history, mailbox, report
 from .search import every_employer
 from .ats import ATS_NAMES, JOB_BOARDS, detect_ats, shared_system
 from .autofill import (classes_only, clean_label, degree_kinds_listed, degree_not_listed, entry_list_unloaded, entry_of,
-                       _CHOICE_KINDS, is_empty_value, no_choice_for_no_degree, norm,
+                       _CHOICE_KINDS, is_empty_value, kept_documents, no_choice_for_no_degree, norm,
                        plan_autofill, profile_entries, site_default, unset_choice,
                        polarity, tailored_document, works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
@@ -107,6 +107,15 @@ DESK_SETTLE = 30  # seconds a paused tab may go on changing after the desk typed
 # A password reset asked for with the inbox watched: when no email has come by then, the email most
 # likely has no account there (most sites won't say), so the desk makes one instead
 RESET_MAIL_WAIT = 3 * 60
+# A reset email from before the desk asked for the reset, by this computer's clock: an earlier reset's, its link spent
+# (KLA's Workday, the reset probe's second pass, run 136), or this one's with the two clocks apart (the mail service's
+# INTERNALDATE against this computer's time). A newer one is waited for this long after the reset was asked for, and
+# that one is used only if none comes
+RESET_FRESH_WAIT = 30
+# ...but only within this much of the request: one from further back is an earlier reset's, whatever the clocks say,
+# never opened (the review of 0.3.209: after the fresh wait, run 136's spent email was opened all the same). Its link was
+# the account's, so its wait running out is said on a card (Run.reset_spent), never taken for no email
+RESET_CLOCK_SKEW = 45
 # How long a site may take over a new account before the page is looked at again (a Workday site goes on
 # to its Sign In page a few seconds after Create Account is pressed)
 ACCOUNT_WAIT = 15
@@ -131,16 +140,23 @@ WENT_IN_CHARS = 200
 WENT_IN_LINES = 30
 # The codes the inbox gave, each with the job it went to: one is never another job's (Mayo Clinic's
 # Oracle site, run 49, was given onsemi's code, mailed from the same Oracle address a minute before and put in
-# there). For the whole process: the live check gives each employer a desk of its own.
+# there). And the password reset links it gave, each opened once: a reset's link works once, and one opened again
+# sets nothing (KLA's Workday, the reset probe's second pass, run 136). For the whole process: the live check gives
+# each employer a desk of its own.
 _MAIL_TAKEN: dict[tuple[str, str, float], int] = {}
 
 
 def _take_code(mail: tuple[str, str, float], job_id: int) -> None:
-    """A code the inbox gave, noted as the job's it went to. A day's are kept: one is looked for within minutes of its
-    mail, and the map grew for as long as the desk ran (the review of Oct 15)."""
+    """A code the inbox gave (or a reset link opened), noted as the job's it went to. A day's are kept: one is looked
+    for within minutes of its mail, and the map grew for as long as the desk ran (the review of Oct 15)."""
     for old in [k for k in _MAIL_TAKEN if k[2] < time.time() - 86400]:
         del _MAIL_TAKEN[old]
     _MAIL_TAKEN[mail] = job_id
+
+
+def _link_opened(link: str) -> bool:
+    """A password reset's link opened already, for any job: spent."""
+    return any(k[1] == link for k in list(_MAIL_TAKEN))
 
 
 FINISHED = {"applied", "interviewing", "offer", "rejected", "withdrawn"}  # tracker statuses never applied to again
@@ -240,6 +256,31 @@ _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon 
 # solve, so it holds nothing up: the person applies elsewhere
 _RESET_DONE = re.compile(r"\b(?:your )?password (?:has been|was|is)(?: successfully)? (?:reset|changed|updated)\b|"
                          r"\bpassword (?:reset|change|changed|updated?) (?:was |is )?(?:a )?success", re.I)
+# A reset's page saying it set nothing (opened from its email, or once its button is pressed). Its link spent: "This link
+# has expired", "The password reset link is invalid or has expired", "This reset link is no longer active", "The
+# password reset has timed out", "The link you clicked has already been used", "Invalid Password Reset Request". Or the
+# password one the site had before: "Password was recently used", "You can't reuse a recent password", "Password cannot
+# be the same as your previous 5 passwords". The usual words (none of Workday's is on record: KLA's, the reset probe's
+# second pass, run 136, opened a spent link, saw its form go and said the password was set), and only said of a link, a
+# token, a reset or a password: never "Your session has expired. Please sign in again." after a reset that went in, nor
+# a posting's "non-expired driver's license" beside a sign-in
+_LINK_SPENT = re.compile(r"\b(?:link|token|reset|url)s?\b[^.!?\n]{0,40}?\b(?:expired|no longer (?:valid|active)|"
+                         r"(?:already )?been used|already used|invalid|not valid|timed out)\b|"
+                         r"\b(?:expired|invalid)(?: or expired)? (?:(?:password )?reset (?:link|token|request)|link|token|"
+                         r"url)\b|\b(?:this|your|the) (?:password )?(?:reset )?request (?:has )?expired\b|"
+                         r"\bpassword reset failed\b", re.I)
+# ...unless said only of what may be, or what to do if it were
+_ONLY_IF = re.compile(r"^\W*(?:if|in case|should|when)\b|\b(?:may|might|could) be\b", re.I)
+_PASSWORD_USED = re.compile(r"\bpasswords?\b[^.!?\n]{0,40}?\b(?:(?:recently|previously) used|used (?:recently|before|"
+                            r"previously)|(?:already )?been used|can(?:not|'t|\u2019t| not) be re-?used|"
+                            r"same as (?:your |the |a |any of your )?(?:current|old|previous|last|recent)|"
+                            r"different from (?:your |the )?(?:current|old|previous)|(?:last|previous|recent) (?:\d+ )?"
+                            r"passwords)\b|\bcan(?:not|'t|\u2019t| not) (?:re-?use|use a password)\b[^.!?\n]{0,40}?"
+                            r"\b(?:password|used)\b", re.I)
+# The site's password rules, shown beside its boxes ("Passwords must not match your last 5 passwords"): no refusal
+# unless an alert says them
+_PASSWORD_RULES = re.compile(r"\bpasswords (?:must|should|may|cannot|can't)\b|\b(?:must|should) (?:not )?(?:contain|"
+                             r"include|match|have|be at least)\b|\bat least \d", re.I)
 _STEPISH = re.compile(r"\b(next|continue|save|submit|review|apply|finish|done|proceed)\b", re.I)
 # Workday saving again what a step saved a moment ago: "A phone number already exists for this application. Update or
 # delete the phone number." (PayPal's, run 56; Grand Canyon Education's address, run 55)
@@ -826,9 +867,33 @@ class Run:
     reset_asked: bool = False  # (once a job: a reset that didn't get in isn't asked for again)
     reset_from: str = ""  # the sign-in page a reset was asked from: back there once it's done elsewhere
     reset_waited: bool = False  # paused for the reset email (a Resume after that means it's done)
+    # when the reset was asked for (the desk's press of its button, or the pause for the person's past a picture code):
+    # its email comes after that, and one from before is an earlier reset's, its link spent (_check_mail)
+    reset_at: float = 0.0
+    # the saved password set as the site's new one through its reset (_set_new_password); or a reset link opened for the
+    # account (the desk's, from the inbox, for this job; or one it found opened already, said on a card): the account is
+    # there, so a sign-in refused after it is said for what it is, and never goes on to a Create Account. Until a
+    # sign-in gets in, or another password is saved
+    reset_set: bool = False
+    reset_opened: bool = False
+    # the reset email found was one whose link was opened already (_link_opened): an email came, so its wait running
+    # out is said on a card, never taken for "no email: no account there"
+    reset_spent: bool = False
+    # ...and, for the job, whatever password is saved since: the site emailed a reset for the account, or the desk set or
+    # opened one, so the account is there and never gets a Create Account (the re-review of 0.3.209: a password saved
+    # since cleared the flags above, and its refusal pressed Create Account). Never cleared for the job
+    account_known: bool = False
+    # the card for a spent reset link was shown: its Resume goes back to the sign-in and tries the saved password, which
+    # the person may have set through a new email's link in their own browser (the review of 0.3.209: on the same spent
+    # page, the card came back on every Resume)
+    reset_spent_said: bool = False
     refreshed: bool = False  # reloaded once for a page that asked for it ("Please refresh the page")
     start_reloaded: bool = False  # reloaded once for a posting page with no way on (the State of Arizona's, run 63)
     reuploaded: bool = False  # a resume the page showed but never kept: its Delete tried, to upload it again (EMD's, once a job)
+    # the documents ("resume", "cover_letter") settled for this job: a file kept from before replaced with the one
+    # tailored for the job, or tried, or left as the person's, or the desk's own put in (_replace_kept). Once a job, so a
+    # page that draws the old file's name again isn't deleted from again and again
+    kept_replaced: set[str] = field(default_factory=set)
     opened_fresh: bool = False  # this pass opened the job in a new tab (its page the posting's own, by its address)
     account_in: bool = False  # an account made for this job, and signed in to (Run.account_made said)
     load_reloaded: bool = False  # reloaded once for a step still loading after its wait (Workday's placeholders, run 57)
@@ -847,8 +912,15 @@ class Run:
     closed_skipped: bool = False
     closed_undone: bool = False
     hands_on: bool = False  # the person pressed Resume on it: what they did in the browser is never reloaded away
+    # the desk went on with it, begun, without the person's Resume, where they may have worked in its tab meanwhile:
+    # the queue picked it up by itself past its pause (_pick_up_left), their Undo of its Skip, or Apply on it again
+    # (desk.apply). A file in its upload may be their own pick: never replaced (Applier._replace_kept: the
+    # re-review of 0.3.209)
+    in_their_hands: bool = False
     invalid_redone: bool = False  # the review page's invalid lists answered again from the profile (once a job)
-    reset_no_mail: bool = False  # and none came in RESET_MAIL_WAIT: no account there, most likely, so one is made
+    # its wait ran out in RESET_MAIL_WAIT with no email it could use: none came (no account there, most likely, so one is
+    # made), or only one whose link was opened already (reset_spent: said on a card)
+    reset_no_mail: bool = False
     reopened_elsewhere: bool = False  # its sign-in page, opened again, led elsewhere: the job opened again (once a job)
     schools_dropped: list[str] = field(default_factory=list)  # education blocks deleted (_drop_unfit_school)
     schools_tried: list[str] = field(default_factory=list)  # and those whose Delete was pressed, gone or not
@@ -952,6 +1024,8 @@ class Run:
     def public(self) -> dict[str, Any]:
         return {**{k: v for k, v in self.__dict__.items() if k not in ("page", "tab_mark", "desk_at", "desk_code", "cookies_asked", "resetting",
                                                                         "reset_asked", "reset_from", "reset_waited",
+                                                                        "reset_at", "reset_set", "reset_opened",
+                                                                        "reset_spent", "reset_spent_said", "account_known",
                                                                         "reset_no_mail", "reopened_elsewhere", "reopened", "sign_in_tries", "sign_in_key",
                                                                         "accounts_tried", "account_made", "account_in", "account_page",
                                                                         "account_finished", "verifying", "verify_resent", "mail_looks", "mail_last",
@@ -960,7 +1034,7 @@ class Run:
                                                                         "went_in", "draft_pages", "submit_pressed",
                                                                         "sending", "cut_short", "started",
                                                                         "pass_steps", "rounds", "resumes", "marked",
-                                                                        "maybe_shown")},
+                                                                        "maybe_shown", "kept_replaced")},
                 # (only for the cards that show it: a job queued or under way has none, and 30 of them made the
                 # page's state megabytes, every poll)
                 "went_in": None if self.status in ("queued", "running") else self.went_in.public()}
@@ -1558,6 +1632,7 @@ class Applier:
             self._log(run, run.reason)
             return run
         self._log(run, "Skip undone: back in the queue")
+        run.in_their_hands = run.in_their_hands or run.started  # (its tab was theirs before the Skip)
         self.enqueue(job_id)  # (submit=False: Undo is no Submit)
         if place is not None:
             self._cancel(job_id)
@@ -1596,7 +1671,7 @@ class Applier:
             if run.need == "email_code":
                 await self._check_mail_safely(run)  # the code or link came after the queue went on
             if self._reset_overdue(run):
-                run.reset_no_mail = True  # no reset email: _drive goes back to make an account
+                run.reset_no_mail = True  # none it could use: _drive makes an account, or says so
                 moved = True
             else:
                 try:
@@ -1604,8 +1679,10 @@ class Applier:
                 except Exception:  # a tab mid-way through loading: looked at again next time, not holding the rest
                     continue
             if moved and run.left and run.status == "needs_you":
-                # (carried on by itself: the person may have changed later pages of a saved draft by hand in its tab)
+                # (carried on by itself: the person may have changed later pages of a saved draft by hand in its tab,
+                # or put a file of their own in its upload)
                 self._draft_off(run)
+                run.in_their_hands = True
                 solved = run.job_id == self.round_job  # (its check solved in the desk's round, the person at its tab)
                 try:
                     self.enqueue(run.job_id, submit=run.submit, front=True)
@@ -1915,7 +1992,7 @@ class Applier:
             except Exception:  # a tab that can't be read just now (mid-load, crashed): not past it, and the
                 moved = False  # idle and long-wait releases below still apply
             if not moved and self._reset_overdue(blocker):
-                blocker.reset_no_mail = moved = True  # no reset email: _drive goes back to make an account
+                blocker.reset_no_mail = moved = True  # (none it could use: as above)
             if time.time() - blocker.paused_at > HANDS_ON_TIMEOUT:
                 self._go_on_without(blocker, "the other jobs went ahead after a long wait")
             elif moved:
@@ -2586,13 +2663,15 @@ class Applier:
         # began earlier. With an earlier job waiting on the same sender, mail between its step's start and that is
         # either job's (the other's Resend, pressed in its tab meanwhile): neither's, left for the person (the
         # re-checks of jobs at once)
+        want = "code" if boxes else "reset" if run.resetting else "link"
+        # (a reset's email from when the desk asked for it: an older one is an earlier reset's, or the clocks apart)
+        asked = run.reset_at if want == "reset" and run.reset_at else run.paused_at
         try:
-            want = "code" if boxes else "reset" if run.resetting else "link"
             if run.others_mail is False:  # (the lists read once a job, off the event loop)
                 job = self.srv.tracker().get(run.job_id, with_description=False) or {}
                 run.others_mail = await asyncio.to_thread(_another_employers_mail, str(run.company or job.get("company")
                                                                                        or ""), run.employer_mail or frozenset())
-            found = await asyncio.to_thread(mailbox.search, *login, run.paused_at, senders, want, own_link,
+            found = await asyncio.to_thread(mailbox.search, *login, asked, senders, want, own_link,
                                             min(later) if later else None, look_back,
                                             others=run.others_mail if want == "code" else None)
         except mailbox.MailboxError as e:
@@ -2623,10 +2702,27 @@ class Applier:
                          + f" ({len(boxes)} code box(es) on the page)")
         if found is None or run.status != "needs_you" or run.need != "email_code":
             return
-        # (a code only: a link is the account's, and two jobs on one site share one: the review)
-        mail = (found.sender, found.value, found.received) if found.kind == "code" else None
-        if mail and _MAIL_TAKEN.get(mail, run.job_id) != run.job_id:  # (the job it went to has it: this one's is to come)
+        # (a code, and a reset's link: a confirmation link is the account's, and two jobs on one site share one: the
+        # review)
+        mail = (found.sender, found.value, found.received) if found.kind in ("code", "reset") else None
+        if mail and found.kind == "code" and _MAIL_TAKEN.get(mail, run.job_id) != run.job_id:
+            # (the job it went to has it: this one's is to come)
             run.mail_last += "; not used: another job's, put in there already"
+            return
+        if found.kind == "reset" and _link_opened(found.value):
+            # a reset's link works once: one opened already (for this job or another) sets nothing. The new one is
+            # waited for; and should none come, its wait running out is said, never taken for no email at all
+            run.reset_spent = run.account_known = True
+            run.mail_last += "; not used: that reset link was opened already"
+            return
+        if found.kind == "reset" and found.received < asked - RESET_CLOCK_SKEW:
+            run.reset_spent = run.account_known = True
+            run.mail_last += "; not used: it came well before the reset was asked for, an earlier reset's"
+            return
+        if found.kind == "reset" and found.received < asked and time.time() - asked < RESET_FRESH_WAIT:
+            # from before the reset was asked for, by this computer's clock: an earlier reset's (its link spent: run 136),
+            # or this one's with the clocks apart. A newer one is waited for a moment, and this one used if none comes
+            run.mail_last += "; not used yet: it came before the reset was asked for, so a newer one is waited for"
             return
         try:
             if found.kind == "code":
@@ -2641,6 +2737,7 @@ class Applier:
             elif found.kind == "reset":  # its page sets the new password: opened in the job's own tab
                 if run.page is None or run.page.is_closed():
                     return
+                run.reset_opened = run.account_known = True  # (the account is there: a refused sign-in makes none)
                 await run.page.goto(found.value, wait_until="domcontentloaded", timeout=45000)
                 run.mail_done = True
                 self._log(run, f"opened the password reset link from your email ({_sent_from(found)})")
@@ -3180,6 +3277,28 @@ class Applier:
             if kind == "sign_in" and _account_and_application(data):
                 return await self._apply_with_account(run, data)
             manage = (kind in ("sign_in", "page", "email_code") or run.resetting) and _may_manage_accounts()
+            if (manage and run.resetting and run.reset_opened and not _new_password_boxes(data, text)
+                    and (refused := _reset_refused(data, text))):
+                # the reset link from the inbox opened on a page that says it's spent (expired, used, invalid), with no
+                # new-password boxes: nothing to set there, and the account is there (never a Create Account)
+                if run.reset_spent_said and run.reset_from and run.page is not None:
+                    # Resume on its card, the tab still on the spent page: the person set the password through a new
+                    # email's link in their own browser, as the card asks. Back to the sign-in for one more try; a
+                    # refusal there is said (reset_opened), never a Create Account
+                    run.resetting, run.reset_spent_said = False, False
+                    await self._back_to_sign_in(run)
+                    sign_ins.clear()
+                    run.sign_in_tries = min(run.sign_in_tries, SIGN_IN_TRIES - 1)
+                    continue
+                run.reset_spent_said = True
+                await self._bring_forward(run)
+                site = _site(run, data)
+                return self._pause(run, "sign_in", f"The password reset link from your email opened on {site}'s page "
+                                   f"saying \u201c{refused.rstrip(' .')}\u201d, so the desk couldn't set your saved "
+                                   f"password there. Ask {site} for a new reset through its \u201cForgot password\u201d and open "
+                                   "the new email's link, set the password you saved on the desk as the new one (or "
+                                   "another, and save that one on the desk), then press Resume: the desk signs in with it.",
+                                   seen=data)
             # On the reset's "email sent" page, or back from waiting on an email that didn't come, on whatever
             # page the site left (Workday's reset form stays, filled, with its "if an account exists" note,
             # which can read as a form: so before a form's "past the sign-in" below)
@@ -3187,6 +3306,20 @@ class Applier:
             if manage and run.resetting and (sent_page or run.reset_no_mail):
                 if not run.reset_waited:
                     return await self._await_reset_email(run, data)
+                if run.reset_no_mail and run.reset_spent:
+                    # its wait ran out on an email whose link was opened already (a site that sent the same link again,
+                    # or an earlier reset's): an email came, so the account is there, and it's never "no email: no
+                    # account there, make one". Left where it is: a new reset's link opened in the tab is set on Resume
+                    run.reset_no_mail = run.reset_spent = False
+                    run.reset_opened = run.account_known = True
+                    await self._bring_forward(run)
+                    site = _site(run, data)
+                    return self._pause(run, "sign_in", f"{site} emailed you a password reset, but its link is one the desk "
+                                       "opened already (a reset link works once), so it couldn't set your saved password "
+                                       f"with it. Ask {site} for a new one through its \u201cForgot password\u201d in the "
+                                       "browser window, or open that email's link yourself; set the password you saved on "
+                                       "the desk as the new one (or another, and save that one on the desk), then press "
+                                       "Resume: the desk signs in with it.", seen=data)
                 # Resume pressed on it: the person set the password from the email themselves (or the
                 # inbox wait ran out), so back to the sign-in page, where the saved password is tried again.
                 # No email in RESET_MAIL_WAIT: most likely no account there, so the way to a new one instead.
@@ -3204,6 +3337,8 @@ class Applier:
             if kind == "form" and finish is None:
                 run.resetting = False  # past the sign-in, however the password was set
                 run.sign_in_tries = 0  # (and none of its sign-ins was refused)
+                run.reset_set = run.reset_opened = run.reset_spent = run.reset_spent_said = False  # (a refusal after
+                # this is the ordinary one)
             if kind == "sign_in":
                 # signed in (or an account made) since a refresh for "Something went wrong": the page after it is the
                 # account's, not what the refresh brought back (presses alone count the steps: the review of 0.3.172)
@@ -3356,6 +3491,20 @@ class Applier:
                     return self._pause(run, "sign_in", f"I filled in your email and saved password on {_site(run, data)}'s "
                                        "sign-in form. Press its sign-in button in the browser window; the desk carries on "
                                        "after that.", seen=data)
+                if done == "refused" and (run.reset_set or run.reset_opened):
+                    # Right after the desk set the saved password through the site's own reset, or opened its link: the
+                    # account is there, so never a Create Account (KLA's Workday, the reset probe's second pass, run
+                    # 136: a spent link's reset set nothing, and the desk pressed Create Account)
+                    told = next((e for e in data.get("errors") or [] if not _ERROR_COUNT.match(e.strip())), "")
+                    it_says = f" (it says \u201c{told[:160].rstrip(' .')}\u201d)" if told else ""
+                    opening = (f"I set your saved password through {_site(run, data)}'s password reset, and it still "
+                              f"doesn't sign in there{it_says}. The site may not have taken it" if run.reset_set else
+                              f"Your saved password still doesn't sign in on {_site(run, data)} after its password "
+                              f"reset{it_says}. The reset may not have set it")
+                    return self._pause(run, "sign_in", opening + ": a reset link works once, and some sites won't take "
+                                       "back a password you've used there before. Reset it there to the one you saved on "
+                                       "the desk (or another, and save that one on the desk), then press Resume: the desk "
+                                       "signs in with it.", seen=data)
                 if done == "refused":  # and no reset (one was asked for already, or the site has no way to one)
                     told = next((e for e in data.get("errors") or [] if not _ERROR_COUNT.match(e.strip())), "")
                     return self._pause(run, "sign_in", f"Your saved password didn't sign in on {_site(run, data)}"
@@ -3431,11 +3580,16 @@ class Applier:
                             self._log(run, f"couldn't press the {section} section's Add button: something on the page "
                                       "covers it, so its blocks are left as they are")
                         self._note_short_entries(run, section, added, data)
-                result = await self._autofill(run, data, filled_ids)
+                # a resume kept from before in its box (Workday's), where this job has one tailored for it: deleted, for
+                # the fill to put the tailored one in its place; or, once the page is filled, the person's (paused)
+                replacing = await self._replace_kept(run, data)
+                result = await self._autofill(run, data, filled_ids, {str(b["id"]) for b in replacing[0]})
                 if result["filled"]:
                     self._log(run, f"filled {len(result['filled'])} field(s) on {_where(data)}")
                 filled_ids |= {str(f["id"]) for f in result["filled"] if f.get("id")}
                 filled_values |= {norm(f["value"]) for f in result["filled"] if f.get("value") not in (None, "")}
+                if not await self._replaced_in(run, data, replacing, result):
+                    return
                 _required_by_errors(result, data)
                 pending, missing_files = _pending(result, once_failed)
                 self._note_skipped(run, result)
@@ -4248,6 +4402,109 @@ class Applier:
         self._pause(run, "stuck", said)
         return "paused"
 
+    async def _replace_kept(self, run: Run, data: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
+        """A resume (or cover letter) box that shows a file kept from before, where this job has one tailored for it
+        (autofill.kept_documents: Workday keeps an account's last resume in My Experience's "Resume/CV" upload, and the
+        desk left it there, so the employer got the old resume: NXP's, the weekly probe of Oct 2026). The kept file is
+        deleted with its own Delete in Workday's list (browser.delete_kept_upload), and the fill that follows puts the
+        tailored one in the box it emptied (_replaced_in says so). Only in Workday's list: another site's list of stored
+        files may be the person's own file library, where a Delete takes the file off their account, so a file kept
+        there stays as it is, as before. Once a job for each document (Run.kept_replaced), so a page that draws the old
+        name again is never deleted from again and again. Never once the person has had the application in their hands
+        (their Resume, after a stop or a restart of the desk, or a Submit pressed before; or the desk went on with it
+        after they may have worked in its tab: Run.in_their_hands): a file there may be their own choice, and it stays,
+        said in the log. A box whose file won't read (a slow page: browser.kept_upload_state's "unread") is the person's
+        too, on a card: taken for a box gone, the kept file would go to the employer unreplaced. A file that won't delete, or a box where which file is the old one isn't
+        sure, keeps what it shows, so the fill never uploads beside it (the employer would get two): the person's, said
+        on a card once the page is filled, one box at a time (one after it is neither pressed nor settled, so the next
+        pass says it). Returns the boxes emptied for their tailored file, and that card's words ("" for none)."""
+        job = self.srv.tracker().get(run.job_id, with_description=False) or {}
+        emptied: list[dict[str, Any]] = []
+        for box in kept_documents(data.get("fields") or [], config.Profile.load(), job):
+            if box["kind"] in run.kept_replaced:
+                continue  # (settled for the job: replaced or tried, left as the person's, or the desk's own put in)
+            # (the desk's own upload, whatever its name; not in Workday's list; or the box gone: as it is)
+            state = await self.srv.browser.kept_upload_state(box["id"])
+            if state and state != "unread":
+                continue
+            what, tailored, old = _DOCUMENT_SAID[box["kind"]], Path(box["tailored"]).name, ", ".join(box["shown"])
+            upload = f"“{_short(box['where'])}” upload"
+            if state == "unread" and not (run.hands_on or run.pressed_before or run.in_their_hands):
+                return emptied, (f"The {upload} on {_site(run, data)} has a {what} kept from before"
+                                 + (f" ({old})" if old else "") + f", and the page was too slow for me to read it, to put "
+                                 f"the one tailored for this job ({tailored}) in its place. In the browser window, delete "
+                                 f"the old file with its Delete, upload {tailored} (in this job's folder), then press "
+                                 "Resume.")
+            run.kept_replaced.add(box["kind"])
+            if run.hands_on or run.pressed_before or run.in_their_hands:
+                # (a restart's job goes on only by the person's Resume: hands_on. Never said of the tailored file's name)
+                if not any(s.lower() == tailored.lower() for s in box["shown"]):
+                    self._log(run, f"left the {what} in its {upload} as it is" + (f" ({old})" if old else "") + ", not "
+                              "the one tailored for this job: you've had this application in your hands, so what's in "
+                              "it is yours")
+                continue
+            # A box that shows only that a file is there ("uploaded": Workday's item with no name) can't say what it
+            # holds. It's replaced all the same, once a job: the desk's own upload of the tailored file is its own
+            # (KEPT_STATE_JS's "mine", or settled when it went in: _replaced_in), so what's there is another; at worst
+            # it's the tailored one sent again. So is a file of the tailored one's name (every tailored resume has the
+            # same name: autofill.kept_documents). Never where which file is the old one isn't sure (several, or a box
+            # for a resume and a cover letter both): the person's
+            deleted = "" if box["unsure"] else await self.srv.browser.delete_kept_upload(
+                box["id"], box["shown"][0] if box["shown"] else "")
+            if deleted == "deleted":
+                emptied.append(box)
+                continue
+            upload = f"The {upload} on {_site(run, data)}"
+            put = f"upload {tailored} (in this job's folder), then press Resume."
+            if box["unsure"]:
+                held = (f"files kept from before ({old})" if len(box["shown"]) > 1 else
+                        f"a file kept from before ({old})" if old else "a file kept from before")
+                return emptied, (f"{upload} still has {held}, and I can't tell "
+                                 + ("which is" if len(box["shown"]) > 1 else "whether it's") + f" your old {what}, to "
+                                 f"put the one tailored for this job in its place. In the browser window, delete your old "
+                                 f"{what} there with its Delete, {put}")
+            return emptied, (f"{upload} still has the {what} kept from before" + (f" ({old})" if old else "") + ", and I "
+                             f"couldn't delete it to put in the one tailored for this job ({tailored}): uploaded beside "
+                             f"it, the employer would get two {what}s. In the browser window, delete the old file with "
+                             f"its Delete, {put}")
+        return emptied, ""
+
+    async def _replaced_in(self, run: Run, data: dict[str, Any], replacing: tuple[list[dict[str, Any]], str],
+                           result: dict[str, Any]) -> bool:
+        """After the fill: a document the desk put in itself is settled for the job (a box showing it later is the
+        desk's own, whatever name the site gives it: never deleted as one kept from before). Each box emptied of a file
+        kept from before (_replace_kept) is said replaced once the fill sent its tailored file itself (never one the
+        fill found the page showing already). On a saved draft, that's a change to its answers whether they were being
+        re-checked or not: Submit for me leaves it for the person to check (_draft_changes). Where the tailored file
+        didn't go, the box is the person's to put it in, said on a card, as is a kept file that wouldn't go (False:
+        paused)."""
+        emptied, stuck = replacing
+        filled = result.get("filled") or []
+        for f in filled:
+            if (kind := _DOCUMENT_KINDS.get(str(f.get("from") or ""))) is not None:
+                run.kept_replaced.add(kind)
+        boxes = {str(f.get("id")): f for f in data.get("fields") or [] if isinstance(f, dict)}
+        for box in emptied:
+            what, tailored, old = _DOCUMENT_SAID[box["kind"]], Path(box["tailored"]).name, ", ".join(box["shown"])
+            sent = next((f for f in filled if f.get("uploaded") and f.get("from") == f"documents.{box['kind']}"
+                         and Path(str(f.get("value") or "")).name.lower() == tailored.lower()), None)
+            if sent is not None:
+                self._log(run, f"replaced the {what} kept from before with the one tailored for this job")
+                if run.draft:
+                    self._draft_changes(run, [(boxes.get(str(box["id"])) or {"id": box["id"], "label": box["where"]},
+                                               old or "uploaded", sent.get("value"))], data)
+            elif not stuck:
+                stuck = (f"I deleted the {what} {_site(run, data)} kept from before" + (f" ({old})" if old else "")
+                         + f" to put in the one tailored for this job, and it didn't go in. In the browser window, "
+                         f"upload {tailored} (in this job's folder) into its “{_short(box['where'])}” "
+                         "upload, then press Resume.")
+        if not stuck:
+            return True
+        _went_in(run, filled, data)  # (what this fill put in, on the job's "What went in" panel)
+        await self._bring_forward(run)
+        self._pause(run, "stuck", stuck)
+        return False
+
     async def _new_tab_soon(self, run: Run, seconds: float) -> bool:
         """Follow a tab that opens a little after a click (the browser makes it current)."""
         deadline = time.monotonic() + seconds
@@ -4408,7 +4665,8 @@ class Applier:
             self._log(run, f"{len(failed)} of your answers didn't go in")
         return failed
 
-    async def _autofill(self, run: Run, data: dict[str, Any], own: set[str] | None = None) -> dict[str, Any]:
+    async def _autofill(self, run: Run, data: dict[str, Any], own: set[str] | None = None,
+                        replacing: set[str] | None = None) -> dict[str, Any]:
         """The profile's answers into the page's empty boxes (srv.autofill). On a saved draft's pages (Run.draft: gone in
         through the site's "Continue Application", issue #112, note 38), once a page and only until the job first pauses
         after going in (from then on the person may be at work in its tab: a Resume, a tab the queue carried on with by
@@ -4424,13 +4682,14 @@ class Applier:
         def replaced(filled: list[dict[str, Any]]) -> list[tuple[dict[str, Any], Any, Any]]:
             # what else went into a box the draft had filled, and changed it (the third review: a preset country set
             # right, a list on its first choice answered again): the draft's answers changed all the same. Never a box
-            # this pass filled itself (filled_ids: its "before" is the desk's own fill)
+            # this pass filled itself (filled_ids: its "before" is the desk's own fill), nor one whose file kept from
+            # before the desk replaced (`replacing`: said by _replaced_in, whether the draft is re-checked or not)
             out = []
             for f in filled:
                 box = before.get(str(f.get("id"))) or {}
                 old = box.get("value")
-                if f.get("refreshed") or str(f.get("id")) in (own or set()) or is_empty_value(old) or unset_choice(box) \
-                        or norm(old) == norm(f.get("value")):
+                if f.get("refreshed") or str(f.get("id")) in (own or set()) | (replacing or set()) \
+                        or is_empty_value(old) or unset_choice(box) or norm(old) == norm(f.get("value")):
                     continue
                 out.append((box, old, f.get("value")))
             return out
@@ -4474,7 +4733,10 @@ class Applier:
         if changed:
             self._log(run, f"re-checked the saved draft's answers on {where}: {len(changed)} field(s) showed another "
                       f"answer than your profile's, so I put your profile's in: {named(changed)}")
-        elif not refused:
+        elif not refused and (not replacing or any(not is_empty_value(f.get("value")) for fid, f in before.items()
+                                                   if fid not in replacing)):
+            # (never of a box whose kept file the desk replaces: that's said on its own. With no other box showing an
+            # answer, there's nothing to say here)
             self._log(run, f"re-checked the saved draft's answers on {where}: they match your profile")
         if refused:
             self._log(run, f"re-checked the saved draft's answers on {where}: {len(refused)} field(s) wouldn't take "
@@ -5267,12 +5529,14 @@ class Applier:
             return await instead("opened its password reset, which didn't take your email", data)
         if captcha:  # (and no new account to go back for: the site said the email has one)
             run.resetting = True
+            run.reset_at = time.time()  # (the person's press, past its picture code, comes after this)
             await self._bring_forward(run)
             self._pause(run, "bot_check", f"I opened {site}'s password reset for your saved password, which didn't sign "
                         "in, and filled in your email. Solve its picture code and press its button; the desk watches your "
                         "inbox for the reset email and sets your saved password as the new one.", seen=data)
             return "paused"
         button = self._account_button(data.get("actions") or [], _RESET_ASK, full=False)
+        run.reset_at = time.time()  # (its email is sent as the button is pressed: none from before is this reset's)
         if button is None or not await press(button, allow_submit=True):  # (asks for the email: sends no application)
             return await instead("filled in your email on its password reset, but couldn't press its button", data)
         data, text = await self._look()
@@ -5435,7 +5699,8 @@ class Applier:
         run.verifying = True
 
     def _reset_overdue(self, run: Run) -> bool:
-        """Waiting on a reset email, with the inbox watched, that hasn't come in RESET_MAIL_WAIT."""
+        """Waiting on a reset email, with the inbox watched, that hasn't come in RESET_MAIL_WAIT (or only one whose link
+        was opened already, Run.reset_spent: _drive says so on a card, and never takes it for no email at all)."""
         # (the wait's own time: not while another job's email step kept its mail from being read; and only once a look
         # made after it has found none, never in the pass that couldn't look: the review of jobs at once)
         return (run.resetting and run.reset_waited and run.status == "needs_you" and run.need == "email_code"
@@ -5457,14 +5722,9 @@ class Applier:
         boxes, and its button pressed. "set" when the site took it, "paused" when it's the
         person's (a picture code, or a password the site turned down); None for any other page."""
         srv = self.srv
-        fields = [f for f in data.get("fields") or [] if not re.match(r"f\d+-", str(f.get("id")))]
-        passwords = [f for f in fields if f.get("kind") == "password" and not _code_box(f)]
-        named = [f for f in fields if f.get("kind") in ("text", "email")
-                 and re.search(r"e-?mail|user ?name|login", f.get("label") or "", re.I)]
-        new = len(passwords) >= 2 or any(_NEW_PASSWORD.search(f.get("label") or "") for f in passwords)
-        if (not passwords or named or not new or any(_OLD_PASSWORD.search(f.get("label") or "") for f in passwords)
-                or not _RESET_PAGE.search(" ".join([text[:2000], *(data.get("headings") or [])]))):
-            return None  # not a reset's page (a Create Account form asks for the email; a change asks the old one)
+        passwords = _new_password_boxes(data, text)
+        if not passwords:
+            return None
         secret = password_for(data["url"])
         if secret is None or _secret(secret) is None:
             return None
@@ -5499,7 +5759,18 @@ class Applier:
                         f"as the new one.{said} Set it there (or another, and save that one on the desk), then sign in; "
                         "the desk carries on after that.", seen=after)
             return "paused"
+        if refused := _reset_refused(after, after_text):
+            # its form gone, and the site's words that it set nothing (its link spent, or a password it had before):
+            # never said to be set (KLA's Workday, the reset probe's second pass, run 136, a spent link's)
+            await self._bring_forward(run)
+            self._pause(run, "sign_in", f"I put your saved password in {site}'s new-password boxes and pressed its button, "
+                        f"and it says \u201c{refused.rstrip(' .')}\u201d: it didn't set it as the new one. Reset it there "
+                        "(through its \u201cForgot password\u201d again if the link is spent) to the one you saved on the "
+                        "desk, or to another and save that one on the desk, then press Resume: the desk signs in with it.",
+                        seen=after)
+            return "paused"
         run.resetting = False
+        run.reset_set = run.account_known = True
         self._log(run, f"set your saved password as {site}'s new one")
         return "set"
 
@@ -5737,6 +6008,7 @@ class Applier:
         key = hashlib.sha256(saved.encode()).hexdigest()
         if key != run.sign_in_key:  # a password saved since: not the one the site refused
             run.sign_in_key, run.sign_in_tries = key, 0
+            run.reset_set = run.reset_opened = False  # (nor the one a reset set: its refusal is the ordinary path's)
         # the page's own fields: never a password box inside a frame from another site
         fields = [f for f in data.get("fields") or [] if not re.match(r"f\d+-", str(f.get("id")))]
         actions = [a for a in data.get("actions") or [] if not a.get("disabled")]
@@ -5766,9 +6038,12 @@ class Applier:
             # press: Amkor's sign-in page reloads after a failed sign-in, and a click on its "Create
             # an account" made before that has finished is lost. A Create Account the desk pressed
             # for this job already didn't make one (a Workday site goes back to its Sign In either
-            # way): never a second, the password is reset instead.
+            # way): never a second, the password is reset instead. Nor one after the desk set the
+            # saved password through the site's own reset, or opened its link: the account is there
+            # (_drive says so).
             if (create is None or tried.get("create_account", 0) >= 2 or run.accounts_tried
-                    or reset_first and _forgot_action(actions)):
+                    or reset_first and _forgot_action(actions) or run.reset_set or run.reset_opened
+                    or run.account_known):
                 return "refused"
             try:
                 await srv.click(create["id"])
@@ -6086,6 +6361,37 @@ _APPLICATION_FIELD = re.compile(r"first name|last name|full name|legal name|resu
 
 _ACCOUNT_FIELD = re.compile(r"e-?mail|password|user ?name|log ?in|terms|privacy|captcha|language|locale|"
                             r"text in (?:the )?(?:image|picture)", re.I)  # Benchmark's "Enter the text in image above"
+
+
+def _new_password_boxes(data: dict[str, Any], text: str) -> list[dict[str, Any]]:
+    """A password reset's page (opened from its email): its new-password boxes. [] for any other page (a Create Account
+    form asks for the email; a change asks the old one; a sign-in has one box, not a new password's)."""
+    fields = [f for f in data.get("fields") or [] if not re.match(r"f\d+-", str(f.get("id")))]
+    passwords = [f for f in fields if f.get("kind") == "password" and not _code_box(f)]
+    named = [f for f in fields if f.get("kind") in ("text", "email")
+             and re.search(r"e-?mail|user ?name|login", f.get("label") or "", re.I)]
+    new = len(passwords) >= 2 or any(_NEW_PASSWORD.search(f.get("label") or "") for f in passwords)
+    if (not passwords or named or not new or any(_OLD_PASSWORD.search(f.get("label") or "") for f in passwords)
+            or not _RESET_PAGE.search(" ".join([text[:2000], *(data.get("headings") or [])]))):
+        return []
+    return passwords
+
+
+def _reset_refused(data: dict[str, Any], text: str) -> str:
+    """What a reset's page says of a new password it didn't set, or can't (_LINK_SPENT, _PASSWORD_USED), in its own
+    words: its alerts, then its headings and lines (but the site's password rules shown there). "" when it says no such
+    thing, or says the password is reset."""
+    if _RESET_DONE.search(text[:2000]):
+        return ""
+    errors = [" ".join(str(e or "").split()) for e in data.get("errors") or []]
+    shown = [" ".join(str(t or "").split()) for t in [*(data.get("headings") or []), *text[:2000].splitlines()]]
+    for said in [*errors, *(t for t in shown if not _PASSWORD_RULES.search(t))]:
+        # (a sentence of help that only says what to do if it were: "If this link has expired, request a new one.",
+        # "The link may be invalid in some mail apps.": the review of 0.3.209)
+        if any((_LINK_SPENT.search(part) or _PASSWORD_USED.search(part)) and not _ONLY_IF.search(part)
+               for part in re.split(r"(?<=[.!?])\s+", said)):
+            return said[:160]
+    return ""
 
 
 def _try_later(data: dict[str, Any]) -> str | None:
@@ -7496,6 +7802,8 @@ def _box_said(box: dict[str, Any]) -> dict[str, str]:
 
 
 _DOCUMENTS = {"documents.resume": "Resume", "documents.cover_letter": "Cover letter"}  # the profile's, by autofill's rule
+_DOCUMENT_KINDS = {"documents.resume": "resume", "documents.cover_letter": "cover_letter"}  # (Run.kept_replaced's)
+_DOCUMENT_SAID = {"resume": "resume", "cover_letter": "cover letter"}
 
 
 def _read_back(box: dict[str, Any] | None, secrets: set[str]) -> Any:
