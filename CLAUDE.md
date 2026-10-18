@@ -111,6 +111,10 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
 - A probe of a few employers on GitHub (where the test identity's secrets are): run the live-nightly
   workflow by hand with `companies` (and `checks`, e.g. `accounts`). It runs only those, in a few minutes,
   and isn't compared or written to the issue: read its artifacts with `nightly_summary.py --artifacts`.
+- The weekly probes (`scripts/live_probes.py`: the live-nightly workflow on Sundays, or by hand with `checks: probes`),
+  as the test identity: the password reset at two Workday tenants (pass 1 saves a password derived from the real one,
+  which the site refuses and the desk resets it to; pass 2 resets it back) and a tailored resume in the job's folder
+  (the review page must show it). Read them with `nightly_summary.py --probes <zip or folder>`.
 - Never wait on the nightly's schedule: GitHub starts it hours late. After each release, run the live-nightly
   workflow by hand with no inputs (a full run, about 15 minutes; it's compared and written to the issue).
   The workflow queues runs, never two at once (one inbox). A routine dispatches the daily run instead of the

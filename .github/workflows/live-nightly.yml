@@ -28,6 +28,13 @@ name: live-nightly
 # A manual run can be a probe of a few employers or checks (its inputs): it runs only those, and
 # isn't compared or written to the issue; its artifacts hold the results
 # (scripts/nightly_summary.py --artifacts reads them).
+# Once a week (Sundays, and by hand with checks "probes"), the weekly probes (scripts/live_probes.py), as the test
+# identity and never submitting: the desk's password reset at two Workday tenants (a pass with a saved password derived
+# from the real one, which the site refuses and the desk resets the site to, then a pass with the real one, which
+# resets it back) and a tailored resume in the job's folder (does the review page show it, not the profile's?). They
+# run here, in this workflow's concurrency group, so never beside another run on the test inbox or its accounts, and
+# after this run's checks when a manual run asks for both. Their results: the run's summary and its live-probes
+# artifact (scripts/nightly_summary.py --probes reads it); a probe that didn't pass fails the run.
 
 on:
   # GitHub starts this schedule hours late (5 to 10, Oct 2026), so a routine dispatches the run at 3:17 AM in Arizona
@@ -35,6 +42,9 @@ on:
   # a scheduled run skips itself when a full run was written to the issue in the last 12 hours (the "fresh" job).
   schedule:
     - cron: "17 10 * * *"  # 3:17 AM in Arizona (UTC-7 all year)
+    # the weekly probes alone (the "fresh" job's WEEKLY: the same string), Sundays at 6:43 AM in Arizona, hours after
+    # the 3:17 run has finished
+    - cron: "43 13 * * 0"
   workflow_dispatch:
     inputs:
       companies:
@@ -42,7 +52,7 @@ on:
         required: false
         default: ""
       checks:
-        description: "Only these checks (comma-separated: pipeline, hr, search, accounts): a probe, not compared"
+        description: "Only these checks (comma-separated: pipeline, hr, search, accounts, probes): a probe, not compared"
         required: false
         default: ""
       plus:
@@ -62,11 +72,13 @@ permissions:
 jobs:
   # A scheduled run that a dispatched full run has already done today's work for (its "Last checked" in the issue
   # within 12 hours) runs nothing: two full runs a day would make the test identity's accounts twice. A dispatched
-  # run always goes ahead.
+  # run always goes ahead. "go": the nightly's checks run; "probes": the weekly probes run (the weekly schedule's run,
+  # which runs nothing else, or a manual run whose checks name them).
   fresh:
     runs-on: ubuntu-latest
     outputs:
       go: ${{ steps.last.outputs.go }}
+      probes: ${{ steps.last.outputs.probes }}
     steps:
       - name: When the issue was last written
         id: last
@@ -74,8 +86,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           REPO: ${{ github.repository }}
+          SCHEDULE: ${{ github.event.schedule }}
+          CHECKS: ${{ github.event.inputs.checks }}
+          WEEKLY: "43 13 * * 0"  # (the weekly probes' schedule, as written under "on")
         run: |
-          if [ "$EVENT" != schedule ]; then echo "go=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if [ "$EVENT" = schedule ] && [ "$SCHEDULE" = "$WEEKLY" ]; then
+            echo "The weekly probes' run: the probes alone (scripts/live_probes.py)." >> "$GITHUB_STEP_SUMMARY"
+            { echo "go=false"; echo "probes=true"; } >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "$EVENT" != schedule ]; then
+            checks=",${CHECKS// /},"
+            if [[ "$checks" == *,probes,* ]]; then echo "probes=true"; else echo "probes=false"; fi >> "$GITHUB_OUTPUT"
+            # (a manual run of the probes alone runs none of the nightly's checks)
+            if [ "${checks//,probes,/,}" = "," ] && [ -n "${CHECKS// /}" ]; then echo "go=false"; else echo "go=true"; fi \
+              >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "probes=false" >> "$GITHUB_OUTPUT"
           # (by its title too: the trend issue, "Nightly live trends", never has its label, but nothing else may count)
           body=$(gh issue list --repo "$REPO" --label live-check --state open --limit 10 --json title,body \
             --jq '[.[] | select(.title == "Nightly live check")][0].body // ""' || true)
@@ -355,4 +382,88 @@ jobs:
           UNFINISHED: ${{ steps.compare.outputs.unfinished }}
         run: |
           echo "::error::A check didn't finish ($UNFINISHED); see its job's log"
+          exit 1
+
+  # The weekly probes (scripts/live_probes.py): the desk's password reset at two Workday tenants and a tailored resume
+  # in the job's folder, as the test identity, never submitting. After this run's checks (never beside the accounts
+  # check: one inbox, and the same accounts), and in this workflow's concurrency group (never beside another run).
+  probes:
+    needs: [fresh, check]
+    if: always() && needs.fresh.outputs.probes == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    defaults:
+      run:
+        working-directory: plugins/job-apply/server
+    env:
+      JOB_APPLY_NEVER_SUBMIT: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Is it set up
+        id: setup
+        env:
+          # whether the test identity's secrets are there, never what they are
+          HAS_SECRETS: ${{ secrets.LIVE_TEST_EMAIL != '' && secrets.LIVE_TEST_EMAIL_PASSWORD != '' && secrets.LIVE_TEST_SITE_PASSWORD != '' }}
+        run: |
+          if [ "$HAS_SECRETS" != true ]; then
+            said="The weekly probes are not set up: they run as the test identity, and the repository has no LIVE_TEST_EMAIL, LIVE_TEST_EMAIL_PASSWORD and LIVE_TEST_SITE_PASSWORD secrets yet (see plugins/job-apply/server/scripts/TEST_IDENTITY.md)."
+            echo "::notice::$said"
+            echo "$said" >> "$GITHUB_STEP_SUMMARY"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: astral-sh/setup-uv@v6
+        if: steps.setup.outputs.ready == 'true'
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: plugins/job-apply/server/uv.lock
+      - if: steps.setup.outputs.ready == 'true'
+        run: uv sync --frozen
+      - if: steps.setup.outputs.ready == 'true'
+        run: uv run --frozen playwright install --with-deps chromium
+      - name: Run the probes
+        id: run
+        if: steps.setup.outputs.ready == 'true'
+        continue-on-error: true
+        # (each of its six runs is stopped at 20 minutes; most take a few)
+        timeout-minutes: 140
+        env:
+          COMPANIES: ${{ github.event.inputs.companies }}
+          # live_probes.py and the runs it starts mask them in everything they print and write (and GitHub masks
+          # secrets in the log too)
+          LIVE_TEST_EMAIL: ${{ secrets.LIVE_TEST_EMAIL }}
+          LIVE_TEST_EMAIL_PASSWORD: ${{ secrets.LIVE_TEST_EMAIL_PASSWORD }}
+          LIVE_TEST_SITE_PASSWORD: ${{ secrets.LIVE_TEST_SITE_PASSWORD }}
+        run: |
+          set -o pipefail
+          mkdir -p live-probes
+          uv run --frozen python scripts/live_probes.py --out live-probes ${COMPANIES:+--companies "$COMPANIES"} 2>&1 \
+            | tee live-probes/run.log
+      - name: Audit what it wrote
+        # (the rules audit, as each check's: a consent the desk never gives, a submit, or the test identity's secrets,
+        # an emailed code or a security answer in a file fail this job)
+        if: steps.setup.outputs.ready == 'true'
+        env:
+          LIVE_TEST_EMAIL: ${{ secrets.LIVE_TEST_EMAIL }}
+          LIVE_TEST_EMAIL_PASSWORD: ${{ secrets.LIVE_TEST_EMAIL_PASSWORD }}
+          LIVE_TEST_SITE_PASSWORD: ${{ secrets.LIVE_TEST_SITE_PASSWORD }}
+        run: uv run --frozen python scripts/live_audit.py --log "probes=live-probes/run.log" --folder live-probes
+      - name: The probes' results
+        if: always() && steps.setup.outputs.ready == 'true'
+        run: |
+          if [ -f live-probes/report.md ]; then cat live-probes/report.md; else
+            echo "The probes wrote no report (see the job's log)."; fi >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.setup.outputs.ready == 'true'
+        with:
+          name: live-probes
+          path: plugins/job-apply/server/live-probes
+          retention-days: 14
+      - name: Fail if a probe didn't pass
+        # (GitHub mails the repository's owner about a failed scheduled run)
+        if: steps.run.outcome == 'failure'
+        run: |
+          echo "::error::A weekly probe didn't pass (or couldn't run): see the run's summary"
           exit 1

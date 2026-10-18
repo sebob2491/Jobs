@@ -21,7 +21,7 @@ own; every site is still visited once. --shard I/N runs only the I-th of N group
 
 Safety: JOB_APPLY_NEVER_SUBMIT=1 is forced, so nothing can be submitted. The only file
 uploaded is a test resume made for the run (live_identity.resume_pdf: it says it's a test and
-that nothing in it is true). It never clicks sign-in, account creation, "Autofill with
+that nothing in it is true; with --tailored-resume, the weekly probe's own, which says so too). It never clicks sign-in, account creation, "Autofill with
 Resume", "Next", or third-party apply buttons (LinkedIn, Indeed, SEEK), and LinkedIn and
 Indeed are never contacted.
 
@@ -41,6 +41,12 @@ The three values are masked in everything it prints and writes. --fake-passwords
 line: the inbox's mail of the last 15 minutes (its Spam folder too) as sender domain, subject
 (any email address shown as <email>) and arrival time, and whether the desk would read a code
 from each, to say why the desk missed it.
+
+The weekly probes (scripts/live_probes.py) run it one employer at a time with two switches of their own:
+--derived-password (with --test-identity: Workday's saved password is one derived from the site password,
+which the site refuses, so the desk resets the site to it; masked like the others) and --tailored-resume
+(with --pipeline: a clearly marked tailored test resume in each job's folder before the desk applies,
+which the desk prefers to the profile's; its file's name goes in the employer's record as "tailored").
 """
 
 from __future__ import annotations
@@ -119,6 +125,7 @@ from job_apply.ats import detect_ats  # noqa: E402
 from job_apply.search import load_companies, sitecore_search  # noqa: E402
 
 import live_identity  # noqa: E402  (scripts/live_identity.py, beside this one)
+import live_probes  # noqa: E402  (scripts/live_probes.py: the weekly probes' derived password and tailored resume)
 
 QUERY_AZ = "field service | customer service engineer | customer engineer | equipment technician"  # in Arizona
 QUERY_ANY = "engineer | technician"  # fallback so every company still gets a browser check
@@ -157,6 +164,7 @@ INBOX_IN_PROFILE = False
 TEST_IDENTITY = False  # --test-identity: the test identity applies, in place of the throwaway profile
 SECURITY_ANSWERS = False  # --security-answers: it answers an account form's security questions on the desk's card
 PLUS = False  # --plus: with its inbox's own "+employer" address at each employer (which sites take one?)
+TAILORED = False  # --tailored-resume: a tailored test resume in each job's folder (the weekly probe's)
 ROLE_AT: dict[str, str] = {}  # with it, each of its employers' role (test_identity_employers.yaml, or --everywhere's)
 EMPLOYERS: list[dict[str, str]] = []  # with it, its employers (name, list, role, system, why)
 MAIL_WAIT = 4 * 60  # with it, how long a run waits for the desk to read an emailed code or link
@@ -257,14 +265,18 @@ def profile_values(path: Path | None = None) -> dict[str, Any]:
             "others": sorted(others)}
 
 
-def start_test_identity(announce: bool = True, everywhere: bool = False) -> list[dict[str, str]]:
+def start_test_identity(announce: bool = True, everywhere: bool = False, derived: bool = False) -> list[dict[str, str]]:
     """--test-identity: from here on, everything the run prints has the identity's email and
     passwords masked; its passwords are the desk's saved ones for this run (in the environment,
     which the groups --parallel starts share: never in a file); and its employers' lists are
-    this run's. Its profile is written by use_role. Returns its employers."""
+    this run's. Its profile is written by use_role. Returns its employers. With `derived`
+    (--derived-password, the weekly reset probe's first pass), Workday's saved password is
+    live_probes.derived_password of the site password, masked like the rest."""
     global TEST_IDENTITY, _mask
     email, inbox, site = live_identity.credentials(os.environ)  # (trimmed; the app password without its spaces)
-    _mask = live_identity.masker(email, [site, inbox, *(os.environ[k] for k in live_identity.ENV_VARS[1:])])
+    away = live_probes.derived_env(site) if derived else {}
+    _mask = live_identity.masker(email, [site, inbox, *(os.environ[k] for k in live_identity.ENV_VARS[1:]),
+                                         *away.values()])
     sys.stdout = live_identity.MaskedStream(sys.stdout, _mask)
     sys.stderr = live_identity.MaskedStream(sys.stderr, _mask)
     employers = live_identity.everywhere_employers() if everywhere else live_identity.load_employers()
@@ -272,6 +284,7 @@ def start_test_identity(announce: bool = True, everywhere: bool = False) -> list
     if unknown:
         raise ValueError(f"{live_identity.EMPLOYERS_FILE.name}: no role named {unknown[0]!r}; roles: {', '.join(ROLES)}")
     os.environ.update(live_identity.secret_env(site, inbox))
+    os.environ.update(away)  # (Workday's alone: the probe's tenants are Workday's)
     os.environ[live_identity.IDENTITY_SWITCH] = "1"  # (config.live_test_identity: with the profile's email)
     TEST_IDENTITY = True
     ROLE_AT.clear()
@@ -280,7 +293,9 @@ def start_test_identity(announce: bool = True, everywhere: bool = False) -> list
     if announce:
         print(f"Test identity: {live_identity.FIRST_NAME} {live_identity.LAST_NAME} ({live_identity.EMAIL_MASK}), at "
               + ", ".join(f"{e['name']} ({e['system']})" for e in employers)
-              + ". Its email and passwords are masked in everything this run prints and writes.", flush=True)
+              + ". Its email and passwords are masked in everything this run prints and writes."
+              + (" Workday's saved password this run is the one derived from its site password (the weekly reset "
+                 "probe's first pass)." if away else ""), flush=True)
     return employers
 
 
@@ -997,7 +1012,20 @@ async def main() -> int:
                     help="with --test-identity: answer an account form's security questions on the desk's card, as "
                          "a person would there (a question from its list, an answer made from the site password), "
                          "so the run goes on into the application (the owner's call, Oct 14; Edward Jones' BrassRing)")
+    ap.add_argument("--derived-password", action="store_true",
+                    help="with --test-identity: Workday's saved password is one derived from the site password "
+                         "(scripts/live_probes.py), which the site refuses, so the desk resets the site to it: the "
+                         "weekly reset probe's first pass (its second, without this, resets it back)")
+    ap.add_argument("--tailored-resume", action="store_true",
+                    help="with --pipeline: a clearly marked tailored test resume in each job's folder before the desk "
+                         "applies (the weekly tailored-resume probe, scripts/live_probes.py)")
     args = ap.parse_args()
+    if args.derived_password and not args.test_identity:
+        print("--derived-password goes with --test-identity. Nothing was run.", file=sys.stderr)
+        return 2
+    if args.tailored_resume and not args.pipeline:
+        print("--tailored-resume goes with --pipeline. Nothing was run.", file=sys.stderr)
+        return 2
     if args.security_answers and not args.test_identity:
         print("--security-answers goes with --test-identity. Nothing was run.", file=sys.stderr)
         return 2
@@ -1018,12 +1046,15 @@ async def main() -> int:
             return 2
     args.out.mkdir(parents=True, exist_ok=True)
     if args.test_identity:
-        EMPLOYERS[:] = start_test_identity(announce=not args.shard, everywhere=args.everywhere)
+        EMPLOYERS[:] = start_test_identity(announce=not args.shard, everywhere=args.everywhere,
+                                           derived=args.derived_password)
         global PLUS, SECURITY_ANSWERS
         PLUS = args.plus
         SECURITY_ANSWERS = args.security_answers
     else:
         mask_broad_email()
+    global TAILORED
+    TAILORED = args.tailored_resume
     use_role(args.role)
     if args.lists and not TEST_IDENTITY:  # as a person's own companies.yaml names them, in this run's own home
         (_HOME / "companies.yaml").write_text(yaml.safe_dump({"lists": [n.strip() for n in args.lists.split(",")
@@ -2088,6 +2119,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
         rec["posting"]["read_error"] = f"{type(e).__name__}: {str(e)[:200]}"
     rec["posting"]["apply_url"] = apply_url
     job = server.add_job(url=first["url"], title=first["title"], company=company["name"], apply_url=apply_url)["job"]
+    if TAILORED:  # (the weekly probe's: before the desk applies, as Claude's render_document would leave it)
+        rec["tailored"] = await drop_tailored_resume(job)
     applier = Applier(server)
     applier.start()
     rec["rounds"] = []
@@ -2200,6 +2233,33 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
         await server.close_browser()
 
 
+async def drop_tailored_resume(job: dict[str, Any]) -> dict[str, Any]:
+    """--tailored-resume (the weekly probe, scripts/live_probes.py): a clearly marked tailored test resume in the job's
+    folder, made as render_document makes one (its Markdown printed to a PDF by render.to_html and render_pdf) from
+    this run's own fake profile, under a name of its own (live_probes.TAILORED_NAME, never the profile resume's
+    live_identity.RESUME_NAME), so the review page tells the two apart. The desk prefers it to the profile's
+    (autofill.tailored_document): "picked" says which file that finds. What was done, or the "error"."""
+    from job_apply import render
+    from job_apply.autofill import tailored_document
+
+    name = live_probes.TAILORED_NAME
+    try:
+        tracked = server.tracker().get(job["id"]) or {}
+        folder = Path(tracked["folder"])
+        profile = yaml.safe_load((_HOME / "profile.yaml").read_text(encoding="utf-8")) or {}
+        markdown = live_probes.tailored_markdown(profile, str(job.get("title") or ""), str(job.get("company") or ""))
+        folder.mkdir(parents=True, exist_ok=True)
+        pages = await render.render_pdf(render.to_html(markdown, "resume", title="Tailored test resume"), folder / name)
+        picked = tailored_document(tracked, "resume")
+    except Exception as e:  # noqa: BLE001 - said in the record: the probe fails with it
+        return {"file": name, "error": f"{type(e).__name__}: {str(e)[:200]}"}
+    picked_name = Path(picked).name if picked else None
+    if picked_name != name:
+        return {"file": name, "pages": pages, "picked": picked_name,
+                "error": f"the desk would take {picked_name or 'no tailored file'} from the job's folder, not {name}"}
+    return {"file": name, "pages": pages, "picked": picked_name}
+
+
 async def wait_for_mail(applier: Any, run: Any) -> bool:
     """The test identity's inbox is watched: a run paused for an emailed code or password-reset
     link is carried on by the desk itself once the email comes (no one presses Resume). True once
@@ -2281,6 +2341,8 @@ async def parallel_main(args: argparse.Namespace) -> int:
               *(["--test-identity"] if args.test_identity else []),  # (its inbox and passwords: in the environment)
               *(["--everywhere"] if args.everywhere else []), *(["--plus"] if args.plus else []),
               *(["--security-answers"] if args.security_answers else []),
+              *(["--derived-password"] if args.derived_password else []),
+              *(["--tailored-resume"] if args.tailored_resume else []),
               *(["--machine", args.machine] if args.machine else []),
               *(["--lists", args.lists] if args.lists else []), "--role", args.role]
     children = [await asyncio.create_subprocess_exec(
