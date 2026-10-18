@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Field Service Technician - Example Fab Master Company</title></head>
+<body>
+<!-- A UKG Pro posting (recruiting.ultipro.com/<tenant>/JobBoard/<board id>/OpportunityDetail?opportunityId=<id>), as
+     Nikon Precision's was live: the job, and "Apply Now", which goes to UKG Pro's sign-in in the board's folder
+     (signin-signup-link.html?register: its "Sign up", then the Register page, ukg-register.html, whose Create
+     account goes on to the application, "step1.html" in that folder: ukg-walk-apply.html). Served by
+     test_site_walks.py's fake_ats at UKG Pro's address. Made-up employer and job. -->
+<header><span>Example Fab Master Company</span> <a href="#">View all opportunities</a></header>
+<h1 data-automation="opportunity-title">Field Service Technician</h1>
+<p>Chandler, AZ · Full Time · Requisition 5005</p>
+<div data-automation="job-description">
+  <h2>Description</h2>
+  <p>Install, maintain and repair wafer processing equipment at customer sites.</p>
+</div>
+<button type="button" id="apply" data-automation="apply-now-button">Apply Now</button>
+<script>
+  document.getElementById('apply').addEventListener('click', () => { location.href = 'signin-signup-link.html?register'; });
+</script>
+</body>
+</html>

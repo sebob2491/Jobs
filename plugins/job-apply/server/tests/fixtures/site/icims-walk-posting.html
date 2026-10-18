@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Field Service Technician | Careers at Example Fab</title>
+<style>
+  #cookie-bar { position: fixed; left: 0; right: 0; bottom: 0; background: #fff; border-top: 1px solid #888; padding: 16px; }
+</style>
+</head>
+<body>
+<!-- An iCIMS posting (careers-<employer>.icims.com/jobs/<id>/<title>/job), as the live checks met them (Charles
+     Schwab's, Daifuku's): the employer's careers page around the iCIMS frame (the same address with ?in_iframe=1),
+     with a cookie bar of the employer's own ("Accept Cookies" or "Reject All"; the choice reported to the fake
+     server, /__fake/cookies). In the frame, the job and "Apply for this job online", which goes on to the
+     application's sign-in (<job>/login, in the frame). Served by test_site_walks.py's fake_ats at an iCIMS address.
+     Made-up employer and job. -->
+<div id="outer" hidden>
+  <nav><a href="#">Search jobs</a> <a href="#">Returning candidate login</a></nav>
+  <h1>Example Fab Careers</h1>
+  <iframe id="icims_content_iframe" title="iCIMS Content iFrame" width="900" height="700"></iframe>
+  <div id="cookie-bar" role="region" aria-label="Cookie banner">
+    <p>This site uses cookies to improve your experience. See our Cookie Policy.</p>
+    <button type="button" id="accept">Accept Cookies</button>
+    <button type="button" id="reject">Reject All</button>
+  </div>
+</div>
+<div id="job" hidden>
+  <div class="iCIMS_JobHeader">
+    <h1 class="iCIMS_Header">Field Service Technician</h1>
+    <p>Job ID 2002 · Chandler, AZ · Category: Field Service</p>
+  </div>
+  <div class="iCIMS_JobContent">
+    <h2>Overview</h2>
+    <p>Install, maintain and repair wafer processing equipment at customer sites.</p>
+    <h2>Qualifications</h2>
+    <p>Two years of semiconductor equipment experience.</p>
+  </div>
+  <a id="apply" class="iCIMS_ApplyOnlineButton iCIMS_PrimaryButton" href="#">Apply for this job online</a>
+</div>
+<script>
+  const fake = (what, data) => fetch('/__fake/' + what, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                         body: JSON.stringify(data || {})});
+  const inFrame = new URLSearchParams(location.search).get('in_iframe') === '1';
+  if (!inFrame) {
+    document.getElementById('outer').hidden = false;
+    document.getElementById('icims_content_iframe').src = location.pathname + '?in_iframe=1';
+    if (localStorage.getItem('icims.cookies')) document.getElementById('cookie-bar').remove();
+    for (const [id, choice] of [['accept', 'accepted'], ['reject', 'declined']]) {
+      document.getElementById(id).addEventListener('click', async () => {
+        localStorage.setItem('icims.cookies', choice);
+        document.getElementById('cookie-bar').remove();
+        await fake('cookies', {choice});
+      });
+    }
+  } else {
+    document.getElementById('job').hidden = false;
+    document.getElementById('apply').href = location.pathname.replace(/\/job$/, '/login') + '?in_iframe=1';
+  }
+</script>
+</body>
+</html>

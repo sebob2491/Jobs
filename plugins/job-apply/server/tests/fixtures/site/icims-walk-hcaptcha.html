@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>hCaptcha</title></head>
+<body>
+<!-- hCaptcha's picture challenge, as its frame shows one (served in the test at hCaptcha's own address, so the desk
+     sees it as the CAPTCHA's frame it is). Its buttons report any press to the fake server (/__fake/captcha): the
+     desk never presses them (the person solves a CAPTCHA, never the desk). -->
+<h2>Please click each image containing a bicycle</h2>
+<div id="grid">
+  <button type="button" class="task" aria-label="Challenge Image 1">1</button>
+  <button type="button" class="task" aria-label="Challenge Image 2">2</button>
+  <button type="button" class="task" aria-label="Challenge Image 3">3</button>
+</div>
+<button type="button" class="button-submit">Verify</button>
+<button type="button" class="refresh">Refresh Challenge.</button>
+<script>
+  for (const b of document.querySelectorAll('button')) {
+    b.addEventListener('click', () => fetch('/__fake/captcha', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                                body: JSON.stringify({pressed: b.textContent})}));
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Apply - Field Service Technician</title></head>
+<body>
+<!-- A UKG Pro application once the account is made (where ukg-register.html goes on to, "step1.html" in its folder),
+     in steps (?step=, kept in the address as UKG keeps its own), each with "Save and continue" as Nikon's were live:
+       contact:   "Contact information": names, email, phone, Address 1, City, a State list, Zip / Postal Code;
+       resume:    "Resume": the resume's file box;
+       questions: "Questions": Yes/No lists, one only the person can answer, and the voluntary Gender list;
+       review:    "Review and submit": what went in, and "Submit", the application's final button.
+     Save and continue checks the step's required boxes and says what's missing beside them ("First name Please
+     enter a value."). Submit, pressed, is reported to the fake server (/__fake/submit). Without the account made in
+     this tab (sessionStorage's ukg.created), the page says to sign in. What went in is kept for the tab
+     (sessionStorage's ukg.answers). Made-up employer and values. -->
+<header><span>Example Fab Master Company</span> <span>Field Service Technician</span></header>
+<div id="signed-out" hidden><p>Please sign in to continue your application.</p></div>
+<main id="app" hidden>
+  <ol class="steps" aria-label="Application steps"><li>Contact information</li><li>Resume</li><li>Questions</li>
+    <li>Review and submit</li></ol>
+  <h2 id="heading"></h2>
+  <form id="step" novalidate><div id="boxes"></div><div id="err" role="alert"></div><div id="buttons"></div></form>
+</main>
+<script>
+  const fake = (what, data) => fetch('/__fake/' + what, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                         body: JSON.stringify(data || {})});
+  const $ = (id) => document.getElementById(id);
+  const step = new URLSearchParams(location.search).get('step') || 'contact';
+  const kept = JSON.parse(sessionStorage.getItem('ukg.answers') || '{}');
+  const text = (id, label) => '<div><label for="' + id + '">' + label + ' *</label><input id="' + id
+    + '" aria-required="true"></div>';
+  const list = (id, label, options, required = true) => '<div><label for="' + id + '">' + label + (required ? ' *' : '')
+    + '</label><select id="' + id + '"' + (required ? ' aria-required="true"' : '') + '><option value="">Select</option>'
+    + options.map((o) => '<option>' + o + '</option>').join('') + '</select></div>';
+  const STEPS = {
+    contact: ['Contact information', text('first', 'First name') + text('last', 'Last name') + text('email', 'Email')
+      + text('phone', 'Phone number') + text('address1', 'Address 1') + text('city', 'City')
+      + list('state', 'State / Province', ['Arizona', 'California', 'Nevada', 'Texas']) + text('zip', 'Zip / Postal Code'),
+      'Save and continue', 'resume'],
+    resume: ['Resume', '<div><label for="resume">Resume *</label><input id="resume" type="file" aria-required="true" '
+      + 'accept=".pdf,.doc,.docx"></div>', 'Save and continue', 'questions'],
+    questions: ['Questions', list('authorized', 'Are you legally authorized to work in the United States?', ['Yes', 'No'])
+      + list('sponsorship', 'Will you now or in the future require sponsorship for employment visa status?', ['Yes', 'No'])
+      + list('overtime', 'Are you willing to work overtime and weekends as needed?', ['Yes', 'No'])
+      + '<h3>Voluntary self-identification</h3>' + list('gender', 'Gender', ['Female', 'Male', 'Decline to self-identify'], false),
+      'Save and continue', 'review'],
+    review: ['Review and submit', '<div id="summary"></div>', 'Submit', null],
+  };
+  const created = JSON.parse(sessionStorage.getItem('ukg.created') || 'false');
+  if (!created) {
+    $('signed-out').hidden = false;
+  } else {
+    $('app').hidden = false;
+    const [heading, boxes, button] = STEPS[step];
+    $('heading').textContent = heading;
+    $('boxes').innerHTML = boxes;
+    $('buttons').innerHTML = '<button type="submit">' + button + '</button>';
+    if (step === 'review') {
+      $('summary').innerHTML = Object.entries(kept).map(([k, v]) => '<p>' + k + ': ' + v + '</p>').join('');
+    }
+  }
+  function collect() {
+    const out = {};
+    for (const el of $('boxes').querySelectorAll('input, select')) {
+      out[el.id] = el.type === 'file' ? (el.files[0] ? el.files[0].name : '') : el.value;
+    }
+    return out;
+  }
+  window.answers = () => ({...kept, ...collect()});
+  $('step').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const now = collect();
+    if (step === 'review') {
+      await fake('submit', {answers: kept});
+      document.body.innerHTML = '<h1>Thank you for applying</h1>';
+      return;
+    }
+    const missing = [...$('boxes').querySelectorAll('[aria-required="true"]')].filter((el) => !now[el.id]);
+    if (missing.length) {
+      $('err').textContent = missing.map((el) => document.querySelector('label[for="' + el.id + '"]').textContent
+        .replace(/\s*\*$/, '') + ' Please enter a value.').join(' ');
+      return;
+    }
+    sessionStorage.setItem('ukg.answers', JSON.stringify({...kept, ...now}));
+    location.href = location.pathname + '?step=' + STEPS[step][3];
+  });
+</script>
+</body>
+</html>

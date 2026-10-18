@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Login | Careers at Example Fab</title></head>
+<body>
+<!-- iCIMS' way into an application for a new candidate (<job>/login, in the employer's iCIMS frame), in the order
+     the live checks met it:
+       gate:    "Privacy Notice", whose only way on is "I Acknowledge the Privacy Notice" (Charles Schwab's, Oct 10);
+       email:   "Enter Your Information", the email and Next. Next brings up hCaptcha's picture challenge over the
+                page and says "Please try again." (Daifuku's): the person's to solve, never the desk's. The challenge
+                is a frame from hCaptcha's own address (routed in the test: icims-walk-hcaptcha.html). window.solved()
+                stands in for the person solving it: the challenge goes and the site goes on;
+       account: "Create Your Candidate Account": names, the email (already in its box), a password twice, and a job alerts box
+                that's never the person's to have ticked for them. Create Account (the password 8 or more characters,
+                the two alike) makes it (reported to the fake server: /__fake/account) and emails a code from
+                icims.com (/__fake/mail);
+       verify:  "Verify Your Email": the code, and Verify, which goes on to the application (<job>/candidate).
+     Outside the frame, the page puts itself in one, as the posting does. Where it is is kept for the tab
+     (sessionStorage's icims.* keys). Made-up employer. -->
+<div id="outer" hidden>
+  <h1>Example Fab Careers</h1>
+  <iframe id="icims_content_iframe" title="iCIMS Content iFrame" width="900" height="760"></iframe>
+</div>
+<div id="gate" hidden>
+  <h1 class="iCIMS_Header">Privacy Notice</h1>
+  <p>Before you apply, please read our <a href="#">Candidate Privacy Notice</a>. It explains how Example Fab collects
+     and uses the information you give us when you apply for a job.</p>
+  <button type="button" id="acknowledge" class="iCIMS_PrimaryButton">I Acknowledge the Privacy Notice</button>
+</div>
+<div id="email-step" hidden>
+  <h1 class="iCIMS_Header">Enter Your Information</h1>
+  <form id="email-form" novalidate>
+    <label for="email">Email</label>
+    <input id="email" type="email" autocomplete="email" aria-required="true">
+    <div id="email-error" role="alert"></div>
+    <button type="submit" id="next">Next</button>
+  </form>
+  <div id="challenge"></div>
+</div>
+<div id="account" hidden>
+  <h1 class="iCIMS_Header">Create Your Candidate Account</h1>
+  <form id="account-form" novalidate>
+    <label for="first">First Name *</label><input id="first" aria-required="true" autocomplete="given-name">
+    <label for="last">Last Name *</label><input id="last" aria-required="true" autocomplete="family-name">
+    <label for="account-email">Email *</label><input id="account-email" type="email" aria-required="true" autocomplete="email">
+    <label for="password">Password *</label><input id="password" type="password" aria-required="true">
+    <label for="confirm">Confirm Password *</label><input id="confirm" type="password" aria-required="true">
+    <input type="checkbox" id="alerts"><label for="alerts">Send me job alerts and news from Example Fab</label>
+    <div id="account-error" role="alert"></div>
+    <button type="submit">Create Account</button>
+  </form>
+</div>
+<div id="verify" hidden>
+  <h1 class="iCIMS_Header">Verify Your Email</h1>
+  <form id="verify-form" novalidate>
+    <label for="code">Enter the verification code we sent to your email</label>
+    <input id="code" inputmode="numeric" autocomplete="one-time-code" aria-required="true">
+    <div id="verify-error" role="alert"></div>
+    <button type="submit">Verify</button>
+  </form>
+</div>
+<script>
+  const fake = (what, data) => fetch('/__fake/' + what, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                         body: JSON.stringify(data || {})});
+  const $ = (id) => document.getElementById(id);
+  const inFrame = new URLSearchParams(location.search).get('in_iframe') === '1';
+  const step = () => sessionStorage.getItem('icims.step') || 'gate';
+  function show() {
+    for (const id of ['gate', 'email-step', 'account', 'verify']) $(id).hidden = true;
+    $({gate: 'gate', email: 'email-step', account: 'account', verify: 'verify'}[step()]).hidden = false;
+    $('account-email').value = sessionStorage.getItem('icims.email') || '';
+  }
+  const go = (to) => { sessionStorage.setItem('icims.step', to); show(); };
+  if (!inFrame) {
+    $('outer').hidden = false;
+    $('icims_content_iframe').src = location.pathname + '?in_iframe=1';
+  } else {
+    show();
+  }
+  $('acknowledge').addEventListener('click', async () => {
+    await fake('notice', {agreed: 'privacy'});
+    go('email');
+  });
+  $('email-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const email = $('email').value.trim();
+    if (!/^\S+@\S+\.\S+$/.test(email)) { $('email-error').textContent = 'Please enter a valid email address.'; return; }
+    sessionStorage.setItem('icims.email', email);
+    // a new email: hCaptcha's pictures, over the page, and the site's "Please try again."
+    $('email-error').textContent = 'Please try again.';
+    $('challenge').innerHTML = '<iframe title="Main content of the hCaptcha challenge" '
+      + 'src="https://newassets.hcaptcha.com/captcha/v1/static/hcaptcha.html#frame=challenge" '
+      + 'style="width:400px;height:480px;border:1px solid #ccc"></iframe>';
+  });
+  // the person solves the challenge: it goes, and the site carries on to the new candidate's account
+  window.solved = () => { $('challenge').innerHTML = ''; $('email-error').textContent = ''; go('account'); };
+  $('account-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const missing = ['first', 'last', 'password', 'confirm'].filter((id) => !$(id).value);
+    if (missing.length) { $('account-error').textContent = 'Please fill in all required fields.'; return; }
+    if ($('password').value.length < 8) { $('account-error').textContent = 'Your password must be at least 8 characters.'; return; }
+    if ($('password').value !== $('confirm').value) { $('account-error').textContent = 'The passwords do not match.'; return; }
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    sessionStorage.setItem('icims.code', code);
+    sessionStorage.setItem('icims.first', $('first').value);
+    sessionStorage.setItem('icims.last', $('last').value);
+    await fake('account', {email: $('account-email').value, first: $('first').value, last: $('last').value, password: $('password').value,
+                           alerts: $('alerts').checked});
+    await fake('mail', {sender: 'no-reply@icims.com', subject: 'Verify your email for Example Fab',
+                        to: $('account-email').value, kind: 'code', value: code});
+    go('verify');
+  });
+  $('verify-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    if ($('code').value.trim() !== sessionStorage.getItem('icims.code')) {
+      $('verify-error').textContent = 'That code is not valid. Please try again.';
+      return;
+    }
+    sessionStorage.setItem('icims.verified', 'yes');
+    location.href = location.pathname.replace(/\/login$/, '/candidate') + '?in_iframe=1';
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Senior Analyst | Example Corp Careers</title></head>
+<body>
+<!-- A BrassRing application once the account is made (where brassring-signin.html's "Let's get started" goes on to,
+     "step1.html" in its folder), in the steps Edward Jones' had live (runs 83 to 89), each with "Save and continue":
+       personal:  "Personal Information": names, email, phone (###-###-####, as BrassRing asks for it), address, a
+                  State list, zip, and the resume's file box;
+       consents:  the older page brassring-consents.html ("Communication Consent & Privacy Notice", agreed only as
+                  accept_notices allows), served at <app>/consents/start;
+       at will:   the older page brassring-at-will.html ("Employment At Will"), served at <app>/atwill/start;
+       questions: "Job Specific Questions": Yes/No lists, one only the person can answer;
+       review:    "Review and Submit": what went in, and "Submit", the application's final button.
+     The two older pages go on to "step1.html" in their own folders: this page again, which goes on from what they
+     kept (sessionStorage's consents.chosen and atwill.agreed). Save and continue checks the step's required boxes
+     ("Required"). Submit, pressed, is reported to the fake server (/__fake/submit). Where it is and what went in are
+     kept for the tab (sessionStorage's brw.* keys). Made-up employer and values. -->
+<header><a href="javascript:void(0)">Example Corp Careers</a> <a href="javascript:void(0)">Sign out</a></header>
+<main>
+  <h1 id="heading"></h1>
+  <form id="step" novalidate><div id="boxes"></div><div id="err" role="alert"></div>
+    <button type="submit" id="go"></button> <a href="javascript:void(0)">Save and finish later</a></form>
+</main>
+<script>
+  const fake = (what, data) => fetch('/__fake/' + what, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                         body: JSON.stringify(data || {})});
+  const $ = (id) => document.getElementById(id);
+  const app = location.pathname.replace(/\/(consents|atwill)\/step1\.html$/, '').replace(/\/step1\.html$/, '');
+  const kept = JSON.parse(sessionStorage.getItem('brw.answers') || '{}');
+  let step = sessionStorage.getItem('brw.step') || 'personal';
+  // back from the older pages: on from what they kept
+  if (step === 'consents' && sessionStorage.getItem('consents.chosen')) step = 'atwill';
+  else if (step === 'atwill' && sessionStorage.getItem('atwill.agreed')) step = 'questions';
+  sessionStorage.setItem('brw.step', step);
+  if (step === 'consents') location.replace(app + '/consents/start');
+  if (step === 'atwill') location.replace(app + '/atwill/start');
+  const text = (id, label) => '<div><label for="' + id + '">*' + label + '</label><input id="' + id + '" aria-required="true"></div>';
+  const list = (id, label, options) => '<div><label for="' + id + '">*' + label + '</label><select id="' + id
+    + '" aria-required="true"><option value="">Select</option>' + options.map((o) => '<option>' + o + '</option>').join('')
+    + '</select></div>';
+  const STEPS = {
+    personal: ['Personal Information', text('first', 'Legal First Name') + text('last', 'Legal Last Name')
+      + text('email', 'Email address') + text('phone', 'Primary Phone (ie. ###-###-####)') + text('address', 'Street Address')
+      + text('city', 'City') + list('state', 'State', ['Arizona', 'California', 'Missouri', 'Texas']) + text('zip', 'Zip Code')
+      + '<div><label for="resume">*Resume</label><input id="resume" type="file" aria-required="true" accept=".pdf,.doc,.docx"></div>',
+      'Save and continue', 'consents'],
+    questions: ['Job Specific Questions',
+      list('authorized', 'Are you legally authorized to work in the United States?', ['Yes', 'No'])
+      + list('sponsorship', 'Will you now or in the future require sponsorship for employment visa status?', ['Yes', 'No'])
+      + list('series', 'Do you currently hold a FINRA Series 7 license?', ['Yes', 'No']), 'Save and continue', 'review'],
+    review: ['Review and Submit', '<div id="summary"></div>', 'Submit', null],
+  };
+  if (STEPS[step]) {
+    const [heading, boxes, button] = STEPS[step];
+    document.title = heading + ' | Example Corp Careers';
+    $('heading').textContent = heading;
+    $('boxes').innerHTML = boxes;
+    $('go').textContent = button;
+    if (step === 'review') $('summary').innerHTML = Object.entries(kept).map(([k, v]) => '<p>' + k + ': ' + v + '</p>').join('');
+  }
+  function collect() {
+    const out = {};
+    for (const el of $('boxes').querySelectorAll('input, select')) {
+      out[el.id] = el.type === 'file' ? (el.files[0] ? el.files[0].name : '') : el.value;
+    }
+    return out;
+  }
+  window.answers = () => ({...kept, ...collect()});
+  $('step').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const now = collect();
+    if (step === 'review') {
+      await fake('submit', {answers: kept});
+      document.body.innerHTML = '<h1>Thank you for applying</h1>';
+      return;
+    }
+    const missing = [...$('boxes').querySelectorAll('[aria-required="true"]')].filter((el) => !now[el.id]);
+    if (missing.length) { $('err').textContent = missing.map(() => 'Required').join(' '); return; }
+    sessionStorage.setItem('brw.answers', JSON.stringify({...kept, ...now}));
+    sessionStorage.setItem('brw.step', STEPS[step][3]);
+    location.href = STEPS[step][3] === 'consents' ? app + '/consents/start' : location.pathname;
+  });
+</script>
+</body>
+</html>

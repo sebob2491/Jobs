@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Candidate Profile | Careers at Example Fab</title></head>
+<body>
+<!-- iCIMS' application once the new candidate's account is made and its email verified (<job>/candidate, in the
+     employer's iCIMS frame; outside the frame the page puts itself in one), in three steps (?step=, kept in the frame's
+     address as iCIMS keeps its own):
+       profile:   "Candidate Profile": the resume, the names the account was made with, phone and address (State a
+                  list with "— Make a Selection —", as iCIMS' are), and Next;
+       questions: "Job-Specific Questions", lists with "— Make a Selection —", and the voluntary self-identification's
+                  Gender, and Next;
+       review:    "Review and Submit": what went in, the attestation that it's true (required), and Submit
+                  Application, the application's final button.
+     Next checks the step's required boxes and says what's missing ("Please complete the required fields: …").
+     Submit Application, pressed, is reported to the fake server (/__fake/submit). Without the account's email
+     verified, the page sends the tab back to the sign-in (<job>/login). What went in is kept for the tab
+     (sessionStorage's icims.answers). Made-up employer and values. -->
+<div id="outer" hidden>
+  <h1>Example Fab Careers</h1>
+  <iframe id="icims_content_iframe" title="iCIMS Content iFrame" width="900" height="760"></iframe>
+</div>
+<div id="app" hidden>
+  <h1 class="iCIMS_Header" id="heading"></h1>
+  <form id="step-form" novalidate>
+    <div id="boxes"></div>
+    <div id="error" role="alert"></div>
+    <div id="buttons"></div>
+  </form>
+</div>
+<script>
+  const fake = (what, data) => fetch('/__fake/' + what, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                         body: JSON.stringify(data || {})});
+  const $ = (id) => document.getElementById(id);
+  const query = new URLSearchParams(location.search);
+  const step = query.get('step') || 'profile';
+  const kept = JSON.parse(sessionStorage.getItem('icims.answers') || '{}');
+  const text = (id, label, value) => '<div class="iCIMS_InfoField"><label for="' + id + '">' + label + ' *</label><input id="'
+    + id + '" aria-required="true" value="' + (value || '') + '"></div>';
+  const list = (id, label, options) => '<div class="iCIMS_InfoField"><label for="' + id + '">' + label + ' *</label><select id="'
+    + id + '" aria-required="true"><option value="">— Make a Selection —</option>' + options.map((o) => '<option>' + o
+    + '</option>').join('') + '</select></div>';
+  const STEPS = {
+    profile: ['Candidate Profile', '<div class="iCIMS_InfoField"><label for="resume">Resume/CV *</label>'
+      + '<input type="file" id="resume" aria-required="true" accept=".pdf,.doc,.docx"></div>'
+      + text('firstName', 'First Name', sessionStorage.getItem('icims.first'))
+      + text('lastName', 'Last Name', sessionStorage.getItem('icims.last'))
+      + text('phone', 'Phone') + text('address1', 'Address') + text('city', 'City')
+      + list('state', 'State', ['Arizona', 'California', 'Nevada', 'New Mexico', 'Texas']) + text('zip', 'Zip Code'),
+      'Next'],
+    questions: ['Job-Specific Questions',
+      list('authorized', 'Are you legally authorized to work in the United States?', ['Yes', 'No'])
+      + list('sponsorship', 'Will you now or in the future require sponsorship for employment visa status?', ['Yes', 'No'])
+      + list('license', "Do you have a valid driver's license?", ['Yes', 'No'])
+      + '<h2>Voluntary Self-Identification</h2>'
+      + list('gender', 'Gender', ['Female', 'Male', 'Decline to self-identify']), 'Next'],
+    review: ['Review and Submit', '<div id="summary"></div><div class="iCIMS_InfoField"><input type="checkbox" '
+      + 'id="certify" aria-required="true"><label for="certify">I certify that the information contained in this '
+      + 'application is true and complete. *</label></div>', 'Submit Application'],
+  };
+  if (query.get('in_iframe') !== '1') {
+    $('outer').hidden = false;
+    $('icims_content_iframe').src = location.pathname + '?in_iframe=1';
+  } else if (sessionStorage.getItem('icims.verified') !== 'yes') {
+    location.replace(location.pathname.replace(/\/candidate$/, '/login') + '?in_iframe=1');
+  } else {
+    $('app').hidden = false;
+    const [heading, boxes, button] = STEPS[step];
+    $('heading').textContent = heading;
+    $('boxes').innerHTML = boxes;
+    $('buttons').innerHTML = '<button type="submit" class="iCIMS_PrimaryButton">' + button + '</button>';
+    if (step === 'review') {
+      $('summary').innerHTML = Object.entries(kept).map(([k, v]) => '<p>' + k + ': ' + v + '</p>').join('');
+    }
+  }
+  function collect() {
+    const out = {};
+    for (const el of $('boxes').querySelectorAll('input, select')) {
+      out[el.id] = el.type === 'file' ? (el.files[0] ? el.files[0].name : '') : el.type === 'checkbox' ? el.checked : el.value;
+    }
+    return out;
+  }
+  window.answers = () => ({...kept, ...collect()});
+  $('step-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const now = collect();
+    const missing = [...$('boxes').querySelectorAll('[aria-required="true"]')]
+      .filter((el) => (el.type === 'checkbox' ? !el.checked : !now[el.id]))
+      .map((el) => document.querySelector('label[for="' + el.id + '"]').textContent.replace(/\s*\*$/, ''));
+    if (step === 'review') {
+      await fake('submit', {missing, answers: {...kept, ...now}});
+      if (!missing.length) document.body.innerHTML = '<h1>Thank you for applying</h1>';
+      return;
+    }
+    if (missing.length) { $('error').textContent = 'Please complete the required fields: ' + missing.join(', '); return; }
+    sessionStorage.setItem('icims.answers', JSON.stringify({...kept, ...now}));
+    location.href = location.pathname + '?in_iframe=1&step=' + (step === 'profile' ? 'questions' : 'review');
+  });
+</script>
+</body>
+</html>
