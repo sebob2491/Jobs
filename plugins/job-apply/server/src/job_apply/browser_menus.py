@@ -285,11 +285,13 @@ class MenusMixin:
                                         and any(norm(t) in norm(pick) or norm(pick) in norm(t) for t in ticked
                                                 if norm(t))):
                 return f"selected {pick} (ticked already)"
+            # (Oracle's takes a pick only as a pill: a row it marks selected as the pointer goes over it isn't one)
+            pills_only = await loc.evaluate("el => !!el.closest('.cx-multi-select-container')")
             await self._click_option(page, field["id"], pick)
             for _ in range(8):
                 await page.wait_for_timeout(150)
                 if (browser._among(pick, await loc.evaluate(browser.TWIN_TICKED_JS) or [])
-                        or await self._row_ticked(page, field["id"], pick)):
+                        or not pills_only and await self._row_ticked(page, field["id"], pick)):
                     return f"selected {pick}"
         finally:
             await self._close_menus(page)  # (its menu stays open after a tick)

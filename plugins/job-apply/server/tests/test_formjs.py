@@ -475,10 +475,12 @@ def test_an_oracle_multi_select_is_read_from_its_pills_and_ticked_once(srv):
         assert after.get("value") == "N/A", after
 
 
-def test_an_oracle_multi_select_that_wont_take_a_pick_says_so(srv):
+@pytest.mark.parametrize("query", ["?refuse", "?rowonly"])
+def test_an_oracle_multi_select_that_wont_take_a_pick_says_so(srv, query):
     """A pick the box doesn't take (no pill after the click) is said, for the person to tick it, never taken for an
-    answer: read as filled, the same question would come back each round with the desk sure it had answered it."""
-    page_of(srv, "site/oracle-multiselect.html", "?refuse")
+    answer: read as filled, the same question would come back each round with the desk sure it had answered it.
+    ?rowonly (the review's): its row marked selected, as one the pointer is over, is no pick without its pill."""
+    page_of(srv, "site/oracle-multiselect.html", query)
     form = run(srv.browser.inspect(include_dropdown_options=True))
     q7 = next(f for f in form["fields"] if f["label"].startswith("7. Have you ever worked for Example Labs"))
     done = run(srv.browser.fill([{"id": q7["id"], "value": "N/A"}]))

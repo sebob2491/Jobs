@@ -1911,6 +1911,140 @@ def test_an_upload_that_loads_its_frame_again_goes_first_and_the_rest_go_into_th
         site.shutdown()
 
 
+_TWO_UPLOADS = """<html><body>
+<form method="post" action="/c?in_iframe=1" enctype="multipart/form-data">
+<h2>Documents</h2>
+<input type="hidden" id="R_FileName" value="%(r)s">
+<label for="R_File">Resume</label>
+<input type="file" id="R_File" name="R_File" onchange="this.form.submit();">
+<input type="hidden" id="C_FileName" value="%(c)s">
+<label for="C_File">Cover Letter</label>
+<input type="file" id="C_File" name="C_File" onchange="this.form.submit();">
+<h2>Home Address</h2>
+<label for="c1">City</label><input id="c1" name="c1">
+<h2>Mailing Address</h2>
+<label for="c2">City</label><input id="c2" name="c2">
+<label for="fn">First Name</label><input id="fn" name="fn">
+</form></body></html>"""
+
+
+def _framed_site(answer):
+    """A careers page whose form is in a frame (iCIMS's), served at the address given back; `answer(state, body)` makes
+    the form's answer to a post as (status, html), each upload's file name kept in `state`."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    state = {"r": "", "c": "", "posts": 0}
+
+    class Site(BaseHTTPRequestHandler):
+        def send(self, status: int, body: bytes) -> None:
+            self.send_response(status)
+            if status != 204:
+                self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            if "in_iframe=1" in self.path:
+                self.send(200, (_TWO_UPLOADS % state).encode())
+            else:
+                self.send(200, b"<html><body><iframe src='/c?in_iframe=1' style='width:100%;height:900px'></iframe>"
+                               b"</body></html>")
+
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            state["posts"] += 1
+            for key in ("r", "c"):
+                if f'filename="{key}.pdf"'.encode() in body:
+                    state[key] = f"{key}.pdf"
+            status, html = answer(state, body)
+            self.send(status, html.encode())
+
+        def log_message(self, *args):
+            pass
+
+    site = ThreadingHTTPServer(("127.0.0.1", 0), Site)
+    threading.Thread(target=site.serve_forever, daemon=True).start()
+    return site, f"http://127.0.0.1:{site.server_address[1]}/c", state
+
+
+def test_two_uploads_that_each_load_the_frame_again_find_every_box_again(srv, tmp_path):
+    """The review of the iCIMS fix: a second upload in the same fill that loads the frame again found the boxes still to
+    fill by the ids the first one had found them under, so none was found again, and two boxes with one label (a home
+    and a mailing City) were then "drawn again and can't be told apart". Each is found again as the same question in
+    the same place however many times the page comes back; the uploads go first, the rest after, as given."""
+    import time
+
+    def answer(state, body):
+        time.sleep(0.2)
+        return 200, _TWO_UPLOADS % state
+    site, url, state = _framed_site(answer)
+    resume, cover = tmp_path / "r.pdf", tmp_path / "c.pdf"
+    resume.write_bytes(b"%PDF-1.4 r")
+    cover.write_bytes(b"%PDF-1.4 c")
+    try:
+        run(srv.browser.goto(url))
+        fields = run(srv.browser.inspect(include_dropdown_options=False))["fields"]
+        city1, city2 = [f["id"] for f in fields if f["label"] == "City"]
+        ids = {f["label"]: f["id"] for f in fields}
+        given = [{"id": city1, "value": "Mesa"}, {"id": ids["Resume"], "value": str(resume)},
+                 {"id": city2, "value": "Tempe"}, {"id": ids["Cover Letter"], "value": str(cover)},
+                 {"id": ids["First Name"], "value": "Sam"}]
+        done = run(srv.browser.fill(given))
+        assert [r["id"] for r in done] == [g["id"] for g in given]  # (the results in the order given)
+        assert all(r["ok"] for r in done), done
+        assert state["posts"] == 2
+        form = run(srv.browser.inspect(include_dropdown_options=False))
+        after = [(f["label"], f.get("value")) for f in form["fields"]]
+        assert after == [("Resume", "r.pdf"), ("Cover Letter", "c.pdf"), ("City", "Mesa"), ("City", "Tempe"),
+                         ("First Name", "Sam")], after
+    finally:
+        site.shutdown()
+
+
+def test_an_upload_answered_without_a_new_page_isnt_waited_on(srv, tmp_path):
+    """The review: an upload whose form's answer brings no new page (204 No Content) leaves the old page there, and the
+    desk mustn't wait out UPLOAD_RELOAD_WAIT (30 s) for one: Chromium ends that load as failed, and the desk goes on."""
+    import time
+
+    site, url, state = _framed_site(lambda state, body: (204, ""))
+    resume = tmp_path / "r.pdf"
+    resume.write_bytes(b"%PDF-1.4 r")
+    try:
+        run(srv.browser.goto(url))
+        ids = {f["label"]: f["id"] for f in run(srv.browser.inspect(include_dropdown_options=False))["fields"]}
+        start = time.monotonic()
+        done = run(srv.browser.fill([{"id": ids["Resume"], "value": str(resume)},
+                                     {"id": ids["First Name"], "value": "Sam"}]))
+        assert time.monotonic() - start < 10, done
+        assert all(r["ok"] for r in done) and state["posts"] == 1, done
+    finally:
+        site.shutdown()
+
+
+def test_a_file_box_that_sends_nothing_is_filled_in_the_order_given(srv, tmp_path):
+    """The review: every file box first broke one that waits on an earlier answer (a choice that shows the upload, an
+    attachment's type picked first). Only a box that sends its form as the file is given goes first; any other file
+    box takes its turn as given."""
+    page = tmp_path / "attach.html"
+    page.write_text("""<!doctype html><html><body><script>window.order = [];</script><form>
+<label for="t">Attachment type</label><select id="t" onchange="window.order.push('type')">
+<option value="">Select</option><option>Resume</option><option>Cover letter</option></select>
+<label for="f">Attachment</label><input type="file" id="f" onchange="window.order.push('file')">
+<label for="n">First Name</label><input id="n" onchange="window.order.push('name')">
+</form></body></html>""", encoding="utf-8")
+    resume = tmp_path / "r.pdf"
+    resume.write_bytes(b"%PDF-1.4 r")
+    run(srv.browser.goto(page.resolve().as_uri()))
+    ids = {f["label"]: f["id"] for f in run(srv.browser.inspect(include_dropdown_options=False))["fields"]}
+    done = run(srv.browser.fill([{"id": ids["Attachment type"], "value": "Resume"},
+                                 {"id": ids["Attachment"], "value": str(resume)},
+                                 {"id": ids["First Name"], "value": "Sam"}]))
+    assert all(r["ok"] for r in done), done
+    assert run(run(srv.browser.page()).evaluate("() => window.order")) == ["type", "file", "name"]
+
+
 def test_a_boards_frame_is_read_once_its_page_is_in(srv):
     """iCIMS portals draw their openings in a frame, then go on loading trackers for seconds
     (Allegis Group's: a survey and an ad pixel). Each page of results waited for the network to

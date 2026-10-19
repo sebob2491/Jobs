@@ -24,7 +24,8 @@
      made by hand after the widget's own code: an input (role=combobox) whose list opens below it on a click, drawn in
      a pop-up inside the input's own container; a click on a choice ticks it (or unticks one ticked already) and shows it
      as a pill under the box; the question's answer (window.committed here) is set only as the list closes (the focus
-     leaving the box, or Escape). ?refuse: a widget that takes no click on its choices. -->
+     leaving the box, or Escape). ?refuse: a widget that takes no click on its choices; ?rowonly: one that
+     marks the row clicked as selected (as a row the pointer is over) but takes no pick. -->
 <form onsubmit="return false">
   <h2>Application Questions</h2>
   <div class="input-row">
@@ -101,7 +102,7 @@
         li.innerHTML = '<div class="cx-multi-select__list-item-container"><span '
           + 'class="cx-multi-select__list-item--content"></span></div>';
         li.querySelector('span').textContent = o;
-        li.onclick = () => pick(o);
+        li.onclick = () => pick(o, li);
         ul.appendChild(li);
       });
       portalHost.appendChild(portal);
@@ -112,8 +113,9 @@
       li.className = 'cx-multi-select__list-item' + (on ? ' cx-multi-select__list-item--selected' : '');
     }
   };
-  const pick = (o) => {
+  const pick = (o, li) => {
     if (params.has('refuse')) return;
+    if (params.has('rowonly')) { li.setAttribute('aria-selected', 'true'); return; }
     selected = selected.includes(o) ? selected.filter((x) => x !== o) : [...selected, o];  // (a ticked one: unticked)
     dirty = true;
     input.focus();
