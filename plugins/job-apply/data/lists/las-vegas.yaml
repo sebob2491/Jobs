@@ -153,6 +153,7 @@ companies:
     careers_url: https://careers.nvenergy.com/
     ats: oracle_hcm           # nvenergy.com's "Begin your job search" goes to careers.nvenergy.com, which opens Berkshire
                               # Hathaway Energy's job site (careers.brkenergy.com) on this Oracle Recruiting site
+    mail_domains: [brkenergy.com]  # its Oracle's "Confirm your identity" code mails from oci.brkenergy.com (live check, run 145)
     nv_sites: Las Vegas, Reno
     confidence: high          # live check, Oct 2026: Network Engineer 3 and Network Operations Engineer 3 with Las
                               # Vegas among their places (the site is all of BHE's)
@@ -254,6 +255,7 @@ companies:
   - name: Mission Support and Test Services (NNSS)
     careers_url: https://nnss.gov/careers/
     ats: oracle_hcm           # nnss.gov/careers ("Explore Job Opportunities with MSTS") links to this Oracle Recruiting site
+    mail_domains: [nv.doe.gov]  # its Oracle's "Confirm your identity" code mails from here (live check, run 145)
     nv_sites: North Las Vegas (HQ), Mercury (the site)
     confidence: high          # live check, Oct 2026: IT Support Specialist I (Mercury), Senior Infrastructure Analyst
                               # and an Oracle Fusion Cloud Administrator (North Las Vegas)
