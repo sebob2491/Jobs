@@ -10443,6 +10443,11 @@ def test_a_sign_ins_lockout_isnt_a_bot_check():
     assert classify({"fields": [comment], "actions": []},
                     "We detected unusual activity from your device or network.") == "bot_check"
     assert classify({"title": "You have been blocked", "fields": [password], "actions": []}, "") == "bot_check"
+    # (nor over an emailed code's box: the site asking the person to prove it's them, which the desk reads from the
+    # inbox: the second review)
+    code = {"id": "k", "kind": "text", "label": "Verification code"}
+    said = "We detected unusual activity from your device. Enter the code we sent to your email."
+    assert classify({"fields": [code], "actions": []}, said) == "email_code"
 
 
 def test_an_apply_button_with_an_arrow_isnt_read_as_an_emailed_link():

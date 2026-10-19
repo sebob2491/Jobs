@@ -1318,8 +1318,9 @@ def classify(data: dict[str, Any], text: str) -> str:
         return "bot_check"
     said = f"{data.get('title') or ''}\n{text[:3000]}"
     if _BLOCK_PAGE.search(said) or _BLOCK_WORDS.search(said) and not any(
-            f.get("kind") == "password" for f in data.get("fields") or []):
-        return "bot_check"  # (a block page's own feedback form is no application: DataDome's, run 144)
+            f.get("kind") == "password" or _code_box(f) for f in data.get("fields") or []):
+        return "bot_check"  # (a block page's own feedback form is no application: DataDome's, run 144; a sign-in's
+        # lockout or an emailed code asked for after "unusual activity" is still the site's own)
     # (never the page's own language picker: Linde's Cornerstone requisition page, run 75, came up empty but for its
     # unlabelled language list, and was read as a form, so it was never reloaded)
     fields = [f for f in _app_fields(data) if not f.get("disabled")]
