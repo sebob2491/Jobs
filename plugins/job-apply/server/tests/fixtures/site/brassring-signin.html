@@ -21,7 +21,9 @@
      account form (run 67): the email shown, a password twice, a security question and its answer; accountForm
      (what's in it) and accountMade (its Continue's presses). ?other: that form shows another email. ?apply: the
      account made, its application's first page (probe 81): "Let's get started" (to step1.html) and "Save and
-     finish later", both marked aria-live as BrassRing's are -->
+     finish later", both marked aria-live as BrassRing's are. ?mail: the passcode is a fresh one, emailed from
+     brassring.com to the fake job systems' inbox (test_site_walks.py's fake_ats, /__fake/mail), and only it is taken
+     ("The passcode you entered is incorrect.") -->
 <header><a href="javascript:void(0)" id="top-sign-in">Sign In</a> <a href="javascript:void(0)">Example Corp Careers</a></header>
 <main id="view"></main>
 <footer><a href="javascript:void(0)">Contact Us</a> <a href="javascript:void(0)">Privacy Policy</a></footer>
@@ -149,12 +151,22 @@
         if (box.value && boxes[i + 1]) boxes[i + 1].focus();
       }));
     }
+    // (?mail: a fresh passcode, emailed through the fake job systems' server, test_site_walks.py; only it is taken)
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    if (q.has('mail')) {
+      fetch('/__fake/mail', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({
+        sender: 'no-reply@brassring.com', subject: 'Your Passcode', to: address, kind: 'code', value: code})});
+    }
     $('verify').addEventListener('click', () => {
       const typed = boxes.map((b) => b.value).join('');
       bump('verifies');
       put('passcode', typed);
       if (typed.length < 6) {
         $('perr').innerHTML = '<p>Please enter the 6-digit passcode.</p>';
+        return;
+      }
+      if (q.has('mail') && typed !== code) {
+        $('perr').innerHTML = '<p>The passcode you entered is incorrect.</p>';
         return;
       }
       account(address);

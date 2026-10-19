@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Career Opportunities: Field Service Technician (4004)</title></head>
+<body>
+<!-- A SuccessFactors posting on its older career site (career4.successfactors.com/career?career_ns=job_listing&
+     company=<employer>&career_job_req_id=<id>), as APS's and Amkor's were live: the job and "Apply now »", which goes
+     to the career site's sign-in for the job (career_ns=job_application: sf-walk-signin.html). Served by
+     test_site_walks.py's fake_ats at SuccessFactors' address. Made-up employer and job. -->
+<div id="header"><a href="#">Career Opportunities</a> <a href="#">Sign In</a></div>
+<h1>Field Service Technician</h1>
+<p>Requisition ID 4004 · Chandler, AZ, US</p>
+<div class="jobDescription">
+  <h2>Job Description</h2>
+  <p>Install, maintain and repair wafer processing equipment at customer sites.</p>
+</div>
+<a href="#" id="apply" class="applyButton">Apply now &raquo;</a>
+<script>
+  const q = new URLSearchParams(location.search);
+  document.getElementById('apply').href = '/career?company=' + (q.get('company') || 'examplefab')
+    + '&career_ns=job_application&career_job_req_id=' + (q.get('career_job_req_id') || '');
+</script>
+</body>
+</html>

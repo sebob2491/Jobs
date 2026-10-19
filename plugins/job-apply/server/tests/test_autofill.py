@@ -1876,6 +1876,154 @@ def test_a_former_employee_question_naming_another_company_is_never_answered_fro
         assert resolve_field(f(asked, "radio_group", options=yes_no), prof(), job).value == "Yes", asked
 
 
+def test_worked_there_before_only_where_the_profile_names_the_employer_itself():
+    """The fake-site walks (Oct 2026): the profile's "Example Fab Services" answered Example Fab's "Have you ever been
+    employed with Example Fab before?" with Yes, previously, as one name held the other. It's Yes only where a job in the
+    profile is at the employer itself, its whole name but for case, punctuation, "The" and its legal words ("Intel
+    Corporation" is Intel). A name that only holds the employer's, or is held in it, may be it or not: the question is
+    the person's, never a Yes (nor a No). A name that's neither ("Intelligent Fabrication" for Intel) is No."""
+    from job_apply.autofill import _same_employer
+
+    same = [("Intel Corporation", "Intel"), ("Microchip Technology Inc.", "Microchip Technology"),
+            ("The Example Fab Group, Inc.", "example fab"), ("Example Fab, LLC", "EXAMPLE FAB CO."),
+            ("Smith & Sons Holdings", "Smith and Sons"), ("Example Fab Ltd", "Example Fab Corp"),
+            ("Wells Fargo & Company", "Wells Fargo")]
+    other = [("Example Fab Services", "Example Fab"), ("ASM Pacific Technology", "ASM International"),
+             ("Intel", "Intelligent Fabrication"), ("Intel Federal", "Intel"), ("ASM", "ASM Pacific Technology"),
+             ("Fab", "Example Fab"), ("", ""), ("Inc", "LLC")]
+    for a, b in other:
+        assert not _same_employer(a, b) and not _same_employer(b, a), (a, b)
+    for a, b in same:
+        assert _same_employer(a, b) and _same_employer(b, a), (a, b)
+
+    asked = "Have you ever been employed with Example Fab before?"
+    yes_no = ["Yes", "No"]
+
+    def worked(history: list[str], company: str, label: str = asked) -> str | None:
+        person = _person(work_history=[{"company": c, "title": "Technician", "start": "2019-01", "end": "2022-05"}
+                                       for c in history])
+        return _answer(label, person, kind="radio_group", options=yes_no, job={"company": company})
+
+    assert worked(["Example Fab Services"], "Example Fab") is None  # (was Yes)
+    assert worked(["Example Fab"], "Example Fab Services") is None
+    assert worked(["Intel"], "Intelligent Fabrication", "Have you ever been employed with Intelligent Fabrication?") == "No"
+    assert worked(["ASM Pacific Technology"], "ASM International", "Have you ever worked for ASM International?") is None
+    assert worked(["Intel"], "Intel Corporation", "Have you previously been employed by Intel?") == "Yes"
+    assert worked(["Microchip Technology Inc."], "Microchip Technology",
+                  "Have you previously been employed by Microchip?") == "Yes"
+    # a job there now, at a name that only holds the employer's: whether it's this one is the person's
+    person = _person(work_history=[{"company": "Example Fab", "title": "Technician", "start": "2019-01", "end": "2021-05"},
+                                   {"company": "Example Fab Services", "title": "Technician", "start": "2021-06",
+                                    "end": "present"}])
+    asm = ["I am CURRENTLY employed by Example Fab", "I was PREVIOUSLY employed by Example Fab",
+           "I have NEVER been employed by Example Fab"]
+    assert _answer(asked, person, kind="radio_group", options=asm, job={"company": "Example Fab"}) is None
+    # an employee ID kept for one employer goes only on that employer's forms, never on one whose name holds it
+    keeps = Profile({"history": {"employee_ids": {"Example Fab": "E1234567"}}})
+    assert resolve_field(f("Employee ID (if applicable)"), keeps, {"company": "Example Fab Services"}) is None
+    assert resolve_field(f("Employee ID (if applicable)"), keeps, {"company": "Example Fab, Inc."}).value == "E1234567"
+
+
+@pytest.mark.parametrize("ours,theirs,answer", [
+    # may be the same employer: asked, never No (the security review of the framed sign-in)
+    ("ASU", "Arizona State University", None), ("TI", "Texas Instruments", None),
+    ("APS", "Arizona Public Service", None), ("Global Foundries", "GlobalFoundries", None),
+    ("Banner - University Medicine", "Banner Health", None), ("ASM Pacific Technology", "ASM International", None),
+    ("Example Fab Services", "Example Fab", None),
+    # (and the second review's: short forms with legal words kept, a short name's first word, two first words)
+    ("TSMC", "Taiwan Semiconductor Manufacturing Company", None),
+    ("TSMC Arizona", "Taiwan Semiconductor Manufacturing Company", None), ("ADI", "Analog Devices, Inc.", None),
+    ("TEL", "Tokyo Electron Limited", None), ("Western Alliance Bancorporation", "Western Alliance Bank", None),
+    ("State Farm Mutual Automobile Insurance Company", "State Farm Insurance", None),
+    ("U of A", "University of Arizona", None), ("UArizona", "University of Arizona", None),
+    ("UMC", "University Medical Center of Southern Nevada", None),
+    ("UMC Southern Nevada", "University Medical Center of Southern Nevada", None),
+    # two employers: No
+    ("Intel", "Intelligent Fabrication", "No"), ("Arizona State University", "Arizona Public Service", "No"),
+    ("American Express", "American Airlines", "No"), ("United Airlines", "United Health Group", "No"),
+    ("ASU", "APS", "No"), ("City of Las Vegas", "City of Henderson", "No"), ("Example Fab Services", "Northwind Litho", "No"),
+    # (the third review's: never by a state's name, nor a generic second word after a common first one)
+    ("Arizona Department of Transportation", "Arizona Department of Education", "No"),
+    ("Arizona Board of Regents", "Arizona Board of Nursing", "No"), ("Arizona Public Service", "Arizona Public Schools", "No"),
+    ("New York Life", "New York Times", "No"), ("New Mexico Gas", "New Mexico State University", "No"),
+    ("North Carolina State", "North Carolina Central", "No"), ("United States Postal Service", "United States Air Force", "No"),
+    ("Community Health Systems", "Community Health Network", "No"), ("National Park Service", "National Park Foundation", "No"),
+    # a two-letter first word may be the initials of a name's first words: asked, never No, though most such pairs are
+    # two employers (the fourth review: "GD Mission Systems" is General Dynamics Mission Systems', "GE Aerospace" General
+    # Electric's, and a wrong No is a false answer where a wrong ask costs a question). Never Yes
+    ("TTM Technologies", "TT Electronics", None), ("SK Hynix", "Southwest Key", None), ("JB Hunt", "Johnson Brothers", None),
+    ("GE Aerospace", "Global Equities", None), ("AB Electronics", "American Bank", None),
+    ("ON Semiconductor", "Oracle Network", None), ("ON Semiconductor", "Onsite Nursing", None),
+    ("EE Times", "Electrical Engineering", None), ("PF Changs", "Phoenix Fire", None), ("BD Medical", "Banner Desert", None),
+    ("ST Microelectronics", "Sound Transit", None), ("JE Dunn", "Jones Electric", None),
+    ("GE", "General Electric", None),
+    # (the fourth review's: real same employers that round 3 made a firm No)
+    ("GD Mission Systems", "General Dynamics Mission Systems", None), ("GE Aerospace", "General Electric", None),
+    ("GE Vernova", "General Electric", None), ("GE Healthcare", "General Electric", None),
+    ("GE", "General Electric Aviation", None), ("HP Enterprise", "Hewlett Packard Enterprise", None),
+    ("TI", "Texas Instruments Tucson", None), ("JB Hunt", "J.B. Hunt Transport", None),
+    ("TE Connectivity", "Tyco Electronics", None), ("UA", "University of Arizona Health Sciences", None),
+    ("Arizona Public Service", "Arizona Public Svc", None), ("Texas Instruments - Sherman", "Texas Instruments Tucson", None),
+    ("Arizona State Univ", "Arizona State University", None),
+    # the employer itself: Yes
+    ("Wells Fargo & Company", "Wells Fargo", "Yes"), ("Texas Instruments Incorporated", "Texas Instruments", "Yes"),
+])
+def test_an_employer_whose_name_may_be_this_ones_is_asked_never_answered_no(ours, theirs, answer):
+    """Worked there before, from a profile job at `ours`, for an employer named `theirs`: No only where neither name may
+    be the other's (_may_be_employer: one holding the other, the same but for spaces, one the other's initials, a first
+    word of their own in common, never a state's or a common one). "ASU" for Arizona State University was answered No."""
+    from job_apply.autofill import _may_be_employer, works_there_now
+
+    person = _person(work_history=[{"company": ours, "title": "Technician", "start": "2019-01", "end": "2022-05"}])
+    asked = f"Have you ever been employed by {theirs}?"
+    assert _answer(asked, person, kind="radio_group", options=["Yes", "No"], job={"company": theirs}) == answer
+    assert _may_be_employer(ours, theirs) == _may_be_employer(theirs, ours) == (answer != "No")
+    # a "new candidate, not a current employee" box: never for someone whose job now may be there
+    now = _person(work_history=[], experience={"current_company": ours})
+    assert works_there_now(now, theirs) == (answer != "No")
+
+
+def test_not_on_the_staff_of_an_employer_the_persons_own_may_be_is_asked():
+    """The second review's probe: someone at "GCU" now, applying to Grand Canyon Education, was answered "I am not a
+    current Grand Canyon University employee": the choice named an employer that may be the job's, but the person's own
+    (GCU) may be the one it names. Asked. And where the person's job may be the one named, past or present."""
+    options = ["Yes", "No", "I am not a current Grand Canyon University employee"]
+    asked = "Have you notified your leader of your application? (internal candidates only)"
+    gcu = _person(work_history=[{"company": "GCU", "title": "Technician", "start": "2020-01", "end": "present"}])
+    assert _answer(asked, gcu, kind="radio_group", options=options, job={"company": "Grand Canyon Education"}) is None
+    from job_apply.autofill import _not_staff_choice
+
+    field = {"label": asked, "options": options}
+    assert _not_staff_choice(field, gcu, {"company": "Grand Canyon Education"}) is None
+    intel = _person(work_history=[{"company": "Intel", "title": "Technician", "start": "2020-01", "end": "present"}])
+    ti = {"label": "Current employees only: have you told your manager?",
+          "options": ["Yes", "No", "I am not a current TI employee"]}
+    assert _not_staff_choice(ti, intel, {"company": "Texas Instruments"}) == "I am not a current TI employee"  # (as before)
+
+
+def test_a_past_job_at_the_employer_and_one_now_that_may_be_it_is_asked():
+    """A past job at Banner Health and one now at Banner Bank, applying to Banner Health: "Yes, previously" may be
+    "currently" (Banner Bank may be Banner Health's, by the wider may-be), so it's the person's."""
+    person = _person(work_history=[{"company": "Banner Health", "title": "Technician", "start": "2015-01", "end": "2019-01"},
+                                   {"company": "Banner Bank", "title": "Teller", "start": "2019-02", "end": "present"}])
+    options = ["I am CURRENTLY employed by Banner Health", "I was PREVIOUSLY employed by Banner Health",
+               "I have NEVER been employed by Banner Health"]
+    assert _answer("Have you ever been employed with Banner Health before?", person, kind="radio_group",
+                   options=options, job={"company": "Banner Health"}) is None
+
+
+def test_a_current_company_is_an_employer_worked_for():
+    """experience.current_company was left out of the employers worked for: someone at Intel now answered No to "Have
+    you ever been employed by Intel?" and to "Are you a current or former employee?"."""
+    person = _person(work_history=[], experience={"current_company": "Intel"})
+    for asked in ("Have you ever been employed by Intel?", "Are you a current or former employee?"):
+        assert _answer(asked, person, kind="radio_group", options=["Yes", "No"], job={"company": "Intel Corporation"}) \
+            == "Yes", asked
+    asm = ["I am CURRENTLY employed by Intel", "I was PREVIOUSLY employed by Intel", "I have NEVER been employed by Intel"]
+    assert _answer("Have you ever been employed with Intel before?", person, kind="radio_group", options=asm,
+                   job={"company": "Intel"}) == "I am CURRENTLY employed by Intel"
+
+
 def test_an_employee_id_goes_only_on_its_own_employers_forms():
     """A person who has worked for an employer has an ID there, which its forms ask for
     ("Employee ID (if applicable)", "please provide your WWID"). It's never put on another's."""

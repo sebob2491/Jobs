@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Field Service Technician - Apply</title>
+<style>
+  .cx-select__list { border: 1px solid #999; background: #fff; max-height: 220px; overflow: auto; }
+  .cx-select__list[hidden] { display: none; }
+  .cx-select-pills-container { list-style: none; display: flex; gap: 8px; padding: 0; }
+  .cx-select-pill-section--selected { background: #2a5; color: #fff; }
+  label, .input-row__label { display: block; margin-top: 10px; }
+</style>
+</head>
+<body>
+<!-- Oracle Recruiting Cloud's application once the emailed code is in (<job>/apply/section/<n>), in three sections, as
+     the multi-page flow draws it (markup after onsemi's, live: tests/fixtures/live/pipeline-onsemi.html):
+       1. the resume first: "Upload Resume", required, and Next;
+       2. Contact Information (the email the code went to already in its box) and Address, whose boxes are lookups
+          whose entries are a grid's cells; picking a ZIP fills City, State and County, as Oracle does (see
+          oracle-address.html). Words typed without a pick are no answer;
+       3. Application Questions as Yes/No pills (role=radiogroup of role=radio buttons), "How did you hear about
+          us?", the job alerts box Oracle puts above the E-Signature (never the person's to have ticked for them),
+          the E-Signature's Full Name, and Submit, the application's final button.
+     Next checks the section's required boxes and says what's missing ("Answer the required questions: …"). Submit,
+     pressed, is reported to the fake server (/__fake/submit, with what's missing), and a complete application
+     shows "Thank you for applying". The section opened without the code put in goes back to the email step. What
+     went in is kept for the tab (sessionStorage's orc.* keys). Made-up employer and values. -->
+<h1>Field Service Technician</h1>
+<div id="section"></div>
+<div id="error" role="alert"></div>
+<div class="apply-flow-pagination__buttons" id="buttons"></div>
+<script>
+  const fake = (what, data) => fetch('/__fake/' + what, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                         body: JSON.stringify(data || {})});
+  const $ = (id) => document.getElementById(id);
+  const n = Number((location.pathname.match(/\/section\/(\d+)/) || [])[1] || 1);
+  if (sessionStorage.getItem('orc.verified') !== 'yes') location.replace(location.pathname.replace(/\/section\/\d+$/, '/email'));
+  const kept = JSON.parse(sessionStorage.getItem('orc.answers') || '{}');
+  const keep = (k, v) => { kept[k] = v; sessionStorage.setItem('orc.answers', JSON.stringify(kept)); };
+  const text = (id, label, required, value) => '<div class="input-row"><label class="input-row__label' + (required
+    ? ' input-row__label--required' : '') + '" for="' + id + '">' + label + '</label><input class="input-row__control" id="'
+    + id + '" type="text"' + (required ? ' aria-required="true"' : '') + ' value="' + (value || '') + '"></div>';
+  const lookup = (id, label) => '<div class="input-row"><label class="input-row__label input-row__label--required" for="'
+    + id + '">' + label + '</label><input id="' + id + '" type="text" role="combobox" aria-autocomplete="list" '
+    + 'aria-haspopup="grid" aria-controls="' + id + '-listbox" aria-expanded="false" aria-required="true"><div role="grid" id="'
+    + id + '-listbox" aria-label="' + label + '" class="cx-select__list" hidden></div></div>';
+  const pills = (id, label) => '<div class="input-row"><span class="input-row__label input-row__label--required" id="'
+    + id + '-label">' + label + '</span><ul aria-label="' + label + '" class="cx-select-pills-container" role="radiogroup" '
+    + 'aria-required="true" id="' + id + '">' + ['Yes', 'No'].map((v) => '<li role="presentation"><button type="button" '
+    + 'role="radio" aria-checked="false" class="cx-select-pill-section" data-value="' + v + '"><span '
+    + 'class="cx-select-pill-name"> ' + v + '</span></button></li>').join('') + '</ul></div>';
+  const SECTIONS = {
+    1: '<h2>Resume</h2><p>Upload your resume to start your application.</p><div class="input-row">'
+       + '<label for="attachment-upload-1" class="input-row__label input-row__label--required">Upload Resume</label>'
+       + '<input type="file" id="attachment-upload-1" aria-required="true" accept=".doc,.docx,.pdf,.rtf,.txt">'
+       + '<span id="file-name"></span></div>',
+    2: '<h2>Contact Information</h2>' + text('lastName', 'Last Name', true) + text('firstName', 'First Name', true)
+       + text('email', 'Email Address', true, sessionStorage.getItem('orc.email')) + text('phone', 'Phone Number', true)
+       + '<h2>Address</h2>' + lookup('addressLine1', 'Address Line 1') + text('addressLine2', 'Address Line 2', false)
+       + lookup('postalCode', 'ZIP Code') + lookup('city', 'City') + lookup('region2', 'State') + lookup('region1', 'County'),
+    3: '<h2>Application Questions</h2>'
+       + pills('authorized', 'Are you legally authorized to work in the country for which you have applied?')
+       + pills('sponsorship', 'Will you now or in the future require sponsorship to work in the country for which the position is located?')
+       + pills('adult', 'Are you at least 18 years or older?')
+       + pills('shifts', 'Are you willing to work rotating 12-hour shifts, including weekends?')
+       + '<div class="input-row"><label class="input-row__label input-row__label--required" for="heard">How did you hear about us?</label>'
+       + '<select id="heard" aria-required="true"><option value="">Select a value</option><option>Company Website</option>'
+       + '<option>Employee Referral</option><option>Indeed</option><option>LinkedIn</option></select></div>'
+       + '<div class="input-row"><input type="checkbox" id="job-alerts-checkbox"><label for="job-alerts-checkbox">'
+       + 'I agree to receive updates about new job opportunities.</label></div>'
+       + '<h2>E-Signature</h2><p>By typing your name below, you confirm that the information in this application is '
+       + 'true and complete.</p>' + text('fullName', 'Full Name', true),
+  };
+  $('section').innerHTML = SECTIONS[n];
+  $('buttons').innerHTML = n < 3 ? '<button type="button" id="next" class="button">Next</button>'
+    : '<button type="button" id="submit" class="button apply-flow-pagination__submit-button">Submit</button>';
+
+  // the address lookups (section 2)
+  const DATA = {
+    addressLine1: ['100 W MAIN ST, MESA, ARIZONA, 85201', '100 W MAIN ST, CHANDLER, ARIZONA, 85225'],
+    postalCode: ['85225, Chandler, Maricopa, AZ', '85226, Chandler, Maricopa, AZ'],
+    city: ['Chandler, Maricopa, AZ', 'Chandler, Henderson, TX'],
+    region2: ['Arizona', 'Arkansas'],
+    region1: ['Maricopa', 'Pima', 'Pinal'],
+  };
+  const picked = JSON.parse(sessionStorage.getItem('orc.picked') || '{}');
+  window.picked = picked;
+  const list = (id) => $(id + '-listbox');
+  function render(id, hits) {
+    list(id).innerHTML = hits.map((e, i) => '<div role="row"><div tabindex="-1" role="gridcell" id="' + id
+      + '-listitem-' + i + '" aria-selected="false" class="cx-select__list-item"><span>' + e + '</span></div></div>').join('');
+    list(id).hidden = !hits.length;
+    $(id).setAttribute('aria-expanded', hits.length ? 'true' : 'false');
+  }
+  function show(id) {
+    const q = $(id).value.trim().toLowerCase();
+    render(id, q ? DATA[id].filter((e) => e.toLowerCase().includes(q)) : []);
+  }
+  function set(id, entry) {
+    $(id).value = entry.split(', ')[0];
+    picked[id] = entry;
+    sessionStorage.setItem('orc.picked', JSON.stringify(picked));
+    $(id).removeAttribute('aria-invalid');
+    list(id).hidden = true;
+    $(id).setAttribute('aria-expanded', 'false');
+  }
+  function pick(id, entry) {
+    set(id, entry);
+    if (id === 'postalCode') {
+      const [, city, county, st] = entry.split(', ');
+      set('city', city + ', ' + county + ', ' + st);
+      set('region2', st === 'AZ' ? 'Arizona' : st);
+      set('region1', county);
+    }
+  }
+  const field = (e) => (DATA[e.target.id] ? e.target.id : null);
+  const root = $('section');
+  root.addEventListener('input', (e) => { const id = field(e); if (id) { delete picked[id]; show(id); } });
+  root.addEventListener('focusout', (e) => {
+    const id = field(e);
+    if (!id) return;
+    setTimeout(() => {
+      list(id).hidden = true;
+      $(id).setAttribute('aria-expanded', 'false');
+      if ($(id).value && !picked[id]) $(id).setAttribute('aria-invalid', 'true');
+    }, 300);
+  });
+  root.addEventListener('click', (e) => {
+    const cell = e.target.closest('[role="gridcell"]');
+    if (cell) pick(cell.closest('[role="grid"]').id.replace('-listbox', ''), cell.textContent.trim());
+    const pill = e.target.closest('[role="radio"]');
+    if (pill) {
+      for (const b of pill.closest('[role="radiogroup"]').querySelectorAll('[role="radio"]')) {
+        b.setAttribute('aria-checked', String(b === pill));
+        b.classList.toggle('cx-select-pill-section--selected', b === pill);
+      }
+    }
+  });
+  if (n === 1) {
+    $('attachment-upload-1').addEventListener('change', (e) => {
+      const f = e.target.files[0];
+      if (f) { sessionStorage.setItem('orc.resume', f.name); $('file-name').textContent = f.name; }
+    });
+    if (sessionStorage.getItem('orc.resume')) $('file-name').textContent = sessionStorage.getItem('orc.resume');
+  }
+
+  function missing() {
+    const out = [];
+    if (n === 1 && !sessionStorage.getItem('orc.resume')) out.push('Upload Resume');
+    if (n === 2) {
+      for (const id of ['lastName', 'firstName', 'email', 'phone']) if (!$(id).value.trim()) out.push(id);
+      for (const id of Object.keys(DATA)) if (!picked[id]) out.push(id);
+    }
+    if (n === 3) {
+      for (const g of document.querySelectorAll('[role="radiogroup"]')) {
+        if (!g.querySelector('[aria-checked="true"]')) out.push(g.getAttribute('aria-label'));
+      }
+      if (!$('heard').value) out.push('How did you hear about us?');
+      if (!$('fullName').value.trim()) out.push('Full Name');
+    }
+    return out;
+  }
+  function collect() {
+    const out = {};
+    for (const el of root.querySelectorAll('input[type="text"], select')) out[el.id] = el.value;
+    for (const g of root.querySelectorAll('[role="radiogroup"]')) {
+      const on = g.querySelector('[aria-checked="true"]');
+      out[g.id] = on ? on.dataset.value : '';
+    }
+    const alerts = $('job-alerts-checkbox');
+    if (alerts) out.jobAlerts = alerts.checked;
+    return out;
+  }
+  if ($('next')) {
+    $('next').addEventListener('click', () => {
+      const left = missing();
+      if (left.length) { $('error').textContent = 'Answer the required questions: ' + left.join(', ') + '.'; return; }
+      keep(n, collect());
+      location.href = location.pathname.replace(/\/section\/\d+$/, '/section/' + (n + 1));
+    });
+  }
+  if ($('submit')) {
+    $('submit').addEventListener('click', async () => {
+      const left = missing();
+      await fake('submit', {missing: left, answers: collect()});
+      if (left.length) { $('error').textContent = 'Answer the required questions: ' + left.join(', ') + '.'; return; }
+      document.body.innerHTML = '<h1>Thank you for applying</h1><p>We received your application.</p>';
+    });
+  }
+  window.answers = () => ({...kept, 3: n === 3 ? collect() : kept[3], picked, resume: sessionStorage.getItem('orc.resume')});
+</script>
+</body>
+</html>

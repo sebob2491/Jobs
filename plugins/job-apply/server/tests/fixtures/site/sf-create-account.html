@@ -28,7 +28,8 @@
      ?marketing: its opening says that accepting also signs the person up for marketing emails and job alerts.
      ?passcode: once made, the account asks for the code it emailed (123456), as the live site does (APS's, Oct 11):
      "*Passcode:" in a password box and Continue; a wrong one is "The passcode entered is incorrect. Please try
-     again." (kept: passcode, the last one typed).
+     again." (kept: passcode, the last one typed). &mail: the passcode is a fresh one, emailed from successfactors.com
+     to the fake job systems' inbox (test_site_walks.py's fake_ats, /__fake/mail).
      ?gigya: the form as Edwards Vacuum's (Atlas Copco's SAP screen set, run 57) draws it: the statement's link,
      "Read and acknowledge the data privacy statement.", is inside the label of a required box that stays greyed
      out until the statement is accepted, and the form's button reads "Submit"; no account without the box ticked.
@@ -210,13 +211,19 @@
     bump('created');
     put('campaign', $('fbclc_campaignEmailEnabled').checked);
     if (!q.has('passcode')) { location.href = 'step1.html'; return; }
+    // (&mail: a fresh passcode, emailed through the fake job systems' server, test_site_walks.py)
+    const code = q.has('mail') ? String(Math.floor(100000 + Math.random() * 900000)) : '123456';
+    if (q.has('mail')) {
+      fetch('/__fake/mail', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({
+        sender: 'noreply@successfactors.com', subject: 'Your passcode', to: email, kind: 'code', value: code})});
+    }
     document.getElementById('outershell').innerHTML = '<h1>Career Opportunities: Create an Account</h1>'
       + '<form id="pc" onsubmit="return false"><label for="passcode">*Passcode:</label>'
       + '<input id="passcode" type="password" required><button type="submit" id="pcgo">Continue</button></form>'
       + '<div id="pcerr" role="alert"></div>';
     $('pcgo').addEventListener('click', () => {
       put('passcode', $('passcode').value);
-      if ($('passcode').value === '123456') location.href = 'step1.html';
+      if ($('passcode').value === code) location.href = 'step1.html';
       else $('pcerr').textContent = 'The passcode entered is incorrect. Please try again.';
     });
   });

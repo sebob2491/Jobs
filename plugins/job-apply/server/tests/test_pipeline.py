@@ -7574,9 +7574,12 @@ def test_the_saved_password_only_goes_to_its_own_system():
 
 
 def test_a_password_box_inside_an_embedded_frame_is_left_alone(srv, monkeypatch):
-    """A frame can come from anywhere; the saved password only goes into the page's own form."""
+    """A frame can come from anywhere; the saved password goes only into the page's own form and a frame on its own
+    system (_password_place), never into a frame from another site."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
-    saved_password(monkeypatch)
+    saved_password(monkeypatch)  # (the page around the frame is the password's system; the frame's address isn't)
+    monkeypatch.setattr(pipeline, "password_for", lambda url: "test_site_password" if url.endswith("/framed-signin.html")
+                        else None)
     job = srv.add_job(url=fixture_url("site/framed-signin.html"), title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
 
@@ -7594,6 +7597,943 @@ def test_a_password_box_inside_an_embedded_frame_is_left_alone(srv, monkeypatch)
     assert r.need == "sign_in", (r.status, r.reason, r.log)
     assert values == ["", ""]
     assert not any("saved password" in line for line in r.log)
+
+
+# A careers page around a job system's sign-in frame (made-up employer and addresses), and the sign-in drawn in it: its
+# Sign In keeps what it was sent in the frame's own storage (window.sent), and nothing else
+FRAMING_PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Careers at Example Fab</title></head><body>
+<h2>Example Fab Careers</h2><p>Sign in below to continue your application.</p>
+{frames}</body></html>"""
+FRAMED_SIGN_IN = """<!doctype html><html><head><meta charset="utf-8"><title>Sign In</title></head><body>
+<h2>Sign In</h2>
+<form id="signin" novalidate>
+  <label for="em">Email Address</label><input id="em" type="email" required>
+  <label for="pw">Password</label><input id="pw" type="password" required>
+  <button type="submit">Sign In</button>
+</form>
+<script>
+  window.sent = () => JSON.parse(localStorage.getItem('sent') || 'null');
+  document.getElementById('signin').addEventListener('submit', (e) => {
+    e.preventDefault();
+    localStorage.setItem('sent', JSON.stringify([em.value, pw.value]));
+    document.body.innerHTML = '<h2>Welcome back</h2><p>You are signed in.</p>';
+  });
+</script></body></html>"""
+ICIMS_HOST = "https://careers-examplefab.icims.com"
+
+
+async def _framed_site(srv, pages: dict[str, str]) -> None:
+    """`pages` at their https addresses in the desk's browser (routed: nothing leaves the machine), the rest 404."""
+    async def handler(route):
+        body = pages.get(route.request.url.split("?")[0])
+        with contextlib.suppress(Exception):  # (a tab closed as the test ends)
+            await route.fulfill(status=200 if body else 404, content_type="text/html",
+                                body=body or "<html><body>not found</body></html>")
+
+    await srv.browser.page()
+    await srv.browser._ctx.route(lambda url: url.startswith("https://"), handler)
+
+
+def test_the_saved_password_goes_into_its_systems_own_frame_on_an_employers_page(srv, monkeypatch):
+    """iCIMS draws its sign-in in its frame, on its own address, inside an employer's careers page (here on the
+    employer's own domain). With an iCIMS password saved, that frame's boxes are the sign-in's: the email and the saved
+    password go in, and its Sign In is pressed. The desk read only the page's own boxes, never a frame's, and stopped
+    for the person (the fake-site walks' framed iCIMS)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    careers = "https://careers.examplefab.example/jobs/2002"
+    login = ICIMS_HOST + "/jobs/2002/login"
+    job = srv.add_job(url=careers, title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _framed_site(srv, {careers: FRAMING_PAGE.format(frames=f'<iframe src="{login}?in_iframe=1" width="600" '
+                                                                         'height="300"></iframe>'),
+                                 login: FRAMED_SIGN_IN})
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            frame = next(f for f in r.page.frames if f.url.startswith(login))
+            return r, await frame.evaluate("() => window.sent ? window.sent() : JSON.parse(localStorage.getItem('sent'))")
+        finally:
+            await applier.stop()
+
+    r, sent = run(go())
+    assert sent == ["sam.rivera@example.com", "not-a-real-password"], (sent, r.reason, r.log)
+    assert "pressed “Sign In” with your saved password" in r.log, r.log
+
+
+def test_a_frame_from_another_site_gets_no_password_and_no_press_on_its_systems_page(srv, monkeypatch):
+    """The page is iCIMS' own, and an iCIMS password is saved, but the sign-in boxes are in frames from elsewhere: a
+    third party's widget, and an address that only begins like iCIMS' (careers-examplefab.icims.com.evil.example).
+    Neither gets the email or the password, nor has its Sign In pressed (the desk pressed a frame's Sign In from any
+    site on a page whose own boxes it had none of); the sign-in is the person's."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    page = ICIMS_HOST + "/jobs/2002/job"
+    widget, lookalike = "https://widgets.examplead.example/signin", ICIMS_HOST + ".evil.example/login"
+    job = srv.add_job(url=page, title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        frames = "".join(f'<iframe src="{u}" width="600" height="300"></iframe>' for u in (widget, lookalike))
+        await _framed_site(srv, {page: FRAMING_PAGE.format(frames=frames), widget: FRAMED_SIGN_IN,
+                                 lookalike: FRAMED_SIGN_IN})
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you", about=state(r))
+            await asyncio.sleep(1)  # (a press would have shown by now)
+            seen = []
+            for url in (widget, lookalike):
+                frame = next(f for f in r.page.frames if f.url == url)
+                seen.append(await frame.evaluate("() => [window.sent(), document.getElementById('em')?.value, "
+                                                 "document.getElementById('pw')?.value]"))
+            return r, seen
+        finally:
+            await applier.stop()
+
+    r, seen = run(go())
+    assert r.need == "sign_in", (r.status, r.reason, r.log)
+    assert seen == [[None, "", ""], [None, "", ""]], (seen, r.log)
+    assert not any("saved password" in line or line.startswith("pressed") for line in r.log), r.log
+
+
+def test_the_saved_passwords_place_is_the_page_and_its_frames_on_its_own_system():
+    """_password_place: the page's own boxes where it's on the saved password's system, and a frame's only where the
+    frame's own address is on that system too. Never a frame from another site, a lookalike address, another job
+    system's, nor a frame whose address isn't known."""
+    place = pipeline._password_place
+    icims, employer = ICIMS_HOST + "/jobs/2002/login?in_iframe=1", "https://careers.examplefab.example/jobs/2002"
+    # iCIMS' frame on the employer's own domain: the frame alone
+    assert place({"url": employer, "frame_urls": {"": employer, "f1-": icims}}) == ("icims_password", {"f1-"})
+    # iCIMS' page around iCIMS' frame: both; around a widget's, a lookalike's, Workday's: the page alone
+    assert place({"url": icims, "frame_urls": {"": icims, "f2-": icims}}) == ("icims_password", {"", "f2-"})
+    for other in ("https://widgets.examplead.example/signin", ICIMS_HOST + ".evil.example/login",
+                  "https://evil.example/icims.com/login", "http://careers-examplefab.icims.com/login",
+                  "https://acme.wd5.myworkdayjobs.com/login"):
+        assert place({"url": icims, "frame_urls": {"": icims, "f1-": other}}) == ("icims_password", {""}), other
+        assert place({"url": employer, "frame_urls": {"": employer, "f1-": other}})[1] <= {"f1-"}, other
+        assert place({"url": employer, "frame_urls": {"f1-": other}}) != ("icims_password", {"f1-"}), other
+    # a frame's address not known (an older reader's look): the page alone, as before
+    assert place({"url": icims}) == ("icims_password", {""})
+    assert place({"url": employer}) == (None, set())
+    # fields and buttons go by their id's frame
+    assert [pipeline._frame_of({"id": i}) for i in ("pw", "f1-pw", "f12-b3", None)] == ["", "f1-", "f12-", ""]
+
+
+# An employer's careers page (made up) around a talent community widget's frame, then iCIMS' frame, with buttons and
+# links of its own ("Next", "Save Job", "Email me jobs like this"; "Forgot your password?", "Sign In"; and "Read and
+# accept the data privacy statement.", which opens the page's own statement with its Accept). Each page tells the test
+# what was pressed there (POST /__log on its own address): the test's handler keeps them, in order, as (host, what).
+EMPLOYER_SITE = "https://careers.examplefab.example"
+WIDGET_JOIN = "https://talent.examplewidget.example/join"
+_LOG_JS = """<script>
+  const log = (what) => fetch('/__log', {method: 'POST', body: what});
+</script>"""
+_OUTER_LINKS = """<p><a href="#" onclick="log('outer-forgot'); return false">Forgot your password?</a>
+<a href="#" onclick="log('outer-sign-in'); return false">Sign In</a>
+<a id="outerStatement" role="button" tabindex="0" onclick="log('outer-statement'); outerDlg.hidden = false">Read and accept
+  the data privacy statement.</a></p>
+<div id="outerDlg" role="dialog" aria-labelledby="outerTitle" hidden><h2 id="outerTitle">Data Privacy Statement</h2>
+  <p>Example Fab's careers site keeps your details to answer your questions.</p>
+  <button type="button" onclick="log('outer-accept'); outerDlg.hidden = true">Accept</button></div>"""
+
+
+def _employer_page(widget: bool = True, links: bool = True) -> str:
+    """The employer's page around iCIMS' frame (its address /jobs/<n>/login, or, with a query, as the emailed reset link
+    opens it, /jobs/<n>/new-password), the widget's frame before it, its own buttons, and its own links."""
+    return (_LOG_JS + "<h1>Field Service Technician</h1>"
+            + (f'<iframe id="widget" src="{WIDGET_JOIN}" width="500" height="220"></iframe>' if widget else "")
+            + '<iframe id="icims" width="700" height="460"></iframe>'
+            + """<p><button type="button" onclick="log('next')">Next</button>
+<button type="button" onclick="log('save-job')">Save Job</button>
+<button type="button" onclick="log('email-jobs')">Email me jobs like this</button></p>"""
+            + (_OUTER_LINKS if links else "")
+            + f"""<script>document.getElementById('icims').src = '{ICIMS_HOST}' + location.pathname
+  + (location.search ? '/new-password' : '/login') + location.search;</script>""")
+
+
+WIDGET_PAGE = _LOG_JS + """<h2>Join our talent community</h2>
+<form onsubmit="event.preventDefault(); log('widget-sign-up')">
+  <label for="wem">Email</label><input id="wem" type="email">
+  <label for="wpw">Create a password</label><input id="wpw" type="password">
+  <input id="wterms" type="checkbox" onchange="log('widget-terms')"><label for="wterms">I agree to the terms and conditions</label>
+  <button type="submit">Sign Up</button>
+</form>"""
+_ICIMS_ACCOUNT_BOXES = """
+  <label for="em">Email</label><input id="em" type="email" required>
+  <label for="fn">First Name</label><input id="fn" type="text" required>
+  <label for="ln">Last Name</label><input id="ln" type="text" required>
+  <label for="pw">Password</label><input id="pw" type="password" required>
+  <label for="pw2">Confirm Password</label><input id="pw2" type="password" required>
+  <input id="terms" type="checkbox" required><label for="terms">I agree to the Terms of Use</label>"""
+# iCIMS' Create Account with its data privacy statement, which opens nothing at the first press (as APS's didn't, live)
+# and its dialog at the second
+ICIMS_CREATE = _LOG_JS + """<h2>Create your account</h2>
+<form id="f" onsubmit="event.preventDefault();
+                       log('account:' + terms.checked + ':' + (pw.value === pw2.value) + ':' + !!sessionStorage.getItem('dpcs'));
+                       location.href = location.pathname.replace(/[^/]+$/, 'questions');">""" + _ICIMS_ACCOUNT_BOXES + """
+  <a id="statement" role="button" tabindex="0">Read and accept the data privacy statement.</a>
+  <button type="submit">Create Account</button>
+</form>
+<div id="dlg" role="dialog" aria-labelledby="dlgTitle" hidden><h2 id="dlgTitle">Data Privacy Statement</h2>
+  <p>Example Fab and iCIMS keep your application's details to consider you for this job.</p>
+  <button type="button" id="accept">Accept</button><button type="button" id="decline">Decline</button></div>
+<script>
+  let presses = 0;
+  statement.addEventListener('click', () => { presses += 1; log('statement-press'); if (presses > 1) dlg.hidden = false; });
+  accept.addEventListener('click', () => { sessionStorage.setItem('dpcs', '1'); log('statement-accepted');
+                                           dlg.hidden = true; });
+  decline.addEventListener('click', () => { dlg.hidden = true; });
+</script>"""
+# iCIMS' Create Account for an email that has an account already: its way back to the sign-in outside the form
+ICIMS_CREATE_EXISTS = _LOG_JS + """<h2>Create your account</h2>
+<form id="f" onsubmit="event.preventDefault(); log('account-exists');
+                       err.textContent = 'An account with this email address already exists.';">""" + _ICIMS_ACCOUNT_BOXES + """
+  <button type="submit">Create Account</button>
+</form>
+<div id="err" role="alert"></div>
+<p>Already have an account? <a href="signin">Sign In</a></p>"""
+ICIMS_SIGN_IN = _LOG_JS + """<h2>Sign In</h2>
+<form id="f" onsubmit="event.preventDefault(); if (localStorage.getItem('reset')) { log('signed-in');
+                       location.href = location.pathname.replace(/[^/]+$/, 'questions'); }
+                       else document.getElementById('err').textContent = 'Invalid email or password.';">
+  <label for="em">Email</label><input id="em" type="email" required>
+  <label for="pw">Password</label><input id="pw" type="password" required>
+  <button type="submit">Sign In</button>
+</form>
+<div id="err" role="alert"></div>
+<a href="forgot">Forgot your password?</a>"""
+ICIMS_FORGOT = _LOG_JS + """<h2>Reset your password</h2>
+<form onsubmit="event.preventDefault(); log('reset-asked');
+                document.body.innerHTML = '<h2>Check your inbox</h2><p>We sent you an email with a link to reset your password.</p>';">
+  <label for="em">Email</label><input id="em" type="email" required>
+  <button type="submit">Send reset link</button>
+</form>"""
+ICIMS_NEW_PASSWORD = _LOG_JS + """<h2>Set a new password</h2>
+<form onsubmit="event.preventDefault(); log('reset-set'); localStorage.setItem('reset', '1');
+                location.href = location.pathname.replace(/new-password$/, 'signin');">
+  <label for="np">New Password</label><input id="np" type="password" required>
+  <label for="np2">Confirm New Password</label><input id="np2" type="password" required>
+  <button type="submit">Save Password</button>
+</form>"""
+ICIMS_QUESTIONS = """<h2>Application questions</h2>
+<form onsubmit="event.preventDefault()">
+  <label for="q">Describe a repair you are proud of *</label><textarea id="q" required></textarea>
+  <button type="submit">Next</button>
+</form>"""
+
+
+async def _employer_around_icims(srv, icims: dict[str, str], employer: str,
+                                 outer: str = EMPLOYER_SITE) -> list[tuple[str, str]]:
+    """`employer` (_employer_page) at `outer`'s /jobs/<n> (the employer's own site, or an iCIMS address), the widget,
+    and `icims`' pages by the end of their path (careers-examplefab.icims.com/jobs/<n>/<end>), in the desk's browser
+    (routed: nothing leaves the machine). What the pages say was pressed, in order."""
+    pressed: list[tuple[str, str]] = []
+
+    async def handler(route):
+        req = route.request
+        parts = urlparse(req.url)
+        end = parts.path.rsplit("/", 1)[-1]
+        if parts.path == "/__log":
+            pressed.append((parts.hostname or "", req.post_data or ""))
+            body = "{}"
+        elif req.url.startswith(outer) and end.isdigit():
+            body = employer
+        elif req.url.startswith(WIDGET_JOIN):
+            body = WIDGET_PAGE
+        elif req.url.startswith(ICIMS_HOST + "/jobs/"):
+            body = icims.get(end, "")
+        else:
+            body = ""
+        with contextlib.suppress(Exception):  # (a tab closed as the test ends)
+            await route.fulfill(status=200 if body else 404, content_type="text/html",
+                                body=body or "<html><body>not found</body></html>")
+
+    await srv.browser.page()
+    await srv.browser._ctx.route(lambda url: url.startswith("https://"), handler)
+    return pressed
+
+
+def _theirs(pressed: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """What was pressed anywhere but in iCIMS' own form: the employer's page's buttons and links (wherever it is), the
+    widget's."""
+    return [p for p in pressed if not p[0].endswith("icims.com") or p[1].startswith(("outer-", "next", "save-job",
+                                                                                         "email-jobs"))]
+
+
+def test_a_framed_icims_create_account_leaves_the_page_and_a_widget_around_it_alone(srv, monkeypatch, job_apply_home):
+    """iCIMS' Create Account in its frame on an employer's page, a talent community widget's frame before it (its own
+    password box, terms box and "Sign Up"), and the page's own "Read and accept the data privacy statement." beside
+    iCIMS' own. With manage_accounts (and accept_notices), the desk fills iCIMS' form, opens iCIMS' statement (pressed
+    again, as it opens nothing at first) and accepts it, ticks iCIMS' own terms and presses its Create Account. Never the
+    widget's terms box or Sign Up (_make_account read every frame's: the security review of the framed sign-in), nor the
+    page's own statement and its Accept (_accept_statement found the link again by its words anywhere: the second
+    review), nor the page's buttons."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    manage_accounts(job_apply_home)
+    job = srv.add_job(url=EMPLOYER_SITE + "/jobs/2002", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        pressed = await _employer_around_icims(srv, {"login": ICIMS_CREATE, "questions": ICIMS_QUESTIONS},
+                                               _employer_page())
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=90, about=state(r))
+            widget = next(f for f in r.page.frames if f.url == WIDGET_JOIN)
+            return r, pressed, await widget.evaluate("() => [wem.value, wpw.value, wterms.checked]")
+        finally:
+            await applier.stop()
+
+    r, pressed, widget = run(go())
+    mine = [what for host, what in pressed if host.endswith("icims.com")]
+    assert mine == ["statement-press", "statement-press", "statement-accepted", "account:true:true:true"], (
+        pressed, r.reason, r.log)
+    assert _theirs(pressed) == [], (pressed, r.log)
+    assert widget == ["", "", False], widget
+    assert any(line.startswith("pressed “Create Account” to create your account") for line in r.log), r.log
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("outer, links", [(EMPLOYER_SITE, True), (ICIMS_HOST, False), (ICIMS_HOST, True)],
+                         ids=["employer", "icims", "icims-links"])
+def test_a_framed_icims_reset_presses_its_own_buttons_never_the_employers(srv, monkeypatch, job_apply_home, outer,
+                                                                          links):
+    """iCIMS' Create Account in its frame says the email has an account already. With the inbox watched the desk goes
+    back to iCIMS' sign-in (its own "Sign In"), asks for a reset (its "Forgot your password?", then "Send reset link"),
+    opens the emailed link (the page again, iCIMS' new-password form in its frame), presses iCIMS' "Save Password", and
+    signs in. The page around it has a widget's frame before iCIMS' and its own "Next", "Save Job", "Email me jobs like
+    this", "Forgot your password?" and "Sign In". _ask_for_reset and _set_new_password took their buttons from every
+    frame and the page (the employer's "Next" for the reset's Send, its "Save Job" for the new password's Save: the
+    security review of the framed sign-in; its "Sign In" and "Forgot your password?": the second review). "icims": the
+    page around the frame is iCIMS' own (no links of its own there), whose "Email me jobs like this" matches a reset's
+    Send ("e-mail me") and "Save Job" its Save: each is its own frame's button, the one by its boxes. "icims-links":
+    and its own "Forgot your password?" and "Sign In" too, in the password's place: iCIMS' frame's own are pressed, the
+    ones by its boxes (_sign_in_ways)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    manage_accounts(job_apply_home)
+    watched_inbox(monkeypatch, reset_link=outer + "/jobs/2003?reset=abc")
+    job = srv.add_job(url=outer + "/jobs/2003", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        pressed = await _employer_around_icims(srv, {"login": ICIMS_CREATE_EXISTS, "signin": ICIMS_SIGN_IN,
+                                                     "forgot": ICIMS_FORGOT, "new-password": ICIMS_NEW_PASSWORD,
+                                                     "questions": ICIMS_QUESTIONS},
+                                               _employer_page(links=links), outer)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running") and r.need != "email_code", timeout=120,
+                        about=state(r))
+            return r, pressed
+        finally:
+            await applier.stop()
+
+    r, pressed = run(go())
+    mine = [what for host, what in pressed if host.endswith("icims.com") and (host, what) not in _theirs(pressed)]
+    assert mine[:4] == ["account-exists", "reset-asked", "reset-set", "signed-in"], (pressed, r.reason, r.log)
+    assert _theirs(pressed) == [], (pressed, r.log)
+    log = "\n".join(r.log)
+    assert "asked it to email a password reset" in log and "set your saved password as" in log, log
+
+
+# A job alerts sign-up of an iCIMS page's own, above iCIMS' frame: its Email box and "Email me jobs like this"
+def _job_alerts_form(button: str) -> str:
+    """A job alerts sign-up of an iCIMS page's own, above iCIMS' frame: its Email box and its button."""
+    return ("""<form onsubmit="event.preventDefault(); log('alerts-signup:' + document.getElementById('al').value)">
+<label for="al">Email</label><input id="al" type="email"><button type="submit">%s</button></form>""" % button)
+
+
+# iCIMS' forgot-password page headed otherwise ("Password Assistance"), or not at all
+ICIMS_FORGOT_PLAIN = ICIMS_FORGOT.replace("<h2>Reset your password</h2>",
+                                          "<h2>Password Assistance</h2><p>Forgot your password? Enter your email.</p>")
+ICIMS_FORGOT_NO_HEADING = ICIMS_FORGOT.replace("<h2>Reset your password</h2>",
+                                               "<p>Forgot your password? Enter your email.</p>")
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("button, forgot", [
+    *((b, f) for b in ("Email me jobs like this", "Email me new jobs", "Send me jobs")
+      for f in ("reset-heading", "plain-heading", "no-heading")),
+    ("", "reset-heading")], ids=lambda v: v.replace(" ", "-") if v else "button-only")
+def test_icims_outer_page_with_job_alerts_email_box(srv, monkeypatch, job_apply_home, button, forgot):
+    """The third and fourth reviews' probes: an iCIMS page around iCIMS' frame (both in the saved password's place)
+    with a job alerts sign-up of its own above the frame, an Email box and a button ("Email me jobs like this", "Email
+    me new jobs", "Send me jobs"), iCIMS' forgot-password page headed "Reset your password", "Password Assistance" or
+    nothing. The reset's email went into that box and its button was pressed, signing the person up for job alerts, and
+    the desk logged that it had asked for a reset. The reset's email box is the frame's its "Forgot your password?" was
+    pressed in, never a side box's, and a button that signs the person up is never pressed in an account's or a reset's
+    steps. "button-only": the page's own "Email me jobs like this" button alone, beside its "Next" and "Save Job"."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    manage_accounts(job_apply_home)
+    watched_inbox(monkeypatch, reset_link=ICIMS_HOST + "/jobs/2003?reset=abc")
+    job = srv.add_job(url=ICIMS_HOST + "/jobs/2003", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+    page = _employer_page(widget=False, links=False)
+    if button:  # (the form's button alone: the page's own is another's)
+        page = page.replace("<h1>Field Service Technician</h1>", "<h1>Field Service Technician</h1>"
+                            + _job_alerts_form(button)).replace("Email me jobs like this</button></p>", "Share</button></p>")
+    fg = {"reset-heading": ICIMS_FORGOT, "plain-heading": ICIMS_FORGOT_PLAIN, "no-heading": ICIMS_FORGOT_NO_HEADING}[forgot]
+
+    async def go():
+        pressed = await _employer_around_icims(srv, {"login": ICIMS_CREATE_EXISTS, "signin": ICIMS_SIGN_IN,
+                                                     "forgot": fg, "new-password": ICIMS_NEW_PASSWORD,
+                                                     "questions": ICIMS_QUESTIONS}, page, ICIMS_HOST)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running") and r.need != "email_code", timeout=120,
+                        about=state(r))
+            return r, pressed
+        finally:
+            await applier.stop()
+
+    r, pressed = run(go())
+    assert not any(what.startswith(("alerts-signup", "email-jobs")) for _, what in pressed), (pressed, r.log)
+    mine = [what for host, what in pressed if host.endswith("icims.com") and (host, what) not in _theirs(pressed)]
+    assert mine[:4] == ["account-exists", "reset-asked", "reset-set", "signed-in"], (pressed, r.reason, r.log)
+    assert _theirs(pressed) == [], (pressed, r.log)
+
+
+def _alerts_beside(button: str, heading: str = "") -> str:
+    """A job alerts sign-up in the same page as an account's form, its own <form>: its Email box tells the test what
+    the typing in it set off (its change and blur), and its button what was sent."""
+    return (heading + """<form onsubmit="event.preventDefault(); log('alerts-signup:' + document.getElementById('al').value)">
+<label for="al">Email</label><input id="al" type="email" onchange="log('alerts-change')" onblur="log('alerts-blur')">
+<button type="submit">%s</button></form>""" % button)
+
+
+SAME_FRAME_ALERTS = {
+    "email-me": ("Email me jobs like this", ""),
+    "submit-new-jobs": ("Submit", "<h3>Get new jobs by email</h3>"),
+    "send-openings": ("Send", "<p>New openings, straight to your inbox</p>"),
+    "continue-new-roles": ("Continue", "<p>Hear about new roles first</p>"),
+}
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("case", list(SAME_FRAME_ALERTS))
+def test_a_reset_in_the_same_frame_as_a_job_alerts_sign_up_types_only_in_its_own_form(srv, monkeypatch, job_apply_home,
+                                                                                         case):
+    """The fifth review's probe: iCIMS' forgot-password page itself (no frame around it) with a job alerts sign-up above
+    the reset's form, its button "Submit", "Send" or "Continue" and its words none the desk knows for a sign-up's ("Get
+    new jobs by email", "New openings, straight to your inbox", "Hear about new roles first"). Nothing tied a box to its
+    form: the email went into the first box, and the first button a reset's might be was pressed, signing the person up
+    for job alerts. Now the reset's box is its own form's (formjs' form index), the one whose form holds a reset's
+    button, and only that form's button is pressed: the email in the reset's box, the alerts box never touched."""
+    button, heading = SAME_FRAME_ALERTS[case]
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    manage_accounts(job_apply_home)
+    watched_inbox(monkeypatch, reset_link=ICIMS_HOST + "/jobs/2004/new-password?reset=abc")
+    job = srv.add_job(url=ICIMS_HOST + "/jobs/2004/login", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+    forgot = ICIMS_FORGOT.replace("log('reset-asked');", "log('reset-asked:' + document.getElementById('em').value);")
+    forgot = forgot.replace("<h2>Reset your password</h2>", _alerts_beside(button, heading) + "<h2>Reset your password</h2>")
+    assert "alerts-signup" in forgot and "reset-asked:" in forgot
+
+    async def go():
+        pressed = await _employer_around_icims(srv, {"login": ICIMS_CREATE_EXISTS, "signin": ICIMS_SIGN_IN,
+                                                     "forgot": forgot, "new-password": ICIMS_NEW_PASSWORD,
+                                                     "questions": ICIMS_QUESTIONS}, "", ICIMS_HOST)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running") and r.need != "email_code", timeout=120,
+                        about=state(r))
+            return r, pressed
+        finally:
+            await applier.stop()
+
+    r, pressed = run(go())
+    said = [what for _, what in pressed]
+    assert not any(w.startswith("alerts-") for w in said), (said, r.log)
+    assert "reset-asked:sam.rivera@example.com" in said, (said, r.reason, r.log)
+    assert said[-3:] == ["reset-asked:sam.rivera@example.com", "reset-set", "signed-in"], (said, r.log)
+
+
+@pytest.mark.slow
+def test_a_sign_in_beside_a_job_alerts_sign_up_types_only_in_its_own_form(srv, monkeypatch):
+    """A sign-in page with a job alerts sign-up above its form, in the same frame ("Get new jobs by email" and its
+    "Submit"): the email goes into the sign-in's own box, the password's form's, never the alerts box (whose change the
+    typing alone sets off), and the sign-in's own button is pressed (the fifth review)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    job = srv.add_job(url=ICIMS_HOST + "/jobs/2005/login", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+    sign_in = _LOG_JS + _alerts_beside("Submit", "<h3>Get new jobs by email</h3>") + """<h2>Sign In</h2>
+<form onsubmit="event.preventDefault(); log('signed-in:' + em.value + ':' + (pw.value === 'not-a-real-password'));
+                location.href = location.pathname.replace(/[^/]+$/, 'questions');">
+  <label for="em">Email</label><input id="em" type="email" required>
+  <label for="pw">Password</label><input id="pw" type="password" required>
+  <button type="submit">Sign In</button>
+</form>"""
+
+    async def go():
+        pressed = await _employer_around_icims(srv, {"login": sign_in, "questions": ICIMS_QUESTIONS}, "", ICIMS_HOST)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=90, about=state(r))
+            return r, pressed
+        finally:
+            await applier.stop()
+
+    r, pressed = run(go())
+    said = [what for _, what in pressed]
+    assert said and said[0] == "signed-in:sam.rivera@example.com:true", (said, r.reason, r.log)
+    assert not any(w.startswith("alerts-") for w in said), (said, r.log)
+
+
+# A reset's page drawn by a script, its box and button in no <form> (a React page's), and one whose button sits outside
+# its <form> (a script's "Send reset link" beside it); both log what was asked for, with the email
+_RESET_DONE = ("document.body.innerHTML = '<h2>Check your inbox</h2><p>We sent you an email with a link to reset your "
+               "password.</p>';")
+_RESET_IN_NO_FORM = """<h2>Reset your password</h2><div><label for="em">Email</label><input id="em" type="email">
+<button type="button" onclick="log('reset-asked:' + em.value); %s">Send reset link</button></div>""" % _RESET_DONE
+_RESET_BUTTON_OUTSIDE = """<h2>Reset your password</h2><form onsubmit="event.preventDefault()">
+<label for="em">Email</label><input id="em" type="email" required></form>
+<button type="button" onclick="log('reset-asked:' + em.value); %s">Send reset link</button>""" % _RESET_DONE
+
+
+def _reset_asked(srv, monkeypatch, job_apply_home, forgot: str) -> tuple[list[str], Run]:
+    """iCIMS' forgot-password page `forgot` (no frame around it), after its Create Account said the email has an account
+    and its sign-in refused the saved password; the inbox watched (none come). What the pages logged, and the run, once
+    the desk waits for the reset email or stopped."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    manage_accounts(job_apply_home)
+    watched_inbox(monkeypatch)
+    job = srv.add_job(url=ICIMS_HOST + "/jobs/2004/login", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        pressed = await _employer_around_icims(srv, {"login": ICIMS_CREATE_EXISTS, "signin": ICIMS_SIGN_IN,
+                                                     "forgot": forgot}, "", ICIMS_HOST)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.need == "email_code" or r.status not in ("queued", "running"), timeout=90,
+                        about=state(r))
+            await asyncio.sleep(0.5)  # (a log from the last press still on its way)
+            return r, pressed
+        finally:
+            await applier.stop()
+
+    r, pressed = run(go())
+    return [what for _, what in pressed], r
+
+
+_ALERTS_SUBMIT = _alerts_beside("Submit", "<h3>Get new jobs by email</h3>")
+RESET_IN_NO_FORM_BESIDE_ALERTS = {
+    "alerts-above-submit": _ALERTS_SUBMIT + _RESET_IN_NO_FORM,
+    "alerts-below-submit": _RESET_IN_NO_FORM + _ALERTS_SUBMIT,
+    "alerts-below-send": _RESET_IN_NO_FORM + _alerts_beside("Send", "<p>New openings, straight to your inbox</p>"),
+    "alerts-above-continue": _alerts_beside("Continue", "<p>Hear about new roles first</p>") + _RESET_IN_NO_FORM,
+}
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("case", list(RESET_IN_NO_FORM_BESIDE_ALERTS))
+def test_a_reset_in_no_form_beside_a_job_alerts_form_never_signs_them_up(srv, monkeypatch, job_apply_home, case):
+    """The sixth review's probe: a reset page drawn by a script, its Email box and "Send reset link" in no <form>, in
+    the same frame as a job alerts sign-up's <form> above or below it ("Get new jobs by email" and its "Submit", "Send"
+    or "Continue"). The alerts form's box was taken for the reset's (the one box in a form whose button a reset's might
+    be), the email typed there and its button pressed: the person signed up for job alerts. Now, with more than one box,
+    the reset's is the one whose own group (its form, or the boxes and buttons in no form) holds a button that names the
+    reset, and that button is pressed (_reset_choice): the reset is asked for, the alerts box never touched."""
+    said, r = _reset_asked(srv, monkeypatch, job_apply_home, _LOG_JS + RESET_IN_NO_FORM_BESIDE_ALERTS[case])
+    assert not any(w.startswith("alerts-") for w in said), (said, r.reason, r.log)
+    assert said == ["account-exists", "reset-asked:sam.rivera@example.com"], (said, r.reason, r.log)
+    assert r.need == "email_code", (r.need, r.reason)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("beside", [
+    """<label for="lang">Language</label><select id="lang"><option>English</option><option>Espanol</option></select>""",
+    """<div><label for="q">Search jobs</label><input id="q" type="text"></div>"""], ids=["language-list", "search-box"])
+def test_a_reset_whose_button_is_outside_its_form_beside_loose_boxes_is_asked(srv, monkeypatch, job_apply_home, beside):
+    """The sixth review's probe: a reset whose "Send reset link" is a script's button outside its <form>, beside a
+    language list or a search box in no form. Those were taken for another form's (_box_buttons), so the reset's form had
+    no button the desk would press, and it stopped after typing the email. Another form is only a real <form> that holds
+    a box for an email or user name: the reset's button is pressed."""
+    said, r = _reset_asked(srv, monkeypatch, job_apply_home, _LOG_JS + beside + _RESET_BUTTON_OUTSIDE)
+    assert said == ["account-exists", "reset-asked:sam.rivera@example.com"], (said, r.reason, r.log)
+    assert r.need == "email_code", (r.need, r.reason)
+
+
+def test_a_box_buttons_other_form_is_one_with_an_email_box():
+    """_box_buttons: a box's form with no button of its own (a script's button outside it) takes its frame's, unless
+    another real <form> there holds a box for an email or user name (a job alerts sign-up's): never a language list, a
+    search box or a button in no form, nor a search form's box. So for a new password's Save outside its form."""
+    box = {"id": "em", "kind": "email", "label": "Email", "form": 0}
+    send = {"id": "send", "text": "Send reset link"}
+    loose = [{"id": "lang", "kind": "select", "label": "Language"}, {"id": "q", "kind": "text", "label": "Search jobs"}]
+    assert pipeline._box_buttons([send], box, [box, *loose]) == [send]
+    search = {"id": "q2", "kind": "text", "label": "Search jobs", "form": 1}
+    assert pipeline._box_buttons([send], box, [box, search]) == [send]
+    alerts = {"id": "al", "kind": "email", "label": "Email", "form": 1}
+    assert pipeline._box_buttons([send], box, [box, *loose, alerts]) == []
+    new = {"id": "np", "kind": "password", "label": "New Password", "form": 0}
+    save = {"id": "save", "text": "Save Password"}
+    assert pipeline._box_buttons([save], new, [new, {**new, "id": "np2"}, *loose]) == [save]
+
+
+def test_a_reset_box_among_several_is_the_one_whose_group_names_the_reset():
+    """_reset_choice: of several email boxes in the reset's frame, the one whose own group (its <form>, or the boxes
+    and buttons in no form) holds a button that names the reset, and that button. A generic Submit, Send, Continue or
+    Next never counts (a job alerts form's), nor a button that signs them up; none, or more than one, is the person's."""
+    reset = {"id": "em", "kind": "email", "label": "Email"}
+    alerts = {"id": "al", "kind": "email", "label": "Email", "form": 0}
+    submit = {"id": "as", "text": "Submit", "form": 0}
+    send = {"id": "rs", "text": "Send reset link"}
+    assert pipeline._reset_choice([alerts, reset], [submit, send]) == (reset, send)
+    assert pipeline._reset_choice([reset, alerts], [send, submit]) == (reset, send)
+    # (the reset's own button generic too: not one the desk can tell)
+    assert pipeline._reset_choice([alerts, reset], [submit, {"id": "rs", "text": "Send"}]) is None
+    # (the alerts form's button names a link to jobs, never a reset; one that signs them up never counts)
+    assert pipeline._reset_choice([alerts, reset], [{"id": "as", "text": "Email me jobs like this", "form": 0},
+                                                    {"id": "rs", "text": "Continue"}]) is None
+    # (both in no form: their group is one, its button both's)
+    assert pipeline._reset_choice([reset, {**reset, "id": "al"}], [send]) is None
+    # (the reset's in a form, the alerts box in none)
+    in_form = {**reset, "form": 1}
+    assert pipeline._reset_choice([{**alerts, "form": None}, in_form],
+                                  [{"id": "as", "text": "Submit"}, {**send, "form": 1}]) == (in_form, {**send, "form": 1})
+
+
+SIGN_IN_IN_NO_FORM = """<h2>Sign In</h2><div><label for="em">Email</label><input id="em" type="email">
+<label for="pw">Password</label><input id="pw" type="password">
+<button type="button" onclick="log('signed-in:' + em.value + ':' + (pw.value === 'not-a-real-password'));
+  location.href = location.pathname.replace(/[^/]+$/, 'questions');">Sign In</button></div>"""
+CREATE_IN_NO_FORM = """<h2>Create your account</h2><div>
+<label for="em">Email</label><input id="em" type="email">
+<label for="em2">Retype Email</label><input id="em2" type="email">
+<label for="pw">Password</label><input id="pw" type="password">
+<label for="pw2">Verify New Password</label><input id="pw2" type="password">
+<button type="button" onclick="log('account')">Create Account</button></div>"""
+
+
+@pytest.mark.slow
+def test_a_sign_in_in_no_form_above_a_job_alerts_form_signs_in(srv, monkeypatch):
+    """The sixth review's probe: a sign-in drawn by a script, its boxes in no <form>, a job alerts sign-up's <form>
+    below it in the same frame ("Get new jobs by email", its "Submit"). Its password in no form: its email box is the
+    one in no form too, never the alerts form's, and it signs in."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    job = srv.add_job(url=ICIMS_HOST + "/jobs/2005/login", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        pressed = await _employer_around_icims(srv, {"login": _LOG_JS + SIGN_IN_IN_NO_FORM + _ALERTS_SUBMIT,
+                                                     "questions": ICIMS_QUESTIONS}, "", ICIMS_HOST)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=90, about=state(r))
+            return r, pressed
+        finally:
+            await applier.stop()
+
+    r, pressed = run(go())
+    said = [what for _, what in pressed]
+    assert said and said[0] == "signed-in:sam.rivera@example.com:true", (said, r.reason, r.log)
+    assert not any(w.startswith("alerts-") for w in said), (said, r.log)
+
+
+@pytest.mark.slow
+def test_a_create_account_in_no_form_below_a_job_alerts_form_leaves_its_box_alone(srv, monkeypatch):
+    """The sixth review's probe: a Create Account drawn by a script, its boxes in no <form> (Workday's "Retype Email"
+    as well), a job alerts sign-up's <form> above it in the same frame. Its email went into every email box there and its
+    details from the profile into every box, the alerts form's among them, whose change the typing alone sets off. Its
+    password boxes in no form: only the boxes in no form are its own, both its email boxes filled, the alerts box empty."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    job = srv.add_job(url=ICIMS_HOST + "/jobs/2005/login", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        pressed = await _employer_around_icims(srv, {"login": _LOG_JS + _ALERTS_SUBMIT + CREATE_IN_NO_FORM},
+                                               "", ICIMS_HOST)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=90, about=state(r))
+            return r, pressed, await r.page.evaluate("() => [em.value, em2.value, al.value]")
+        finally:
+            await applier.stop()
+
+    r, pressed, values = run(go())
+    said = [what for _, what in pressed]
+    assert not any(w.startswith("alerts-") for w in said), (said, r.log)
+    assert values == ["sam.rivera@example.com", "sam.rivera@example.com", ""], (values, r.reason, r.log)
+    assert any(line.startswith("filled the Create Account form") for line in r.log), r.log
+
+
+def test_a_reset_whose_email_box_is_in_two_frames_is_the_persons(srv, monkeypatch, job_apply_home):
+    """A reset whose email boxes are in two frames, neither the one its "Forgot your password?" was pressed in nor
+    headed as a reset's: not one the desk can tell, so it's the person's; nothing typed (the fourth review's stop; on the
+    code before it, the first frame's box got the email)."""
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 0)
+    manage_accounts(job_apply_home)
+    applier = Applier(srv)
+    url = ICIMS_HOST + "/jobs/2006/login"
+    frames = {"": url, "f1-": ICIMS_HOST + "/jobs/2006/alerts", "f2-": ICIMS_HOST + "/jobs/2006/signin",
+              "f3-": ICIMS_HOST + "/jobs/2006/other"}
+    sign_in = {"url": url, "title": "Sign In", "frame_urls": frames, "errors": [], "dialogs": [], "headings": [],
+               "fields": [{"id": "f2-e", "kind": "email", "label": "Email", "value": ""},
+                          {"id": "f2-p", "kind": "password", "label": "Password", "value": ""}],
+               "actions": [{"id": "f2-forgot", "text": "Forgot your password?"}]}
+    reset = {**sign_in, "headings": ["Reset your password"],
+             "fields": [{"id": "f1-e", "kind": "email", "label": "Email", "value": ""},
+                        {"id": "f3-e", "kind": "email", "label": "Email", "value": ""}],
+             "actions": [{"id": "f1-s", "text": "Send"}, {"id": "f3-s", "text": "Send"}]}
+    stub = _Stubbed(applier, monkeypatch, reset)
+
+    async def click(target):  # (the tools' click, which the reset's "Forgot your password?" is pressed with)
+        stub.clicked.append(target)
+        return {"clicked": True}
+
+    monkeypatch.setattr(srv, "click", click)
+    r = Run(1, "FSE", "Example Fab")
+    run(applier._ask_for_reset(r, sign_in, {}))
+    assert stub.filled == [] and stub.clicked == ["f2-forgot"], (stub.filled, stub.clicked, r.log)
+    assert "couldn't tell from another form's" in " ".join(r.log) + (r.reason or ""), (r.reason, r.log)
+
+
+def test_a_button_that_signs_them_up_is_never_an_account_step():
+    """_signs_them_up: "Email me jobs like this", "Subscribe", "Join our Talent Community", "Sign up for job alerts" are
+    never pressed for the person in an account's or a reset's steps; "Sign Up", "Send reset link", "Email me a reset
+    link" and "Create Account" are steps."""
+    for text in ("Email me jobs like this", "Subscribe", "Join our Talent Community", "Sign up for job alerts",
+                 "Get the newsletter", "Notify me of jobs like these", "Email me new jobs", "Send me jobs", "Text me jobs",
+                 "Send jobs to my email", "Save search and email me", "Set up an alert", "Create job alert",
+                 "Get notified", "Keep me updated", "Sign up for updates", "Send me texts", "Opt in"):
+        assert pipeline._signs_them_up({"text": text}), text
+        assert pipeline.Applier._account_button([{"id": "a", "text": text}], pipeline._RESET_ASK, full=False) is None
+    for text in ("Sign Up", "Send reset link", "Email me a reset link", "Create Account", "Continue", "Email me a code",
+                 "Send me a code", "Resend verification email", "Send me a reset link", "Email me the link",
+                 "Sign Up for an account", "Save Password"):
+        assert not pipeline._signs_them_up({"text": text}), text
+
+
+def _framed_account_page(fields: list[dict], actions: list[dict], **more) -> dict:
+    """An employer's page (made up) around a widget's frame (f1-) and iCIMS' (f2-), as the desk reads it."""
+    page = EMPLOYER_SITE + "/jobs/2002"
+    return {"url": page, "title": "Careers", "frame_urls": {"": page, "f1-": WIDGET_JOIN, "f2-": ICIMS_HOST + "/jobs/2002/login"},
+            "fields": fields, "actions": actions, "errors": [], "headings": ["Create your account"], "dialogs": [], **more}
+
+
+class _Stubbed:
+    """What a stubbed Applier pressed and filled (srv.browser.click, srv.fill_form, srv.browser.fill), its looks all
+    `page`."""
+
+    def __init__(self, applier, monkeypatch, page: dict) -> None:
+        self.clicked: list[str] = []
+        self.filled: list[str] = []
+        srv = applier.srv
+
+        async def look(text=True):
+            return page, "Create your account. Verify your account before you sign in."
+
+        async def click(field_id, allow_submit=False):
+            self.clicked.append(field_id)
+            return {"clicked": True}
+
+        async def fill_form(fields):
+            self.filled += [f["id"] for f in fields]
+            return {"ok": True, "results": [{"id": f["id"], "ok": True} for f in fields]}
+
+        async def fill(fields):
+            self.filled += [f["id"] for f in fields]
+            return [{"id": f["id"], "ok": True} for f in fields]
+
+        async def inspect_form(include_dropdown_options=True):
+            return page
+
+        async def nothing(*args, **kwargs):
+            return None
+
+        monkeypatch.setattr(applier, "_look", look)
+        monkeypatch.setattr(applier, "_wait_to_leave", nothing)
+        monkeypatch.setattr(srv.browser, "click", click)
+        monkeypatch.setattr(srv.browser, "fill", fill)
+        monkeypatch.setattr(srv, "fill_form", fill_form)
+        monkeypatch.setattr(srv, "inspect_form", inspect_form)
+
+
+def _security_page() -> dict:
+    """iCIMS' Create Account (f2-) asking a security question, a widget's frame (f1-) asking one of its own."""
+    def asked(frame: str, n: int) -> list[dict]:
+        return [{"id": f"{frame}q{n}", "kind": "select", "label": f"Security Question {n}", "options": ["Pet", "City"]},
+                {"id": f"{frame}a{n}", "kind": "text", "label": f"Security Answer {n}", "value": ""}]
+    return _framed_account_page(asked("f1-", 2) + asked("f2-", 1), [])
+
+
+def test_security_answers_go_only_into_the_job_systems_own_form(srv, monkeypatch, job_apply_home):
+    """An account form's security questions are put to the person on the desk's card, and their answers typed in, only
+    from the job system's own form (_account_view): never a box in another site's frame around it, where the person's
+    answers would go (the second review: _account_card and _fill_account_answers read every frame)."""
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    manage_accounts(job_apply_home)
+    applier = Applier(srv)
+    page = _security_page()
+    stub = _Stubbed(applier, monkeypatch, page)
+    r = Run(1, "FSE", "Example Fab")
+    card = run(applier._account_card(r, page))
+    assert sorted(f["id"] for f in card) == ["f2-a1", "f2-q1"], card
+    # answers for every box the page shows (as a card that asked them all would have them): only iCIMS' go in
+    r.account_answers = {pipeline.placed_key(f): "made-up" for f in page["fields"]}
+    run(applier._fill_account_answers(r, page))
+    assert sorted(stub.filled) == ["f2-a1", "f2-q1"], stub.filled
+
+
+def test_a_create_accounts_last_step_ticks_and_presses_only_its_own(srv, monkeypatch, job_apply_home):
+    """The rest of a Create Account on a page of its own (_finish_account), in iCIMS' frame, a widget's frame before it
+    with a terms box and a button of the same words: iCIMS' terms box ticked and its button pressed, never the
+    widget's (the second review: it ticked and pressed across every frame)."""
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    manage_accounts(job_apply_home)
+    applier = Applier(srv)
+    terms = {"kind": "checkbox", "label": "I agree to the Terms of Use", "required": True, "value": False}
+    page = _framed_account_page([{**terms, "id": "f1-t"}, {**terms, "id": "f2-t"}],
+                                [{"id": "f1-b", "text": "Create account"}, {"id": "f2-b", "text": "Create account"}])
+    stub = _Stubbed(applier, monkeypatch, page)
+    r = Run(1, "FSE", "Example Fab")
+    assert run(applier._finish_account(r, page, page["actions"][1])) is True
+    assert (stub.filled, stub.clicked) == (["f2-t"], ["f2-b"]), (stub.filled, stub.clicked, r.log)
+
+
+def test_a_verifications_resend_is_pressed_only_in_the_job_systems_own_form(srv, monkeypatch, job_apply_home):
+    """A sign-in refused for want of the account's verification, with the inbox watched: its "Resend verification
+    email" pressed once, iCIMS' own, never one of the same words in another site's frame (the second review)."""
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    manage_accounts(job_apply_home)
+    watched_inbox(monkeypatch)
+    applier = Applier(srv)
+    page = _framed_account_page([], [{"id": "f1-r", "text": "Resend verification email"},
+                                     {"id": "f2-r", "text": "Resend verification email"}],
+                                errors=["Verify your account before you sign in."])
+    stub = _Stubbed(applier, monkeypatch, page)
+    r = Run(1, "FSE", "Example Fab")
+    run(applier._await_verify_email(r, page, "Verify your account before you sign in."))
+    assert stub.clicked == ["f2-r"], (stub.clicked, r.log)
+
+
+def test_a_statement_that_opens_with_no_button_to_read_is_said_for_what_it_is(srv, monkeypatch, job_apply_home):
+    """A Create Account's privacy statement whose press opened a dialog the desk can't read as the job system's (no
+    button with words, or another site's): the log says something opened that it can't accept, never that nothing
+    opened (the second review)."""
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    monkeypatch.setattr(pipeline, "ACCOUNT_STEP_WAIT", 0)
+    manage_accounts(job_apply_home)
+    applier = Applier(srv)
+    link = {"id": "f2-s", "text": "Read and accept the data privacy statement.", "in_account_form": True}
+    page = _framed_account_page([], [link], dialogs=[{"heading": "Data Privacy Statement", "text": "...", "buttons": []}])
+    _Stubbed(applier, monkeypatch, page)
+    r = Run(1, "FSE", "Example Fab")
+    assert run(applier._accept_statement(r, page, link)) is False
+    assert any("something opened over the page that I can't accept for you" in line for line in r.log), r.log
+    assert not any("no statement opened" in line for line in r.log), r.log
+
+
+def test_security_questions_in_another_sites_frame_are_not_the_accounts(srv, monkeypatch, job_apply_home):
+    """iCIMS' own security answers in (read back "(set)"), a widget's frame around it asking a question of its own,
+    empty: the account's last step is pressed, as its own questions are answered (_security_asked and
+    _security_answered read the account's own form, the third review: counted across every frame, the widget's empty
+    question kept the desk asking again for answers it had)."""
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    manage_accounts(job_apply_home)
+    applier = Applier(srv)
+
+    def asked(frame: str, n: int, value: str = "") -> list[dict]:
+        return [{"id": f"{frame}q{n}", "kind": "select", "label": f"Security Question {n}", "options": ["Pet", "City"],
+                 "value": value},
+                {"id": f"{frame}a{n}", "kind": "text", "label": f"Security Answer {n}", "value": value}]
+
+    page = _framed_account_page(asked("f1-", 2) + asked("f2-", 1, "(set)") + [
+        {"id": "f2-t", "kind": "checkbox", "label": "I agree to the Terms of Use", "required": True, "value": False}],
+        [{"id": "f2-b", "text": "Create account"}])
+    assert pipeline._security_asked(page) and pipeline._security_answered(page)
+    stub = _Stubbed(applier, monkeypatch, page)
+    r = Run(1, "FSE", "Example Fab")
+    assert run(applier._finish_account(r, page, page["actions"][0])) is True, (r.reason, r.log)
+    assert (stub.filled, stub.clicked) == (["f2-t"], ["f2-b"]), (stub.filled, stub.clicked)
+
+
+def test_a_create_accounts_last_step_is_found_in_its_own_frame(monkeypatch):
+    """The rest of a Create Account (_finish_button): iCIMS' "Create account" in its frame, never a widget's "Sign Up"
+    in a frame before it (the third review: read over every frame, the widget's button came first)."""
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    page = _framed_account_page(
+        [{"id": "f1-e", "kind": "email", "label": "Email", "value": ""},
+         {"id": "f2-p", "kind": "text", "label": "Phone", "value": ""}],
+        [{"id": "f1-s", "text": "Sign Up"}, {"id": "f2-c", "text": "Create account"}],
+        headings=["Almost there! Create your account"])
+    assert pipeline._finish_button(page, "Almost there! Tell us a little more.")["id"] == "f2-c"
+
+
+def test_an_unframed_reset_presses_the_button_it_pressed_before(srv, monkeypatch, job_apply_home):
+    """A reset's page of one frame: its buttons in the page's own order, as before the frames' rule (the third review:
+    _own_frame_first put a form's submit first, which changed what an unframed page had pressed)."""
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    manage_accounts(job_apply_home)
+    applier = Applier(srv)
+    url = ICIMS_HOST + "/jobs/2002/new-password"
+    page = {"url": url, "title": "Set a new password", "frame_urls": {"": url}, "errors": [], "dialogs": [],
+            "headings": ["Set a new password"],
+            "fields": [{"id": "n1", "kind": "password", "label": "New Password", "value": ""},
+                       {"id": "n2", "kind": "password", "label": "Confirm New Password", "value": ""}],
+            "actions": [{"id": "b1", "text": "Update password"}, {"id": "b2", "text": "Submit", "form_submit": True}]}
+    stub = _Stubbed(applier, monkeypatch, page)
+
+    async def fill_secret(field_id, name):
+        return {"ok": True}
+
+    monkeypatch.setattr(srv, "fill_secret", fill_secret)
+    r = Run(1, "FSE", "Example Fab")
+    run(applier._set_new_password(r, page, "Set a new password for your account."))
+    assert stub.clicked == ["b1"], (stub.clicked, r.log)
+
+
+def test_the_saved_passwords_place_is_where_a_password_is_saved(monkeypatch):
+    """_password_place: the page's own system's password where one is saved for it, else the first frame's whose system
+    has one saved, not merely the first frame on a system (a UKG Pro frame before iCIMS', only iCIMS' password saved).
+    With none saved, the first system's, as before (and nothing goes in)."""
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    monkeypatch.delenv("JOB_APPLY_SECRET_UKG_PASSWORD", raising=False)
+    monkeypatch.delenv("JOB_APPLY_SECRET_WORKDAY_PASSWORD", raising=False)
+    icims, ukg = ICIMS_HOST + "/jobs/2002/login", "https://recruiting.ultipro.com/EXA1000/JobBoard/x"
+    employer, workday = "https://careers.examplefab.example/jobs/2002", "https://examplefab.wd5.myworkdayjobs.com/x"
+    for page in (employer, workday):
+        assert pipeline._password_place({"url": page, "frame_urls": {"": page, "f1-": ukg, "f2-": icims}}) == (
+            "icims_password", {"f2-"}), page
+    assert pipeline._password_place({"url": employer, "frame_urls": {"f1-": ukg}}) == ("ukg_password", {"f1-"})
+    monkeypatch.setenv("JOB_APPLY_SECRET_WORKDAY_PASSWORD", "not-a-real-password-either")
+    assert pipeline._password_place({"url": workday, "frame_urls": {"": workday, "f2-": icims}}) == (
+        "workday_password", {""})
+
+
+def test_an_emailed_code_goes_only_into_this_jobs_own_frames(srv):
+    """An emailed code's boxes (Applier._code_boxes): the tab's own, and a frame's on this job's own place (the iCIMS
+    frame on the page it paused on, a frame from the employer's own site), never a frame from another site."""
+    job = srv.add_job(url="https://careers.examplefab.example/jobs/2002", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+    r = pipeline.Run(job["id"], "FSE", "Example Fab", url=job["url"], paused_host="careers.examplefab.example")
+    box = {"kind": "text", "label": "Verification code"}
+    data = {"url": job["url"], "fields": [{**box, "id": i} for i in ("c1", "f1-c2", "f2-c3", "f3-c4", "f4-c5", "f5-c6")],
+            "frame_urls": {"": job["url"], "f1-": ICIMS_HOST + "/jobs/2002/login", "f2-": "https://apply.examplefab.example/x",
+                           "f3-": "https://widgets.examplead.example/code", "f4-": ICIMS_HOST + ".evil.example/code"}}
+    assert [f["id"] for f in applier._code_boxes(r, data)] == ["c1", "f1-c2", "f2-c3"]
 
 
 def test_skip_closes_the_jobs_tabs_both_the_posting_and_the_application(srv, monkeypatch):

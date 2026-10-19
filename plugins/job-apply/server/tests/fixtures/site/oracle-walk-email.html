@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Field Service Technician - Apply</title></head>
+<body>
+<!-- Oracle Recruiting Cloud's way into an application (<job>/apply/email), as onsemi's and Texas Instruments' were
+     live: no password, only the email, and a box agreeing to the site's terms and conditions (its link opens them).
+     Next with both sends a code to that address (here: the fake server's inbox, /__fake/mail, from
+     oraclecloud.com, subject "<employer> Confirm Your Identity", as Oracle mails every employer's) and shows "Confirm
+     Your Identity": a box per digit, Verify, and Send New Code. The right code goes on to the application's first
+     section (<job>/apply/section/1); a wrong one says so. Next without the terms ticked says "You need to accept the
+     terms and conditions." and sends nothing. What happened is kept for the tab (sessionStorage's orc.* keys).
+     Made-up employer. -->
+<h1>Field Service Technician</h1>
+<div id="start">
+  <h2>Let's Get Started</h2>
+  <p>Enter your email address to apply. You don't need an account: we'll send you a code to confirm it's you.</p>
+  <form id="email-form" novalidate>
+    <label for="email">Email Address</label>
+    <input id="email" type="email" aria-required="true" autocomplete="email">
+    <div class="legal">
+      <input type="checkbox" id="legal" aria-required="true">
+      <label for="legal">I agree with the <a href="#" id="terms">terms and conditions</a>.</label>
+    </div>
+    <div id="error" role="alert"></div>
+    <button type="submit">Next</button>
+  </form>
+</div>
+<div id="pin" hidden>
+  <h2>Confirm Your Identity</h2>
+  <p id="sent"></p>
+  <form id="pin-form" novalidate>
+    <span id="pin-label">Verification Code</span>
+    <fieldset aria-labelledby="pin-label">
+      <input class="pin" inputmode="numeric" maxlength="1" aria-required="true" aria-label="Enter verification code digit 1 of six.">
+      <input class="pin" inputmode="numeric" maxlength="1" aria-required="true" aria-label="Enter verification code digit 2 of six.">
+      <input class="pin" inputmode="numeric" maxlength="1" aria-required="true" aria-label="Enter verification code digit 3 of six.">
+      <input class="pin" inputmode="numeric" maxlength="1" aria-required="true" aria-label="Enter verification code digit 4 of six.">
+      <input class="pin" inputmode="numeric" maxlength="1" aria-required="true" aria-label="Enter verification code digit 5 of six.">
+      <input class="pin" inputmode="numeric" maxlength="1" aria-required="true" aria-label="Enter verification code digit 6 of six.">
+    </fieldset>
+    <div id="pin-error" role="alert"></div>
+    <button type="submit">Verify</button>
+    <button type="button" id="resend">Send New Code</button>
+  </form>
+</div>
+<script>
+  const fake = (what, data) => fetch('/__fake/' + what, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                         body: JSON.stringify(data || {})});
+  const $ = (id) => document.getElementById(id);
+  const pins = [...document.querySelectorAll('.pin')];
+  pins.forEach((el) => el.addEventListener('input', () => { el.value = el.value.replace(/\D/g, '').slice(-1); }));
+  function showPin() {
+    $('start').hidden = true;
+    $('pin').hidden = false;
+    const to = sessionStorage.getItem('orc.email') || '';
+    $('sent').textContent = 'We sent a verification code to ' + to.replace(/^(.).*(@.*)$/, '$1***$2')
+      + '. Enter it below to continue.';
+  }
+  async function send() {
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    sessionStorage.setItem('orc.code', code);
+    sessionStorage.setItem('orc.sent', String(Number(sessionStorage.getItem('orc.sent') || 0) + 1));
+    await fake('mail', {sender: 'no-reply@oraclecloud.com', subject: 'Example Fab Confirm Your Identity',
+                        to: sessionStorage.getItem('orc.email'), kind: 'code', value: code});
+  }
+  if (sessionStorage.getItem('orc.code')) showPin();
+  $('email-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = $('email').value.trim();
+    if (!/^\S+@\S+\.\S+$/.test(email)) { $('error').textContent = 'Enter a valid email address.'; return; }
+    if (!$('legal').checked) { $('error').textContent = 'You need to accept the terms and conditions.'; return; }
+    sessionStorage.setItem('orc.email', email);
+    sessionStorage.setItem('orc.terms', 'accepted');
+    await send();
+    showPin();
+  });
+  $('resend').addEventListener('click', send);
+  $('pin-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (pins.map((el) => el.value).join('') !== sessionStorage.getItem('orc.code')) {
+      $('pin-error').textContent = 'The verification code is incorrect. Try again.';
+      return;
+    }
+    sessionStorage.setItem('orc.verified', 'yes');
+    location.href = location.pathname.replace(/\/email$/, '/section/1');
+  });
+</script>
+</body>
+</html>

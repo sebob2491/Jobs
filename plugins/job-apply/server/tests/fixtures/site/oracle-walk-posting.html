@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Field Service Technician - Careers</title>
+<style>
+  #cookie-consent { position: fixed; left: 0; right: 0; bottom: 0; background: #fff; border-top: 1px solid #888;
+                    padding: 16px; z-index: 10; }
+</style>
+</head>
+<body>
+<!-- An Oracle Recruiting Cloud posting (Candidate Experience, /hcmUI/CandidateExperience/en/sites/<site>/job/<id>),
+     as onsemi's and Texas Instruments' were live: the job's details, "Apply Now", and the site's cookie consent at the
+     bottom ("Accept All" or "Decline Optional Cookies"). Served by test_site_walks.py's fake_ats at an Oracle pod's
+     own address. Its cookie choice is reported to the fake server (/__fake/cookies), and Apply Now goes on to the
+     application's email step (<job>/apply/email). Made-up employer and job. -->
+<header><a href="#">Example Fab Careers</a> <a href="#">Sign In</a></header>
+<main>
+  <h1>Field Service Technician</h1>
+  <p>Chandler, AZ, United States · Posting Date 10/01/2026 · Job Identification 1001</p>
+  <h2>Job Description</h2>
+  <p>Install, maintain and repair wafer processing equipment at customer sites.</p>
+  <h2>Qualifications</h2>
+  <p>Two years of semiconductor equipment experience.</p>
+  <button type="button" id="apply" class="button apply-button">Apply Now</button>
+</main>
+<div id="cookie-consent" role="dialog" aria-label="Cookie Consent">
+  <p>We use cookies to give you the best experience on our careers site. Some are needed for the site to work;
+     others are optional.</p>
+  <button type="button" id="accept">Accept All</button>
+  <button type="button" id="decline">Decline Optional Cookies</button>
+</div>
+<script>
+  const fake = (what, data) => fetch('/__fake/' + what, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                         body: JSON.stringify(data || {})});
+  if (sessionStorage.getItem('orc.cookies')) document.getElementById('cookie-consent').remove();
+  for (const [id, choice] of [['accept', 'accepted'], ['decline', 'declined']]) {
+    document.getElementById(id).addEventListener('click', async () => {
+      sessionStorage.setItem('orc.cookies', choice);
+      document.getElementById('cookie-consent').remove();
+      await fake('cookies', {choice});
+    });
+  }
+  document.getElementById('apply').addEventListener('click', () => {
+    location.href = location.pathname.replace(/\/$/, '') + '/apply/email';
+  });
+</script>
+</body>
+</html>

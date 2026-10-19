@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Job Application for Field Service Technician at Northwind Litho</title>
+<style>
+  .select-shell { position: relative; width: 420px; }
+  .select__control { border: 1px solid #999; min-height: 32px; display: flex; align-items: center; padding: 0 6px; }
+  .select__menu { position: absolute; left: 0; right: 0; background: #fff; border: 1px solid #999; z-index: 5; }
+  .select__option--is-focused { background: #def; }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .field-wrapper { margin: 12px 0; }
+</style>
+</head>
+<body>
+<!-- Greenhouse's application form, one page (job-boards.greenhouse.io/embed/job_app?for=<board>&token=<job id>: the
+     desk opens it for a job-boards posting, ats.greenhouse_form_url; its `token` is the job's id, which a step's
+     address keeps), with markup after ASM's (live: tests/fixtures/live/pipeline-asm-asm-america.frame-1.html): text
+     boxes, the resume's hidden file input under "Attach", and lists drawn as react-select's are (a role=combobox input
+     in a .select__control; the menu, a role=listbox of role=option, opens on a press and filters as words are typed;
+     a pick shows in .select__single-value and empties the input). "Location (City)" searches as Greenhouse's does:
+     its places come a moment after the typing, and Chandler is in more than one. The questions, the voluntary
+     self-identification, a consent to the privacy notice and terms (required: agreed only as accept_notices allows)
+     and a marketing opt-in (never the person's to have chosen for them), then "Submit application", the form's final
+     button. Submit, pressed, is reported to the fake server (/__fake/submit, with what's missing). Made-up employer,
+     job and values. -->
+<main>
+  <h1 class="section-header">Field Service Technician</h1>
+  <p>Chandler, Arizona</p>
+  <div class="job__description"><p>Install, maintain and repair wafer processing equipment at customer sites.</p></div>
+  <form id="application-form" novalidate>
+    <h2>Apply for this job</h2>
+    <div class="field-wrapper"><label for="first_name">First Name<span aria-hidden="true">*</span></label>
+      <input id="first_name" aria-required="true" autocomplete="given-name"></div>
+    <div class="field-wrapper"><label for="last_name">Last Name<span aria-hidden="true">*</span></label>
+      <input id="last_name" aria-required="true" autocomplete="family-name"></div>
+    <div class="field-wrapper"><label for="email">Email<span aria-hidden="true">*</span></label>
+      <input id="email" type="text" aria-required="true" autocomplete="email"></div>
+    <div class="field-wrapper" data-select="country" data-label="Country" data-required="1"
+         data-options="Canada|Mexico|United States"></div>
+    <div class="field-wrapper"><label for="phone">Phone<span aria-hidden="true">*</span></label>
+      <input id="phone" type="tel" aria-required="true"></div>
+    <div class="field-wrapper" data-select="candidate-location" data-label="Location (City)" data-required="1"
+         data-search="Chandler, Arizona, United States|Chandler, Quebec, Canada|Chandler, Texas, United States|Phoenix, Arizona, United States"></div>
+    <div class="field-wrapper">
+      <div aria-labelledby="upload-label-resume" aria-required="true" class="file-upload" role="group">
+        <div class="label upload-label" id="upload-label-resume">Resume/CV<span class="required">*</span></div>
+        <button class="btn btn--rectangle" type="button" id="attach">Attach</button>
+        <label class="visually-hidden" for="resume">Attach</label>
+        <input accept=".pdf,.doc,.docx,.txt,.rtf" class="visually-hidden" id="resume" type="file">
+        <span id="resume-name"></span>
+      </div>
+    </div>
+    <div class="field-wrapper"><label for="linkedin">LinkedIn Profile</label><input id="linkedin" type="text"></div>
+    <div class="application--questions">
+      <div class="field-wrapper" data-select="question_authorized" data-label="Are you legally authorized to work in this country?"
+           data-required="1" data-options="I am authorized to work in this country for any employer|I am authorized to work in this country for my present employer only|I require sponsorship to work in this country"></div>
+      <div class="field-wrapper" data-select="question_sponsorship" data-label="Will you now or in the future require visa sponsorship for employment?"
+           data-required="1" data-options="Yes|No"></div>
+      <div class="field-wrapper" data-select="question_before" data-label="Have you ever been employed with Northwind Litho before?"
+           data-required="1" data-options="Yes|No"></div>
+    </div>
+    <h2>Voluntary Self-Identification</h2>
+    <div class="field-wrapper" data-select="gender" data-label="How would you describe your gender?"
+         data-options="Male|Female|Decline to self-identify"></div>
+    <div class="field-wrapper" data-select="veteran_status" data-label="Veteran Status"
+         data-options="I am not a protected veteran|I identify as one or more of the classifications of a protected veteran|I don't wish to answer"></div>
+    <div class="field-wrapper" data-select="question_consent" data-label="I have read and agree to the Privacy notice and Terms of use."
+         data-required="1" data-options="Yes"></div>
+    <div class="field-wrapper" data-select="question_marketing" data-label="I opt-in to receive occasional messages and emails from Northwind Litho about career opportunities."
+         data-options="Yes|No"></div>
+    <div id="error" role="alert"></div>
+    <div class="application--submit"><button class="btn btn--rectangle" type="submit">Submit application</button></div>
+  </form>
+</main>
+<script>
+  const fake = (what, data) => fetch('/__fake/' + what, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                         body: JSON.stringify(data || {})});
+  const $ = (id) => document.getElementById(id);
+  const picks = {};
+  // react-select's lists
+  for (const wrap of document.querySelectorAll('[data-select]')) {
+    const id = wrap.dataset.select, label = wrap.dataset.label, required = !!wrap.dataset.required;
+    const fixed = wrap.dataset.options ? wrap.dataset.options.split('|') : null;
+    const places = wrap.dataset.search ? wrap.dataset.search.split('|') : null;
+    wrap.innerHTML = '<div class="select"><label class="label select__label" for="' + id + '" id="' + id + '-label">' + label
+      + (required ? '<span aria-hidden="true">*</span>' : '') + '</label><div class="select-shell"><div class="select__control">'
+      + '<div class="select__value-container"><div class="select__single-value" hidden></div><div class="select__input-container">'
+      + '<input aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="' + id + '-label"'
+      + (required ? ' aria-required="true"' : '') + ' autocomplete="off" class="select__input" id="' + id + '" role="combobox" type="text">'
+      + '</div></div></div><div class="select__menu" hidden><div class="select__menu-list" role="listbox" id="react-select-' + id
+      + '-listbox"></div></div>' + (required ? '<input aria-hidden="true" class="requiredInput" tabindex="-1">' : '')
+      + '</div></div>';
+    const input = wrap.querySelector('input.select__input'), menu = wrap.querySelector('.select__menu');
+    const listbox = wrap.querySelector('[role="listbox"]'), shown = wrap.querySelector('.select__single-value');
+    let searching = 0;
+    const draw = (items) => {
+      listbox.innerHTML = items.length ? items.map((o, i) => '<div class="select__option' + (i ? '' : ' select__option--is-focused')
+        + '" role="option" aria-selected="false" id="react-select-' + id + '-option-' + i + '">' + o + '</div>').join('')
+        : '<div class="select__menu-notice">No options</div>';
+      menu.hidden = false;
+      input.setAttribute('aria-expanded', 'true');
+    };
+    const open = () => {
+      const typed = input.value.trim().toLowerCase();
+      if (fixed) return draw(fixed.filter((o) => o.toLowerCase().includes(typed)));
+      if (typed.length < 2) return draw([]);
+      const mine = ++searching;
+      setTimeout(() => { if (mine === searching) draw(places.filter((o) => o.toLowerCase().includes(typed))); }, 400);
+    };
+    const close = () => { menu.hidden = true; input.setAttribute('aria-expanded', 'false'); };
+    const pick = (value) => {
+      picks[id] = value;
+      shown.textContent = value;
+      shown.hidden = false;
+      input.value = '';
+      const hidden = wrap.querySelector('.requiredInput');
+      if (hidden) hidden.value = value;
+      close();
+    };
+    wrap.querySelector('.select__control').addEventListener('mousedown', (e) => {
+      if (e.target !== input) e.preventDefault();
+      input.focus();
+      open();
+    });
+    input.addEventListener('focus', open);
+    input.addEventListener('input', () => { shown.hidden = !!input.value || !picks[id]; open(); });
+    input.addEventListener('blur', () => setTimeout(close, 150));
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const first = listbox.querySelector('[role="option"]');
+        if (first && !menu.hidden) pick(first.textContent);
+      }
+    });
+    listbox.addEventListener('mousedown', (e) => {
+      const option = e.target.closest('[role="option"]');
+      if (option) { e.preventDefault(); pick(option.textContent); }
+    });
+  }
+  $('attach').addEventListener('click', () => $('resume').click());
+  $('resume').addEventListener('change', () => { $('resume-name').textContent = $('resume').files[0] ? $('resume').files[0].name : ''; });
+  function collect() {
+    const out = {...picks};
+    for (const id of ['first_name', 'last_name', 'email', 'phone', 'linkedin']) out[id] = $(id).value;
+    out.resume = $('resume').files[0] ? $('resume').files[0].name : '';
+    return out;
+  }
+  window.answers = collect;
+  $('application-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const now = collect();
+    const missing = ['first_name', 'last_name', 'email', 'phone', 'resume'].filter((k) => !now[k])
+      .concat([...document.querySelectorAll('[data-select][data-required]')].map((w) => w.dataset.select).filter((k) => !picks[k]));
+    await fake('submit', {missing, answers: now});
+    if (missing.length) { $('error').textContent = 'Please complete the required fields.'; return; }
+    document.body.innerHTML = '<h1>Thank you for applying.</h1><p>Your application has been received.</p>';
+  });
+</script>
+</body>
+</html>

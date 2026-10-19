@@ -901,9 +901,11 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
     async def _extract(self, page: Page) -> dict[str, Any]:
         """Every frame's fields, buttons, errors, headings and dialogs, together; and each frame's own
         headings under `frame_headings`, by the prefix of its ids ("" for the page itself, "f2-"):
-        what heads a button is in its own frame, not in the careers page around an iCIMS frame."""
+        what heads a button is in its own frame, not in the careers page around an iCIMS frame. Each
+        frame's own address under `frame_urls`, by the same prefix: a saved password goes only into a
+        frame on its own system (the pipeline's _password_place)."""
         result: dict[str, Any] = {"fields": [], "actions": [], "errors": [], "headings": [], "dialogs": [],
-                                  "frame_headings": {}}
+                                  "frame_headings": {}, "frame_urls": {}}
         for frame in page.frames:
             if frame.is_detached():
                 continue
@@ -935,6 +937,7 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
             if data.get("empty_frame") and frame is page.main_frame:
                 result["empty_frame"] = True  # (Workday's application frame with nothing in it yet: formjs's unmounted)
             result["frame_headings"][prefix] = list(data.get("headings", []))
+            result["frame_urls"][prefix] = frame.url
         self._fields = {f["id"]: f for f in result["fields"]}
         self._actions = {a["id"]: a for a in result["actions"]}
         return result
@@ -1084,6 +1087,7 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
         in on jobs left waiting for the person this way, while Claude may be using the tools."""
         async with self._lock:
             data: dict[str, Any] = {"fields": [], "actions": [], "errors": [], "headings": []}
+            urls: dict[str, str] = {}  # (each frame's own address, by its ids' prefix: as _extract's frame_urls)
             parts, challenge = [], False
             for frame in tab.frames:
                 if frame.is_detached() or frame is not tab.main_frame and (not frame.url or frame.url == "about:blank"
@@ -1100,10 +1104,13 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
                     found = {**found, "errors": []}  # (as in _extract: an embed's errors aren't the form's)
                 for key in data:
                     data[key].extend(found.get(key, []))
+                if form:
+                    urls[self._frame_prefix(frame, tab)] = frame.url
                 if text:
                     parts.append(text)
             loading = await tab.evaluate("() => document.readyState !== 'complete'")
-            return ({"url": tab.url, "title": await tab.title(), **data, "challenge": challenge, "loading": loading},
+            return ({"url": tab.url, "title": await tab.title(), **data, "frame_urls": urls, "challenge": challenge,
+                     "loading": loading},
                     "\n\n".join(parts)[:max_chars])
 
     async def visit(self, url: str) -> str:

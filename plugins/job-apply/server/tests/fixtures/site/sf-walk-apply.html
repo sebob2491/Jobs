@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Career Opportunities: Field Service Technician (4004)</title></head>
+<body>
+<!-- A SuccessFactors application on its older career site once the account is made (where sf-create-account.html
+     goes on to, "step1.html" in its folder), one page as APS's and Amkor's were live (the profile's fields as
+     tests/fixtures/live/pipeline-amkor-technology.html has them, "*First Name:" and the like): the Candidate Profile
+     (names, contact, address, Country and State lists), the resume, the Job-Specific Information (Yes/No radios,
+     one question only the person can answer), the voluntary Gender list, and "Apply": the button that sends it all,
+     never the desk's to press (SuccessFactors' final button reads "Apply"). Apply, pressed, is reported to the fake
+     server (/__fake/submit). Without the account made in this tab (sessionStorage's sf.created), the page says to
+     sign in. Made-up employer and values. -->
+<h1>Career Opportunities: Field Service Technician (4004)</h1>
+<div id="signed-out" hidden><p>Your session has expired. Please sign in again.</p></div>
+<form id="application" novalidate hidden>
+  <h2>Candidate Profile</h2>
+  <label for="firstName">*First Name:</label><input id="firstName" aria-required="true">
+  <label for="lastName">*Last Name:</label><input id="lastName" aria-required="true">
+  <label for="email">*Email:</label><input id="email" aria-required="true">
+  <label for="phone">*Phone:</label><input id="phone" aria-required="true">
+  <label for="address">*Address 1</label><input id="address" aria-required="true">
+  <label for="city">*City:</label><input id="city" aria-required="true">
+  <label for="state">*State:</label>
+  <select id="state" aria-required="true"><option value="">No Selection</option><option>Arizona</option>
+    <option>California</option><option>New Mexico</option><option>Texas</option></select>
+  <label for="zip">*Zip Code:</label><input id="zip" aria-required="true">
+  <label for="country">*Country:</label>
+  <select id="country" aria-required="true"><option value="">No Selection</option><option>Canada</option>
+    <option>Mexico</option><option>United States</option></select>
+  <label for="resume">*Resume:</label><input id="resume" type="file" aria-required="true" accept=".pdf,.doc,.docx">
+  <h2>Job-Specific Information</h2>
+  <fieldset id="authorized"><legend>*Are you legally authorized to work in the United States?</legend>
+    <label><input type="radio" name="authorized" value="Yes">Yes</label>
+    <label><input type="radio" name="authorized" value="No">No</label></fieldset>
+  <fieldset id="sponsorship"><legend>*Will you now or in the future require sponsorship for employment visa status?</legend>
+    <label><input type="radio" name="sponsorship" value="Yes">Yes</label>
+    <label><input type="radio" name="sponsorship" value="No">No</label></fieldset>
+  <fieldset id="cleanroom"><legend>*Are you willing to work in a clean room environment?</legend>
+    <label><input type="radio" name="cleanroom" value="Yes">Yes</label>
+    <label><input type="radio" name="cleanroom" value="No">No</label></fieldset>
+  <label for="pumps">*How many years of experience do you have servicing dry vacuum pumps?</label>
+  <input id="pumps" aria-required="true">
+  <h2>Voluntary Self-Identification</h2>
+  <label for="gender">Gender:</label>
+  <select id="gender"><option value="">No Selection</option><option>Female</option><option>Male</option>
+    <option>Decline to self-identify</option></select>
+  <div id="err" role="alert"></div>
+  <button type="button" id="apply">Apply</button>
+</form>
+<script>
+  const fake = (what, data) => fetch('/__fake/' + what, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                         body: JSON.stringify(data || {})});
+  const $ = (id) => document.getElementById(id);
+  const made = Number(JSON.parse(sessionStorage.getItem('sf.created') || '0')) > 0;
+  $(made ? 'application' : 'signed-out').hidden = false;
+  function collect() {
+    const out = {};
+    for (const el of $('application').querySelectorAll('input:not([type=radio]), select')) {
+      out[el.id] = el.type === 'file' ? (el.files[0] ? el.files[0].name : '') : el.value;
+    }
+    for (const set of $('application').querySelectorAll('fieldset')) {
+      const on = set.querySelector('input:checked');
+      out[set.id] = on ? on.value : '';
+    }
+    return out;
+  }
+  window.answers = collect;
+  $('apply').addEventListener('click', async () => {
+    const now = collect();
+    const missing = Object.keys(now).filter((k) => k !== 'gender' && !now[k]);
+    await fake('submit', {missing, answers: now});
+    if (missing.length) { $('err').textContent = 'Please complete all required fields and re-submit.'; return; }
+    document.body.innerHTML = '<h1>Thank you for applying!</h1>';
+  });
+</script>
+</body>
+</html>

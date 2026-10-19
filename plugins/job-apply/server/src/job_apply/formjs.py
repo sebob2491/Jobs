@@ -767,6 +767,7 @@ EXTRACT_JS = r"""
   // referral sources or countries used to fill all 60 places before "Submit
   // application", so it was never seen. Submit and next-step buttons always make it in.
   const actions = [];
+  const actionEls = new Map();  // each button's element, for the form pass
   const STEP = /^(next|continue|save and continue|review|submit)/i;
   const COOKIE_BOX = '[id*="cookie" i], [class*="cookie" i], [aria-label*="cookie" i], [id*="onetrust" i], '
     + '[class*="onetrust" i], [id*="cybot" i], [id*="gdpr" i], [id*="truste" i]';
@@ -881,6 +882,7 @@ EXTRACT_JS = r"""
     const target = anchor && document.getElementById(anchor[1]);
     if (target && target.getClientRects().length > 0) a.same_page = true;
     actions.push(a);
+    actionEls.set(a, el);
   }
   // A box in such a sign-up (a talent community's email and consent beside a posting) isn't the
   // application's either: not one in a form whose own button goes on with an application
@@ -896,6 +898,21 @@ EXTRACT_JS = r"""
       formAside.set(form, !own.some((t) => APPLYISH.test(t.trim())) && sideBox(el));
     }
     if (form ? formAside.get(form) : sideBox(el)) f.aside = true;
+  }
+  // Which <form> each box and button is in: its index among this document's forms, left out for one in none. What
+  // ties an email box to its own form's button, never to another form's beside it in the same frame (a job alerts
+  // sign-up above a password reset)
+  const forms = [...document.querySelectorAll('form')];
+  const formIndex = (el) => {
+    const form = formOf(el) || el.closest('form');
+    return form ? forms.indexOf(form) : -1;
+  };
+  for (const [items, els] of [[fields, fieldEls], [actions, actionEls]]) {
+    for (const item of items) {
+      const el = els.get(item);
+      const at = el ? formIndex(el) : -1;
+      if (at >= 0) item.form = at;
+    }
   }
 
   const errors = [];

@@ -777,10 +777,144 @@ def _phone_code(prof: Profile, job: dict) -> str | None:
     return f"{canonical_country(country)} ({code})" if country else code
 
 
+# The words an employer's name may end in that don't make it another employer's ("Intel Corporation" is Intel's)
+_LEGAL_ENDINGS = {"inc", "incorporated", "llc", "ltd", "limited", "corp", "corporation", "co", "company", "group",
+                  "holdings", "plc", "lp", "llp"}
+
+
+def _employer_key(name: str) -> str:
+    """An employer's name without what doesn't tell it from another: case, punctuation ("&" is "and": norm), a leading
+    "The" and the legal words it ends in ("The Example Fab Group, Inc." is "example fab")."""
+    words = norm(name).split()
+    if len(words) > 1 and words[0] == "the":
+        words = words[1:]
+    while len(words) > 1 and (words[-1] in _LEGAL_ENDINGS or words[-1] == "and"):  # ("Wells Fargo & Company")
+        words.pop()
+    return " ".join(words)
+
+
+# First words many employers' names share, which don't say two of them may be one: a state's ("Arizona State
+# University", "Arizona Public Service"), and the like ("American", "United", "National", "First", "General")
+_COMMON_FIRST = {name.split()[0] for name in _STATE_BY_NAME} | {
+    "the", "american", "america", "united", "national", "first", "general", "global", "international", "advanced",
+    "applied", "pacific", "western", "eastern", "northern", "southern", "central", "great", "new", "us", "usa", "city",
+    "county", "state", "university", "community", "citizens", "premier", "standard", "universal", "allied", "midwest"
+} | set(_STATE_BY_NAME)
+# Second words that, after a common first one, still name no employer of their own: "United States Postal Service" and
+# "United States Air Force", "National Park Service" and "National Park Foundation" are two
+_GENERIC_SECOND = {"department", "public", "board", "federal", "health", "states", "community", "school", "schools",
+                   "college", "medical", "park", "life", "times"}
+# the small words a name's initials may leave out ("University of Arizona": ua)
+_SMALL_WORDS = {"of", "and", "the", "for", "at", "de"}
+
+
+def _short_forms(name: str) -> set[str]:
+    """What a name of several words may be shortened to: its initials, of the whole and of its first words, with its
+    small words and without, with its legal words and without ("Taiwan Semiconductor Manufacturing Company": tsmc;
+    "Analog Devices, Inc.": adi; "Tokyo Electron Limited": tel; "University Medical Center of Southern Nevada": umc);
+    and its initials before its last word ("University of Arizona": uarizona). Of its first words too: "GE" may be
+    "General Electric Aviation"'s, "TI" "Texas Instruments Tucson"'s (and "TT" "TTM Technologies"': only ever asked)."""
+    forms: set[str] = set()
+    for words in (norm(name).split(), _employer_key(name).split()):
+        if words and words[0] == "the":
+            words = words[1:]
+        big = [w for w in words if w not in _SMALL_WORDS]
+        for ws in (words, big):
+            forms |= {"".join(w[0] for w in ws[:n]) for n in range(2, len(ws) + 1)}
+        if len(big) >= 2:
+            forms.add("".join(w[0] for w in big[:-1]) + big[-1])
+    return forms
+
+
+def _as_short(name: str) -> set[str]:
+    """How a name may be another's short form: a name of one word, as it is ("ASU", "UArizona"); one of single letters
+    and small words, as its letters ("U of A": ua, uoa); one whose first word isn't a common one, as that word ("TSMC
+    Arizona": tsmc, "UMC Southern Nevada": umc, "GD Mission Systems": gd, "J.B. Hunt": jb). A two-letter word is any
+    two words' initials ("TT Electronics" may be "TTM Technologies"'s), so it only ever asks: a may-be is never a Yes."""
+    words = _fold(_employer_key(name)).split()
+    if not words:
+        return set()
+    if len(words) == 1:
+        return {words[0]} if len(words[0]) >= 2 else set()
+    if all(len(w) == 1 or w in _SMALL_WORDS for w in words):
+        return {"".join(w[0] for w in words), "".join(w for w in words if len(w) == 1)}
+    return {words[0]} if len(words[0]) >= 2 and words[0] not in _COMMON_FIRST else set()
+
+
+# Words a name may be shortened to, read as the word itself where two names are compared ("Arizona Public Svc")
+_ABBREVIATED = {"svc": "service", "svcs": "services", "co": "company", "corp": "corporation", "intl": "international",
+                "univ": "university", "med": "medical", "ctr": "center", "tech": "technology", "mfg": "manufacturing",
+                "technologies": "technology"}
+
+
+def _fold(key: str) -> str:
+    """A name's key (_employer_key) with its abbreviations written out (_ABBREVIATED) and its initials' letters
+    together ("j b hunt": jb hunt, as "J.B. Hunt" is written "JB Hunt" too), for telling whether two names may be one
+    employer's (_may_be_employer), never whether they are (_same_employer)."""
+    out: list[str] = []
+    run = False  # (the last word out is single letters run together)
+    for word in key.split():
+        letter = len(word) == 1 and word.isalpha()
+        if letter and run:
+            out[-1] += word
+        else:
+            out.append(_ABBREVIATED.get(word, word))
+        run = letter or (run and letter)
+    return " ".join(out)
+
+
 def _same_employer(a: str, b: str) -> bool:
-    """One name holds the other as whole words: "Intel" ~ "Intel Corporation", not
-    "Intelligent Systems"."""
-    return bool(a and b and (re.search(rf"(^| ){re.escape(a)}( |$)", b) or re.search(rf"(^| ){re.escape(b)}( |$)", a)))
+    """The same employer's name, the whole of it (_employer_key): "Intel" is "Intel Corporation", "Microchip Technology"
+    is "Microchip Technology Inc.". Never one name inside another: "Example Fab Services" isn't Example Fab, nor "ASM
+    Pacific Technology" ASM International, nor "Intelligent Fabrication" Intel. Only this says the person worked
+    somewhere."""
+    key = _employer_key(a)
+    return bool(key) and key == _employer_key(b)
+
+
+def _may_be_employer(a: str, b: str) -> bool:
+    """Two names that may be one employer's, or not: the same name (_same_employer); one holding the other as whole words
+    ("Example Fab Services" and "Example Fab", "Intel" and "Intel Federal"); the same but for its spaces ("Global
+    Foundries", "GlobalFoundries"); one a short form of the other (_as_short, _short_forms: "ASU", "Arizona State
+    University"; "TSMC Arizona", "Taiwan Semiconductor Manufacturing Company"; "U of A", "UArizona", "University of
+    Arizona"); a first word of their own in common ("Banner - University Medicine", "Banner Health"); or, where that word
+    is a common one, the same first two words, one of them not common ("Western Alliance Bancorporation", "Western
+    Alliance Bank"; "State Farm Insurance"). Not "Intelligent Fabrication" and Intel, nor "Arizona State University" and
+    "Arizona Public Service", "American Express" and "American Airlines", "City of Las Vegas" and "City of Henderson".
+
+    Never said to be another employer's: what says the person never worked there (a No, a "not a current employee"
+    box or choice) is said only of a name that's none of these. And never the same: a Yes needs _same_employer, and a
+    may-be beside it can still make the question the person's (a "Yes, previously" at Banner Health, with a job now at
+    Banner Bank, is asked: it may be "currently"). "Maricopa County Community College District" (MCCCD) and "Maricopa
+    Community Colleges" are out of these rules' reach: two names of the one employer that share no short form."""
+    ka, kb = _fold(_employer_key(a)), _fold(_employer_key(b))
+    if not (ka and kb):
+        return False
+    if re.search(rf"(^| ){re.escape(ka)}( |$)", kb) or re.search(rf"(^| ){re.escape(kb)}( |$)", ka):
+        return True
+    if ka.replace(" ", "") == kb.replace(" ", ""):
+        return True
+    for short, long in ((a, b), (b, a)):
+        if " " in _employer_key(long) and _as_short(short) & _short_forms(long):
+            return True
+    wa, wb = (_leading_words(k) for k in (ka, kb))
+    if not (wa and wb) or wa[0] != wb[0]:
+        return False
+    # (a state's name alone is no employer: "Arizona Department of ..." are many, "New York Life" isn't the Times; but
+    # "Texas Instruments - Sherman" and "Texas Instruments Tucson" are by the next word, read below)
+    if len(wa[0]) >= 3 and wa[0] not in _COMMON_FIRST:
+        return True
+    return (len(wa) >= 2 and wa[:2] == wb[:2] and wa[1] not in _COMMON_FIRST and wa[1] not in _GENERIC_SECOND
+            and len(wa[1]) >= 3)
+
+
+def _leading_words(key: str) -> list[str]:
+    """A name's words without its small ones, a state's name of two words read as one ("new mexico gas": new mexico,
+    gas)."""
+    words = [w for w in key.split() if w not in _SMALL_WORDS]
+    if len(words) >= 2 and f"{words[0]} {words[1]}" in _STATE_BY_NAME:
+        words = [f"{words[0]} {words[1]}", *words[2:]]
+    return words
 
 
 def _listed(value: Any) -> list[Any]:
@@ -795,7 +929,7 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     """Has the person worked for this employer before? Only for a question about working
     for this employer: "Have you ever worked in a cleanroom?" and "Have you worked on Lam
     etch tools?" aren't. The answer comes from the employers in the profile, past and present
-    (previous_employers in the profile's history section, and work_history), and says which:
+    (previous_employers in the profile's history section, work_history and experience.current_company), and says which:
     "Yes, previously" picks ASM's "I was PREVIOUSLY employed by ASM", not "I am CURRENTLY employed"."""
     company = norm(job.get("company"))
     if not company:
@@ -822,20 +956,36 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     past = [norm(c) for c in _listed(prof.get("history.previous_employers"))]
     entries = [e for e in _listed(prof.get("work_history")) if isinstance(e, dict)]
     past += [norm(e.get("company")) for e in entries]
+    past += _current_employers(prof)  # (experience.current_company too: someone at Intel now has worked for Intel)
     if not any(_same_employer(c, company) for c in past if c):
-        # "...or any of its subsidiaries or affiliates": the profile can't say it's none of those
-        return None if re.search(r"\b(subsidiar|affiliat)", asked) else "No"
-    return "Yes, currently" if works_there_now(prof, company) else "Yes, previously"
+        # an employer whose name only holds this one's, or is held in it ("Example Fab Services" for Example Fab): the
+        # profile doesn't say whether it's this one, so neither Yes nor No; and "...or any of its subsidiaries or
+        # affiliates": the profile can't say it's none of those
+        if any(_may_be_employer(c, company) for c in past if c) or re.search(r"\b(subsidiar|affiliat)", asked):
+            return None
+        return "No"
+    if works_there_now(prof, company):  # (a job now whose name only holds this one's: the person's to say)
+        return "Yes, currently" if any(_same_employer(c, company) for c in _current_employers(prof)) else None
+    return "Yes, previously"
 
 
-def works_there_now(prof: Profile, company: str) -> bool:
-    """Does the profile have the person working for this employer now: a work_history entry that
-    runs to the present, or experience.current_company?"""
-    company = norm(company)
+def _current_employers(prof: Profile) -> list[str]:
+    """Where the profile has the person working now: its work_history entries that run to the present, and
+    experience.current_company."""
     entries = [e for e in _listed(prof.get("work_history")) if isinstance(e, dict)]
     now = [norm(e.get("company")) for e in entries if is_present(entry_dates(e)[1]) or e.get("current") is True]
     now.append(norm(prof.get("experience.current_company")))
-    return bool(company) and any(_same_employer(c, company) for c in now if c)
+    return [c for c in now if c]
+
+
+def works_there_now(prof: Profile, company: str) -> bool:
+    """Might the profile have the person working for this employer now: a work_history entry that runs to the
+    present, or experience.current_company, whose name may be this one's (_may_be_employer: a "not a current
+    employee" box is never ticked for someone at "Example Fab Services" applying to Example Fab, nor at "UMC" applying
+    to University Medical Center of Southern Nevada)? Wider than the same employer, so it also moves a "Yes, previously"
+    to the person (a past job at Banner Health, one now at Banner Bank, applying to Banner Health)."""
+    company = norm(company)
+    return bool(company) and any(_may_be_employer(c, company) for c in _current_employers(prof))
 
 
 def _said_no(prof: Profile, key: str) -> bool:
@@ -929,8 +1079,8 @@ def _not_staff_choice(field: dict, prof: Profile, job: dict) -> str | None:
         return None  # (a profile that says nothing of their work says nothing of this either)
     known = [norm(e.get("company")) for e in entries] + [norm(c) for c in _listed(prof.get("history.previous_employers"))]
     known.append(norm(prof.get("experience.current_company")))
-    if any(_same_employer(c, company) for c in known if c):
-        return None
+    if any(_may_be_employer(c, company) for c in known if c):
+        return None  # (one that may be this employer: "not staff" is the person's to say)
     fits = []
     for o in field.get("options") or []:
         said = norm(o)
@@ -938,7 +1088,9 @@ def _not_staff_choice(field: dict, prof: Profile, job: dict) -> str | None:
         if not m or _SAYS_MORE.search(said):
             continue
         named = [n.strip() for n in (m.group("who"), m.group("of")) if n and n.strip()]
-        if all(_same_employer(n, company) for n in named):
+        if any(_may_be_employer(c, n) for c in known if c for n in named):
+            return None  # ("not a current Grand Canyon University employee" from someone at GCU: the person's to say)
+        if all(_may_be_employer(n, company) for n in named):
             fits.append(o)
     return fits[0] if len(fits) == 1 else None
 
