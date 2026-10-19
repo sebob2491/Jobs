@@ -7,7 +7,7 @@ import contextlib
 import json
 import time
 from pathlib import Path
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse
 
 import pytest
 import yaml
@@ -1590,6 +1590,56 @@ def test_a_privacy_dialog_over_the_form_is_agreed_and_another_is_the_persons(srv
         assert "Use of the Eightfold AI" in r.reason and "accept_notices" not in r.reason, r.reason
     else:
         assert "“Privacy Policy of Example Corp”" in r.reason and "accept_notices: true" in r.reason, r.reason
+
+
+CONFIRMS = {
+    "personal": ("Personal Information", "Please confirm your personal information is correct before we finalize."),
+    "privacy-confirm": ("Privacy Notice", "Are you sure? Once you submit you can no longer edit. We process your "
+                                          "personal data as our privacy policy says."),
+    "terms": ("Terms and Conditions", "By clicking Submit you agree to our Terms and Conditions and Privacy Policy."),
+}
+
+
+@pytest.mark.parametrize("page", ["data-privacy", "data-privacy-signup", "data-privacy-alerts", "personal",
+                                  "privacy-confirm", "terms", "terms-in-form"])
+@pytest.mark.parametrize("mode", ["review", "practice", "test-identity"])
+def test_a_dialogs_submit_is_never_pressed_for_the_person(srv, monkeypatch, job_apply_home, page, mode):
+    """Every "Submit" is the person's, a dialog's too, in every mode. Insight Enterprises' Eightfold (live run 145) put
+    a "Data Privacy Agreement" over the form ("I agree to the Terms and understand that information collected will be
+    used as described here, the Notice at Collection, and Privacy Policy."), its agree a "Submit" beside the form's own
+    "Submit application"; a desk that pressed such a Submit for a privacy notice also pressed an application's own
+    confirmation (the review of fix-accept-gates: "Personal Information — please confirm ...", "Privacy Notice — Are
+    you sure? Once you submit ...", "Terms and Conditions — By clicking Submit you agree ...", a <dialog> inside the
+    application's form), which sent the application. So the dialog stops the desk for the person, whatever the
+    settings (review mode with accept_notices, practice mode, the live check's test identity), and nothing is sent."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    if mode == "practice":
+        notice_settings(job_apply_home, submit_mode="dry_run")
+    elif mode == "test-identity":
+        as_test_identity(monkeypatch, job_apply_home)
+    if page.startswith("data-privacy"):
+        url = fixture_url("site/ai-notice-form.html") + f"?notice={page}"
+    else:
+        heading, words = CONFIRMS[page.removesuffix("-in-form")]
+        url = fixture_url("site/confirm-dialog.html") + "?" + urlencode(
+            {"h": heading, "t": words, **({"in-form": "1"} if page.endswith("-in-form") else {})})
+    job = srv.add_job(url=url, title="Equipment Technician", company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => window.sent")
+        finally:
+            await applier.stop()
+
+    r, sent = run(go())
+    assert sent == 0, (r.status, r.reason, r.log)
+    assert r.status == "needs_you" and not any(line.startswith("agreed") for line in r.log), (r.status, r.log)
+    if page.startswith("data-privacy"):
+        assert r.code == "notice_theirs" and "“Data Privacy Agreement”" in r.reason, (r.code, r.reason)
 
 
 PROFILE_START = "site/profile-start.html"
