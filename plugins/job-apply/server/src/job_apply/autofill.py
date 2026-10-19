@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 
 from . import config
 from .config import Profile, expand, question_core
@@ -341,6 +341,14 @@ def _strip_codes(n: str) -> str:
     return " ".join(t for t in n.split() if not _CODE_WORD.fullmatch(t))
 
 
+class _Choice(NamedTuple):
+    """What a stage of choose_option decided: `done`, with its `option` (None: none of them, the person's to say), or
+    not, with the choices (`normed`: each with its words normalised) the next stages look among."""
+    done: bool
+    option: str | None
+    normed: list[tuple[str, str]]
+
+
 def choose_option(desired: Any, options: list[str], exact_only: bool = False, names: bool = False) -> str | None:
     """Pick the option that best matches `desired`, or None if nothing does. With
     exact_only, only the same text (or an alias: AZ ~ Arizona) counts. With names (a school
@@ -351,27 +359,15 @@ def choose_option(desired: Any, options: list[str], exact_only: bool = False, na
         return None
     want = norm(desired)
     normed = [(o, norm(o)) for o in opts]
+    exact = _aliases(want)
+    bare = _strip_codes(want)  # (a number alone strips to nothing: no "loose" match then)
+    wanted = exact | (_aliases(bare) if bare else set())
 
     # 1. exact, including aliases (AZ ~ Arizona, USA ~ United States of America), ignoring
     #    dial codes and flags ("🇺🇸 (+1) United States of America")
-    exact = _aliases(want)
-    for o, n in normed:  # the same words first, then an alias ("U.S. Citizen" before "U.S. Citizen or National")
-        if n == want:
-            return o
-    for o, n in normed:
-        if n in exact or _aliases(n) & exact:
-            return o
-    bare = _strip_codes(want)  # (a number alone strips to nothing: no "loose" match then)
-    wanted = exact | (_aliases(bare) if bare else set())
-    loose = [o for o, n in normed if n in wanted or _aliases(n) & wanted or (bare_n := _strip_codes(n)) and bare_n in wanted]
-    if len(loose) == 1:  # not when only a number told them apart ("Yes - 25%" / "Yes - 75%")
-        return loose[0]
-    # the same place, its state spelled the other way or its country added: "AZ" is "Arizona,
-    # United States" and "US-AZ", "Phoenix, AZ" is "Phoenix, Arizona"
-    place = _place_parts(desired)
-    same_place = [o for o in opts if place and _place_parts(o) == place]
-    if len(same_place) == 1:
-        return same_place[0]
+    hit = _exact_choice(desired, want, opts, normed, exact, wanted)
+    if hit is not None:
+        return hit
     if exact_only:
         return None
     if names:
@@ -385,6 +381,68 @@ def choose_option(desired: Any, options: list[str], exact_only: bool = False, na
     if not declining:
         normed = [(o, n) for o, n in normed if not _contradicts(desired, o) and not _only_declines(o)]
         opts = [o for o, _ in normed]
+    stage = _schooling_choices(want, normed)
+    if stage.done:
+        return stage.option
+    normed = stage.normed
+
+    # a number among ranges: "10" years -> "More than 3 years", a 3.8 GPA -> "3.50 - 4.00 or higher"
+    ranged = _in_range(str(desired), opts)
+    if ranged is not None:
+        return ranged
+
+    # 2. declines ("Decline to self-identify", "I don't wish to answer", ...): only ever another
+    # decline, never a "No" ("I don't want to answer" isn't "I am not a protected veteran")
+    if declining:
+        return _decline_choice(normed)
+
+    # 3. yes / no questions
+    pol = polarity(desired)
+    stage = _yes_no_choice(want, normed, pol)
+    if stage.done:
+        return stage.option
+
+    # 4. degrees: "BS Electrical Engineering" ~ "Bachelor's Degree"
+    stage = _degree_choice(want, normed)
+    if stage.done:
+        return stage.option
+    normed = stage.normed
+
+    # 5. one contains the other
+    hit, contains = _containment_choice(want, wanted, normed)
+    if hit is not None:
+        return hit
+
+    # 6. token overlap
+    return _overlap_choice(want, normed, pol, contains)
+
+
+def _exact_choice(desired: Any, want: str, opts: list[str], normed: list[tuple[str, str]], exact: set[str],
+                  wanted: set[str]) -> str | None:
+    """choose_option's first stage: the choice that is the answer word for word, else one an alias of it is (`exact`:
+    the answer's aliases; `wanted`: those of the answer without its dial codes and numbers too), else the same place
+    written another way. None where none is."""
+    for o, n in normed:  # the same words first, then an alias ("U.S. Citizen" before "U.S. Citizen or National")
+        if n == want:
+            return o
+    for o, n in normed:
+        if n in exact or _aliases(n) & exact:
+            return o
+    loose = [o for o, n in normed if n in wanted or _aliases(n) & wanted or (bare_n := _strip_codes(n)) and bare_n in wanted]
+    if len(loose) == 1:  # not when only a number told them apart ("Yes - 25%" / "Yes - 75%")
+        return loose[0]
+    # the same place, its state spelled the other way or its country added: "AZ" is "Arizona,
+    # United States" and "US-AZ", "Phoenix, AZ" is "Phoenix, Arizona"
+    place = _place_parts(desired)
+    same_place = [o for o in opts if place and _place_parts(o) == place]
+    if len(same_place) == 1:
+        return same_place[0]
+    return None
+
+
+def _schooling_choices(want: str, normed: list[tuple[str, str]]) -> _Choice:
+    """For an answer that is schooling (a degree, or a study under way): the choices narrowed to that schooling as it
+    is, and the one that is the same study under way, however worded."""
     if degree_key(want) or _partial_study(want):
         # schooling as it is, never more nor less: "High School Diploma" isn't "Some High
         # School", and "Associate's (in progress)" isn't "Associate's Degree"
@@ -395,21 +453,18 @@ def choose_option(desired: Any, options: list[str], exact_only: bool = False, na
         level = _partial_level(want)
         alike = [o for o, n in normed if level and _partial_level(n) == level]
         if len(alike) == 1:
-            return alike[0]
+            return _Choice(True, alike[0], normed)
+    return _Choice(False, None, normed)
 
-    # a number among ranges: "10" years -> "More than 3 years", a 3.8 GPA -> "3.50 - 4.00 or higher"
-    ranged = _in_range(str(desired), opts)
-    if ranged is not None:
-        return ranged
 
-    # 2. declines ("Decline to self-identify", "I don't wish to answer", ...): only ever another
-    # decline, never a "No" ("I don't want to answer" isn't "I am not a protected veteran")
-    if declining:
-        hits = sorted((o for o, _ in normed if is_decline(o)), key=lambda o: not _only_declines(o))
-        return hits[0] if hits else None
+def _decline_choice(normed: list[tuple[str, str]]) -> str | None:
+    """For a decline: another decline among the choices (one that only declines first), else None."""
+    hits = sorted((o for o, _ in normed if is_decline(o)), key=lambda o: not _only_declines(o))
+    return hits[0] if hits else None
 
-    # 3. yes / no questions
-    pol = polarity(desired)
+
+def _yes_no_choice(want: str, normed: list[tuple[str, str]], pol: bool | None) -> _Choice:
+    """For a yes or a no (`pol`): the choice that says it, by the words after the yes or no where several do."""
     if pol is not None:
         # the words after the yes or no first, among the answers that don't say the opposite:
         # "Yes, previously" is "I was PREVIOUSLY employed by ASM", not "I am CURRENTLY employed"
@@ -417,10 +472,10 @@ def choose_option(desired: Any, options: list[str], exact_only: bool = False, na
         near = sorted(((len(detail & set(n.split())), o) for o, n in normed if polarity(o) is not (not pol)),
                       key=lambda x: -x[0])
         if near and near[0][0] > 0 and (len(near) == 1 or near[0][0] > near[1][0]):
-            return near[0][1]
+            return _Choice(True, near[0][1], normed)
         hits = [o for o, _ in normed if polarity(o) is pol]
         if len(hits) == 1:
-            return hits[0]  # e.g. "No" -> "I have NEVER been employed by ASM"
+            return _Choice(True, hits[0], normed)  # e.g. "No" -> "I have NEVER been employed by ASM"
         # several answers say yes: the words after the yes decide ("Yes, for any employer"
         # -> "I am authorized to work in this country for any employer", not "...for my
         # current employer")
@@ -428,41 +483,52 @@ def choose_option(desired: Any, options: list[str], exact_only: bool = False, na
         if len(hits) > 1 and detail:
             scores = sorted(((len(detail & set(norm(o).split())), o) for o in hits), key=lambda x: -x[0])
             if scores[0][0] > scores[1][0]:
-                return scores[0][1]
+                return _Choice(True, scores[0][1], normed)
         if len(hits) > 1 and len(want.split()) == 1:
-            return None  # a bare "Yes" among "Yes, for any employer" / "Yes, for my current employer only": the person says
+            # a bare "Yes" among "Yes, for any employer" / "Yes, for my current employer only": the person says
+            return _Choice(True, None, normed)
         # e.g. "No, I will not require sponsorship" vs "No" — fall through to overlap
+    return _Choice(False, None, normed)
 
-    # 4. degrees: "BS Electrical Engineering" ~ "Bachelor's Degree"
+
+def _degree_choice(want: str, normed: list[tuple[str, str]]) -> _Choice:
+    """For a degree: the choice of its level (and of its kind, where the list has several), or the choices narrowed
+    to that level."""
     dk = degree_key(want)
     if dk:
         same = [(o, n) for o, n in normed if degree_key(n) == dk and _same_schooling(want, n)]
         if not same and any(degree_key(n) for _, n in normed):
             # a level the list lacks is never another level, nor a GED a diploma ("Bachelor's Degree" among Master's,
             # Doctorate and Other was Master's, by the words they share: the review of Oct 15): the person's to say
-            return None
+            return _Choice(True, None, normed)
         if len(same) == 1:
-            return same[0][0]
+            return _Choice(True, same[0][0], normed)
         # several of that level ("Bachelor of Arts", "Bachelor of Science"): the kind the answer names, however
         # each writes it ("Bachelor of Science" is "BS", "B.S." or "Bachelor's - BS"); none named, none picked
         kind = degree_kind(want)
         if kind and len(same) > 1:
             of_kind = [o for o, n in same if degree_kind(n) == kind]
             if len(of_kind) == 1:
-                return of_kind[0]
+                return _Choice(True, of_kind[0], normed)
         if not kind and len({degree_kind(n) for _, n in same} - {None}) > 1:
-            return None  # a bare "Bachelor's Degree" among "Bachelor's - BS" and "Bachelor's - BA": the person's to say
+            # a bare "Bachelor's Degree" among "Bachelor's - BS" and "Bachelor's - BA": the person's to say
+            return _Choice(True, None, normed)
         if len(same) > 1 and all(degree_kind(n) is None for _, n in same):
             # the level written twice, no kind named in either (ASM's "Bachelors" and "Bachelor's Degree", the second
             # nightly at every employer, Oct 12): the same answer, so the one that says it's a degree, else the first
-            return next((o for o, n in same if "degree" in n.split()), same[0][0])
+            return _Choice(True, next((o for o, n in same if "degree" in n.split()), same[0][0]), normed)
         if same:
             normed = same
+    return _Choice(False, None, normed)
 
-    # 5. one contains the other
+
+def _containment_choice(want: str, wanted: set[str], normed: list[tuple[str, str]]) -> tuple[str | None, list[str]]:
+    """The one choice that contains the answer, else the one the answer contains (whole words), or None; and the
+    choices that contain it (the one whose extra words the answer's aliases, `wanted`, explain first, else the one with
+    the fewest)."""
     contains = [o for o, n in normed if want and _within_words(want, n)]
     if len(contains) == 1:
-        return contains[0]
+        return contains[0], contains
     if len(contains) > 1:
         # "United States" in both "...of America" and "...Minor Outlying Islands": take the
         # one whose extra words the aliases explain, else the one with the fewest extra words
@@ -473,9 +539,13 @@ def choose_option(desired: Any, options: list[str], exact_only: bool = False, na
     # whole words only: "male" is in "female", "no" in "not"
     contained = [o for o, n in normed if n and _within_words(n, want)]
     if len(contained) == 1:
-        return contained[0]
+        return contained[0], contains
+    return None, contains
 
-    # 6. token overlap
+
+def _overlap_choice(want: str, normed: list[tuple[str, str]], pol: bool | None, contains: list[str]) -> str | None:
+    """The choice that shares the most words with the answer (half of all theirs at least), never one that says the
+    opposite yes or no (`pol`); else the first that contains the answer (`contains`); else None."""
     wt = set(want.split())
     best, best_score = None, 0.0
     for o, n in normed:
@@ -2527,57 +2597,9 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
         return ans
 
     if kind == "file":
-        where = f"{label} {norm(field.get('section'))}"
-        # A box that reads the resume to fill the form in ("Import your profile from resume" on
-        # TI's and onsemi's Oracle), beside the one that attaches it: the site would refill the
-        # form from its own reading while the desk fills it, so only the attachment gets it
-        if file_inputs_on_page > 1 and re.search(r"\b(import|autofill|auto fill|parse|populate)\b", where):
-            return Answer(SKIP, "documents.resume")
-        # (a page's one upload, in a section for both, "Resume/CV and Cover Letter": the resume goes in it, as a
-        # person would put it there: Arizona State University's Workday, the full run of Oct 12)
-        # (only a section named for both alike, never one for a cover letter that mentions the resume: "Cover Letter
-        # (and resume if not uploaded)", "Your resume was already imported", the review's)
-        section = norm(field.get("section"))
-        both = (file_inputs_on_page == 1 and not re.search(r"cover", label)
-                and re.search(r"\b(resume|cv)\b (and|or)? ?(cover letter)$|^(resume|cv)( cv)? (and|or) cover letter\b", section)
-                and not re.search(r"\b(if|optional|already|instead|only)\b", section))
-        if re.search(r"cover", where) and not both:
-            path = _document(prof, job, "cover_letter")
-            return Answer(path, "documents.cover_letter") if path else None
-        named = re.search(r"resume|cv|curriculum", where)
-        if named or file_inputs_on_page == 1 and not _OTHER_DOCUMENT.search(where):
-            path = _document(prof, job, "resume")
-            return Answer(path, "documents.resume") if path else None
-        return None
-
-    if kind == "checkbox" and (_FILE_PICKED.match(raw_label) or _FILE_IS_RESUME.match(raw_label)):
-        # a list of the files on the person's record (Kforce's Taleo, the nightly of Oct 12: "You must select at least
-        # one relevant file"): the profile's resume is the one for this application, and is the resume; no other file
-        # (its row's file exactly the profile's resume, and the only row with that name: never a file tailored for
-        # another job that shares its name, nor one whose name only holds it)
-        path = _document(prof, job, "resume")
-        name = Path(path).name.strip().lower() if path else ""
-        row_file = str(field.get("row_file") or "").strip().lower()
-        if name and row_file == name and field.get("same_file_rows") == 1:
-            return Answer(True, "documents.resume")
-        return None
-    if kind == "checkbox" and (declined := _DECLINE_BOX.match(clean_label(raw_label))):
-        # a self-identification question's own "I decline to say" box (Nikon's UKG Pro, live run 17: "I decline to
-        # say Gender" beside its Gender list): ticked when the profile's answer to that question is a decline,
-        # which the list itself may not have
-        ans = resolve_field({"kind": "select", "label": declined.group(1), "section": field.get("section")}, prof, job)
-        if ans is not None and ans.rule in _EEO_RULES and is_decline(ans.value):
-            return Answer(True, ans.rule)
-        return None
+        return _resolve_file(field, prof, job, file_inputs_on_page, label)
     if kind == "checkbox":
-        # Single checkboxes are usually consents/attestations: leave for a person,
-        # except ones the user pre-approved in the answer bank.
-        # (only a yes ticks one, and a no unticks it: an answer that is neither, "Decline to self-identify" for a
-        # veteran's box or "Maybe" for relocating, is no yes, and ticking it says what the person never said: the
-        # mutation pass of Oct 18)
-        ans = _answer_bank(prof, raw_label, job)
-        pol = polarity(ans.value) if ans is not None else None
-        return Answer(pol, ans.rule) if ans is not None and pol is not None else None
+        return _resolve_checkbox(field, prof, job, raw_label)
 
     ans = _answer_bank(prof, raw_label, job)
     if ans is None and _NEVER_GUESS.search(label):
@@ -2610,45 +2632,9 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
     if ans is None and kind == "checkbox_group" and (none := _plans_none(field, prof)):
         return Answer(none, "background.plans")  # (one of its own choices, as it reads)
     if ans is None:
-        # a self-identification question is its own topic's, whatever else its notice's words match
-        own = _self_identification(label, field)
-        asked_as = "" if own else _citizen_question(asked)
-        for name, pattern, getter, max_len, kinds in ([own] if own else RULES):
-            if someone_else and (name in _CONTACT_RULES or name == "employee_id"):
-                continue  # a reference's or an emergency contact's name, phone or email; a referrer's ID
-            if name in _EEO_RULES and _FAMILY.search(label):
-                continue  # "Are you the spouse of a veteran?", "Gender of your spouse": not the person's own
-            if max_len is not None and len(label) > max_len:
-                continue
-            if kinds is not None and kind not in kinds:
-                continue
-            if own or re.search(pattern, label):
-                if name in _WORK_RULES and (_OTHER_COUNTRIES.search(label) or _OTHER_THAN.search(label)):
-                    return None  # another country's question: the profile's facts are the United States'
-                if asked_as and name not in _ASKED_BY[asked_as]:
-                    continue  # the U.S. citizen's or person's question: only its own rules read it, whatever's around it
-                if name == "us_person" and (asked_as != "us_person" or _asks_more_than_citizenship(asked, persons=True)):
-                    continue  # more than the U.S. person's question asked, or a wording the check doesn't know: theirs
-                if name == "us_person" and not _NAMES_RESIDENTS.search(_undotted(_from_the_question(asked))):
-                    getter = _among_the_named  # (a list that leaves out the permanent residents)
-                if name in {"sponsorship", "no_sponsorship"} and (
-                        _THEIR_FAMILY_SPONSORSHIP.search(label)
-                        or _EMPLOYER_SPONSORSHIP.search(label) and not _YOUR_NEED.search(label)):
-                    return None  # someone else's need, or the employer's policy: not the person's
-                # (as the form gives it, its notes too: "(Note: green card holders should select Yes.)")
-                if name in {"us_citizen", "citizenship"} and _asks_more_than_citizenship(asked) \
-                        and not (name == "citizenship" and re.search(r"citizenship|country of citizen|which country",
-                                                                     label)):
-                    continue  # more than citizenship asked: the next rule's (the country, where it's asked), or theirs
-                if name == "phone" and _other_kind_of_phone(label, prof):
-                    return None  # a Work Phone for a mobile: the profile's number isn't that kind's
-                if name == "signature" and (_SIGNING_DATE_NAMED.search(label) or _DATE_TO_ENTER.search(raw_label)):
-                    return None  # the signing date's box, or one for a date to enter: never the name
-                value = getter(prof, job, raw_label) if _reads_question(getter) else getter(prof, job)  # type: ignore[call-arg]  # these take the question too
-                if value is None or value == "":
-                    return None  # recognised but the profile has no answer
-                ans = Answer(value, name)
-                break
+        left, ans = _rule_answer(field, prof, job, kind, asked, raw_label, label, someone_else)
+        if left:
+            return None
     if ans is None and kind in _CHOICE_KINDS - {"checkbox", "checkbox_group"} and not someone_else \
             and (outside := _not_staff_choice(field, prof, job)):
         return Answer(outside, "work_history")  # (one of its own choices, as it reads; only where no rule took the question)
@@ -2666,6 +2652,125 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
     if ans.rule == "expected_grad" and ans.value == NOT_ATTENDING and not field.get("options"):
         return None  # (a list's choice, not a date: a box for the date is left empty or the person's: the review of Oct 15)
 
+    if not _fits_box(ans, kind, label):
+        return None
+    if isinstance(ans.value, bool):
+        ans.value = "Yes" if ans.value else "No"
+    if ans.rule in {"state", "home_state"} and re.search(r"\babbreviat", label) and not field.get("options"):
+        # ("Please use the state abbreviation format, i.e. AZ")
+        ans.value = next((k for k, v in US_STATES.items() if norm(v) == norm(ans.value)), ans.value)
+
+    return _choose_from_options(field, prof, job, ans, kind, label, section, unmatched)
+
+
+def _resolve_file(field: dict, prof: Profile, job: dict, file_inputs_on_page: int, label: str) -> Answer | None:
+    """A file box's answer: the resume or the cover letter, or SKIP for a box that reads the resume to fill the form
+    in (`label`: the box's own, normalised)."""
+    where = f"{label} {norm(field.get('section'))}"
+    # A box that reads the resume to fill the form in ("Import your profile from resume" on
+    # TI's and onsemi's Oracle), beside the one that attaches it: the site would refill the
+    # form from its own reading while the desk fills it, so only the attachment gets it
+    if file_inputs_on_page > 1 and re.search(r"\b(import|autofill|auto fill|parse|populate)\b", where):
+        return Answer(SKIP, "documents.resume")
+    # (a page's one upload, in a section for both, "Resume/CV and Cover Letter": the resume goes in it, as a
+    # person would put it there: Arizona State University's Workday, the full run of Oct 12)
+    # (only a section named for both alike, never one for a cover letter that mentions the resume: "Cover Letter
+    # (and resume if not uploaded)", "Your resume was already imported", the review's)
+    section = norm(field.get("section"))
+    both = (file_inputs_on_page == 1 and not re.search(r"cover", label)
+            and re.search(r"\b(resume|cv)\b (and|or)? ?(cover letter)$|^(resume|cv)( cv)? (and|or) cover letter\b", section)
+            and not re.search(r"\b(if|optional|already|instead|only)\b", section))
+    if re.search(r"cover", where) and not both:
+        path = _document(prof, job, "cover_letter")
+        return Answer(path, "documents.cover_letter") if path else None
+    named = re.search(r"resume|cv|curriculum", where)
+    if named or file_inputs_on_page == 1 and not _OTHER_DOCUMENT.search(where):
+        path = _document(prof, job, "resume")
+        return Answer(path, "documents.resume") if path else None
+    return None
+
+
+def _resolve_checkbox(field: dict, prof: Profile, job: dict, raw_label: str) -> Answer | None:
+    """A single checkbox's answer (`raw_label`: its label without its notes): a yes ticks it and a no unticks it."""
+    if _FILE_PICKED.match(raw_label) or _FILE_IS_RESUME.match(raw_label):
+        # a list of the files on the person's record (Kforce's Taleo, the nightly of Oct 12: "You must select at least
+        # one relevant file"): the profile's resume is the one for this application, and is the resume; no other file
+        # (its row's file exactly the profile's resume, and the only row with that name: never a file tailored for
+        # another job that shares its name, nor one whose name only holds it)
+        path = _document(prof, job, "resume")
+        name = Path(path).name.strip().lower() if path else ""
+        row_file = str(field.get("row_file") or "").strip().lower()
+        if name and row_file == name and field.get("same_file_rows") == 1:
+            return Answer(True, "documents.resume")
+        return None
+    if declined := _DECLINE_BOX.match(clean_label(raw_label)):
+        # a self-identification question's own "I decline to say" box (Nikon's UKG Pro, live run 17: "I decline to
+        # say Gender" beside its Gender list): ticked when the profile's answer to that question is a decline,
+        # which the list itself may not have
+        ans = resolve_field({"kind": "select", "label": declined.group(1), "section": field.get("section")}, prof, job)
+        if ans is not None and ans.rule in _EEO_RULES and is_decline(ans.value):
+            return Answer(True, ans.rule)
+        return None
+    # Single checkboxes are usually consents/attestations: leave for a person,
+    # except ones the user pre-approved in the answer bank.
+    # (only a yes ticks one, and a no unticks it: an answer that is neither, "Decline to self-identify" for a
+    # veteran's box or "Maybe" for relocating, is no yes, and ticking it says what the person never said: the
+    # mutation pass of Oct 18)
+    ans = _answer_bank(prof, raw_label, job)
+    pol = polarity(ans.value) if ans is not None else None
+    return Answer(pol, ans.rule) if ans is not None and pol is not None else None
+
+
+def _rule_answer(field: dict, prof: Profile, job: dict, kind: str, asked: str, raw_label: str, label: str,
+                 someone_else: re.Match[str] | None) -> tuple[bool, Answer | None]:
+    """The answer of the first of RULES that takes the question (`asked`: its label or name; `raw_label`: that without
+    its notes; `label`: that normalised; `someone_else`: a match where it's about another person), as (False, the
+    answer), or (False, None) where none takes it; (True, None) where one takes it and leaves it unanswered: another
+    country's question, someone else's need, or one the profile has no answer to."""
+    # a self-identification question is its own topic's, whatever else its notice's words match
+    own = _self_identification(label, field)
+    asked_as = "" if own else _citizen_question(asked)
+    for name, pattern, getter, max_len, kinds in ([own] if own else RULES):
+        if someone_else and (name in _CONTACT_RULES or name == "employee_id"):
+            continue  # a reference's or an emergency contact's name, phone or email; a referrer's ID
+        if name in _EEO_RULES and _FAMILY.search(label):
+            continue  # "Are you the spouse of a veteran?", "Gender of your spouse": not the person's own
+        if max_len is not None and len(label) > max_len:
+            continue
+        if kinds is not None and kind not in kinds:
+            continue
+        if own or re.search(pattern, label):
+            if name in _WORK_RULES and (_OTHER_COUNTRIES.search(label) or _OTHER_THAN.search(label)):
+                return True, None  # another country's question: the profile's facts are the United States'
+            if asked_as and name not in _ASKED_BY[asked_as]:
+                continue  # the U.S. citizen's or person's question: only its own rules read it, whatever's around it
+            if name == "us_person" and (asked_as != "us_person" or _asks_more_than_citizenship(asked, persons=True)):
+                continue  # more than the U.S. person's question asked, or a wording the check doesn't know: theirs
+            if name == "us_person" and not _NAMES_RESIDENTS.search(_undotted(_from_the_question(asked))):
+                getter = _among_the_named  # (a list that leaves out the permanent residents)
+            if name in {"sponsorship", "no_sponsorship"} and (
+                    _THEIR_FAMILY_SPONSORSHIP.search(label)
+                    or _EMPLOYER_SPONSORSHIP.search(label) and not _YOUR_NEED.search(label)):
+                return True, None  # someone else's need, or the employer's policy: not the person's
+            # (as the form gives it, its notes too: "(Note: green card holders should select Yes.)")
+            if name in {"us_citizen", "citizenship"} and _asks_more_than_citizenship(asked) \
+                    and not (name == "citizenship" and re.search(r"citizenship|country of citizen|which country",
+                                                                 label)):
+                continue  # more than citizenship asked: the next rule's (the country, where it's asked), or theirs
+            if name == "phone" and _other_kind_of_phone(label, prof):
+                return True, None  # a Work Phone for a mobile: the profile's number isn't that kind's
+            if name == "signature" and (_SIGNING_DATE_NAMED.search(label) or _DATE_TO_ENTER.search(raw_label)):
+                return True, None  # the signing date's box, or one for a date to enter: never the name
+            value = getter(prof, job, raw_label) if _reads_question(getter) else getter(prof, job)  # type: ignore[call-arg]  # these take the question too
+            if value is None or value == "":
+                return True, None  # recognised but the profile has no answer
+            return False, Answer(value, name)
+    return False, None
+
+
+def _fits_box(ans: Answer, kind: str, label: str) -> bool:
+    """Whether the box takes the answer (`label`: its own, normalised): a text area only the person's own words (the
+    common questions'), a link, pay, a start date, a status, and a yes or no or a home asked as a question."""
     # (a yes/no question drawn as a text area, as Nikon's UKG Pro draws its work-authorization questions, live run
     # 14, Oct 2026: the profile's plain Yes or No)
     # ("Is sponsorship required...?" too, unless it asks for an explanation: "If yes, please explain.")
@@ -2680,13 +2785,14 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
     if kind == "textarea" and not ans.rule.startswith("answers[") and ans.rule not in {"linkedin", "salary", "start_date",
                                                                                      "auth_status"} \
             and not yes_no_box and not home_box:
-        return None
-    if isinstance(ans.value, bool):
-        ans.value = "Yes" if ans.value else "No"
-    if ans.rule in {"state", "home_state"} and re.search(r"\babbreviat", label) and not field.get("options"):
-        # ("Please use the state abbreviation format, i.e. AZ")
-        ans.value = next((k for k, v in US_STATES.items() if norm(v) == norm(ans.value)), ans.value)
+        return False
+    return True
 
+
+def _choose_from_options(field: dict, prof: Profile, job: dict, ans: Answer, kind: str, label: str, section: str,
+                         unmatched: list[Answer] | None) -> Answer | None:
+    """The answer as one of the field's choices, where it has them (`label` and `section`: its own, normalised); a
+    choice none of them is goes to `unmatched` for a self-identification question, so it can be said."""
     options = field.get("options")
     if ans.rule == "citizen_status" and options:
         # the one choice that says U.S. citizen ("US Citizen", "Citizen of the United States"), not "Non-US Citizen"
@@ -3354,84 +3460,118 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
         # menu (Infineon's "Preferred location"): it still takes a choice
         if f.get("disabled") or f.get("readonly") and f.get("kind") not in _CHOICE_KINDS:
             continue
-        unset = unset_choice(f)
-        # `redo`: lists the page marks invalid on a choice it made itself, which the desk may answer again (Northrop's
-        # Eightfold phone "Country code" on Mexico, live run 13, Oct 2026: the review step's, once a job), and text
-        # boxes it says are wrong showing what it wrote itself (EMD's resume parse's phone, live run 41, Oct 12)
-        rejected = f["id"] in (redo or set()) and f.get("kind") in ("select", "listbox", "combobox", "radio_group", "text") \
-            and not is_empty_value(f.get("value"))
-        has_value = not is_empty_value(f.get("value")) and not unset and not rejected
-        preset = has_value and not overwrite and preset_country(f, prof, presets_done or frozenset())
-        if preset:
-            presets[f["id"]] = preset_key(f)
-        defaulted = has_value and (site_default(f) or preset)
-        if has_value and not overwrite and not defaulted:
-            if refresh and blocks is None:
-                blocks = _entry_blocks(fields, prof, job, file_inputs)
-            stale = _differs(f, prof, job, file_inputs, blocks or set()) if refresh and f["id"] not in (keep or set()) \
-                else None
-            if stale is not None:
-                to_fill.append({"id": f["id"], "label": f.get("label", ""), "value": stale.value, "rule": stale.rule,
-                                "refreshed": True, **({"again": True} if f.get("role") == "spinbutton" else {})})
-                continue
+        planned = _plan_field(f, fields, prof, job, overwrite, redo, presets_done, refresh, keep, file_inputs, blocks)
+        blocks = planned.blocks
+        if planned.preset is not None:
+            presets[f["id"]] = planned.preset
+        if planned.fill is not None:
+            to_fill.append(planned.fill)
+        if planned.ask is not None:
+            needs_input.append(planned.ask)
+        if planned.already:
             already.append(f["id"])
-            continue
-        missed: list[Answer] = []
-        # (a list on its own "Not Specified" first choice: answered from the others, never that placeholder again;
-        # one read with a placeholder alone, "No Selection", hasn't shown its entries yet (SuccessFactors fetches
-        # them on the first open: Edwards Vacuum's veteran list, run 107), so the answer goes to the fill, which
-        # waits for them: never "not one of its choices" of a list that has shown none)
-        options = (f.get("options") or [])[1:] if unset else (f.get("options") or [])
-        if options and all(is_empty_value(o) for o in options):
-            options = []
-        ans = resolve_field({**f, "options": options}, prof, job, file_inputs, unmatched=missed)
-        if defaulted and not overwrite and (ans is None and not missed or ans is not None and (
-                ans.value == SKIP or choose_option(str(ans.value), [str(f.get("value"))], exact_only=True) is not None
-                or preset and same_country(ans.value, f.get("value"), dial=(dial := "code" in norm(clean_label(f.get("label") or ""))))
-                or preset and dial and same_country(_phone_code(prof, job or {}), f.get("value"), dial=True))):
-            # (a dial code's list by the profile's own code, not the entry its address's country picked from the list's
-            # choices: a +52 number with a US address keeps Mexico (+52), the re-check of 0.3.196)
-            # (the site's first choice, where the profile says nothing else, or says the same: left as it is; the same
-            # word for word, as "Bachelor's Degree" isn't an "Associate's Degree" a list opens on: the review)
-            already.append(f["id"])
+        if planned.judged:
             judged.append(f["id"])
-            continue
-        if unset and not overwrite and ans is not None and is_eeo_rule(ans.rule) and not f.get("required"):
-            # an optional self-identification list on its "Not Specified" stays as it is (the person may have
-            # chosen it); a required one is answered (Kforce's "Birth Assigned Gender", live run 13)
-            already.append(f["id"])
-            continue
-        # (a date's part showing the answer is typed again all the same: the page lost what was typed, and keeps only
-        # what's shown: Entegris' Workday Self Identify Date, run 54)
-        if rejected and not overwrite and (ans is None or ans.value == SKIP or is_eeo_rule(ans.rule)
-                                           or (str(ans.value).strip() == str(f.get("value")).strip()
-                                               and f.get("role") != "spinbutton"
-                                               if f.get("kind") == "text"
-                                               else choose_option(str(ans.value), [str(f.get("value"))]) is not None)):
-            already.append(f["id"])  # (nothing else to give it, or the same answer: left to the person)
-            continue
-        if ans is not None and ans.value == SKIP:
-            continue
-        if ans is not None:
-            to_fill.append({"id": f["id"], "label": f.get("label", ""), "value": ans.value, "rule": ans.rule})
-            if defaulted:
-                judged.append(f["id"])
-        elif f.get("kind") != "password":
-            # with the profile's answer the choices don't have (Qorvo's veteran list has no "I
-            # don't wish to answer"), so the desk can say why it's empty
-            # (a list on its "Not Specified" first choice is asked about without it: that choice is the empty one,
-            # and an answer of it was taken for none and asked again, Kforce's Birth Assigned Gender, live run 24)
-            asked = _asked({**f, "options": (f.get("options") or [])[1:]} if unset else f)
-            # (a list on the site's first choice is never left empty: what it shows goes out, so it's asked as
-            # required, optional or not: the review)
-            needs_input.append({**asked, **({"unmatched": str(missed[0].value)} if missed else {}),
-                                **({"required": True} if defaulted else {})})
     _graduation_of_the_school_given(fields, to_fill, needs_input, prof, job, file_inputs)
     _title_beside_its_company(fields, to_fill, needs_input, prof)
-    # A form with no phone box of the profile's kind and no plain one, whose boxes name other kinds ("Home
-    # Phone" alone, for a mobile): where only one of them is there, or only one is required, that's where
-    # the form wants the number, so it's filled, as before boxes had kinds. Only a box the profile would
-    # fill but for its kind (never a reference's, nor one that signs the person up for texts)
+    _phone_of_another_kind(fields, to_fill, needs_input, prof, job, file_inputs)
+    _declined_by_box(fields, to_fill, needs_input)
+    needs_input.sort(key=lambda f: not f.get("required"))
+    return {"to_fill": to_fill, "needs_input": needs_input, "already_filled": already,
+            **({"judged": judged} if judged else {}), **({"presets": presets} if presets else {})}
+
+
+class _Planned(NamedTuple):
+    """A box's place in plan_autofill's plan: its entry in `fill` (to_fill) or `ask` (needs_input), or `already`
+    (left as it shows); `judged` where it's on the site's first choice (filled or left); its country list's `preset`
+    key where that was looked at (preset_country); and the entries' `blocks` (_entry_blocks), once read."""
+    preset: str | None
+    blocks: set[str] | None
+    fill: dict | None = None
+    ask: dict | None = None
+    already: bool = False
+    judged: bool = False
+
+
+def _plan_field(f: dict, fields: list[dict], prof: Profile, job: dict | None, overwrite: bool, redo: set[str] | None,
+                presets_done: set[str] | None, refresh: bool, keep: set[str] | None, file_inputs: int,
+                blocks: set[str] | None) -> _Planned:
+    """One box of plan_autofill's `fields` (its arguments as plan_autofill's; `blocks`: _entry_blocks, None until
+    read)."""
+    unset = unset_choice(f)
+    # `redo`: lists the page marks invalid on a choice it made itself, which the desk may answer again (Northrop's
+    # Eightfold phone "Country code" on Mexico, live run 13, Oct 2026: the review step's, once a job), and text
+    # boxes it says are wrong showing what it wrote itself (EMD's resume parse's phone, live run 41, Oct 12)
+    rejected = f["id"] in (redo or set()) and f.get("kind") in ("select", "listbox", "combobox", "radio_group", "text") \
+        and not is_empty_value(f.get("value"))
+    has_value = not is_empty_value(f.get("value")) and not unset and not rejected
+    preset = has_value and not overwrite and preset_country(f, prof, presets_done or frozenset())
+    key = preset_key(f) if preset else None
+    defaulted = has_value and (site_default(f) or preset)
+    if has_value and not overwrite and not defaulted:
+        if refresh and blocks is None:
+            blocks = _entry_blocks(fields, prof, job, file_inputs)
+        stale = _differs(f, prof, job, file_inputs, blocks or set()) if refresh and f["id"] not in (keep or set()) \
+            else None
+        if stale is not None:
+            return _Planned(key, blocks, fill={"id": f["id"], "label": f.get("label", ""), "value": stale.value,
+                                               "rule": stale.rule, "refreshed": True,
+                                               **({"again": True} if f.get("role") == "spinbutton" else {})})
+        return _Planned(key, blocks, already=True)
+    missed: list[Answer] = []
+    # (a list on its own "Not Specified" first choice: answered from the others, never that placeholder again;
+    # one read with a placeholder alone, "No Selection", hasn't shown its entries yet (SuccessFactors fetches
+    # them on the first open: Edwards Vacuum's veteran list, run 107), so the answer goes to the fill, which
+    # waits for them: never "not one of its choices" of a list that has shown none)
+    options = (f.get("options") or [])[1:] if unset else (f.get("options") or [])
+    if options and all(is_empty_value(o) for o in options):
+        options = []
+    ans = resolve_field({**f, "options": options}, prof, job, file_inputs, unmatched=missed)
+    if defaulted and not overwrite and (ans is None and not missed or ans is not None and (
+            ans.value == SKIP or choose_option(str(ans.value), [str(f.get("value"))], exact_only=True) is not None
+            or preset and same_country(ans.value, f.get("value"), dial=(dial := "code" in norm(clean_label(f.get("label") or ""))))
+            or preset and dial and same_country(_phone_code(prof, job or {}), f.get("value"), dial=True))):
+        # (a dial code's list by the profile's own code, not the entry its address's country picked from the list's
+        # choices: a +52 number with a US address keeps Mexico (+52), the re-check of 0.3.196)
+        # (the site's first choice, where the profile says nothing else, or says the same: left as it is; the same
+        # word for word, as "Bachelor's Degree" isn't an "Associate's Degree" a list opens on: the review)
+        return _Planned(key, blocks, already=True, judged=True)
+    if unset and not overwrite and ans is not None and is_eeo_rule(ans.rule) and not f.get("required"):
+        # an optional self-identification list on its "Not Specified" stays as it is (the person may have
+        # chosen it); a required one is answered (Kforce's "Birth Assigned Gender", live run 13)
+        return _Planned(key, blocks, already=True)
+    # (a date's part showing the answer is typed again all the same: the page lost what was typed, and keeps only
+    # what's shown: Entegris' Workday Self Identify Date, run 54)
+    if rejected and not overwrite and (ans is None or ans.value == SKIP or is_eeo_rule(ans.rule)
+                                       or (str(ans.value).strip() == str(f.get("value")).strip()
+                                           and f.get("role") != "spinbutton"
+                                           if f.get("kind") == "text"
+                                           else choose_option(str(ans.value), [str(f.get("value"))]) is not None)):
+        return _Planned(key, blocks, already=True)  # (nothing else to give it, or the same answer: left to the person)
+    if ans is not None and ans.value == SKIP:
+        return _Planned(key, blocks)
+    if ans is not None:
+        return _Planned(key, blocks, fill={"id": f["id"], "label": f.get("label", ""), "value": ans.value,
+                                           "rule": ans.rule}, judged=bool(defaulted))
+    if f.get("kind") != "password":
+        # with the profile's answer the choices don't have (Qorvo's veteran list has no "I
+        # don't wish to answer"), so the desk can say why it's empty
+        # (a list on its "Not Specified" first choice is asked about without it: that choice is the empty one,
+        # and an answer of it was taken for none and asked again, Kforce's Birth Assigned Gender, live run 24)
+        asked = _asked({**f, "options": (f.get("options") or [])[1:]} if unset else f)
+        # (a list on the site's first choice is never left empty: what it shows goes out, so it's asked as
+        # required, optional or not: the review)
+        return _Planned(key, blocks, ask={**asked, **({"unmatched": str(missed[0].value)} if missed else {}),
+                                          **({"required": True} if defaulted else {})})
+    return _Planned(key, blocks)
+
+
+def _phone_of_another_kind(fields: list[dict], to_fill: list[dict], needs_input: list[dict], prof: Profile,
+                           job: dict | None, file_inputs: int) -> None:
+    """A form with no phone box of the profile's kind and no plain one, whose boxes name other kinds ("Home
+    Phone" alone, for a mobile): where only one of them is there, or only one is required, that's where
+    the form wants the number, so it's filled, as before boxes had kinds. Only a box the profile would
+    fill but for its kind (never a reference's, nor one that signs the person up for texts)."""
     if not any(t["rule"] == "phone" for t in to_fill) and prof.get("personal.phone"):
         def kind_only(f: dict) -> bool:
             kind = _phone_box_kind(norm(clean_label(f.get("label") or "")))
@@ -3448,8 +3588,11 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
             needs_input[:] = [q for q in needs_input if q.get("id") != chosen["id"]]
             to_fill.append({"id": chosen["id"], "label": chosen.get("label", ""),
                             "value": _phone(prof, job or {}, norm(clean_label(chosen.get("label") or ""))), "rule": "phone"})
-    # a question whose own "I decline to say" box is ticked (or being ticked) for a profile that declines it is
-    # answered by that box (Nikon's UKG Pro: "Gender" with "I decline to say Gender" beneath it)
+
+
+def _declined_by_box(fields: list[dict], to_fill: list[dict], needs_input: list[dict]) -> None:
+    """A question whose own "I decline to say" box is ticked (or being ticked) for a profile that declines it is
+    answered by that box (Nikon's UKG Pro: "Gender" with "I decline to say Gender" beneath it)."""
     def declined_by(f: dict) -> str | None:
         got = _DECLINE_BOX.match(clean_label(f.get("label") or ""))
         return norm(clean_label(got.group(1))) if got else None
@@ -3458,9 +3601,6 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
     declined = {d for f in fields if f.get("id") in ticking and (d := declined_by(f))}
     if declined:
         needs_input[:] = [q for q in needs_input if norm(clean_label(q.get("label") or "")) not in declined]
-    needs_input.sort(key=lambda f: not f.get("required"))
-    return {"to_fill": to_fill, "needs_input": needs_input, "already_filled": already,
-            **({"judged": judged} if judged else {}), **({"presets": presets} if presets else {})}
 
 
 def _asked(f: dict) -> dict:
