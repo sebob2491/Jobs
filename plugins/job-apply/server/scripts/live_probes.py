@@ -5,8 +5,8 @@ Oct 18), as the test identity (live_identity.py; TEST_IDENTITY.md), which never 
     uv run python scripts/live_probes.py --out live-probes --report-only   # the report again, from what's there
 
 - reset: with settings.manage_accounts the desk resets a saved password the site refuses, through the site's own
-  "Forgot password" and its emailed link (pipeline.py's _ask_for_reset, _set_new_password). The nightly takes that
-  path only when a site happens to refuse. At RESET_TENANTS (two Workday tenants where the test identity has an
+  "Forgot password" and its emailed link (pipeline_accounts.py's _ask_for_reset, _set_new_password). The nightly takes
+  that path only when a site happens to refuse. At RESET_TENANTS (two Workday tenants where the test identity has an
   account), two passes a tenant, each a live_smoke.py run of its own (its own home, browser and sign-ins):
     1. Workday's saved password is derived_password(the site password), which the site refuses: the desk asks for
        a reset, reads the email, sets the derived password and signs in;

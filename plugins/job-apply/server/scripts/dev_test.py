@@ -8,10 +8,11 @@ origin/main, committed or not, and new files git doesn't ignore), each to the te
     uv run python scripts/dev_test.py --list       # which test files, without running them
     uv run python scripts/dev_test.py --lf -x      # anything else goes to pytest as it is
 
-What reads what: a module (src/job_apply/X.py; the browser_*.py mixins count as browser.py) to the tests that import
-it; scripts/X.py to tests/test_X.py and the tests that import it or name X.py; a test file to itself and the tests
-that import it; the desk's page (static/) to test_desk.py and test_pipeline.py; data/ to the tests that read the
-plugin's data; any other file of the plugin's (a fixture, a template, a skill) to the tests that name it.
+What reads what: a module (src/job_apply/X.py; the browser_*.py and pipeline_*.py mixins count as browser.py and
+pipeline.py) to the tests that import it; scripts/X.py to tests/test_X.py and the tests that import it or name X.py;
+a test file to itself and the tests that import it; the desk's page (static/) to test_desk.py and test_pipeline.py;
+data/ to the tests that read the plugin's data; any other file of the plugin's (a fixture, a template, a skill) to the
+tests that name it.
 tests/conftest.py, pyproject.toml and uv.lock run everything. Files outside the plugin run nothing.
 """
 
@@ -41,14 +42,15 @@ _BARE = re.compile(r"^[ \t]*(?:import|from)[ \t]+(\w+)\b", re.M)
 
 
 def module_of(path: str) -> str:
-    """The module a source file is, by name ("browser" for browser.py and its browser_*.py mixins)."""
+    """The module a source file is, by name ("browser" for browser.py and its browser_*.py mixins, "pipeline" for
+    pipeline.py and its pipeline_*.py)."""
     name = Path(path).stem
-    return "browser" if name.startswith("browser_") else name
+    return next((m for m in ("browser", "pipeline") if name.startswith(m + "_")), name)
 
 
 def imports(text: str) -> set[str]:
     """The modules a file imports by name: job_apply's as "job_apply.<name>" (absolute or, inside the package,
-    relative; a mixin as browser), any other as its bare name (a script, or a test module beside it)."""
+    relative; a mixin as its class's module), any other as its bare name (a script, or a test module beside it)."""
     found = {"job_apply." + module_of(m) for m in _FROM_MODULE.findall(text) + _IMPORT_MODULE.findall(text)}
     for names in _FROM_PACKAGE.findall(text):
         for part in names.strip("()").split(","):
@@ -162,7 +164,7 @@ def main(argv: list[str] | None = None) -> int:
         changed = changed_files(args.base)
         tests = {p.relative_to(SERVER).as_posix(): text for p, text in _read(SERVER / "tests", "*.py").items()}
         modules: dict[str, str] = {}
-        for p, text in _read(SERVER / "src" / "job_apply", "*.py").items():  # (a mixin's imports are browser's)
+        for p, text in _read(SERVER / "src" / "job_apply", "*.py").items():  # (a mixin's imports are its class's module's)
             key = "job_apply." + module_of(p.name)
             modules[key] = modules.get(key, "") + text
         modules |= {p.stem: text for p, text in _read(SERVER / "scripts", "*.py").items()}

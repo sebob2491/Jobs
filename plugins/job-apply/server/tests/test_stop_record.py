@@ -18,6 +18,12 @@ from job_apply.pipeline import Applier, Run
 
 PIPELINE = Path(pipeline.__file__)
 
+
+def _driver_source() -> str:
+    """The driver's source: pipeline.py and its mixins (pipeline_*.py, Applier's bases), read as one."""
+    return "\n".join(p.read_text(encoding="utf-8") for p in [PIPELINE, *sorted(PIPELINE.parent.glob("pipeline_*.py"))])
+
+
 # A step whose Next doesn't move on (its error says the resume is wanted), on a page that also shows the person's own
 # email and phone (as a signed-in site does) beside the error, and echoes what was typed into the form
 STUCK_PAGE = """<!doctype html>
@@ -122,7 +128,7 @@ def test_every_recording_of_the_last_action_is_a_statement_of_its_own():
     """The last action is a record only (T10): each Run.did call in the driver is a statement of its own (nothing reads
     what it gives back), and its arguments wait for nothing, assign nothing and call nothing but reads (a dict's get):
     so taking each such line away leaves the driver as it decides. Run.did itself never raises."""
-    tree = ast.parse(PIPELINE.read_text(encoding="utf-8"))
+    tree = ast.parse(_driver_source())
     statements = {id(n.value) for n in ast.walk(tree) if isinstance(n, ast.Expr)}
     calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "did"]
     assert len(calls) >= 40  # (where the desk clicks and fills)
