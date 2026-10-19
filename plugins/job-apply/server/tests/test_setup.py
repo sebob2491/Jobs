@@ -43,7 +43,8 @@ def test_the_desks_browser_doesnt_offer_to_save_passwords(tmp_path):
 
     used = tmp_path / "used"
     (used / "Default").mkdir(parents=True)
-    (used / "Default" / "Preferences").write_text(json.dumps({"profile": {"name": "Person 1"}, "homepage": "x"}), encoding="utf-8")
+    (used / "Default" / "Preferences").write_text(json.dumps({"profile": {"name": "Person 1"}, "homepage": "x"}),
+                                                  encoding="utf-8")
     quiet_password_manager(used)
     prefs = json.loads((used / "Default" / "Preferences").read_text(encoding="utf-8"))
     assert prefs["profile"] == {"name": "Person 1", "password_manager_enabled": False,
@@ -122,7 +123,8 @@ def test_a_zip_code_with_a_leading_zero_is_kept_as_written(job_apply_home):
     """Unquoted, 02134 reads as an octal number (1116) in YAML: the profile keeps 02134."""
     from job_apply import config
 
-    (job_apply_home / "profile.yaml").write_text("personal:\n  first_name: Kim\n  address:\n    postal_code: 02134\n", encoding="utf-8")
+    (job_apply_home / "profile.yaml").write_text("personal:\n  first_name: Kim\n  address:\n    postal_code: 02134\n",
+                                                 encoding="utf-8")
     assert config.Profile.load().get("personal.address.postal_code") == "02134"
 
 

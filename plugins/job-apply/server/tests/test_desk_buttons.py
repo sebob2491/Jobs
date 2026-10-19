@@ -1,7 +1,7 @@
-"""The desk's buttons that no test pressed through the page (the design of Oct 18, A9): Carry on with the queue on the notice of
-jobs back after a restart, Undo on a skipped job's row, Show me, Clear, the review round's Stop, and the header's This
-week, Safety, Notes and What and where. Each is pressed in the real page; the test checks the call it made to the desk
-(or that it made none) and what the page shows after."""
+"""The desk's buttons that no test pressed through the page (the design of Oct 18, A9): Carry on with the queue on the
+notice of jobs back after a restart, Undo on a skipped job's row, Show me, Clear, the review round's Stop, and the
+header's This week, Safety, Notes and What and where. Each is pressed in the real page; the test checks the call it made
+to the desk (or that it made none) and what the page shows after."""
 
 import asyncio
 import contextlib
@@ -68,8 +68,8 @@ def _idle_desk(srv) -> Desk:
 
 
 def test_resume_queue_on_the_restored_notice_lets_the_jobs_back_go_on(srv):
-    """Jobs queued again after a restart wait, paused, under a notice with Carry on with the queue: pressed, the queue goes on,
-    the notice goes and the header's button is Pause queue again."""
+    """Jobs queued again after a restart wait, paused, under a notice with Carry on with the queue: pressed, the queue
+    goes on, the notice goes and the header's button is Pause queue again."""
     from job_apply.pipeline import Run
 
     desk = _idle_desk(srv)
@@ -256,7 +256,8 @@ def test_safety_opens_with_each_setting_as_the_desk_acts_on_it(srv, job_apply_ho
     calls, keys, first = run(go())
     assert calls == [("GET", "/api/safety", None)], calls
     assert keys == [line["key"] for line in lines] and len(keys) > 3, keys
-    assert first.startswith(f"{lines[0]['name']}: {lines[0]['value']}.") and f"Where: {lines[0]['where']}." in first, first
+    assert (first.startswith(f"{lines[0]['name']}: {lines[0]['value']}.")
+            and f"Where: {lines[0]['where']}." in first), first
 
 
 def test_notes_opens_the_notes_as_the_one_issue_they_make(srv, job_apply_home):
@@ -301,7 +302,8 @@ def test_what_and_where_opens_on_the_profiles_titles_and_places_and_cancel_saves
             await page.wait_for_selector("#area[open]")
             titles = await page.locator("#area-titles .chip").all_inner_texts()
             places = await page.locator("#area-places .chip").all_inner_texts()
-            lists = await page.eval_on_selector_all("[data-area-list]", "bs => bs.map((b) => [b.dataset.areaList, b.checked])")
+            lists = await page.eval_on_selector_all("[data-area-list]",
+                                                    "bs => bs.map((b) => [b.dataset.areaList, b.checked])")
             await page.fill("#area-title-new", "Help Desk Technician")  # (typed, then Cancel: not kept)
             await page.click("[data-act=area-close]")
             await page.wait_for_selector("#area[open]", state="detached")

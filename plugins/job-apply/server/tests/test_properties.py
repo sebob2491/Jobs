@@ -49,8 +49,9 @@ def test_redact_takes_a_secret_out_wherever_it_is_and_does_so_once_for_good(secr
 
 def test_a_found_code_is_always_in_the_mail_and_never_a_year_after_the_words_alone():
     rng = _rng("code")
-    filler = ["Thanks for applying.", "Your verification code is", "Use code", "The year is 2024.", "Call 480-555-0100.",
-              "Job 2617841", "promo code SAVE20", "ZIP code 85201", "Expires in 15 minutes.", "Hi there,"]
+    filler = ["Thanks for applying.", "Your verification code is", "Use code", "The year is 2024.",
+              "Call 480-555-0100.", "Job 2617841", "promo code SAVE20", "ZIP code 85201", "Expires in 15 minutes.",
+              "Hi there,"]
     for _ in range(TRIES):
         code = "".join(rng.choice(string.digits) for _ in range(6))
         parts = [rng.choice(filler) for _ in range(rng.randint(0, 5))] + [f"Your verification code is {code}."]

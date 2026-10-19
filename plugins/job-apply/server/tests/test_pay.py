@@ -202,7 +202,8 @@ REVIEWED = [
     ('Phone allowance $50/month; pay $25/hr', (25, 25, 'hour')),
     ('Health insurance premium $100 per month; pay competitive', None),
     ('Hourly employees receive a $250 annual bonus', None),
-    ('The annual base salary range for this position in California is $150,000-$200,000 and in Arizona $120,000-$160,000',
+    ('The annual base salary range for this position in California is $150,000-$200,000 '
+     'and in Arizona $120,000-$160,000',
      (120000, 200000, 'year')),
     ('Pay: $30/hr for 40 hours per week', (30, 30, 'hour')),
     ('Rate: 40 hours per week, $25', None),
@@ -370,7 +371,8 @@ def test_the_tooltip_quotes_salary_words_only_when_they_say_the_pay_shown():
     indeed = {**fields, "pay_source": "indeed"}
     assert pay.view(indeed, "Estimated $30K a year")["from"] == "From Indeed's salary field"
     # (the second review) pay read from the text says so: it never hides the job
-    assert pay.view({**fields, "pay_sure": False})["from"] == "From the posting's text (≈ read from the text: Pay at least never hides this job for it)"
+    assert (pay.view({**fields, "pay_sure": False})["from"]
+            == "From the posting's text (≈ read from the text: Pay at least never hides this job for it)")
     assert pay.view({**fields, "pay_sure": False})["sure"] is False and pay.view(fields)["sure"] is True
 
 
@@ -473,7 +475,10 @@ def test_the_rows_view_says_where_the_pay_came_from():
     assert view["from"].startswith("From Indeed's salary field") and "“$25 - $27 an hour”" in view["from"]
     assert (view["top"], view["sort"]) == (56160, 56160)
     view = pay.view({"pay_min": 22, "pay_max": None, "pay_period": "hour", "pay_source": "text"})
-    assert view is not None and (view["top"], view["sort"], view["from"]) == (None, 45760, "From the posting's text (≈ read from the text: Pay at least never hides this job for it)")
+    assert (view is not None
+            and (view["top"], view["sort"], view["from"])
+            == (None, 45760,
+                "From the posting's text (≈ read from the text: Pay at least never hides this job for it)"))
     assert pay.view({}) is None and pay.view({"pay_min": None, "pay_max": None, "pay_period": ""}) is None
 
 
@@ -489,21 +494,30 @@ REVIEWED_AGAIN = [
     ('Compensation Range: $1,820.00 - $2,730.00 Biweekly', [(1820, 2730, 'biweekly')]),
     ('Expected Pay Range: $27.88 - $41.82 per hour', [(27.88, 41.82, 'hour')]),
     ('Target Pay Range: $105,000.00 - $157,500.00 annually', [(105000, 157500, 'year')]),
-    ('The salary range for this position is $70,200 - $105,300. Individual pay is determined by work location, skills and experience.', [(70200, 105300, 'year')]),
-    ('Pay Transparency: The base salary range for this role in California, Colorado, New York City, and Washington is $128,000 - $192,000. In Illinois and Maryland the range is $115,000 - $172,000.', [(115000, 192000, 'year')]),
-    ('The pay range for this role is:\n115,200 - 172,800 USD per year (Remote - United States)\n126,700 - 190,100 USD per year (San Francisco, CA)', [(115200, 190100, 'year')]),
-    ('Colorado/Washington Pay Range\n$90,000—$135,000 USD\nCalifornia Pay Range\n$99,000—$148,500 USD\nNew York City Pay Range\n$103,500—$155,250 USD', [(90000, 155250, 'year')]),
-    ('For roles based in New York State, the hourly pay range is $22.00 to $28.50. For Washington State, $21.00 to $27.00.', [(21, 28.5, 'hour')]),
+    ('The salary range for this position is $70,200 - $105,300. Individual pay is determined by work location, skills '
+     'and experience.', [(70200, 105300, 'year')]),
+    ('Pay Transparency: The base salary range for this role in California, Colorado, New York City, and Washington is '
+     '$128,000 - $192,000. In Illinois and Maryland the range is $115,000 - $172,000.', [(115000, 192000, 'year')]),
+    ('The pay range for this role is:\n115,200 - 172,800 USD per year (Remote - United States)\n'
+     '126,700 - 190,100 USD per year (San Francisco, CA)', [(115200, 190100, 'year')]),
+    ('Colorado/Washington Pay Range\n$90,000—$135,000 USD\nCalifornia Pay Range\n$99,000—$148,500 USD\n'
+     'New York City Pay Range\n$103,500—$155,250 USD', [(90000, 155250, 'year')]),
+    ('For roles based in New York State, the hourly pay range is $22.00 to $28.50. For Washington State, $21.00 to '
+     '$27.00.', [(21, 28.5, 'hour')]),
     ('Minimum Salary: $81,600.00 Maximum Salary: $134,600.00', [(81600, 134600, 'year')]),
-    ('Salary Range: $73,600 - $110,400 (CO, CA, NY, WA); this range may vary based on location', [(73600, 110400, 'year')]),
-    ("In compliance with Colorado's Equal Pay for Equal Work Act, the annual salary for this role is $65,000 - $78,000 plus a discretionary annual bonus of up to 10%.", [(65000, 78000, 'year')]),
+    ('Salary Range: $73,600 - $110,400 (CO, CA, NY, WA); this range may vary based on location',
+     [(73600, 110400, 'year')]),
+    ("In compliance with Colorado's Equal Pay for Equal Work Act, the annual salary for this role is $65,000 - $78,000 "
+     "plus a discretionary annual bonus of up to 10%.", [(65000, 78000, 'year')]),
     ('Maryland Pay Range: $46,000—$62,000 USD', [(46000, 62000, 'year')]),
     ('Illinois pay range $19.25/hr - $24.10/hr', [(19.25, 24.1, 'hour')]),
-    ('The base compensation range for this role in the posted location is: $88,000.00 - $132,000.00', [(88000, 132000, 'year')]),
+    ('The base compensation range for this role in the posted location is: $88,000.00 - $132,000.00',
+     [(88000, 132000, 'year')]),
     ('Base Salary Range\n$140,000—$175,000 USD', [(140000, 175000, 'year')]),
     ('$140,000 - $175,000 a year', [(140000, 175000, 'year')]),
     ('Annual Salary\n$85,000 - $110,000', [(85000, 110000, 'year')]),
-    ('The US base salary range for this full-time position is $96,000 - $132,000 + bonus + equity + benefits.', [(96000, 132000, 'year')]),
+    ('The US base salary range for this full-time position is $96,000 - $132,000 + bonus + equity + benefits.',
+     [(96000, 132000, 'year')]),
     ('Compensation: $120K - $160K + equity', [(120000, 160000, 'year')]),
     ('Compensation: $120–160K, plus equity and benefits', [(120000, 160000, 'year')]),
     ('Salary: $70k–$90k DOE', [(70000, 90000, 'year')]),
@@ -522,16 +536,19 @@ REVIEWED_AGAIN = [
     ('Wage: 16.50/hr', [(16.5, 16.5, 'hour')]),
     ('Wage: $16.50 p/h', [(16.5, 16.5, 'hour')]),
     ('Pay: $16.50 ph', [(16.5, 16.5, 'hour')]),
-    ('Pay Range: $38.50 - $57.75 per hour based on experience. Shift differentials: Evening $3.00/hr, Night $5.00/hr, Weekend $2.50/hr.', [(38.5, 57.75, 'hour')]),
+    ('Pay Range: $38.50 - $57.75 per hour based on experience. Shift differentials: Evening $3.00/hr, Night $5.00/hr, '
+     'Weekend $2.50/hr.', [(38.5, 57.75, 'hour')]),
     ('$38.50 - $57.75 per hour based on experience, plus $4.50/hr night shift differential', [(38.5, 57.75, 'hour')]),
     ('Night Differential: $5.00/hr. Base pay: $41.20 - $61.80 per hour', [(41.2, 61.8, 'hour')]),
     ('Per Diem RN - $65/hr', [(65, 65, 'hour')]),
     ('PRN rate: $55.00 per hour', [(55, 55, 'hour')]),
     ('Travel RN: $2,450/week (includes housing stipend $1,200/wk)', [(2450, 2450, 'week'), None]),
-    ('Weekly gross pay: $2,450. Taxable hourly rate: $22/hr; housing stipend: $1,100/wk; meals: $400/wk', [(22, 22, 'hour'), (2450, 2450, 'week'), None]),
+    ('Weekly gross pay: $2,450. Taxable hourly rate: $22/hr; housing stipend: $1,100/wk; meals: $400/wk',
+     [(22, 22, 'hour'), (2450, 2450, 'week'), None]),
     ('Pay is $28.62 per hour. Evening differential $1.75/hr. Night differential $3.25/hr.', [(28.62, 28.62, 'hour')]),
     ('Charge nurse premium $2/hr. Hourly pay $44-$66.', [(44, 66, 'hour')]),
-    ('Starting rate $32.15/hr; up to $48.20/hr based on years of experience', [(32.15, 48.2, 'hour'), (32.15, None, 'hour')]),
+    ('Starting rate $32.15/hr; up to $48.20/hr based on years of experience',
+     [(32.15, 48.2, 'hour'), (32.15, None, 'hour')]),
     ('Earn up to $28/hr!', [(None, 28, 'hour')]),
     ('Up to $85,000 per year DOE', [(None, 85000, 'year')]),
     ('Starting at $19.50 per hour', [(19.5, None, 'hour')]),
@@ -582,9 +599,12 @@ REVIEWED_AGAIN = [
     ('We pay $25, $27, or $30 per hour depending on shift', [(25, 30, 'hour'), (30, 30, 'hour'), None]),
     ('Hourly pay: $20.50, Mon-Fri', [(20.5, 20.5, 'hour')]),
     ('Salary is $110,000, and the bonus target is 10%.', [(110000, 110000, 'year')]),
-    ('Benefits: Medical, dental and vision starting day one; 401(k) with company match up to 6%; $5,250 annual tuition reimbursement; $1,500 wellness allowance; EAP. Pay: $24/hr.', [(24, 24, 'hour')]),
-    ('We offer a 401(k) plan that matches up to 6% of your pay, and an HSA with a $1,000 employer contribution.', [None]),
-    ('Our total rewards include an annual bonus, a $2,000 learning budget, and paid parental leave. The salary range is $80,000 - $100,000.', [(80000, 100000, 'year')]),
+    ('Benefits: Medical, dental and vision starting day one; 401(k) with company match up to 6%; '
+     '$5,250 annual tuition reimbursement; $1,500 wellness allowance; EAP. Pay: $24/hr.', [(24, 24, 'hour')]),
+    ('We offer a 401(k) plan that matches up to 6% of your pay, and an HSA with a $1,000 employer contribution.',
+     [None]),
+    ('Our total rewards include an annual bonus, a $2,000 learning budget, and paid parental leave. The salary range '
+     'is $80,000 - $100,000.', [(80000, 100000, 'year')]),
     ('$5,000 relocation package available. Annual salary $92,000.', [(92000, 92000, 'year')]),
     ('Relocation: up to $5,000. Salary: $92,000/yr', [(92000, 92000, 'year')]),
     ('Tuition assistance of up to $5,250 per year', [None]),
@@ -744,7 +764,8 @@ REVIEWED_AGAIN = [
     ('Salary range: 600,000 - 800,000 JPY', [None]),
     ('Salary: ¥8,000,000', [None]),
     ('US Salary: $120,000 - $150,000 | Canada Salary: CAD $140,000 - $170,000', [(120000, 150000, 'year')]),
-    ('Salary range (Canada): $95,000 - $115,000 CAD\nSalary range (US): $85,000 - $105,000 USD', [(85000, 105000, 'year')]),
+    ('Salary range (Canada): $95,000 - $115,000 CAD\nSalary range (US): $85,000 - $105,000 USD',
+     [(85000, 105000, 'year')]),
     ('Toronto, ON - Salary: $95,000 - $115,000', [None, (95000, 115000, 'year')]),
     ('Salary: $72,000 per annum', [(72000, 72000, 'year')]),
     ('Salary: $72,000 p.a.', [(72000, 72000, 'year')]),
@@ -866,7 +887,8 @@ REVIEWED_AGAIN = [
     ('Hourly Pay: 22', [(22, 22, 'hour')]),
     ('Pay: twenty dollars an hour', [None]),
     ('Annual value of benefits: $18,000. Pay: $25/hr', [(25, 25, 'hour')]),
-    ('Total annual compensation including benefits averages $72,000; hourly pay $26', [(26, 26, 'hour'), (72000, 72000, 'year')]),
+    ('Total annual compensation including benefits averages $72,000; hourly pay $26',
+     [(26, 26, 'hour'), (72000, 72000, 'year')]),
     ('Annual Merit Pool: 3.5%. Pay: $25/hr', [(25, 25, 'hour')]),
     ('Annual Salary: $4,000 per month', [(4000, 4000, 'month')]),
     ('Hourly rate: $28.00 / Annual equivalent: $58,240', [(28, 28, 'hour')]),

@@ -131,8 +131,8 @@ def test_an_assessment_page_with_no_way_on_keeps_its_boxes_as_read():
     assert "Always" in last["markup"] and "Never" in last["markup"], result
     grouped = _take("?vendor=" + "http://localhost:PORT/site/assessment-vendor.html?boxes&stuck".replace("?", "%3F")
                     .replace("=", "%3D").replace("&", "%26"))  # (a group of boxes: its markup by its members)
-    assert grouped["steps"][-1]["fields"][0]["kind"] == "checkbox_group" and "Always" in grouped["steps"][-1]["markup"], \
-        grouped
+    assert (grouped["steps"][-1]["fields"][0]["kind"] == "checkbox_group"
+            and "Always" in grouped["steps"][-1]["markup"]), grouped
 
 
 ACCOUNT = PRELUDE + """
@@ -185,8 +185,9 @@ def test_the_test_identity_makes_a_create_account_choice_the_desk_leaves_to_the_
 
 
 @pytest.mark.skipif(not browser_available(), reason="needs Chromium")
-@pytest.mark.parametrize("mode", ["tiles", "tiles=fixed", pytest.param("bestworst", marks=pytest.mark.slow), "tiles=dead",
-                                  "words", "words=many"])
+@pytest.mark.parametrize("mode",
+                         ["tiles", "tiles=fixed", pytest.param("bestworst", marks=pytest.mark.slow), "tiles=dead",
+                          "words", "words=many"])
 def test_an_assessments_answer_tiles_are_clicked_and_a_word_list_that_wants_more_gets_more(mode):
     """Circle K's (run 62): its statements' answers are tiles to click under "Answers" (nothing read as a box but its
     Auto Advance switch), and the taker found no way on. One is clicked at random, and the page goes on by itself.

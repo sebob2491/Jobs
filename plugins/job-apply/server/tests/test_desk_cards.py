@@ -20,9 +20,9 @@ pytestmark = pytest.mark.skipif(not browser_available(), reason="no Playwright C
 DESK_FIXTURES = Path(__file__).parent / "fixtures" / "desk"
 UPDATE = os.environ.get("JOB_APPLY_UPDATE_SNAPSHOTS") == "1"
 
-# Each case: the canned state it draws, the snapshot its cards are compared with, what's kept in the browser before the page opens (its localStorage), and what's
-# pressed before the cards are read. Every <details> is opened first (What went in, the passwords' How this works), so
-# what's in them is in the snapshot too.
+# Each case: the canned state it draws, the snapshot its cards are compared with, what's kept in the browser before the
+# page opens (its localStorage), and what's pressed before the cards are read. Every <details> is opened first (What
+# went in, the passwords' How this works), so what's in them is in the snapshot too.
 CASES = {
     # a job stopped for each need: questions (with a What went in panel), a sign-in holding the queue, an emailed code,
     # a bot check, a CAPTCHA, stuck, a Submit that didn't go, the person's own Submit, one to check whether it went in,
@@ -73,7 +73,8 @@ def _state(name: str) -> dict:
 
 
 def _cards(srv, monkeypatch, state: dict, storage: dict | None = None, press: list[str] = ()) -> str:
-    """The desk's page drawn from `state` (Desk.state replaced by it), each section.card's words as _snapshot says them."""
+    """The desk's page drawn from `state` (Desk.state replaced by it), each section.card's words as
+    _snapshot says them."""
     monkeypatch.setattr(Desk, "state", lambda self: copy.deepcopy(state))
     desk = Desk(srv)
     desk.applier.start = lambda: None  # (nothing is worked: the page shows only the canned state)
@@ -85,7 +86,7 @@ def _cards(srv, monkeypatch, state: dict, storage: dict | None = None, press: li
                 page = await browser.new_page(viewport={"width": 1280, "height": 900})
                 if storage:
                     await page.add_init_script(f"""(() => {{ try {{ for (const [k, v] of Object.entries({json.dumps(storage)}))
-                        localStorage.setItem(k, v); }} catch (e) {{}} }})()""")
+                        localStorage.setItem(k, v); }} catch (e) {{}} }})()""")  # noqa: E501
                 await page.goto(desk.url)
                 await page.wait_for_selector("#plugin-version:not(:empty)")  # the state is drawn
                 for selector in press:

@@ -1,5 +1,6 @@
 """The live check records the words just above each box the desk asked about (scripts/live_smoke.py's _words_above):
-what a question with no words of its own asks. Run in a process of its own: live_smoke sets the environment it runs in."""
+what a question with no words of its own asks. Run in a process of its own: live_smoke sets the
+environment it runs in."""
 
 import json
 import subprocess
@@ -77,7 +78,7 @@ masked = live_smoke.agreed_words([{"what": "attestation", "heading": "Sign as jo
                                    "words": "Account jobdesk.test@example.com", "choices": ["I am jobdesk.test@example.com"],
                                    "windows": ["password Xk9-not-a-real-password"]}])
 print("RESULT " + json.dumps({"first": first, "then": then, "all": live_smoke.agreed_words(agreed), "masked": masked}))
-"""
+"""  # noqa: E501
 
 
 def test_the_words_agreed_to_are_kept_scrubbed_for_the_audit_each_in_its_round():

@@ -61,7 +61,8 @@ def test_each_part_holds_the_same_tests_with_the_slow_ones_first_or_not(monkeypa
         assert sorted(first) == sorted(plain) and first_deselected == plain_deselected, part  # (the same split)
         assert first == [i for i in plain if i in SLOW] + [i for i in plain if i not in SLOW], part
         assert sorted(plain + plain_deselected) == sorted(EVERY), part
-        assert set(plain) & set(SLOW) and set(plain) - set(SLOW), part  # (each part has both: the check means something)
+        # (each part has both: the check means something)
+        assert set(plain) & set(SLOW) and set(plain) - set(SLOW), part
         seen += plain
     assert sorted(seen) == sorted(EVERY)  # (every test in exactly one part)
 

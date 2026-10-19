@@ -108,7 +108,8 @@ def test_pipeline_outcome_is_where_it_ended():
     rec["rounds"].insert(0, {"status": "needs_you", "need": "questions", "questions": [{"label": "Q"}]})
     assert lc.pipeline_outcome(rec).outcome == "needs_you stuck"
     crashed = pipeline_rec("TI", crash="TimeoutError: still running after 180s")
-    assert lc.pipeline_outcome(crashed) == Result("crash", "Field Service Engineer · TimeoutError: still running after 180s")
+    assert (lc.pipeline_outcome(crashed)
+            == Result("crash", "Field Service Engineer · TimeoutError: still running after 180s"))
     assert lc.pipeline_outcome({"company": "X", "note": "no postings found", "seconds": 3}) == \
         Result("no postings", "no postings found")
 
@@ -329,7 +330,8 @@ def test_a_record_run_on_from_a_cut_screenshot_line_is_read():
     """A screenshot printed before an employer's record was cut at 64 KiB, and the record ran on
     into it: ASM, Ebara and onsemi went missing from the nightly issue, and 'stuck' outcomes (the
     ones with a screenshot) were never saved."""
-    text = 'LIVE_SHOT "ASM" /9j/' + "A" * 65530 + "LIVE_PIPELINE " + json.dumps(pipeline_rec("ASM", "needs_you", "stuck"))
+    text = ('LIVE_SHOT "ASM" /9j/' + "A" * 65530 + "LIVE_PIPELINE "
+            + json.dumps(pipeline_rec("ASM", "needs_you", "stuck")))
     text += "\n" + log("LIVE_PIPELINE ", [pipeline_rec("KLA")])
     assert {name: r.outcome for name, r in lc.results("pipeline", text).items()} == {
         "ASM": "needs_you stuck", "KLA": "ready"}
@@ -363,10 +365,12 @@ def test_a_site_down_for_maintenance_keeps_its_employers_last_outcome():
     and changed back the next night. Down for maintenance is no outcome of the employer's own."""
     down = {"company": "KLA", "seconds": 3,
             "note": "no postings found (the search failed: SearchError: kla.wd1.myworkdayjobs.com is down for "
-                    "maintenance (it sends searches to community.workday.com/maintenance-page); try again in a few hours)"}
+                    "maintenance (it sends searches to community.workday.com/"
+                    "maintenance-page); try again in a few hours)"}
     assert lc.pipeline_outcome(down).outcome == lc.SITE_DOWN
     stopped = pipeline_rec("ASML", "needs_you", "stuck", "ASML's site is down for maintenance (it sent the job to "
-                           "https://www.asml.com/en/maintenance). Try again in a few hours: press Resume once it's back.")
+                           "https://www.asml.com/en/maintenance). Try again in a few "
+                           "hours: press Resume once it's back.")
     assert lc.pipeline_outcome(stopped).outcome == lc.SITE_DOWN
     assert lc.search_outcome(search_rec("KLA", az=0, error="SearchError: kla.wd1.myworkdayjobs.com is down for "
                                          "maintenance (...); try again in a few hours")).outcome == lc.SITE_DOWN
@@ -442,7 +446,8 @@ def test_a_ready_rows_detail_is_its_title_and_the_saved_outcomes_are_grouped():
     two hundred of them the review page's one sentence, and a fifth the saved outcomes, one line an employer. A
     ready row's detail is its posting's title (the outcome says the rest), and the saved outcomes group each
     check's employers by outcome, on one line."""
-    ready = pipeline_rec("ASM", reason="Filled and waiting on the review page. Check it in the browser, then press Submit.")
+    ready = pipeline_rec("ASM",
+                         reason="Filled and waiting on the review page. Check it in the browser, then press Submit.")
     assert lc.pipeline_outcome(ready) == Result("ready", "Field Service Engineer")
     stuck = pipeline_rec("KLA", "needs_you", "stuck", "Workday didn't move on.")
     assert lc.pipeline_outcome(stuck).detail == "Field Service Engineer · Workday didn't move on."
@@ -470,7 +475,8 @@ def test_a_version_1_state_block_still_reads():
     v1 = json.dumps({"version": 1, "outcomes": {"pipeline": {"KLA": "needs_you sign_in", "ASM": "ready"},
                                                 "search": {"USAA": "works"}}}, indent=1)
     body = f"Last checked: 2026-10-15 10:17 UTC\n\n{lc.STATE_MARK}\n```json\n{v1}\n```\n"
-    assert lc.read_state(body) == {"pipeline": {"ASM": "ready", "KLA": "needs_you sign_in"}, "search": {"USAA": "works"}}
+    assert (lc.read_state(body)
+            == {"pipeline": {"ASM": "ready", "KLA": "needs_you sign_in"}, "search": {"USAA": "works"}})
     assert list(lc.read_state(body)["pipeline"]) == ["ASM", "KLA"]  # by name, as the tables list them
     assert lc.read_reached(body) == {}
 
@@ -702,7 +708,8 @@ def test_the_trend_body_fits_githubs_size_with_sixty_runs_of_four_checks():
 
 
 @pytest.mark.parametrize("sizes", [
-    {"pipeline": 39, "hr": 68, "finance": 68, "accounts": 144, "search": 144},  # (both lists and Las Vegas, finance back)
+    # (both lists and Las Vegas, finance back)
+    {"pipeline": 39, "hr": 68, "finance": 68, "accounts": 144, "search": 144},
     {c: 150 for c in ("pipeline", "hr", "finance", "accounts", "search")}])
 def test_the_trend_body_with_five_checks_and_more_employers_sheds_runs_to_fit(sizes):
     """The review of c4edd30: finance may run again, and the Las Vegas list would bring 144 employers to the accounts
@@ -859,8 +866,8 @@ def test_an_employer_twice_as_slow_as_usual_this_run_and_the_last_is_said(tmp_pa
     new_trend, body, comment, outputs = _trend_run(tmp_path, [trend_issue], night, issues=[issue])
     assert outputs["changes"] == "1"  # (Other Co's)
     assert "- Slower at ASM (pipeline): 95 s, its usual 41 s" in comment
-    assert "**Slower (2× an employer's usual time or more, and 60 s or more, this run and the last):** ASM (pipeline): " \
-           "95 s, its usual 41 s." in body
+    assert ("**Slower (2× an employer's usual time or more, and 60 s or more, this run and the last):** ASM "
+            "(pipeline): 95 s, its usual 41 s.") in body
     assert not any(n in comment.split("**Slower")[1] for n in ("KLA", "Mail Co", "Once Co", "Other Co")), comment
     assert lc.read_trend(new_trend).seconds["pipeline"]["ASM"] == [40, 41, 42, 95, 95]
 

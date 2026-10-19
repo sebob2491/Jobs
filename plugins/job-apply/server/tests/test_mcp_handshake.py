@@ -95,7 +95,8 @@ def test_a_server_that_answers_wrong_fails_and_is_stopped(tmp_path, capsys, mode
     fake.write_text(FAKE_SERVER, encoding="utf-8")
     names = sorted(hs.expected_tools(SERVER_PY) - ({"submit_application"} if mode == "missing" else set()))
     started = time.monotonic()
-    assert hs.main(["--mcp-json", str(mcp_json(tmp_path, sys.executable, [str(fake), mode, json.dumps(names), VERSION])),
+    assert hs.main(["--mcp-json",
+                    str(mcp_json(tmp_path, sys.executable, [str(fake), mode, json.dumps(names), VERSION])),
                     "--timeout", "3"]) == 1
     assert time.monotonic() - started < 30  # the silent one stopped after its 3 s, not left running
     assert said in capsys.readouterr().err

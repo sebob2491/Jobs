@@ -15,7 +15,7 @@ LOG = """2026-10-16T21:40:01Z ============ short test summary info ============
 2026-10-16T21:40:01Z FAILED tests/test_pipeline.py::test_an_emailed_link_or_code_is_waited_for[] - AssertionError: assert 'verify'
 2026-10-16T21:40:01Z FAILED tests/test_desk.py::test_links_past_the_first_twenty_are_handed_back
 2026-10-16T21:40:01Z = 2 failed, 640 passed in 600.00s =
-"""
+"""  # noqa: E501
 
 
 def test_a_jobs_log_names_its_failed_tests():
@@ -71,7 +71,8 @@ def test_a_log_github_wont_give_is_counted_not_the_end_of_the_report():
                 "repos/o/r/actions/runs/1/attempts/1/jobs?per_page=100": {"jobs": [
                     {"id": 11, "name": "tests (Python 3.13, part 1/2)", "conclusion": "failure"},
                     {"id": 12, "name": "windows (Python 3.13, part 2/2)", "conclusion": "failure"}]},
-                "repos/o/r/actions/jobs/11/logs": "FAILED tests/test_search.py::test_a_board_page - KeyError: 'x'\n"}[path]
+                "repos/o/r/actions/jobs/11/logs": "FAILED tests/test_search.py::"
+                                                  "test_a_board_page - KeyError: 'x'\n"}[path]
 
     since = datetime.date(2026, 10, 9)
     found = fr.tally("o/r", since, api=api)

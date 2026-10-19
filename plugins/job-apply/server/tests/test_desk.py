@@ -78,7 +78,8 @@ def test_desk_finds_applies_and_submits(srv, monkeypatch):
             assert (await c.get("/api/state")).status_code == 403
             assert (await c.get("/api/state", headers={"x-desk-token": "guess"})).status_code == 403
             # a key that isn't plain ASCII is refused, not a server error
-            assert (await c.get("/api/state", headers={"x-desk-token": "gu\u00e9ss".encode("latin-1")})).status_code == 403
+            assert ((await c.get("/api/state",
+                                 headers={"x-desk-token": "gu\u00e9ss".encode("latin-1")})).status_code == 403)
             assert (await c.get("/api/state", headers={**h, "host": "evil.example"})).status_code == 403
             page = await c.get("/")
             assert page.status_code == 200 and "<title>Job Desk</title>" in page.text
@@ -90,7 +91,8 @@ def test_desk_finds_applies_and_submits(srv, monkeypatch):
             rows = {r["title"]: r for r in s["listings"]}
             assert rows["Field Service Engineer"]["fit"]["recommended"]
             assert not rows["Accountant"]["fit"]["recommended"]
-            assert s["search"]["browser_only"] == [{"company": "TSMC Arizona", "careers_url": "https://careers.tsmc.com"}]
+            assert (s["search"]["browser_only"]
+                    == [{"company": "TSMC Arizona", "careers_url": "https://careers.tsmc.com"}])
             assert s["search"]["errors"] == {"Broken Co": "SearchError: HTTP 500"}
 
             # the one button
@@ -140,14 +142,15 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
                  "recommended": False}},
     ]
     other = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
-    desk.applier.runs[other["id"]] = Run(other["id"], "Technician", "Example Litho", status="needs_you", need="questions",
-                                         reason="2 questions", questions=[{"id": "9", "label": "Do you have a valid driver's license?",
-                                                                           "kind": "select", "options": ["Select One", "Yes", "No"],
-                                                                           "required": True},
-                                                                          # SuccessFactors' list: its first page only
-                                                                          {"id": "10", "label": "Country", "kind": "combobox",
-                                                                           "options": ["No Selection", "Afghanistan", "Albania"],
-                                                                           "required": True}])
+    desk.applier.runs[other["id"]] = Run(other["id"], "Technician", "Example Litho", status="needs_you",
+                                         need="questions", reason="2 questions",
+                                         questions=[{"id": "9", "label": "Do you have a valid driver's license?",
+                                                     "kind": "select", "options": ["Select One", "Yes", "No"],
+                                                     "required": True},
+                                                    # SuccessFactors' list: its first page only
+                                                    {"id": "10", "label": "Country", "kind": "combobox",
+                                                     "options": ["No Selection", "Afghanistan", "Albania"],
+                                                     "required": True}])
     desk.applier.start = lambda: None  # the queue isn't worked in this test
     desk.search.update(status="done", at=time.time())  # recent, so opening the page doesn't search the real sites
 
@@ -236,7 +239,8 @@ def test_the_banner_names_the_job_waited_on_and_the_profile_gaps_are_in_words(sr
     desk = Desk(srv)
     desk.applier.start = lambda: None
     desk.search.update(status="done", at=time.time())
-    job = srv.add_job(url=fixture_url("site/posting.html"), title="Field Service Engineer", company="Example Fab")["job"]
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="Field Service Engineer",
+                      company="Example Fab")["job"]
     desk.applier.runs[job["id"]] = Run(job["id"], "Field Service Engineer", "Example Fab", status="needs_you",
                                        need="sign_in", blocking=True,
                                        reason="Sign in on Workday in the desk's browser window.")
@@ -275,9 +279,10 @@ def test_the_page_alerts_when_a_job_needs_you(srv):
     desk.applier.start = lambda: None
     desk.search.update(status="done", at=time.time())
     first = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
-    second = srv.add_job(url=fixture_url("site/posting.html"), title="Field Service Engineer", company="Example Fab")["job"]
-    desk.applier.runs[first["id"]] = Run(first["id"], "Technician", "Example Litho", status="needs_you", need="questions",
-                                         reason="1 question")
+    second = srv.add_job(url=fixture_url("site/posting.html"), title="Field Service Engineer",
+                         company="Example Fab")["job"]
+    desk.applier.runs[first["id"]] = Run(first["id"], "Technician", "Example Litho", status="needs_you",
+                                         need="questions", reason="1 question")
     fake = """
       window.__shown = [];
       class FakeNotification {
@@ -306,7 +311,8 @@ def test_the_page_alerts_when_a_job_needs_you(srv):
                 await page.wait_for_function("window.__shown.length > 0", timeout=10000)
                 await asyncio.sleep(2)  # announced once, not on every refresh
                 shown = await page.evaluate("window.__shown")
-                assert shown == [{"title": "Example Fab needs you", "body": "Field Service Engineer: Sign in on Workday"}]
+                assert (shown
+                        == [{"title": "Example Fab needs you", "body": "Field Service Engineer: Sign in on Workday"}])
                 await browser.close()
         finally:
             await desk.stop()
@@ -523,9 +529,11 @@ def test_a_search_asked_by_the_page_itself_needs_the_switch_and_a_running_queue(
                 state = (await c.get("/api/state", headers=h)).json()
                 # the openings found before stay, with when they were found
                 assert state["search"]["status"] == "done" and state["search"]["at"] == before
-                assert state["search"]["stopped"] and [r["url"] for r in state["listings"]] == ["https://example.com/job/1"]
+                assert (state["search"]["stopped"]
+                        and [r["url"] for r in state["listings"]] == ["https://example.com/job/1"])
                 # Find jobs needs no switch
-                assert (await c.post("/api/settings", headers=h, json={"auto_search": False})).json()["auto_search"] is False
+                assert (await c.post("/api/settings", headers=h,
+                                     json={"auto_search": False})).json()["auto_search"] is False
                 assert (await c.post("/api/search", headers=h, json={})).json() == {"started": True}
                 await asyncio.sleep(0.2)
                 assert desk.search["status"] == "running" and desk.search["auto"] is False
@@ -579,7 +587,8 @@ def test_a_site_password_goes_to_secrets_only(srv):
 
 def test_saving_a_password_leaves_the_rest_of_the_file_alone(job_apply_home):
     path = config.secrets_path()
-    path.write_text("# career sites\nsuccessfactors_password: keep-me\nworkday_password: old-one\n\nother: 1\n", encoding="utf-8")
+    path.write_text("# career sites\nsuccessfactors_password: keep-me\nworkday_password: old-one\n\nother: 1\n",
+                    encoding="utf-8")
     config.save_site_password("workday_password", "new one")
     config.save_site_password("workday_password", "newer one")  # replaced, not added twice
     text = path.read_text(encoding="utf-8")
@@ -607,7 +616,8 @@ def test_a_password_save_that_fails_midway_leaves_the_saved_ones_and_a_long_one_
     with monkeypatch.context() as m, pytest.raises(OSError):
         m.setattr(os, "fdopen", boom)
         config.save_site_password("workday_password", "new one")
-    assert config.get_secret("workday_password") == "old-one" and config.get_secret("successfactors_password") == "keep-me"
+    assert (config.get_secret("workday_password") == "old-one"
+            and config.get_secret("successfactors_password") == "keep-me")
     assert [p.name for p in path.parent.iterdir() if p.name.endswith(".tmp")] == []
     with pytest.raises(ValueError):
         config.save_site_password("workday_password", "x" * (config.PASSWORD_MAX + 1))
@@ -698,7 +708,8 @@ def test_openings_new_since_the_last_visit_are_tagged(srv, job_apply_home):
     desk.saw(now=later + 120)  # a reload, the page to the front again: still this visit, still New
     assert new() == {"Etch Technician", "Equipment Technician II"}
     state = Desk(srv).state()  # and after a restart of the desk
-    assert {r["title"] for r in state["listings"] if r["new"]} == {"Equipment Technician II"}  # (its own openings: none)
+    # (its own openings: none)
+    assert {r["title"] for r in state["listings"] if r["new"]} == {"Equipment Technician II"}
     assert state["seen"] == {"since": t0 + 300, "last": later + 120}
     srv.update_job(claudes["id"], status="skipped")  # taken up since: no news
     assert new() == {"Etch Technician"}
@@ -804,7 +815,8 @@ def test_an_answer_naming_the_employer_is_remembered_as_company_website_or_not_a
     desk = Desk(srv)
 
     def answer(*pairs):
-        desk.applier.runs[job["id"]] = Run(job["id"], "FSE", "Acme Technologies Inc", status="needs_you", need="questions")
+        desk.applier.runs[job["id"]] = Run(job["id"], "FSE", "Acme Technologies Inc", status="needs_you",
+                                           need="questions")
         return desk.answer(job["id"], [{"label": label, "value": value} for label, value in pairs])
 
     assert answer(("How Did You Hear About Us?*", "Acme website"), ("Preferred shift", "Nights")) is None
@@ -825,7 +837,8 @@ def test_saving_an_answer_keeps_the_rest_of_answers_yaml(job_apply_home):
     import yaml
 
     path = job_apply_home / "answers.yaml"
-    path.write_text("answers:\n  - question: a note to myself\n  - match: lift\n    answer: 'Yes'\nmine: keep\n", encoding="utf-8")
+    path.write_text("answers:\n  - question: a note to myself\n  - match: lift\n    answer: 'Yes'\nmine: keep\n",
+                    encoding="utf-8")
     config.save_answer("Are you willing to relocate?", "No", "Example Fab")
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert data["mine"] == "keep" and {"question": "a note to myself"} in data["answers"]
@@ -847,10 +860,11 @@ def test_the_tailoring_switch_is_kept_and_its_waiting_jobs_listed(srv, job_apply
             h = {"x-desk-token": desk.token}
             async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{desk.port}", timeout=20, trust_env=False) as c:
                 r = await c.post("/api/settings", headers=h, json={"tailor_resumes": True})
-                assert r.json() == {"auto_submit": False, "tailor_resumes": True, "handled_only": False, "troubleshoot": False,
-                                    "min_pay": None, "posted_within": None, "within_miles": None, "requirements": [], "workplace": [],
-                                    "job_types": [], "systems": [],
-                                    "auto_search": False, "jobs_at_once": 1}  # (the tests' profile: one at a time)
+                assert (r.json()
+                        == {"auto_submit": False, "tailor_resumes": True, "handled_only": False, "troubleshoot": False,
+                            "min_pay": None, "posted_within": None, "within_miles": None, "requirements": [],
+                            "workplace": [], "job_types": [], "systems": [],
+                            "auto_search": False, "jobs_at_once": 1})  # (the tests' profile: one at a time)
                 await desk.applier.stop()  # hold the queue still while the waiting job is set up
                 desk.applier.runs[job["id"]] = Run(job["id"], "FSE", "Example Fab", status="needs_you", need="tailor")
                 state = (await c.get("/api/state", headers=h)).json()
@@ -867,8 +881,9 @@ def test_the_tailoring_switch_is_kept_and_its_waiting_jobs_listed(srv, job_apply
 
 
 def test_the_queue_is_paused_and_resumed_through_the_api(srv):
-    """Pause queue and Carry on with the queue (issue #112, note 36): behind the page's key like the rest, an unknown action is
-    no action, and the state says whether the queue is paused. Not one of the settings: kept with the queue."""
+    """Pause queue and Carry on with the queue (issue #112, note 36): behind the page's key like the rest, an unknown
+    action is no action, and the state says whether the queue is paused. Not one of the settings: kept
+    with the queue."""
     desk = Desk(srv)
     desk.applier.start = lambda: None
 
@@ -894,8 +909,8 @@ def test_the_queue_is_paused_and_resumed_through_the_api(srv):
 
 
 def test_the_pause_button_pauses_and_resumes_the_queue(srv):
-    """The header's Pause queue shows while jobs are queued or running, turns into Carry on with the queue (with how many wait)
-    once pressed, and the Working on card says the queue is paused (issue #112, note 36)."""
+    """The header's Pause queue shows while jobs are queued or running, turns into Carry on with the queue (with how
+    many wait) once pressed, and the Working on card says the queue is paused (issue #112, note 36)."""
     from job_apply.pipeline import Run
 
     job = srv.add_job(url=fixture_url("generic_form.html"), title="Technician", company="Example Litho")["job"]
@@ -1074,14 +1089,16 @@ def test_only_where_the_desk_goes_all_the_way_shows_those_employers_alone_and_is
                 await page.wait_for_selector("text=Field Service Engineer")
                 row = page.locator("li.row", has_text="Module Equipment Technician")
                 assert await row.locator(".chip.handled").count() == 1
-                assert await page.locator("li.row", has_text="Field Service Engineer").locator(".chip.handled").count() == 0
+                assert await (page.locator("li.row", has_text="Field Service Engineer")
+                              .locator(".chip.handled").count()) == 0
                 await page.click("text=Select recommended")
                 await page.check("#handled-only")
                 await page.wait_for_selector("text=Field Service Engineer", state="detached")
                 assert await page.locator("text=Module Equipment Technician").count() == 1
                 assert await page.locator("#apply").inner_text() == "Apply to 1 selected"
                 # (the review's) a link the person adds shows, whatever its employer, and nothing hidden is applied to
-                srv.add_job(url="https://example.com/p", title="Pasted Technician", company="lamresearch")  # (a pasted link)
+                # (a pasted link)
+                srv.add_job(url="https://example.com/p", title="Pasted Technician", company="lamresearch")
                 desk.listings.append({"company": "Example Fab", "title": "Hidden Tech", "url": "https://example.com/h",
                                       "location": "Phoenix, AZ", "fit": fit})
                 await page.wait_for_selector("text=Pasted Technician")
@@ -1460,7 +1477,8 @@ def test_within_miles_hides_only_a_job_surely_farther_from_home(srv, job_apply_h
                      opening("Mesa Technician", 90, "Mesa, AZ"),
                      opening("Tucson Technician", 85, "Tucson, AZ"),
                      # (far, but remote: its own field says so)
-                     opening("Remote Technician", 80, "Las Vegas, NV", workplace="remote", workplace_source="structured"),
+                     opening("Remote Technician", 80, "Las Vegas, NV", workplace="remote",
+                             workplace_source="structured"),
                      opening("Hybrid Technician", 75, "Flagstaff, AZ (Hybrid)", workplace="hybrid",
                              workplace_source="location"),
                      opening("Unsaid Technician", 70, "2 Locations"),
@@ -1496,7 +1514,8 @@ def test_within_miles_hides_only_a_job_surely_farther_from_home(srv, job_apply_h
                 assert "in your town" in await meta("Chandler Technician").inner_text()
                 assert "about 8 mi" in await meta("Mesa Technician").inner_text()
                 tip = await meta("Mesa Technician").locator(".miles").get_attribute("title")
-                assert tip == "From your home, Chandler, AZ, to Mesa, AZ: a straight line between town centres, not a drive"
+                assert (tip == "From your home, Chandler, AZ, to Mesa, AZ: a straight line "
+                        "between town centres, not a drive")
                 assert "never hides" in await meta("More Technician").locator(".miles").get_attribute("title")
                 assert await meta("Remote Technician").locator(".miles").count() == 0  # (remote: no distance)
                 assert await meta("Unsaid Technician").locator(".miles").count() == 0
@@ -1559,7 +1578,8 @@ def test_within_miles_is_off_and_the_window_says_why_without_a_home_town(srv, jo
                 async with page.expect_response("**/api/settings"):
                     await page.click("[data-within='']")
                 assert desk.within_miles is None
-                await page.wait_for_function("document.querySelector('#within-why').innerText === 'needs your home town'")
+                await page.wait_for_function("document.querySelector('#within-why').innerText === 'needs your home "
+                                             "town'")
                 await page.click("#area-btn")
                 note = await page.inner_text("#area-home")
                 assert note == ("Within N miles needs your home town, and your profile doesn't say it: add "
@@ -1684,8 +1704,10 @@ def test_a_state_asked_before_a_chip_is_pressed_never_puts_the_old_chips_back(sr
     second after the desk made it."""
     desk = Desk(srv)
     desk.listings = [{**_facts_opening("Remote Technician", 95), "workplace": "remote", "workplace_source": "location"},
-                     {**_facts_opening("Onsite Technician", 90), "workplace": "onsite", "workplace_source": "structured"},
-                     {**_facts_opening("Hybrid Technician", 85), "workplace": "hybrid", "workplace_source": "structured"}]
+                     {**_facts_opening("Onsite Technician", 90), "workplace": "onsite",
+                      "workplace_source": "structured"},
+                     {**_facts_opening("Hybrid Technician", 85), "workplace": "hybrid",
+                      "workplace_source": "structured"}]
     desk.applier.start = lambda: None
     desk.search.update(status="done", at=time.time())
 
@@ -1823,7 +1845,7 @@ def test_the_system_chips_show_only_the_jobs_on_the_systems_pressed(srv, job_app
                   renderRows();
                   return {same, title: oracle.title, kept,
                           after: [...document.querySelectorAll("[data-chip='systems']")].map((b) => b.textContent)};
-                }""")
+                }""")  # noqa: E501
                 assert steady == {"same": True, "title": "4 openings listed on Oracle", "kept": True,
                                   "after": ["Employer's own site", "iCIMS", "Oracle", "Workday"]}, steady
                 await page.reload()
@@ -1911,7 +1933,8 @@ def test_a_posting_that_wont_sponsor_a_visa_says_so_only_to_a_person_who_needs_s
     run(go())
 
 
-def test_troubleshooting_searches_every_list_shows_where_the_desk_stops_and_sends_nothing(srv, job_apply_home, monkeypatch):
+def test_troubleshooting_searches_every_list_shows_where_the_desk_stops_and_sends_nothing(srv, job_apply_home,
+                                                                                          monkeypatch):
     """The owner (Oct 12), to get the desk going at more employers: a Troubleshooting switch. Find jobs
     searches every list's employers (the person's own file names only one) for the profile's titles and HR ones;
     the page shows only the openings where the desk doesn't go all the way yet, whatever their fit; and nothing is
@@ -1957,7 +1980,8 @@ def test_troubleshooting_searches_every_list_shows_where_the_desk_stops_and_send
                 assert searched and searched[0][1] is True, searched
                 desk.listings = listed  # (as troubleshooting's search would find them)
                 await page.wait_for_selector("text=HR Generalist")  # (a low fit, shown all the same)
-                assert await page.locator("text=Module Equipment Technician").count() == 0  # (the desk goes all the way)
+                # (the desk goes all the way)
+                assert await page.locator("text=Module Equipment Technician").count() == 0
                 assert not await page.is_checked("#handled-only")
                 assert "Troubleshooting is on: no application is submitted" in await page.inner_text("#notices")
                 await browser.close()
@@ -2147,7 +2171,8 @@ def test_the_page_keeps_its_lists_steady(srv):
 
     desk = Desk(srv)
     desk.applier.start = lambda: None
-    job = srv.add_job(url=fixture_url("site/posting.html"), title="Field Service Engineer", company="Example Fab")["job"]
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="Field Service Engineer",
+                      company="Example Fab")["job"]
     desk.listings = [{"url": job["url"], "title": "Field Service Engineer", "company": "Example Fab"},
                      {"url": job["url"] + "?utm_source=x", "title": "Field Service Engineer", "company": "Example Fab"}]
     desk.applier.runs[job["id"]] = Run(job["id"], "Field Service Engineer", "Example Fab", status="ready",
@@ -2198,7 +2223,8 @@ def test_a_job_marked_applied_while_queued_is_never_filled_or_sent(srv):
             async with _client(desk) as c:
                 h = {"x-desk-token": desk.token}
                 ids = [on_desk["id"], by_claude["id"]]
-                assert (await c.post("/api/apply", headers=h, json={"job_ids": ids, "submit": True})).json()["queued"] == ids
+                assert ((await c.post("/api/apply", headers=h,
+                                      json={"job_ids": ids, "submit": True})).json()["queued"] == ids)
                 assert (await c.post(f"/api/job/{on_desk['id']}/applied", headers=h)).json() == {"ok": True}
             srv.update_job(by_claude["id"], status="applied")  # Claude logged it, say from a confirmation email
             for _ in range(2):
@@ -2298,8 +2324,10 @@ def test_a_password_saved_on_the_desk_is_the_one_used(srv, monkeypatch):
 
 
 def test_a_broken_profile_or_saved_search_doesnt_take_the_page_down(srv, job_apply_home):
-    (job_apply_home / "profile.yaml").write_text("personal:\n  first_name: Sam\n   last_name: [oops\n", encoding="utf-8")
-    (job_apply_home / "recommendations.json").write_text(json.dumps({"results": [{"title": "no address"}, "x"]}), encoding="utf-8")
+    (job_apply_home / "profile.yaml").write_text("personal:\n  first_name: Sam\n   last_name: [oops\n",
+                                                 encoding="utf-8")
+    (job_apply_home / "recommendations.json").write_text(json.dumps({"results": [{"title": "no address"}, "x"]}),
+                                                         encoding="utf-8")
     state = Desk(srv).state()
     assert "typo" in state["profile_problem"] and state["listings"] == []
 
@@ -2402,11 +2430,13 @@ def test_report_a_problem_can_leave_out_which_job_it_was(srv, job_apply_home):
                 await page.wait_for_selector("#report[open]")
                 named = await page.locator("#report-text").inner_text()
                 await page.check("#report-anonymous")
-                await page.wait_for_function("() => !document.querySelector('#report-text').textContent.includes('Litho')")
+                await page.wait_for_function("() => !document.querySelector('#report-text').textContent.includes('Litho"
+                                             "')")
                 anonymous = await page.locator("#report-text").inner_text()
                 title = parse_qs(urlsplit(await page.locator("#report-open").get_attribute("href")).query)["title"]
                 await page.uncheck("#report-anonymous")
-                await page.wait_for_function("() => document.querySelector('#report-text').textContent.includes('Litho')")
+                await page.wait_for_function("() => document.querySelector('#report-text').textContent.includes('Litho'"
+                                             ")")
                 await browser.close()
                 return named, anonymous, title
         finally:
@@ -2567,7 +2597,8 @@ def test_the_desk_reads_an_icims_posting_in_its_browser(srv, monkeypatch):
 
     async def frames_html(url, inner=None):
         asked.append((url, inner))
-        outer = ("<html><head><title>Careers at Example</title></head><body><nav>" + "Jobs | Locations | Benefits | " * 20
+        outer = ("<html><head><title>Careers at Example</title></head><body><nav>"
+                 + "Jobs | Locations | Benefits | " * 20
                  + "</nav><iframe id='icims_content_iframe'></iframe></body></html>")  # long, but no posting
         return [outer, "<html><head><title>Entry Level Recruiter</title></head><body><div class='iCIMS_JobContent'>"
                 "<h1>Entry Level Recruiter</h1>"
@@ -2578,7 +2609,8 @@ def test_the_desk_reads_an_icims_posting_in_its_browser(srv, monkeypatch):
     desk = Desk(srv)
     p = run(desk.read_in_browser("https://careers-aco.icims.com/jobs/13516/entry-level-recruiter/job#top"))
     assert "Recruit and place contract talent" in p.description and "Benefits" not in p.description
-    assert p.apply_url == "https://careers-aco.icims.com/jobs/13516/entry-level-recruiter/job#top"  # not its framed sign-in
+    # not its framed sign-in
+    assert p.apply_url == "https://careers-aco.icims.com/jobs/13516/entry-level-recruiter/job#top"
     assert asked == [("https://careers-aco.icims.com/jobs/13516/entry-level-recruiter/job?in_iframe=1",
                       "#icims_content_iframe")]  # (in its query, not after its #)
 
@@ -2745,14 +2777,17 @@ def test_undo_on_the_page_puts_a_skipped_job_back(srv, width):
     from job_apply.pipeline import Run
 
     fit = {"score": 80, "reasons": ["title matches"], "concerns": [], "blocked": False, "recommended": True}
-    begun = srv.add_job(url=fixture_url("site/posting.html"), title="Field Service Engineer", company="Example Fab")["job"]
+    begun = srv.add_job(url=fixture_url("site/posting.html"), title="Field Service Engineer",
+                        company="Example Fab")["job"]
     srv.update_job(begun["id"], status="in_progress")
-    earlier = srv.add_job(url="https://example.com/jobs/earlier", title="Equipment Technician", company="Example Litho")["job"]
+    earlier = srv.add_job(url="https://example.com/jobs/earlier", title="Equipment Technician",
+                          company="Example Litho")["job"]
     srv.update_job(earlier["id"], status="skipped")  # skipped before the desk was restarted: no run
     desk = Desk(srv)
     desk.applier.start = lambda: None  # (the queue isn't worked: where Undo puts the job is what's looked at)
     desk.search.update(status="done", at=time.time())
-    desk.listings = [{"url": j["url"], "title": j["title"], "company": j["company"], "fit": fit} for j in (begun, earlier)]
+    desk.listings = [{"url": j["url"], "title": j["title"], "company": j["company"], "fit": fit}
+                     for j in (begun, earlier)]
     desk.applier.runs[begun["id"]] = Run(begun["id"], "Field Service Engineer", "Example Fab", status="needs_you",
                                          need="sign_in", reason="Sign in on Example Fab's site.")
     undo = "button[data-job-act=unskip]"
@@ -2981,8 +3016,8 @@ def test_the_bot_checks_waiting_are_solved_in_one_round(srv):
 
 def test_the_applications_ready_for_the_persons_submit_are_reviewed_in_one_round(srv):
     """For a batch (the owner's mega apply, Oct 12): "Review them" brings each application filled to the person's
-    Submit up in turn; "Submit this one" sends the one shown (their press), "I submitted it myself" says they pressed the
-    site's own last button, and the next comes up once it's gone. Nothing is sent without the person's press."""
+    Submit up in turn; "Submit this one" sends the one shown (their press), "I submitted it myself" says they pressed
+    the site's own last button, and the next comes up once it's gone. Nothing is sent without the person's press."""
     from job_apply.pipeline import Run
 
     desk = Desk(srv)
@@ -2990,7 +3025,8 @@ def test_the_applications_ready_for_the_persons_submit_are_reviewed_in_one_round
     desk.search.update(status="done", at=time.time())
     jobs = [srv.add_job(url=f"https://example.com/job/{i}", title="Technician", company=c)["job"]
             for i, c in enumerate(["Example Fab", "Example Litho"])]
-    first = Run(jobs[0]["id"], "Technician", "Example Fab", status="ready", reason="Filled and waiting on the review page.")
+    first = Run(jobs[0]["id"], "Technician", "Example Fab", status="ready",
+                reason="Filled and waiting on the review page.")
     second = Run(jobs[1]["id"], "Technician", "Example Litho", status="needs_you", need="your_submit",
                  reason="Its send button reads Apply.")
     first.paused_at, second.paused_at = 1000.0, 1001.0
@@ -3029,7 +3065,8 @@ def test_the_applications_ready_for_the_persons_submit_are_reviewed_in_one_round
                 await page.click("#notices [data-act=review-submit]")
                 # (its own "I submitted it", the site's last button pressed: the round is on the second)
                 await page.wait_for_selector("#notices :text('Reviewing Technician (Example Litho)')")
-                for _ in range(40):  # (the desk's focus is awaited after the words show: the review of Oct 15, under load)
+                # (the desk's focus is awaited after the words show: the review of Oct 15, under load)
+                for _ in range(40):
                     if len(shown) >= 2:
                         break
                     await page.wait_for_timeout(100)
@@ -3090,7 +3127,8 @@ def test_jobs_stopped_on_a_bot_check_or_captcha_are_marked_and_a_forms_captcha_i
                 # each card says its stop's code (T1, the review of Oct 18: nothing shown, for a test or a look)
                 codes = await page.eval_on_selector_all("#needs .task", "ts => ts.map((t) => t.dataset.code)")
                 assert sorted(codes) == ["account_captcha", "bot_check", "captcha", "questions"], codes
-                assert "1 application ready for your Submit (1 with a CAPTCHA to tick first)" in await page.inner_text("#notices")
+                assert ("1 application ready for your Submit (1 with a CAPTCHA to tick "
+                        "first)" in await page.inner_text("#notices"))
                 assert not sent
                 await page.click("#notices [data-act=review-round]")
                 await page.wait_for_selector("#notices [data-act=review-submit]")
@@ -3169,7 +3207,8 @@ def test_a_box_whose_words_say_little_shows_the_words_above_it_and_isnt_remember
         # remembered by the date's label, which would put the day in every part: the review of 0.3.159)
         {"id": "d", "kind": "text", "label": "Start date*", "sublabel": "Day", "section": "Questions", "required": True,
          "role": "spinbutton"},
-        {"id": "g", "kind": "text", "label": "Graduation", "sublabel": "Year", "required": True}])  # (a box, not a date's)
+        # (a box, not a date's)
+        {"id": "g", "kind": "text", "label": "Graduation", "sublabel": "Year", "required": True}])
 
     async def go():
         await desk.start(port=0, open_browser=False)
@@ -3302,7 +3341,8 @@ def test_a_cards_what_went_in_shows_the_answers_as_text_and_nothing_secret(srv, 
     ready.went_in.agree("agreed to Example Fab's notice “AI in hiring”")
     ready.went_in.account("created your account on Example Fab's site with your saved password and agreed to its "
                           "terms (manage_accounts: false in profile.yaml leaves this to you)")
-    ready.went_in.change("Last Name: Rivers \u2192 Rivera")  # (a saved draft's answer the desk changed: note 38's review)
+    # (a saved draft's answer the desk changed: note 38's review)
+    ready.went_in.change("Last Name: Rivers \u2192 Rivera")
     stopped = Run(jobs[1]["id"], "Technician", "Example Fab", status="needs_you", need="questions",
                   reason="1 question your profile doesn't answer.",
                   questions=[{"id": "9", "kind": "text", "label": "Desired salary", "required": True}])
@@ -3328,7 +3368,8 @@ def test_a_cards_what_went_in_shows_the_answers_as_text_and_nothing_secret(srv, 
                 still = await panel.evaluate("(el) => el.open")
                 # its card drawn again (its reason changed): the panel the person opened is open still
                 ready.reason = "Filled and waiting on the review page. Check it before you press Submit."
-                await tab.wait_for_function("() => document.querySelector('#done').innerText.includes('Check it before')")
+                await tab.wait_for_function("() => document.querySelector('#done').innerText.includes('Check it "
+                                            "before')")
                 still = still and await panel.evaluate("(el) => el.open")
                 other = await tab.locator(f'#needs details[data-went="{jobs[1]["id"]}"] summary').inner_text()
                 html, title = await tab.content(), await tab.title()
@@ -3491,8 +3532,8 @@ def test_the_openings_bar_shows_where_each_job_stands_and_troubleshooting_ticks_
                 await page.wait_for_selector("#stops:not([hidden]) [data-stop='bot']")
                 bar = {await b.get_attribute("data-stop"): " ".join((await b.inner_text()).split())
                        for b in await page.locator("#stops button").all()}
-                assert bar == {"any": "Any 7", "new": "Not started 3", "bot": "Bot checks 1", "you": "Questions and sign-ins 1",
-                               "stuck": "Stuck 1", "ready": "Ready 1"}, bar
+                assert (bar == {"any": "Any 7", "new": "Not started 3", "bot": "Bot checks 1",
+                                "you": "Questions and sign-ins 1", "stuck": "Stuck 1", "ready": "Ready 1"}), bar
                 await page.click("[data-stop='bot']")
                 await page.wait_for_selector("text=Technician new1", state="detached")
                 assert await page.locator("#rows .row").count() == 1 and await page.is_visible("text=Technician bot")
@@ -3606,10 +3647,10 @@ def test_after_a_restart_the_jobs_never_begun_are_queued_again_paused_and_the_be
                                                                                                   how):
     """The queue is kept in the person's folder as it changes. The desk starting again queues the jobs it never began
     again, in their order, with Submit for me where they had it and it's still on; and the queue comes back paused, said
-    at the top of the page, so none starts without the person's Carry on with the queue. A job begun before the restart isn't
-    queued again (the review of the restart, HIGH: one stopped on its review page's errors, the person may have fixed
-    them and pressed the site's own Submit; a fresh pass with Submit for me would send a second application): it's a
-    card, which says to check where it is, and its Resume fills it again up to its review page, never sending it, as
+    at the top of the page, so none starts without the person's Carry on with the queue. A job begun before the restart
+    isn't queued again (the review of the restart, HIGH: one stopped on its review page's errors, the person may have
+    fixed them and pressed the site's own Submit; a fresh pass with Submit for me would send a second application): it's
+    a card, which says to check where it is, and its Resume fills it again up to its review page, never sending it, as
     does one the browser's closing (or the desk's stopping) cut short. A job applied to or skipped since is left out.
     Whether the desk was stopped, or the program ended with its tasks cancelled (and the queue written again after, as
     another job's end would)."""
@@ -3670,8 +3711,9 @@ def test_after_a_restart_the_jobs_never_begun_are_queued_again_paused_and_the_be
                                     "on the site, press I submitted it myself. Otherwise Carry on fills it again up to "
                                     "its review page (nothing is sent), or Skip job."), r.reason
             assert after.state()["restored"] == (
-                "2 jobs from before the desk restarted are back in the queue, paused. Press Carry on with the queue. 2 of "
-                "them go in by Submit for me once they're filled; turn Submit for me off first if you'd rather check each.")
+                "2 jobs from before the desk restarted are back in the queue, paused. Press Carry on with the queue. 2 "
+                "of them go in by Submit for me once they're filled; turn Submit for me off "
+                "first if you'd rather check each.")
             assert d not in q.runs and e not in q.runs
             async with person_browser() as browser:
                 page = await browser.new_page()
@@ -3687,7 +3729,8 @@ def test_after_a_restart_the_jobs_never_begun_are_queued_again_paused_and_the_be
                 await asyncio.sleep(1)
                 assert passes == [a, b]  # (paused: nothing restored has started)
                 notice = page.locator("#notices", has_text="back in the queue, paused")
-                await notice.locator("button", has_text="Carry on with the queue").click()  # the person's Carry on with the queue
+                # the person's Carry on with the queue
+                await notice.locator("button", has_text="Carry on with the queue").click()
                 await _until(lambda: q.runs[c].status == q.runs[f].status == "ready", about=lambda: passes)
                 await notice.wait_for(state="detached")
                 assert passes[2:] == [c, f] and q.runs[a].status == q.runs[b].status == "needs_you"
@@ -3703,8 +3746,8 @@ def test_after_a_restart_the_jobs_never_begun_are_queued_again_paused_and_the_be
 def test_a_job_whose_submit_may_have_gone_in_isnt_queued_again_after_a_restart(srv, monkeypatch):
     """A job with a Submit pressed for it and no confirmation (its folder's submission.json, written as Submit is
     pressed, or the tracker's note) may have gone in: after a restart it isn't queued again at all, even with Submit
-    for me on. Its card says to check, with I submitted it myself, and Resume, which fills it again up to its review page and
-    never sends it."""
+    for me on. Its card says to check, with I submitted it myself, and Resume, which fills it again up to its review
+    page and never sends it."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     passes = _passes_reach_review(monkeypatch)
     recorded, noted, fine = _jobs(srv, 3)
@@ -3754,7 +3797,8 @@ def test_a_job_whose_submit_may_have_gone_in_isnt_queued_again_after_a_restart(s
 def test_submit_for_me_goes_on_after_a_restart_only_while_it_is_still_on(srv):
     """Submit for me applies to a job never begun, queued again after a restart, only while it's still on (desk.json),
     as it does to any job queued now; a job queued before it was turned on stays without it. The notice that they're
-    back says how many Submit for me sends once they're filled (the re-check: Carry on with the queue sends those too)."""
+    back says how many Submit for me sends once they're filled (the re-check: Carry on with the queue
+    sends those too)."""
     with_it, without = _jobs(srv, 2)
     before = Desk(srv)
     before.applier.restore()
@@ -3868,7 +3912,8 @@ def test_a_job_that_may_be_one_begun_or_applied_to_on_indeed_waits_for_the_perso
                 await page.goto(desk.url)
                 card = page.locator("#needs .task", has_text="Lam Research")
                 await card.wait_for()
-                assert await card.locator("button").all_inner_texts() == ["Apply anyway", "Skip job", "Report a problem"]
+                assert (await card.locator("button").all_inner_texts()
+                        == ["Apply anyway", "Skip job", "Report a problem"])
                 await card.locator("button", has_text="Skip job").click()
                 await _until(lambda: srv.tracker().get(lam["id"])["status"] == "skipped")
                 await page.locator("#needs .task", has_text="Intel").locator("button", has_text="Apply anyway").click()
@@ -4050,7 +4095,8 @@ def test_the_desks_port_is_never_one_another_program_holds():
 
     from job_apply.desk import _free_port
 
-    held = [("127.0.0.1", False, True), ("127.0.0.1", True, True), ("127.0.0.1", True, False), ("127.0.0.1", False, False)]
+    held = [("127.0.0.1", False, True), ("127.0.0.1", True, True), ("127.0.0.1", True, False),
+            ("127.0.0.1", False, False)]
     if os.name != "nt":  # (Windows lets a specific address share a port with the wildcard's: not the desk's to judge)
         held += [("0.0.0.0", False, True), ("0.0.0.0", True, True)]
     for address, reuse, listening in held:
@@ -4093,8 +4139,8 @@ def test_a_desk_takes_the_queue_up_once_the_other_has_ended_and_holds_only_what_
                                                                                        job_apply_home):
     """The re-check of the restart: a desk that found another keeping the queue only tried again as it was opened, and
     then paused its whole queue for what it picked up. It looks again about every minute while the other runs; once
-    that one has ended, the note goes, and the jobs it had kept are back, held for the person's Carry on with the queue (said so),
-    while this desk's own queue goes on."""
+    that one has ended, the note goes, and the jobs it had kept are back, held for the person's Carry on with the queue
+    (said so), while this desk's own queue goes on."""
     import subprocess
     import sys
 
@@ -4215,7 +4261,8 @@ def test_this_week_sums_up_the_desks_history(srv, job_apply_home):
                 refused = [(await c.get("/api/history")).status_code,
                            (await c.get("/api/history", headers={"x-desk-token": "guess"})).status_code,
                            (await c.get("/api/history", headers={**h, "host": "evil.example"})).status_code]
-                bad = [(await c.get(f"/api/history?days={d}", headers=h)).status_code for d in ("0", "abc", "400", "-1")]
+                bad = [(await c.get(f"/api/history?days={d}", headers=h)).status_code
+                       for d in ("0", "abc", "400", "-1")]
                 week = (await c.get("/api/history?recent=3", headers=h)).json()
                 month = (await c.get("/api/history?days=30", headers=h)).json()
                 return empty, refused, bad, week, month
@@ -4294,7 +4341,8 @@ def test_the_desk_page_shows_each_log_lines_time_and_this_week(srv, job_apply_ho
     desk = Desk(srv)
     desk.applier.start = lambda: None
     desk.search.update(status="done", at=time.time())
-    job = srv.add_job(url=fixture_url("site/posting.html"), title="Field Service Engineer", company="Example Fab")["job"]
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="Field Service Engineer",
+                      company="Example Fab")["job"]
     r = desk.applier.runs[job["id"]] = Run(job["id"], "Field Service Engineer", "Example Fab", status="running")
     for line in ("opened the posting", "clicked “Apply”", "filled 4 field(s) on “Your Details”"):
         desk.applier._log(r, line)
@@ -4316,7 +4364,8 @@ def test_the_desk_page_shows_each_log_lines_time_and_this_week(srv, job_apply_ho
                 await page.click("#week button[data-act=week-close]")
                 (job_apply_home / "runs.jsonl").write_text(json.dumps(_history_line(
                     time.time(), 0.1, 3.5, job_id=job["id"], company="Example Fab", title="Field Service Engineer",
-                    host="careers.example.com", outcome="ready", reason="Filled and waiting on the review page.")) + "\n",
+                    host="careers.example.com", outcome="ready",
+                    reason="Filled and waiting on the review page.")) + "\n",
                     encoding="utf-8")
                 await page.click("#week-btn")
                 await page.wait_for_selector("#week[open] #week-recent li")
@@ -4348,8 +4397,8 @@ def _after_submit_jobs(srv, monkeypatch) -> dict[str, int]:
     """An application at each stage after it was sent in (and a job only saved), with the tracker's clock at AFTER_NOW:
     Quiet Fab applied 16 days before with no reply (a follow-up due since Oct 11), Fresh Fab 5 days before, Ready Fab
     not sent yet; Ack Fab confirmed; Quiz Fab sent an assessment, and the person put it back to applied; Talk Fab and
-    Test Fab are interviewing (Test Fab's newest email an assessment), Offer Fab has an offer; No Fab was turned down and
-    Gone Fab withdrawn."""
+    Test Fab are interviewing (Test Fab's newest email an assessment), Offer Fab has an offer; No Fab was turned down
+    and Gone Fab withdrawn."""
     from job_apply import tracker
 
     monkeypatch.setattr(tracker, "_clock", lambda: AFTER_NOW)
@@ -4385,7 +4434,8 @@ def test_my_applications_say_when_each_last_heard_whether_to_follow_up_and_its_g
     """The code review's worth building 7 (after submit): each application in the desk's state carries its newest
     email logged (category, when it came, that day and its one-line summary) and how many are logged; the day a
     follow-up became due, for one applied to settings.follow_up_days days ago (10 by default) with no email at all; and
-    its group (waiting, heard, interviews, closed). Claude's list_jobs says the same, small, and only for a job sent in."""
+    its group (waiting, heard, interviews, closed). Claude's list_jobs says the same, small, and only
+    for a job sent in."""
     ids = _after_submit_jobs(srv, monkeypatch)
     desk = Desk(srv)
     desk.applier.start = lambda: None
@@ -4398,7 +4448,8 @@ def test_my_applications_say_when_each_last_heard_whether_to_follow_up_and_its_g
     assert apps["Talk Fab"]["last_heard"] == {"category": "interview", "received_at": "2026-10-06", "day": "2026-10-06",
                                               "summary": "Phone screen request, reply with availability"}
     assert apps["Talk Fab"]["emails"] == 2 and apps["Ack Fab"]["emails"] == 1
-    assert (apps["Quiz Fab"]["last_heard"]["category"], apps["Test Fab"]["last_heard"]["category"]) == ("assessment",) * 2
+    assert ((apps["Quiz Fab"]["last_heard"]["category"], apps["Test Fab"]["last_heard"]["category"])
+            == ("assessment",) * 2)
     listed = {j["company"]: j for j in srv.list_jobs()["jobs"]}
     assert (listed["Quiet Fab"]["last_heard"], listed["Quiet Fab"]["follow_up_due"]) == (None, "2026-10-11")
     assert listed["Talk Fab"]["last_heard"] == {"category": "interview", "day": "2026-10-06",
@@ -4432,7 +4483,8 @@ def test_my_applications_on_the_page_are_grouped_marked_for_follow_up_and_copy_a
             async with person_browser() as browser:
                 page = await browser.new_page(permissions=["clipboard-read", "clipboard-write"])
                 sent: list[str] = []
-                page.on("request", lambda r: sent.append(r.url) if not r.url.startswith(desk.url.split("?")[0]) else None)
+                page.on("request",
+                        lambda r: sent.append(r.url) if not r.url.startswith(desk.url.split("?")[0]) else None)
                 await page.goto(desk.url)
                 await page.wait_for_function("document.getElementById('mine-count').textContent === '(10)'")
                 seen = {"hidden_on_openings": await page.locator("#app-groups").is_hidden()}
@@ -4489,7 +4541,8 @@ def test_my_applications_on_the_page_are_grouped_marked_for_follow_up_and_copy_a
     assert seen["hidden_on_openings"] and seen["hidden_again"], seen
     assert seen["bar"] == "All 10 Waiting 3, 1 to follow up Heard back 2 Interviews 3 Closed 2", seen["bar"]
     interviews = seen["interviews"]
-    assert all(c in interviews for c in ("Talk Fab", "Test Fab", "Offer Fab")) and "Quiet Fab" not in interviews, interviews
+    assert (all(c in interviews for c in ("Talk Fab", "Test Fab", "Offer Fab"))
+            and "Quiet Fab" not in interviews), interviews
     assert seen["interview_preps"] == 3, seen
     assert seen["heard"] == "Heard 2026-10-06: interview", seen["heard"]
     assert seen["heard_tip"] == "Phone screen request, reply with availability (2 emails logged)", seen["heard_tip"]
@@ -4498,7 +4551,8 @@ def test_my_applications_on_the_page_are_grouped_marked_for_follow_up_and_copy_a
                               "(use interview-prep)"), seen["copied"]
     assert seen["copied_test"] == (f"Prep me for my assessment: job {ids['Test Fab']}, Technician at Test Fab "
                                    "(use interview-prep)"), seen["copied_test"]
-    assert "Quiz Fab" in seen["heard_rows"] and "Heard 2026-09-21: confirmation" in seen["heard_rows"], seen["heard_rows"]
+    assert ("Quiz Fab" in seen["heard_rows"]
+            and "Heard 2026-09-21: confirmation" in seen["heard_rows"]), seen["heard_rows"]
     assert seen["heard_preps"] == [1, 0], seen
     waiting = seen["waiting"]
     assert all(c in waiting for c in ("Quiet Fab", "Fresh Fab", "Ready Fab")) and "Ack Fab" not in waiting, waiting
@@ -4554,8 +4608,8 @@ def test_whats_new_lists_the_openings_saved_since_a_time_or_its_last_call(srv, j
     t = srv.tracker()
     t.set_not_interested("https://example.com/etch", company="Example Etch", title="Etch Technician", reason="title")
     t.set_not_interested("https://example.com/litho-2", company="Example Litho", title="Litho Tech", reason="company")
-    saved = srv.add_job(url="https://careers.example.com/jobs/7", title="Field Service Engineer", company="Example Tool",
-                        location="Phoenix, AZ")["job"]
+    saved = srv.add_job(url="https://careers.example.com/jobs/7", title="Field Service Engineer",
+                        company="Example Tool", location="Phoenix, AZ")["job"]
     begun = srv.add_job(url="https://careers.example.com/jobs/8", title="Equipment Technician", company="Example Tool",
                         location="Phoenix, AZ")["job"]
     srv.update_job(begun["id"], status="in_progress")
@@ -4587,7 +4641,8 @@ def test_whats_new_lists_the_openings_saved_since_a_time_or_its_last_call(srv, j
     assert first["first_call"] and first["count"] == 3
     again = srv.whats_new()
     assert (again["count"], again["openings"]) == (0, []) and again["summary"].startswith("Nothing new since "), again
-    fresh = srv.add_job(url="https://careers.example.com/jobs/9", title="Etch Technician", company="Example Tool")["job"]
+    fresh = srv.add_job(url="https://careers.example.com/jobs/9", title="Etch Technician",
+                        company="Example Tool")["job"]
     later = srv.whats_new()
     assert [o["job_id"] for o in later["openings"]] == [fresh["id"]], later
     assert json.loads((job_apply_home / "whats_new.json").read_text(encoding="utf-8"))["at"] <= time.time()
@@ -4598,8 +4653,8 @@ def test_not_interested_hides_an_opening_until_undone_lowers_its_employer_and_is
     """Code review, worth building 9: Not interested on an opening hides it (but for the bar's Not interested group),
     with a reason or none (Title, Company, Location, Pay, Other), kept in the tracker; Undo shows it again. For reason
     Company, that employer's other openings score 10 lower (recommend.NOT_INTERESTED_COMPANY), said in their parts and
-    concerns. The desk never queues one: not by Apply with its address, nor by its job number. Not for a job the desk has
-    a card for (Skip job is for those), nor one sent in. Locked to the page, as every call is."""
+    concerns. The desk never queues one: not by Apply with its address, nor by its job number. Not for a job the desk
+    has a card for (Skip job is for those), nor one sent in. Locked to the page, as every call is."""
     desk = Desk(srv)
     desk.applier.start = lambda: None  # (nothing is filled: what's queued is what's looked at)
     desk.search.update(status="done", at=time.time())
@@ -4609,8 +4664,10 @@ def test_not_interested_hides_an_opening_until_undone_lowers_its_employer_and_is
         {"company": "Example Fab, Inc.", "title": "Equipment Technician", "url": tech, "fit": _fit(65)},
         {"company": "Example Litho", "title": "Litho Technician", "url": litho, "fit": _fit(70)},
     ]
-    claudes = srv.add_job(url="https://careers.example.com/jobs/5", title="Etch Technician", company="Example Etch")["job"]
-    sent = srv.add_job(url="https://careers.example.com/jobs/6", title="Etch Technician II", company="Example Etch")["job"]
+    claudes = srv.add_job(url="https://careers.example.com/jobs/5", title="Etch Technician",
+                          company="Example Etch")["job"]
+    sent = srv.add_job(url="https://careers.example.com/jobs/6", title="Etch Technician II",
+                       company="Example Etch")["job"]
     srv.update_job(sent["id"], status="applied")
 
     async def go():
@@ -4659,7 +4716,8 @@ def test_not_interested_hides_an_opening_until_undone_lowers_its_employer_and_is
                 assert "not interested (pay)" in events
 
                 # Undo: shown again, its employer's openings as they were, and Apply queues it
-                assert (await c.post("/api/not_interested/undo", headers=h, json={"url": fse})).json() == {"undone": True}
+                assert ((await c.post("/api/not_interested/undo", headers=h, json={"url": fse})).json()
+                        == {"undone": True})
                 again = await c.post("/api/not_interested/undo", headers=h, json={"url": fse})
                 assert again.status_code == 409 and "nothing to undo" in again.json()["error"]  # (said, on the page)
                 r = await rows()
@@ -4687,7 +4745,8 @@ def test_jobs_queued_together_go_the_likeliest_to_go_all_the_way_first(srv, job_
     rest1 = job("https://careers.rest-one.example/jobs/1", "Rest One")
     board = job("https://www.indeed.com/viewjob?jk=2222222222222222", "Board Co", source="indeed")
     handled = job("https://intel.wd1.myworkdayjobs.com/External/job/Chandler/Equipment-Technician_JR0001", "Intel")
-    workday = job("https://unlisted.wd5.myworkdayjobs.com/External/job/Phoenix/Equipment-Technician_R0002", "Unlisted Co")
+    workday = job("https://unlisted.wd5.myworkdayjobs.com/External/job/Phoenix/Equipment-Technician_R0002",
+                  "Unlisted Co")
     rest2 = job("https://careers.rest-two.example/jobs/2", "Rest Two")
     walled = job("https://careers.walled.example/jobs/3", "Walled Co")
     now = time.time()
@@ -4710,7 +4769,8 @@ def test_jobs_queued_together_go_the_likeliest_to_go_all_the_way_first(srv, job_
                 assert [j for _, j in desk.applier.tasks] == out["queued"]
                 # one alone keeps its place, after those queued before it: the person's own press
                 late_rest = job("https://careers.rest-three.example/jobs/4", "Rest Three")
-                late_handled = job("https://intel.wd1.myworkdayjobs.com/External/job/Chandler/Technician_JR0005", "Intel")
+                late_handled = job("https://intel.wd1.myworkdayjobs.com/External/job/Chandler/Technician_JR0005",
+                                   "Intel")
                 assert await apply(late_rest) == {"queued": [late_rest], "already_applied": []}
                 assert await apply(late_handled) == {"queued": [late_handled], "already_applied": []}
                 assert [j for _, j in desk.applier.tasks][-2:] == [late_rest, late_handled]
@@ -4772,7 +4832,8 @@ def test_the_safety_window_says_each_setting_as_the_desk_acts_on_it(srv, job_app
     assert "one with no way to decline is accepted for you" in s["accept_cookies"]["said"]
     # (saved, for an address whose mail the desk can't read: as its inbox has it, and the page's notices left alone)
     assert s["email_password"]["value"] == "saved, but the desk can't use it now"
-    assert "can't read mail for example.com addresses" in s["email_password"]["said"] and desk.applier.mail_problem is None
+    assert ("can't read mail for example.com addresses" in s["email_password"]["said"]
+            and desk.applier.mail_problem is None)
     monkeypatch.setitem(mailbox.IMAP_HOSTS, "example.com", "imap.example.com")
     s = lines()
     assert s["email_password"]["value"] == "saved"
@@ -4825,7 +4886,8 @@ def test_the_page_marks_new_openings_hides_one_not_wanted_with_undo_and_shows_sa
     desk.applier.start = lambda: None
     desk.search.update(status="done", at=now)
     desk.listings = [
-        {"company": "Example Litho", "title": "Litho Technician", "url": old, "location": "Phoenix, AZ", "fit": _fit(75)},
+        {"company": "Example Litho", "title": "Litho Technician", "url": old, "location": "Phoenix, AZ",
+         "fit": _fit(75)},
         {"company": "Example Fab", "title": "Field Service Engineer", "url": fse, "location": "Phoenix, AZ",
          "fit": _fit(80)},
         {"company": "Example Fab", "title": "Equipment Technician", "url": tech, "location": "Chandler, AZ",
@@ -4905,7 +4967,8 @@ def test_the_page_marks_new_openings_hides_one_not_wanted_with_undo_and_shows_sa
     assert "New 2" in seen["bar"] and seen["fresh_rows"] == 2, seen
     assert seen["parts"] == "start 50 · title matches +30 = 80", seen["parts"]
     assert seen["asked"] == "Field Service Engineer at Example Fab", seen
-    assert seen["toast"].startswith("Not interested: Field Service Engineer is hidden.") and "Undo" in seen["toast"], seen
+    assert (seen["toast"].startswith("Not interested: Field Service Engineer is hidden.")
+            and "Undo" in seen["toast"]), seen
     assert seen["concern"] == "you said not interested in Example Fab", seen
     assert seen["hidden_chip"] == "Not interested: Company" and seen["hidden_box"], seen
     assert seen["left"] == {}, seen
@@ -4970,8 +5033,8 @@ def test_a_job_marked_not_interested_on_the_employers_row_is_never_its_indeed_co
     desk = Desk(srv)
     desk.applier.start = lambda: None
     desk.search.update(status="done", at=time.time())
-    desk.listings = [{"url": own, "title": "Field Service Engineer", "company": "Example Fab", "location": "Phoenix, AZ",
-                      "fit": _fit(80)}]
+    desk.listings = [{"url": own, "title": "Field Service Engineer", "company": "Example Fab",
+                      "location": "Phoenix, AZ", "fit": _fit(80)}]
     assert desk.state()["listings"][0]["job_id"] == board["id"]
     desk.not_interested(own, "title")
     (job_apply_home / "recommendations.json").write_text(json.dumps({"results": desk.listings, "at": time.time()}),
@@ -5055,8 +5118,9 @@ def _intel_openings(srv, home: Path, numbered: bool, both: bool = True) -> Desk:
     desk = Desk(srv)
     desk.applier.start = lambda: None
     desk.search.update(status="done", at=time.time())
-    desk.listings = [{"url": url, "title": "Equipment Technician", "company": "Intel", "location": "US-Arizona-Chandler",
-                      "ats": "workday", "fit": _fit(80), **({"external_id": number} if numbered else {})}
+    desk.listings = [{"url": url, "title": "Equipment Technician", "company": "Intel",
+                      "location": "US-Arizona-Chandler", "ats": "workday", "fit": _fit(80),
+                      **({"external_id": number} if numbered else {})}
                      for url, number in ((JR1, "JR0001111"), (JR2, "JR0002222"))[:2 if both else 1]]
     (home / "recommendations.json").write_text(json.dumps({"results": desk.listings, "at": time.time()}),
                                               encoding="utf-8")
@@ -5066,8 +5130,9 @@ def _intel_openings(srv, home: Path, numbered: bool, both: bool = True) -> Desk:
 
 def _indeed_copy(srv, number: str = "") -> dict:
     """The Indeed copy of one of them, saved by Claude after the mark: naming its requisition number, or none."""
-    return srv.add_job(url=INDEED_COPY, title="Equipment Technician", company="Intel Corporation", location="Chandler, AZ",
-                       source="indeed", description=f"Requisition ID: {number}" if number else "")["job"]
+    return srv.add_job(url=INDEED_COPY, title="Equipment Technician", company="Intel Corporation",
+                       location="Chandler, AZ", source="indeed",
+                       description=f"Requisition ID: {number}" if number else "")["job"]
 
 
 def test_a_mark_made_before_its_job_never_takes_another_requisitions_copy(srv, job_apply_home):
@@ -5134,7 +5199,8 @@ def test_a_listed_opening_with_words_that_arent_text_never_breaks_the_not_intere
     ("company": 123) raised AttributeError in the check the queue and Claude's list_jobs make. Read as text."""
     desk = _intel_openings(srv, job_apply_home, numbered=False, both=False)
     copy = _indeed_copy(srv)
-    desk.listings.append({"url": JR2, "title": 2024, "company": 123, "location": None, "ats": "workday", "fit": _fit(80)})
+    desk.listings.append({"url": JR2, "title": 2024, "company": 123, "location": None, "ats": "workday",
+                          "fit": _fit(80)})
     assert srv.tracker().marked_not_interested(job_id=copy["id"], listed=desk.listings)["reason"] == "pay"
 
 
@@ -5218,7 +5284,8 @@ def test_the_safety_windows_troubleshooting_and_accounts_say_what_the_desk_does(
     said = s["troubleshoot"]["said"]
     makes = accounts and not practice
     if troubleshoot:
-        assert said.startswith("Nothing is submitted, by your Submit or for you.") and s["troubleshoot"]["value"] == "on"
+        assert (said.startswith("Nothing is submitted, by your Submit or for you.")
+                and s["troubleshoot"]["value"] == "on")
         assert ("makes accounts" in said) == makes, said
     else:
         assert said == ("Practice mode sends nothing either way." if practice else "The desk applies for real."), said
@@ -5341,8 +5408,8 @@ def _stopped_desk(srv, shapes: dict[str, dict]) -> tuple[Desk, dict[str, int]]:
     desk = Desk(srv)
     desk.applier.start = lambda: None
     desk.search.update(status="done", at=time.time())
-    desk.listings = [{"company": name, "title": "Technician", "url": f"https://example.com/{i}", "location": "Phoenix, AZ",
-                      "fit": _fit(50)} for i, name in enumerate(shapes)]
+    desk.listings = [{"company": name, "title": "Technician", "url": f"https://example.com/{i}",
+                      "location": "Phoenix, AZ", "fit": _fit(50)} for i, name in enumerate(shapes)]
     jobs = {}
     for i, (name, shape) in enumerate(shapes.items()):
         job = srv.add_job(url=f"https://example.com/{i}", title="Technician", company=name)["job"]
@@ -5354,10 +5421,10 @@ def _stopped_desk(srv, shapes: dict[str, dict]) -> tuple[Desk, dict[str, int]]:
 
 
 def test_the_needs_you_count_is_the_bars_groups_added_up(srv, job_apply_home):
-    """The review of Oct 18 (U1): "Needs you" was three sets. The side card counted every job stopped for the person, the
-    bar's "Needs you" group only the questions, sign-ins and emailed codes, and a stuck job's row said "Needs you" while
-    the bar filed it under Stuck. Each row and card now says what its job waits on, in one word per state; the bar's
-    group is "Questions and sign-ins"; and the card's count is the bar's groups added up."""
+    """The review of Oct 18 (U1): "Needs you" was three sets. The side card counted every job stopped for the person,
+    the bar's "Needs you" group only the questions, sign-ins and emailed codes, and a stuck job's row said "Needs you"
+    while the bar filed it under Stuck. Each row and card now says what its job waits on, in one word per state; the
+    bar's group is "Questions and sign-ins"; and the card's count is the bar's groups added up."""
     words = {"Example Questions": (dict(need="questions"), "Questions", "warn"),
              "Example Sign In": (dict(need="sign_in"), "Sign in", "warn"),
              "Example Code": (dict(need="email_code"), "Emailed code", "warn"),
@@ -5392,7 +5459,8 @@ def test_the_needs_you_count_is_the_bars_groups_added_up(srv, job_apply_home):
     # (questions, a sign-in, an emailed code, waiting for a resume, and one begun before the desk restarted)
     assert bar["you"] == "Questions and sign-ins 5", bar
     assert bar["bot"] == "Bot checks 1" and bar["stuck"] == "Stuck 1" and bar["ready"] == "Ready 1", bar
-    assert card == len(words) == sum(int(bar[k].rsplit(" ", 1)[1]) for k in ("you", "bot", "stuck", "ready")), (card, bar)
+    assert (card == len(words)
+            == sum(int(bar[k].rsplit(" ", 1)[1]) for k in ("you", "bot", "stuck", "ready"))), (card, bar)
     said = {next(n for n in words if n in meta): (text, cls) for meta, text, cls in rows}
     assert said == {n: (word, f"pill {cls}") for n, (_, word, cls) in words.items()}, said
     assert "Needs you" not in str(said)
@@ -5421,7 +5489,7 @@ def test_a_problem_is_red_a_tip_is_blue_and_a_wait_is_yellow(srv, job_apply_home
                     n.innerText, getComputedStyle(n).backgroundColor])""")
                 colors = await page.evaluate("""() => Object.fromEntries(['--warn-bg', '--info-bg', '--bad-bg'].map((v) =>
                     { const p = document.createElement('p'); p.style.background = `var(${v})`; document.body.append(p);
-                      const c = getComputedStyle(p).backgroundColor; p.remove(); return [v, c]; }))""")
+                      const c = getComputedStyle(p).backgroundColor; p.remove(); return [v, c]; }))""")  # noqa: E501
                 header = await page.inner_text("#searched")
                 failed_tip = await page.get_attribute("#notices .notice.bad [title]", "title")
                 keyless = await browser.new_page()
@@ -5441,7 +5509,8 @@ def test_a_problem_is_red_a_tip_is_blue_and_a_wait_is_yellow(srv, job_apply_home
     assert len(waits) == 1 and "Waiting for you in the desk's browser window" in waits[0][0], notices
     assert waits[0][1] == colors["--warn-bg"], (waits, colors)
     tips = by_class.get("notice info tip", [])
-    assert [t for t, _ in tips if t.startswith("Fewer stops:")] and all(bg == colors["--info-bg"] for _, bg in tips), notices
+    assert ([t for t, _ in tips if t.startswith("Fewer stops:")]
+            and all(bg == colors["--info-bg"] for _, bg in tips)), notices
     problems = [t for t, bg in by_class.get("notice bad", []) if bg == colors["--bad-bg"]]
     assert any(t.startswith("Problem: the search failed: the site didn't answer. Press Find jobs") for t in problems), \
         notices
@@ -5490,7 +5559,8 @@ def test_the_desks_words_name_its_buttons_and_the_window(srv, job_apply_home):
                                      "Example Litho": dict(status="needs_you", need="your_submit")})
     desk.search.update(errors={"Broken Co": "SearchError: HTTP 500", "Odd Co": "SearchError: No job list from x",
                                # (server.py's browser searches: some of them found openings)
-                               "Part Co": "browser search: TimeoutError: Timeout 30000ms exceeded (2 of 4 searches failed)",
+                               "Part Co": "browser search: TimeoutError: Timeout 30000ms "
+                                          "exceeded (2 of 4 searches failed)",
                                # (search.py's)
                                "Half Co": "SearchError: HTTP 502 from x (1 of 2 searches failed; the others' results "
                                           "are listed)"})
@@ -5506,7 +5576,7 @@ def test_the_desks_words_name_its_buttons_and_the_window(srv, job_apply_home):
                 later = await page.get_attribute("#needs [data-job-act=later]", "title")
                 applied = await page.eval_on_selector_all("[data-job-act=applied]", "bs => bs.map((b) => b.innerText)")
                 errs = await page.eval_on_selector_all("#skipped-sites details div", """ds => ds.map((d) => [d.textContent.trim(),
-                    d.querySelector('[title]').title])""")
+                    d.querySelector('[title]').title])""")  # noqa: E501
                 footer = await page.inner_text("footer")
                 await browser.close()
                 return area, later, applied, errs, footer
@@ -5599,7 +5669,8 @@ def test_a_queue_this_folder_cant_keep_is_a_problem_and_one_kept_elsewhere_is_in
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("#notices .notice:not(.tip)")
-                said = await page.eval_on_selector_all("#notices .notice", "ns => ns.map((n) => [n.className, n.innerText])")
+                said = await page.eval_on_selector_all("#notices .notice",
+                                                       "ns => ns.map((n) => [n.className, n.innerText])")
                 await browser.close()
                 return said
         finally:
@@ -5635,7 +5706,8 @@ def test_the_job_button_is_carry_on_and_the_queues_is_carry_on_with_the_queue(sr
                 await card.wait_for()
                 buttons = await card.locator("button").all_inner_texts()
                 acts = await card.locator("button").evaluate_all("bs => bs.map((b) => b.dataset.jobAct)")
-                tailor = await page.locator("#needs .task", has_text="Example Tailor").locator("button").all_inner_texts()
+                tailor = await page.locator("#needs .task",
+                                            has_text="Example Tailor").locator("button").all_inner_texts()
                 await page.wait_for_selector("#pause-btn:not([hidden])")
                 queue = (await page.inner_text("#pause-btn"), await page.get_attribute("#pause-btn", "data-act"))
                 await card.locator("button", has_text="Carry on").click()
@@ -5667,9 +5739,9 @@ def test_each_switch_that_is_on_is_said_under_the_openings_head(srv, job_apply_h
     desk = Desk(srv)
     desk.applier.start = lambda: None
     desk.search.update(status="done", at=time.time())  # (fresh: Search by itself has nothing to search)
-    desk.listings = [{"company": name, "title": "Technician", "url": f"https://example.com/{i}", "location": "Phoenix, AZ",
-                      "fit": _fit(70)} for i, name in enumerate(["Example Fab", "Example Fab", "Example Litho",
-                                                                  "Example Bank"])]
+    desk.listings = [{"company": name, "title": "Technician", "url": f"https://example.com/{i}",
+                      "location": "Phoenix, AZ", "fit": _fit(70)}
+                     for i, name in enumerate(["Example Fab", "Example Fab", "Example Litho", "Example Bank"])]
     # (one the desk goes all the way at, but not recommended: not shown, so not counted among the employers shown)
     desk.listings.append({"company": "Example Quiet", "title": "Technician", "url": "https://example.com/quiet",
                           "location": "Phoenix, AZ", "fit": _fit(40)})
@@ -5680,7 +5752,8 @@ def test_each_switch_that_is_on_is_said_under_the_openings_head(srv, job_apply_h
 
         async def hint() -> str:
             await page.wait_for_timeout(100)
-            return "" if await page.is_hidden("#switch-hint") else " ".join((await page.inner_text("#switch-hint")).split())
+            return ("" if await page.is_hidden("#switch-hint")
+                    else " ".join((await page.inner_text("#switch-hint")).split()))
 
         async def said(start: str) -> str:
             await page.wait_for_function("(s) => { const h = document.getElementById('switch-hint'); "
@@ -5753,14 +5826,16 @@ def test_the_common_questions_show_the_most_asked_four_and_site_passwords_only_t
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("#bank-card:not([hidden]) [data-bank]")
-                seen["shown"] = await page.eval_on_selector_all("#bank [data-bank]", "bs => bs.map((b) => b.dataset.bank)")
+                seen["shown"] = await page.eval_on_selector_all("#bank [data-bank]",
+                                                                "bs => bs.map((b) => b.dataset.bank)")
                 seen["link"] = await page.inner_text("#bank [data-act=bank-all]")
                 seen["pills"] = await page.inner_text("#pw-state")
                 seen["pills_hidden"] = await page.is_hidden("#pw-state")
                 seen["count"] = await page.inner_text("#pw-count")
                 await page.click("#bank [data-act=bank-all]")
                 await page.wait_for_selector("#bank [data-act=bank-all]", state="detached")
-                seen["all"] = await page.eval_on_selector_all("#bank [data-bank]", "bs => bs.map((b) => b.dataset.bank)")
+                seen["all"] = await page.eval_on_selector_all("#bank [data-bank]",
+                                                              "bs => bs.map((b) => b.dataset.bank)")
                 config.secrets_path().write_text("workday_password: a\n", encoding="utf-8")
                 await page.wait_for_selector("#pw-state [data-site=workday]")
                 seen["saved"] = await page.eval_on_selector_all("#pw-state .pill", "ps => ps.map((p) => p.innerText)")
@@ -5804,7 +5879,8 @@ def test_the_preflight_dialog_defaults_to_seeing_to_things_first(srv, job_apply_
                 await page.click("text=Select recommended")
                 await page.click("#apply")
                 await page.wait_for_selector("#preflight[open]")
-                seen["said"] = await page.eval_on_selector_all("#preflight-lines li", "ls => ls.map((l) => l.innerText)")
+                seen["said"] = await page.eval_on_selector_all("#preflight-lines li",
+                                                               "ls => ls.map((l) => l.innerText)")
                 seen["focused"] = await page.evaluate("document.activeElement.id")
                 await page.keyboard.press("Enter")
                 await page.wait_for_selector("#preflight", state="hidden")
@@ -5813,7 +5889,8 @@ def test_the_preflight_dialog_defaults_to_seeing_to_things_first(srv, job_apply_
                 seen["picked"] = await page.input_value("#pw-site")
                 seen["pw_focused"] = await page.evaluate("document.activeElement.id")
                 seen["pw_in_view"] = await page.evaluate("(() => { const r = document.getElementById('pw-h')"
-                                                         ".getBoundingClientRect(); return r.top >= 0 && r.top < innerHeight; })()")
+                                                         ".getBoundingClientRect(); "
+                                                         "return r.top >= 0 && r.top < innerHeight; })()")
                 await page.click("#apply")
                 await page.wait_for_selector("#preflight[open]")
                 await page.keyboard.press("Escape")
@@ -5867,13 +5944,16 @@ def test_see_to_these_first_for_the_common_questions_shows_them_all(srv, job_app
                 await page.click("text=Select recommended")
                 await page.click("#apply")
                 await page.wait_for_selector("#preflight[open]")
-                seen["said"] = await page.eval_on_selector_all("#preflight-lines li", "ls => ls.map((l) => l.innerText)")
+                seen["said"] = await page.eval_on_selector_all("#preflight-lines li",
+                                                               "ls => ls.map((l) => l.innerText)")
                 await page.keyboard.press("Enter")  # (See to these first)
                 await page.wait_for_selector("#preflight", state="hidden")
                 await page.wait_for_selector("#bank [data-act=bank-all]", state="detached")
-                seen["after"] = await page.eval_on_selector_all("#bank [data-bank]", "bs => bs.map((b) => b.dataset.bank)")
+                seen["after"] = await page.eval_on_selector_all("#bank [data-bank]",
+                                                                "bs => bs.map((b) => b.dataset.bank)")
                 seen["in_view"] = await page.evaluate("(() => { const r = document.getElementById('bank-h')"
-                                                      ".getBoundingClientRect(); return r.top >= 0 && r.top < innerHeight; })()")
+                                                      ".getBoundingClientRect(); "
+                                                      "return r.top >= 0 && r.top < innerHeight; })()")
                 seen["tasks"] = list(desk.applier.tasks)
                 await browser.close()
                 return seen

@@ -179,7 +179,8 @@ def test_titles_to_leave_out_written_as_one_are_each_of_them(job_apply_home):
     search.set_search_area(avoid_titles=["Senior, Call Center", "Night; Lead | senior"])
     assert search.search_area()["avoid_titles"] == ["Senior", "Call Center", "Night", "Lead"]
     config.profile_path().write_text(PROFILE.replace("  willing_to_relocate: false\n",
-                                                     "  willing_to_relocate: false\n  avoid_titles: Senior, Call Center\n"),
+                                                     "  willing_to_relocate: false\n"
+                                                     "  avoid_titles: Senior, Call Center\n"),
                                      encoding="utf-8")
     assert search.search_area()["avoid_titles"] == ["Senior", "Call Center"]
 
@@ -209,7 +210,8 @@ def test_a_title_to_leave_out_that_would_leave_out_what_you_look_for_is_refused(
     assert search.search_area()["avoid_titles"] == ["I", "2", "Senior"]
     # (the second review) new job titles are checked against the titles to leave out the profile has; and the
     # example a refusal gives is never in the person's own titles
-    with pytest.raises(ValueError, match="“Senior” is in “Senior Accountant”, a job title you look for.*such as Intern"):
+    with pytest.raises(ValueError,
+                       match="“Senior” is in “Senior Accountant”, a job title you look for.*such as Intern"):
         search.set_search_area(titles=["Staff Accountant", "Senior Accountant"])
     assert search.search_area()["titles"] == ["Recruiter"]  # (nothing written)
     search.set_search_area(titles=["Staff Accountant"])
@@ -220,8 +222,8 @@ def test_a_title_to_leave_out_that_would_leave_out_what_you_look_for_is_refused(
         search.set_search_area(avoid_titles=["!!"])
     # no titles of their own: the plugin's are what Find jobs looks for, and the refusal says so
     config.profile_path().write_text(PROFILE.replace("[Field Service Engineer]", "[]"), encoding="utf-8")
-    with pytest.raises(ValueError, match="“Customer” is in “customer service engineer”, one of the plugin's default job "
-                                         r"titles \(you have none of your own\).*isn't in them, such as Senior"):
+    with pytest.raises(ValueError, match="“Customer” is in “customer service engineer”, one of the plugin's default "
+                                         r"job titles \(you have none of your own\).*isn't in them, such as Senior"):
         search.set_search_area(avoid_titles=["Customer"])
     assert "avoid_titles" not in config.profile_path().read_text(encoding="utf-8")
 
@@ -379,7 +381,8 @@ def test_the_what_and_where_window_saves_the_titles_to_leave_out(srv):
                 browser = await pw.chromium.launch(**launch_options())
                 page = await browser.new_page()
                 await page.goto(desk.url)
-                await page.wait_for_function("document.getElementById('area-btn').title.includes('a title with Intern')")
+                await page.wait_for_function("document.getElementById('area-btn')"
+                                             ".title.includes('a title with Intern')")
                 await page.click("#area-btn")
                 await page.wait_for_selector("#area[open]")
                 assert await pills(page) == ["Intern"]

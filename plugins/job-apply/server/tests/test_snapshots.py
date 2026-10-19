@@ -39,7 +39,8 @@ def test_failed_fill_saves_snapshot_and_converts_to_fixture(srv, tmp_path):
     assert expect["actions"]  # the buttons that move it on are kept, and a lost one is reported
     assert run(check_fixture_extraction(srv, tmp_path / "generic-test.html", expect)) == []
     lost = {**expect, "actions": [*expect["actions"], "Create Account"]}
-    assert run(check_fixture_extraction(srv, tmp_path / "generic-test.html", lost)) == ["missing button 'Create Account'"]
+    assert (run(check_fixture_extraction(srv, tmp_path / "generic-test.html", lost))
+            == ["missing button 'Create Account'"])
 
 
 def test_a_saved_page_never_keeps_whats_in_a_password_box(srv):

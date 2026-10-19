@@ -28,7 +28,8 @@ def test_choose_option():
     assert choose_option("No", ["Yes, I will require sponsorship", "No, I will not require sponsorship"]) == \
         "No, I will not require sponsorship"
     assert choose_option(True, ["I am authorized", "I am not authorized"]) == "I am authorized"
-    assert choose_option("Decline to self-identify", ["Male", "Female", "I don't wish to answer"]) == "I don't wish to answer"
+    assert (choose_option("Decline to self-identify", ["Male", "Female", "I don't wish to answer"])
+            == "I don't wish to answer")
     assert choose_option("united states of america (+1)", ["Canada (+1)", "United States of America (+1)"]) == \
         "United States of America (+1)"
     assert choose_option("Mobile", ["Home", "Mobile", "Work"]) == "Mobile"
@@ -127,8 +128,10 @@ def test_a_place_and_its_aliases_read_the_same_as_before():
         n = norm(s)
         aliases = {n} | ({norm(US_STATES[n.upper()])} if n.upper() in US_STATES else set()) | {
             c.lower() for c, name in US_STATES.items() if n == norm(name)}
-        assert aliases <= _aliases(n) and not {a for a in _aliases(n) - aliases if len(a) == 2 and a.upper() in US_STATES}
-        parts = [p for p in (norm(x) for x in re.split(r"\s*,\s*|\s+-\s+", re.sub(r"^\s*usa?\s*-\s*", "", s, flags=re.I)))
+        assert (aliases <= _aliases(n)
+                and not {a for a in _aliases(n) - aliases if len(a) == 2 and a.upper() in US_STATES})
+        parts = [p for p in (norm(x)
+                             for x in re.split(r"\s*,\s*|\s+-\s+", re.sub(r"^\s*usa?\s*-\s*", "", s, flags=re.I)))
                  if p]
         was = [next((c.lower() for c, name in US_STATES.items() if p in (c.lower(), norm(name))), p) for p in parts]
         while was and was[-1] in {"united states", "united states of america", "usa", "us", "u s", "u s a"}:
@@ -168,7 +171,8 @@ def test_a_choice_saying_the_person_is_not_on_staff_is_answered_from_the_profile
                  "I am not a current employee and have not been employed there in the last 12 months"):
         assert answer(opts=["Yes", "No", more]) is None, more
     # a question that isn't only for staff: whether they applied before, or worked there lately, isn't this
-    assert answer(label="Have you applied with us before?", opts=["I am a new applicant", "I am a returning applicant"]) is None
+    assert answer(label="Have you applied with us before?",
+                  opts=["I am a new applicant", "I am a returning applicant"]) is None
     assert answer(label="Have you worked for Desert Financial in the last year?") == "No"  # (the work history's rule)
     # a profile that has this employer in it at all (a job there with no end, a past one): theirs to say
     there = {"title": "Teller", "company": "Desert Financial Credit Union", "start": "2022-01"}
@@ -177,7 +181,8 @@ def test_a_choice_saying_the_person_is_not_on_staff_is_answered_from_the_profile
     assert answer(Profile({**data, "work_history": [*data["work_history"], {**there, "end": "2023-05"}]})) is None
     # another employer that only shares a first word isn't this one (the State of Arizona at Arizona State University)
     asu = {"company": "Arizona State University"}
-    for other in ("I am not a current employee of the State of Arizona", "I am not a current State of Arizona employee"):
+    for other in ("I am not a current employee of the State of Arizona",
+                  "I am not a current State of Arizona employee"):
         assert answer(opts=["Yes", "No", other], job=asu) is None, other
 
 
@@ -190,34 +195,40 @@ def test_resolve_contact_fields():
     assert resolve_field(f("Retype Email Address: *"), p).value == "sam.rivera@example.com"  # SuccessFactors
     assert resolve_field(f("Phone Number"), p).value == "480-555-0123"
     assert resolve_field(f("State", "select", options=["Arizona", "Texas"]), p).value == "Arizona"
-    assert resolve_field(f("Country Phone Code", "listbox", options=["Canada (+1)", "United States of America (+1)"]), p).value \
-        == "United States of America (+1)"
+    assert resolve_field(f("Country Phone Code", "listbox", options=["Canada (+1)", "United States of America (+1)"]),
+                         p).value == "United States of America (+1)"
     assert resolve_field(f("LinkedIn Profile"), p).value.endswith("/samrivera")
 
 
 def test_resolve_questions():
     p = prof()
     yes_no = ["Yes", "No"]
-    assert resolve_field(f("Are you legally authorized to work in the United States?", "radio_group", options=yes_no), p).value == "Yes"
+    assert (resolve_field(f("Are you legally authorized to work in the United States?", "radio_group", options=yes_no),
+                          p).value == "Yes")
     assert resolve_field(f("Will you now or in the future require sponsorship for employment visa status (e.g., H-1B)?",
                            "radio_group", options=yes_no), p).value == "No"
     assert resolve_field(f("Are you a U.S. person as defined by the ITAR?", "select", options=yes_no), p).value == "Yes"
     assert resolve_field(f("Are you willing to relocate?", "select", options=yes_no), p).value == "No"
     assert resolve_field(f("Are you at least 18 years of age?", "radio_group", options=yes_no), p).value == "Yes"
-    assert resolve_field(f("Have you ever worked for Lam Research?", "select", options=yes_no), p, {"company": "Lam Research"}).value == "No"
-    assert resolve_field(f("Have you previously been employed by Intel?", "select", options=yes_no), p, {"company": "Intel Corporation"}).value == "Yes"
-    assert resolve_field(f("Are you comfortable working in a cleanroom environment?", "radio_group", options=yes_no), p).value == "Yes"
+    assert (resolve_field(f("Have you ever worked for Lam Research?", "select", options=yes_no), p,
+                          {"company": "Lam Research"}).value == "No")
+    assert (resolve_field(f("Have you previously been employed by Intel?", "select", options=yes_no), p,
+                          {"company": "Intel Corporation"}).value == "Yes")
+    assert (resolve_field(f("Are you comfortable working in a cleanroom environment?", "radio_group", options=yes_no),
+                          p).value == "Yes")
     # the same facts asked the other way round
-    assert resolve_field(f("Are you legally authorized to work in the U.S. without employer sponsorship?", "radio_group",
-                           options=yes_no), p).value == "Yes"
+    assert resolve_field(f("Are you legally authorized to work in the U.S. without employer sponsorship?",
+                           "radio_group", options=yes_no), p).value == "Yes"
     assert resolve_field(f("Can you work for us without requiring visa sponsorship now or in the future?", "select",
                            options=yes_no), p).value == "Yes"
     assert resolve_field(f("Are you under the age of 18?", "radio_group", options=yes_no), p).value == "No"
     # a local applicant isn't relocating; more travel than the profile allows is the user's call
     assert resolve_field(f("Do you currently live in the Phoenix area or are you willing to relocate?", "radio_group",
                            options=yes_no), p) is None
-    assert resolve_field(f("Are you willing to travel up to 50% of the time?", "radio_group", options=yes_no), p).value == "Yes"
-    assert resolve_field(f("This role requires up to 100% travel. Are you willing?", "radio_group", options=yes_no), p) is None
+    assert (resolve_field(f("Are you willing to travel up to 50% of the time?", "radio_group", options=yes_no),
+                          p).value == "Yes")
+    assert resolve_field(f("This role requires up to 100% travel. Are you willing?", "radio_group",
+                           options=yes_no), p) is None
     # "How did you hear" must not be answered with the LinkedIn profile URL
     assert resolve_field(f("How did you hear about us? (LinkedIn, Indeed, etc.)"), p).value == "LinkedIn"
 
@@ -225,7 +236,8 @@ def test_resolve_questions():
 def test_resolve_leaves_unknowns_alone():
     p = prof()
     assert resolve_field(f("Why do you want to work here?", "textarea"), p) is None
-    assert resolve_field(f("Can you lift 50 lbs?", "radio_group", options=["Yes", "No"]), p) is None  # answer bank entry empty
+    # answer bank entry empty
+    assert resolve_field(f("Can you lift 50 lbs?", "radio_group", options=["Yes", "No"]), p) is None
     assert resolve_field(f("Desired salary"), p) is None  # not in profile
     assert resolve_field(f("I certify the information is true", "checkbox"), p) is None
     assert resolve_field(f("Password", "password"), p) is None
@@ -261,7 +273,8 @@ def test_plan_autofill_orders_required_first():
         {"id": "2", "kind": "text", "label": "Last Name", "value": "Already"},
         {"id": "3", "kind": "textarea", "label": "Anything else?", "value": ""},
         {"id": "4", "kind": "textarea", "label": "Why us?", "value": "", "required": True},
-        {"id": "5", "kind": "select", "label": "Gender", "value": "Select...", "options": ["Select...", "Male", "Female", "Decline"]},
+        {"id": "5", "kind": "select", "label": "Gender", "value": "Select...",
+         "options": ["Select...", "Male", "Female", "Decline"]},
     ]
     plan = plan_autofill(fields, prof())
     assert [x["id"] for x in plan["to_fill"]] == ["1", "5"]
@@ -282,8 +295,8 @@ def test_dates_and_degrees():
     assert degree_key("B.S. Electrical Engineering") == "bachelor"
     assert degree_key("Master's Degree") == "master"
     assert degree_key("Ph.D.") == "doctorate"
-    assert choose_option("BS Electrical Engineering", ["Associate's Degree", "Bachelor's Degree", "Master's Degree"]) == \
-        "Bachelor's Degree"
+    assert choose_option("BS Electrical Engineering",
+                         ["Associate's Degree", "Bachelor's Degree", "Master's Degree"]) == "Bachelor's Degree"
     assert choose_option("Bachelor of Science", ["Bachelor of Arts", "Bachelor of Science", "Master of Science"]) == \
         "Bachelor of Science"
 
@@ -309,7 +322,8 @@ def test_work_and_education_entries():
     assert entry("Work Experience 3", "Job Title") is None  # no third job in the profile
     assert entry("Work Experience 1", "Supervisor Phone") is None  # not the applicant's own phone
     assert entry("Education 1", "School or University") == "Arizona State University"
-    assert entry("Education 1", "Degree", "listbox", options=["Associate's Degree", "Bachelor's Degree"]) == "Bachelor's Degree"
+    assert (entry("Education 1", "Degree", "listbox", options=["Associate's Degree", "Bachelor's Degree"])
+            == "Bachelor's Degree")
     assert entry("Education 1", "Overall Result (GPA)") == "3.4"
     assert entry("Education 1", "To (Actual or Expected)", sublabel="Year") == "2020"
 
@@ -410,7 +424,8 @@ def test_plan_skips_end_date_of_current_job():
 def test_unsectioned_education_dates_follow_school_fields():
     fields = [
         {"id": "1", "kind": "combobox", "label": "School*", "value": ""},
-        {"id": "2", "kind": "combobox", "label": "Degree*", "value": "", "options": ["Associate's Degree", "Bachelor's Degree"]},
+        {"id": "2", "kind": "combobox", "label": "Degree*", "value": "",
+         "options": ["Associate's Degree", "Bachelor's Degree"]},
         {"id": "3", "kind": "text", "label": "Start date year*", "value": ""},
         {"id": "4", "kind": "text", "label": "End date year*", "value": ""},
         {"id": "5", "kind": "text", "label": "Start date", "value": "", "section": "Availability"},
@@ -444,7 +459,8 @@ def test_a_start_date_after_other_questions_is_not_the_last_jobs():
 def test_a_citizen_holds_no_nonimmigrant_visa():
     """Texas Instruments (live, Oct 2026) asks whether you hold an H, L, E, J or F visa."""
     q = f("U.S. Immigration Form: Do you currently hold an H, L, E, J, or F nonimmigrant visa (examples: H-1B, "
-          "H-2B, H-4, L-1, L-2, E-1, E-2, J-1, J-2, F-1, etc.)?", "radio_group", options=["Yes", "No", "Pending with USCIS"])
+          "H-2B, H-4, L-1, L-2, E-1, E-2, J-1, J-2, F-1, etc.)?", "radio_group",
+          options=["Yes", "No", "Pending with USCIS"])
     citizen = Profile({"work_authorization": {"us_citizen": True, "requires_sponsorship": False}})
     assert resolve_field(q, citizen).value == "No"
     assert resolve_field(q, Profile({"work_authorization": {"requires_sponsorship": False}})) is None  # not known
@@ -455,7 +471,8 @@ def test_attestations_need_known_choices():
     q = "Are you a U.S. person as defined by U.S. export control regulations (EAR)?"
     assert resolve_field(f(q, "combobox"), p) is None  # choices unknown: leave it for a person
     assert resolve_field(f(q, "combobox", options=["Yes", "No"]), p).value == "Yes"
-    assert resolve_field(f(q, "combobox", options=["I am a U.S. citizen", "I am a lawful permanent resident", "Other"]), p) is None
+    assert resolve_field(f(q, "combobox",
+                           options=["I am a U.S. citizen", "I am a lawful permanent resident", "Other"]), p) is None
 
 
 def test_export_questions_that_are_not_about_being_a_us_person():
@@ -463,8 +480,8 @@ def test_export_questions_that_are_not_about_being_a_us_person():
     yes_no = ["Yes", "No"]
     # Micron, live: answering this from "U.S. person: yes" said Yes, the opposite of the truth
     micron = ("All Micron sites must observe U.S. export control rules that control information that may be provided "
-              "to persons from Cuba, Iran, North Korea, and Syria. Are you a citizen of, or do you hold dual citizenship "
-              "with any of these countries?")
+              "to persons from Cuba, Iran, North Korea, and Syria. Are you a citizen of, or do you hold dual "
+              "citizenship with any of these countries?")
     assert resolve_field(f(micron, "combobox", options=yes_no), p) is None
     for q in ("Will you require an export license to access our technology?",
               "This role involves export-controlled technology. Can you comply with these requirements?",
@@ -481,7 +498,8 @@ def test_export_questions_that_are_not_about_being_a_us_person():
     # a yearly desired salary doesn't answer current or monthly pay questions (Micron, live)
     p.data.setdefault("preferences", {})["desired_salary"] = "$85,000"
     assert resolve_field(f("Expected salary"), p).value == "$85,000"
-    for q in ("Current/Last Drawn Monthly Basic Salary:", "Expected Monthly Basic Salary (exclude allowance & overtime)",
+    for q in ("Current/Last Drawn Monthly Basic Salary:",
+              "Expected Monthly Basic Salary (exclude allowance & overtime)",
               "Please describe your current compensation package."):
         assert resolve_field(f(q, "textarea" if q.startswith("Please") else "text"), p) is None, q
     # the user's own answer still applies
@@ -490,11 +508,13 @@ def test_export_questions_that_are_not_about_being_a_us_person():
 
 
 def test_choices_seen_on_live_forms():
-    asm_prev = ["I have NEVER been employed by ASM", "I was PREVIOUSLY employed by ASM", "I am CURRENTLY employed by ASM"]
+    asm_prev = ["I have NEVER been employed by ASM", "I was PREVIOUSLY employed by ASM",
+                "I am CURRENTLY employed by ASM"]
     assert choose_option("No", asm_prev) == "I have NEVER been employed by ASM"
     asm_auth = ["I require sponsorship to work in this country",
                 "I am authorized to work in this country for my current employer",
-                "I am authorized to work in this country for any employer", "My status to work in this country is unknown"]
+                "I am authorized to work in this country for any employer",
+                "My status to work in this country is unknown"]
     assert choose_option("Yes", asm_auth) is None  # two "authorized" answers: a bare yes can't pick
     assert choose_option("Yes, for any employer", asm_auth) == asm_auth[2]
     assert choose_option("Yes, for any employer", ["Yes", "No"]) == "Yes"
@@ -511,8 +531,8 @@ def test_choices_seen_on_live_forms():
 
 
 def test_country_lists_with_flags_and_dial_codes():
-    lam = ["\U0001F1FA\U0001F1F2 (+1) United States Minor Outlying Islands", "\U0001F1FA\U0001F1F8 (+1) United States of America",
-           "\U0001F1E8\U0001F1E6 (+1) Canada"]
+    lam = ["\U0001F1FA\U0001F1F2 (+1) United States Minor Outlying Islands",
+           "\U0001F1FA\U0001F1F8 (+1) United States of America", "\U0001F1E8\U0001F1E6 (+1) Canada"]
     assert choose_option("United States", lam) == lam[1]
     assert choose_option("united states of america (+1)", lam) == lam[1]
     assert choose_option("United States", ["United States Minor Outlying Islands", "United States"]) == "United States"
@@ -667,8 +687,8 @@ def test_a_file_kept_from_before_gives_way_only_to_one_tailored_for_the_job(tmp_
     for shown in ("", None):
         assert autofill.kept_documents([{**box, "value": shown}], prof(), job) == [], shown
     # a file of the tailored one's name is no sign it's that one (the review of 0.3.209): every tailored resume is named
-    # <First>_<Last>_Resume.pdf, so the last application's at the same employer has it too. Whether the desk put it there
-    # is the desk's to say (Applier._replace_kept)
+    # <First>_<Last>_Resume.pdf, so the last application's at the same employer has it too. Whether the desk put it
+    # there is the desk's to say (Applier._replace_kept)
     [kept] = autofill.kept_documents([{**box, "value": "Sam_Rivera_Resume.pdf"}], prof(), job)
     assert (kept["shown"], kept["unsure"]) == (["Sam_Rivera_Resume.pdf"], False)
     # a box that shows only that a file is there: replaced; several files, or a box for a resume and a cover letter
@@ -724,7 +744,8 @@ def test_a_question_whose_choices_say_what_it_asks(job_apply_home):
     # isn't the EEO disability answer, nor is "military member" the protected-veteran one
     data["eeo"]["veteran"] = "I am not a protected veteran"
     (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
-    accommodation = ["Yes, I need an accommodation due to a disability", "No, I do not need an accommodation for a disability"]
+    accommodation = ["Yes, I need an accommodation due to a disability",
+                     "No, I do not need an accommodation for a disability"]
     assert resolve_field(f("Do you require an accommodation to interview?", "radio_group", options=accommodation),
                          prof()) is None
     military = ["Yes, I am a veteran", "No, I am not a veteran", "I am currently serving"]
@@ -756,7 +777,8 @@ def test_choices_by_whole_words_and_by_number():
 
 def test_questions_that_only_look_like_profile_questions():
     """Each of these took a profile answer that said something untrue."""
-    p = Profile({"work_authorization": {"authorized_to_work": True, "requires_sponsorship": False, "citizenship": "Mexico"},
+    p = Profile({"work_authorization": {"authorized_to_work": True, "requires_sponsorship": False,
+                                        "citizenship": "Mexico"},
                  "personal": {"address": {"country": "United States"}, "first_name": "Sam", "last_name": "Rivera",
                               "phone": "480-555-0100"},
                  "preferences": {"willing_to_relocate": True},
@@ -781,7 +803,8 @@ def test_questions_that_only_look_like_profile_questions():
     assert answer("Graduation Year") is None
     assert answer("Graduation Date", section="Education 1") is None
     # self-identification, not whether the person can do the job
-    assert answer("Can you perform the essential functions of this job with or without accommodation for a disability?") is None
+    assert answer("Can you perform the essential functions of this job with or without "
+                  "accommodation for a disability?") is None
     assert answer("Please indicate whether you have a disability") == "No, I do not have a disability"
     # relocation money isn't moving
     assert answer("Will you require relocation assistance?") is None
@@ -817,7 +840,8 @@ def _person(**extra) -> Profile:
 
 
 def _answer(label, p=None, kind="text", job=None, **kw):
-    a = resolve_field({"id": "1", "label": label, "kind": kind, "value": "", **kw}, p or _person(), job or {"company": "Acme"})
+    a = resolve_field({"id": "1", "label": label, "kind": kind, "value": "", **kw}, p or _person(),
+                      job or {"company": "Acme"})
     return a and a.value
 
 
@@ -830,7 +854,8 @@ def test_work_authorization_and_sponsorship_the_right_way_round():
               "Can you work in the US for any employer? Sponsorship is not required for you?",
               "Are you able to work in the U.S. with no sponsorship needed?",
               "Is your U.S. work authorization free of any sponsorship requirement?",
-              "Are you legally authorized to work in the United States? Note: this position is not eligible for visa sponsorship.",
+              "Are you legally authorized to work in the United States? Note: this position is not "
+              "eligible for visa sponsorship.",
               "Are you authorized to work in the U.S.? (We are unable to sponsor visas for this role.)"):
         assert str(_answer(q)).startswith("Yes"), q  # ("Yes, for any employer" in a text box)
     assert _answer("Please answer yes or no: will you require sponsorship?") == "No"
@@ -847,9 +872,12 @@ def test_age_asked_either_way_and_never_for_another_question():
     assert _answer("Are you less than 18 years of age?") == "No"
     assert _answer("Are you below 18 years of age?") == "No"
     assert _answer("Are you at least 18 years of age?") == "Yes"
-    not_allowed = _person(work_authorization={"authorized_to_work": False, "requires_sponsorship": True, "over_18": True})
-    assert _answer("Are you at least 18 years of age and legally authorized to work in the United States?", not_allowed) is None
-    assert _answer("Are you 18 years of age or older and able to work in the U.S. without sponsorship?", not_allowed) is None
+    not_allowed = _person(work_authorization={"authorized_to_work": False, "requires_sponsorship": True,
+                                              "over_18": True})
+    assert _answer("Are you at least 18 years of age and legally authorized to work in the United States?",
+                   not_allowed) is None
+    assert _answer("Are you 18 years of age or older and able to work in the U.S. without sponsorship?",
+                   not_allowed) is None
     # a count of 18 isn't an age (the review of Oct 15: "at least 18 months of experience" was answered Yes from
     # being over 18, "less than 18 months" No)
     for q in ("Do you have at least 18 months of experience in equipment maintenance?",
@@ -867,18 +895,23 @@ def test_age_asked_either_way_and_never_for_another_question():
 def test_schooling_is_never_understated_nor_overstated():
     """A high school diploma isn't "Some High School"; schooling not finished is never a
     degree, nor gets a graduation date; a school is picked by its name."""
-    for ladder in (["Some High School", "High School Graduate", "Some College", "Associate's Degree", "Bachelor's Degree"],
-                   ["Less than High School", "Some High School", "High School/GED", "Some College", "Associates", "Bachelors"]):
-        assert _answer("Highest level of education", kind="select", options=ladder) in ("High School Graduate", "High School/GED")
-    assert choose_option("Associate's degree (in progress)", ["Some College", "Associate's Degree", "Bachelor's Degree"]) \
-        in (None, "Some College")
+    for ladder in (["Some High School", "High School Graduate", "Some College", "Associate's Degree",
+                    "Bachelor's Degree"],
+                   ["Less than High School", "Some High School", "High School/GED", "Some College", "Associates",
+                    "Bachelors"]):
+        assert _answer("Highest level of education", kind="select", options=ladder) in ("High School Graduate",
+                                                                                        "High School/GED")
+    assert choose_option("Associate's degree (in progress)",
+                         ["Some College", "Associate's Degree", "Bachelor's Degree"]) in (None, "Some College")
     assert choose_option("Electrical Engineering coursework toward BSEE", ["High School", "Bachelor's Degree"]) is None
     for written in ("Not completed", "None", "No degree", "Some college (no degree)"):
-        p = _person(education={}, education_history=[{"school": "Mesa Community College", "degree": written, "end": 2019}])
+        p = _person(education={},
+                    education_history=[{"school": "Mesa Community College", "degree": written, "end": 2019}])
         assert _answer("Graduation Year", p) is None, written
         assert _answer("Graduation Date", p, section="Education 1") is None, written
     asu = _person(education={"school": "Arizona State University"})
-    assert _answer("School", asu, kind="combobox", options=["University of Arizona", "Northern Arizona University"]) is None
+    assert _answer("School", asu, kind="combobox",
+                   options=["University of Arizona", "Northern Arizona University"]) is None
 
 
 def test_a_schools_block_without_numbers_is_one_school():
@@ -919,7 +952,8 @@ def test_a_graduation_year_beside_a_school_is_that_schools():
             assert plan(*fields) == ({"s": "Mesa Community College"}, ["y"]), (label, fields[0]["id"])
     for section in ("Education", "Education 1"):  # an unnumbered heading, and a numbered school with a loose year
         filled, asked = plan(box("s", "School name", section=section), box("y", "Graduation year",
-                                                                           section="Education" if section == "Education" else None))
+                                                                           section="Education"
+                                                                           if section == "Education" else None))
         assert (filled, asked) == ({"s": "Mesa Community College"}, ["y"]), section
     # on its own, or about another credential, the year is the profile's
     assert plan(box("y", "Graduation year")) == ({"y": 2015}, [])
@@ -928,7 +962,8 @@ def test_a_graduation_year_beside_a_school_is_that_schools():
     graduate = _person(education={"highest_degree": "Bachelor's Degree", "graduation_year": 2015},
                        education_history=[{"school": "Arizona State University", "degree": "Bachelor's Degree",
                                            "start": 2016, "end": 2020}])
-    assert plan(school, box("y", "Graduation year"), person=graduate) == ({"s": "Arizona State University", "y": "2020"}, [])
+    assert (plan(school, box("y", "Graduation year"), person=graduate)
+            == ({"s": "Arizona State University", "y": "2020"}, []))
     # with no school in the profile, the School is the person's and the year stays the profile's
     ged = _person(education={"highest_degree": "GED", "graduation_year": 2017}, education_history=[])
     assert plan(school, box("y", "Graduation year"), person=ged) == ({"y": 2017}, ["s"])
@@ -942,10 +977,11 @@ def test_a_graduation_year_beside_a_school_is_that_schools():
 
 def test_worked_here_before_says_when_and_only_about_working_there():
     asm = ["I am CURRENTLY employed by ASM", "I was PREVIOUSLY employed by ASM", "I have NEVER been employed by ASM"]
-    assert _answer("Have you ever been employed with ASM before?", kind="radio_group", options=asm, job={"company": "ASM"}) \
-        == "I was PREVIOUSLY employed by ASM"
-    assert _answer("Have you ever been employed with Example Fab before?", kind="radio_group", job={"company": "Example Fab"},
-                   options=[o.replace("ASM", "Example Fab") for o in asm]) == "I am CURRENTLY employed by Example Fab"
+    assert _answer("Have you ever been employed with ASM before?", kind="radio_group", options=asm,
+                   job={"company": "ASM"}) == "I was PREVIOUSLY employed by ASM"
+    assert (_answer("Have you ever been employed with Example Fab before?", kind="radio_group",
+                    job={"company": "Example Fab"}, options=[o.replace("ASM", "Example Fab") for o in asm])
+            == "I am CURRENTLY employed by Example Fab")
     assert _answer("Have you ever worked on Lam Research etch tools?", job={"company": "Lam Research"}) is None
     assert _answer("Have you previously worked with KLA metrology systems?", job={"company": "KLA"}) is None
     one = _person(history={"previous_employers": "Northwind Semi"})
@@ -1002,13 +1038,14 @@ def test_a_question_remembered_from_a_long_notice_is_the_same_question_in_anothe
                                      "request"), "No", "Acme")
     assert remembered(terms, "Example Fab") is None
     assert remembered(f"{example} Do you want job alerts by email?", "Example Fab") is None  # and the same, with it
-    # a short question has no core: it is the whole label or nothing ("Are you currently employed?" isn't "... by ASML?")
+    # a short question has no core: it is the whole label or nothing ("Are you currently employed?"
+    # isn't "... by ASML?")
     assert "core" not in config.save_answer("Are you currently employed?", "Yes", "Acme")
     assert remembered("Are you currently employed?", "Acme") == "Yes"
     assert remembered("Are you currently employed by ASML? Please say.", "Acme") is None
     # a question about the employer is that employer's, read from the sentence that asks, not the notice around it
-    mine = ("Our Hiring Process: Acme looks at every application it gets, and its recruiters talk to some of the people "
-            "who apply, so you may hear from them by phone or by email in the weeks after you apply. "
+    mine = ("Our Hiring Process: Acme looks at every application it gets, and its recruiters talk to some of the "
+            "people who apply, so you may hear from them by phone or by email in the weeks after you apply. "
             "Would you take other roles with this company?")
     config.save_answer(mine, "Yes", "Acme")
     assert remembered(mine, "Acme") == "Yes"
@@ -1051,7 +1088,8 @@ def test_what_names_the_employer_isnt_remembered_as_it_was_said():
     assert answer_to_remember(how, "Acme website", "") == "Acme website"
     # (the review's) an employer whose first word is an everyday or a place's: only its whole name names it
     assert answer_to_remember("Where do you live?", "Phoenix, Arizona", "Phoenix Children's") == "Phoenix, Arizona"
-    assert answer_to_remember("Have you applied before?", "No, never applied", "Applied Materials") == "No, never applied"
+    assert (answer_to_remember("Have you applied before?", "No, never applied", "Applied Materials")
+            == "No, never applied")
     assert answer_to_remember(how, "Applied Materials website", "Applied Materials") == "Company Website"
     # remembered so, it's the employer's own website wherever it's asked: the list's "<employer> website"
     p = _person(preferences={"how_did_you_hear": "LinkedIn"})
@@ -1060,7 +1098,8 @@ def test_what_names_the_employer_isnt_remembered_as_it_was_said():
     lists = ["Advertisement", "Example Fab website", "Job Board"]
     assert _answer("How Did You Hear About Us?*", p, "combobox", {"company": "Example Fab"}, options=lists) == \
         "Example Fab website"
-    assert _answer("How Did You Hear About Us?*", p, "combobox", {"company": "Example Fab"}, options=["Job Board"]) is None
+    assert _answer("How Did You Hear About Us?*", p, "combobox", {"company": "Example Fab"},
+                   options=["Job Board"]) is None
     # (the review's) a lone site that's another source's is never the employer's own
     for other in ("Indeed Website", "University Career Site", "Other Website"):
         assert _answer("How Did You Hear About Us?*", p, "combobox", {"company": "Example Fab"},
@@ -1079,7 +1118,8 @@ def test_travel_willingness_answers_only_how_much_travel():
 
 
 def test_placeholder_text_is_no_answer():
-    for shown in ("Please Select...", "Select One...", "Choose...", "Select a State", "Select Country", "Make a Selection"):
+    for shown in ("Please Select...", "Select One...", "Choose...", "Select a State", "Select Country",
+                  "Make a Selection"):
         assert is_empty_value(shown), shown
     assert not is_empty_value("Selection Committee") and not is_empty_value("Arizona")
     field = {"id": "q", "label": "Will you now or in the future require sponsorship?", "kind": "select",
@@ -1141,8 +1181,8 @@ def test_a_sign_ups_boxes_are_never_filled_nor_asked():
     application) are neither filled nor put to the person."""
     p = _person()
     plan = plan_autofill([{"id": "e", "label": "Email", "kind": "text", "value": "", "aside": True},
-                          {"id": "c", "label": "I agree to join the Talent Community", "kind": "checkbox", "value": False,
-                           "required": True, "aside": True},
+                          {"id": "c", "label": "I agree to join the Talent Community", "kind": "checkbox",
+                           "value": False, "required": True, "aside": True},
                           {"id": "f", "label": "First Name", "kind": "text", "value": ""}], p, {"company": "Acme"})
     assert [f["id"] for f in plan["to_fill"]] == ["f"] and plan["needs_input"] == []
 
@@ -1210,7 +1250,8 @@ def test_a_county_comes_from_an_arizona_citys():
 
     def with_address(**address):
         path.write_text(yaml.safe_dump({**data, "personal": {**data["personal"],
-                                                            "address": {**data["personal"]["address"], **address}}}), encoding="utf-8")
+                                                            "address": {**data["personal"]["address"], **address}}}),
+                        encoding="utf-8")
         return Profile.load()
 
     assert resolve_field(f("County"), with_address(county="Yavapai")).value == "Yavapai"
@@ -1244,14 +1285,16 @@ def test_located_near_the_job_or_willing_to_relocate():
             "currently located within 100 miles of a Mayo Clinic campus, or willing to relocate?")
 
     def answer(label, location, profile=p):
-        a = resolve_field(f(label, "radio_group", options=yes_no), profile, {"company": "Mayo Clinic", "location": location})
+        a = resolve_field(f(label, "radio_group", options=yes_no), profile,
+                          {"company": "Mayo Clinic", "location": location})
         return a and a.value
 
     assert answer(mayo, "Phoenix, AZ, United States") == "Yes"
     assert answer(mayo, "Scottsdale, Arizona") == "Yes"
     assert answer(mayo, "US-AZ-Phoenix") == "Yes"
     assert answer(mayo, "Rochester, MN; Phoenix, AZ") == "Yes"
-    assert answer("Do you live within commuting distance of the job, or are you open to relocating?", "Tempe, AZ") == "Yes"
+    assert (answer("Do you live within commuting distance of the job, or are you open to relocating?",
+                   "Tempe, AZ") == "Yes")
     assert answer(mayo, "Tucson, AZ") is None  # another metro area
     assert answer(mayo, "Glendale, CA") is None  # Arizona's Glendale is near, California's isn't
     assert answer(mayo, "") is None
@@ -1269,7 +1312,8 @@ def test_located_near_the_job_or_willing_to_relocate():
         return Profile.load()
 
     assert answer(mayo, "Tucson, AZ", with_(preferences={"willing_to_relocate": True})) == "Yes"
-    assert answer(mayo, "Phoenix, AZ", with_(personal={"city": "San Tan Valley"})) == "Yes"  # Pinal County: still Phoenix's
+    # Pinal County: still Phoenix's
+    assert answer(mayo, "Phoenix, AZ", with_(personal={"city": "San Tan Valley"})) == "Yes"
     assert answer(mayo, "Phoenix, AZ", with_(personal={"city": "Austin", "state": "TX"})) is None
 
 
@@ -1282,7 +1326,8 @@ def test_how_did_you_first_hear():
 
     path = config.profile_path()
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "how_did_you_hear": "Company Website"}}), encoding="utf-8")
+    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"],
+                                                            "how_did_you_hear": "Company Website"}}), encoding="utf-8")
     options = ["I am a current Mayo Clinic Employee (not a trainee)", "Handshake", "Indeed", "LinkedIn",
                "Mayo Clinic Career Site", "Referral - Other", "Other"]
     ans = resolve_field(f("How did you first hear about this opportunity?", "combobox", options=options), prof(),
@@ -1327,7 +1372,9 @@ def test_a_preferred_work_location_from_the_profiles_places():
     assert resolve_field(asked, prof()) is None  # the profile names no places
     path = config.profile_path()
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "locations": ["Phoenix, AZ", "Tempe, AZ"]}}), encoding="utf-8")
+    path.write_text(yaml.safe_dump({**data,
+                                    "preferences": {**data["preferences"], "locations": ["Phoenix, AZ", "Tempe, AZ"]}}),
+                    encoding="utf-8")
     assert resolve_field(asked, prof()).value == "Phoenix, AZ"
     assert resolve_field(f("Preferred Location"), prof()).value == "Phoenix, AZ"
 
@@ -1364,7 +1411,8 @@ def test_never_the_opposite_of_the_answer():
     assert choose_option("Not Hispanic or Latino", ["Hispanic or Latino", "Decline to answer"]) is None
     assert choose_option("Not Hispanic or Latino", ["Hispanic/Latino", "Non-Hispanic/Latino"]) != "Hispanic/Latino"
     assert choose_option("Hispanic or Latino", ["Not Hispanic or Latino", "Decline"]) is None
-    assert choose_option("Hispanic or Latino", ["Yes, Hispanic or Latino", "Not Hispanic or Latino"]) == "Yes, Hispanic or Latino"
+    assert (choose_option("Hispanic or Latino", ["Yes, Hispanic or Latino", "Not Hispanic or Latino"])
+            == "Yes, Hispanic or Latino")
     assert choose_option("I am not a protected veteran", ["Protected Veteran", "Decline"]) is None
     # nor a choice that denies more than the answer: a veteran who isn't a protected one is a veteran
     assert choose_option("I am not a protected veteran", ["Protected Veteran", "Not a Veteran", "Decline"]) is None
@@ -1373,8 +1421,9 @@ def test_never_the_opposite_of_the_answer():
     # a denial about something else doesn't stand in the way
     assert choose_option("Asian", ["Asian (Not Hispanic or Latino)", "White (Not Hispanic or Latino)"]) == \
         "Asian (Not Hispanic or Latino)"
-    assert choose_option("No, I do not have a disability", ["Yes, I have a disability", "No, I don't have a disability",
-                                                             "I don't wish to answer"]) == "No, I don't have a disability"
+    assert choose_option("No, I do not have a disability",
+                         ["Yes, I have a disability", "No, I don't have a disability",
+                          "I don't wish to answer"]) == "No, I don't have a disability"
     assert choose_option("No, I will not require sponsorship", ["Yes, I will require sponsorship", "No"]) == "No"
     # a decline's "not" denies nothing
     assert choose_option("I don't wish to answer", ["Yes, I have a disability", "I do not want to answer"]) == \
@@ -1427,8 +1476,8 @@ def test_sponsorship_and_military_asked_in_other_words():
     no_visa = resolve_field(f("I will not require a visa to work in the United States.", "radio_group",
                               options=["Yes", "No"]), p)
     assert no_visa is not None and choose_option(no_visa.value, ["Yes", "No"]) == "Yes", no_visa
-    legally = resolve_field(f("Are you authorized to legally work in the United States? If offered employment, you will "
-                              "be required to present documentation.*", "radio_group", options=["Yes", "No"]), p)
+    legally = resolve_field(f("Are you authorized to legally work in the United States? If offered employment, you "
+                              "will be required to present documentation.*", "radio_group", options=["Yes", "No"]), p)
     assert legally is not None and (legally.rule, choose_option(legally.value, ["Yes", "No"])) == ("authorized", "Yes")
     # a visa for travel isn't a work visa (review)
     travel = resolve_field(f("Will you require a visa to travel for work?", "radio_group", options=["Yes", "No"]), p)
@@ -1466,7 +1515,8 @@ def test_a_degree_level_the_list_lacks_is_never_another_level_nor_a_ged_a_diplom
     assert choose_option("Master's Degree", ["Associate's Degree", "Bachelor's Degree", "Other"]) is None
     assert choose_option("Associate's Degree", ["Some College", "No degree", "Other"]) is None
     assert choose_option("GED", ["High School Diploma", "Bachelor's Degree"]) is None
-    assert choose_option("GED", ["High School", "College"]) == "High School"  # (the bare level: a GED is its equivalent)
+    # (the bare level: a GED is its equivalent)
+    assert choose_option("GED", ["High School", "College"]) == "High School"
     assert choose_option("High School Diploma", ["GED", "Bachelor's Degree"]) is None
     assert choose_option("High School Diploma", ["High School Equivalent (GED)", "Bachelor's"]) is None
     assert choose_option("GED", ["High School Diploma or GED", "Bachelor's Degree"]) == "High School Diploma or GED"
@@ -1474,14 +1524,15 @@ def test_a_degree_level_the_list_lacks_is_never_another_level_nor_a_ged_a_diplom
     assert choose_option("GED", ["High School or Equivalent", "Bachelor's"]) == "High School or Equivalent"
     assert choose_option("High School Diploma", ["High School Diploma or Equivalent", "Bachelor's"]) == \
         "High School Diploma or Equivalent"
-    assert choose_option("High School Diploma", ["High School or Equivalent", "Bachelor's"]) == "High School or Equivalent"
+    assert (choose_option("High School Diploma", ["High School or Equivalent", "Bachelor's"])
+            == "High School or Equivalent")
     assert choose_option("High School Diploma", ["High School", "College"]) == "High School"
     # the level that is there, as before, in the bare singular too (the review of 0.3.175: "Bachelor" alone was no
-    # level, so the list of issue #112, note 16, would have been said to lack a bachelor's); a list with no degree in it,
-    # as before
+    # level, so the list of issue #112, note 16, would have been said to lack a bachelor's); a list with no degree in
+    # it, as before
     assert choose_option("Bachelor's Degree", ["Associates", "Bachelors", "Masters"]) == "Bachelors"
-    workday = ["Certificate", "Foundation", "Associate", "Bachelor", "Master", "Doctor", "Ph.D.", "Others", "Some College",
-               "No degree (Dropped out)"]
+    workday = ["Certificate", "Foundation", "Associate", "Bachelor", "Master", "Doctor", "Ph.D.", "Others",
+               "Some College", "No degree (Dropped out)"]
     for said, pick in (("Bachelor's Degree", "Bachelor"), ("Bachelor of Science", "Bachelor"), ("BSEE", "Bachelor"),
                        ("Master's Degree", "Master"), ("MBA", "Master"), ("Associate of Applied Science", "Associate"),
                        ("GED", None), ("High School Diploma", None)):
@@ -1499,7 +1550,8 @@ def test_a_bare_job_title_beside_a_profile_employers_company_gets_that_jobs_titl
     title of the profile's job at that company. Never for a company the profile doesn't have."""
     p = Profile({"work_history": [{"title": "Equipment Technician", "company": "Example Fab", "start": "2021-03",
                                    "end": "present"},
-                                  {"title": "Field Tech", "company": "Other Semi", "start": "2018-01", "end": "2021-02"}]})
+                                  {"title": "Field Tech", "company": "Other Semi", "start": "2018-01",
+                                   "end": "2021-02"}]})
 
     def row(company):
         return [{"id": "c", "label": "Company*", "kind": "text", "required": True, "value": company},
@@ -1524,14 +1576,16 @@ def test_a_list_still_on_its_not_specified_first_choice_is_filled():
     p = Profile({"personal": {"address": {"country": "United States", "state": "AZ", "city": "Chandler"}},
                  "eeo": {"gender": "Male"}})
     country = {"id": "c", "label": "Country", "kind": "select", "value": "Not Specified",
-               "section": "Closest Metropolitan City . Required", "options": ["Not Specified", "United States", "Canada"]}
+               "section": "Closest Metropolitan City . Required",
+               "options": ["Not Specified", "United States", "Canada"]}
     gender = {"id": "g", "label": "Gender", "kind": "select", "value": "Not Specified",
               "options": ["Male", "Female", "Not Specified"]}
     # nor a self-identification list whose first choice is "Not Specified": the person may have chosen it
     taleo_gender = {**gender, "id": "t", "options": ["Not Specified", "Male", "Female"]}
     # its Region is a list of cities: the profile's city goes there, not its state (live run 12)
     region = {"id": "r", "label": "Region", "kind": "select", "value": "Not Specified",
-              "section": "Closest Metropolitan City . Required", "options": ["Not Specified", "Anthem", "Bisbee", "Chandler"]}
+              "section": "Closest Metropolitan City . Required",
+              "options": ["Not Specified", "Anthem", "Bisbee", "Chandler"]}
     assert resolve_field(region, p).value == "Chandler"
     # a required self-identification list on it, for a profile that declines and a list without a decline: asked,
     # without the "Not Specified" that is its empty choice (an answer of it was taken for none, live run 24)
@@ -1550,14 +1604,16 @@ def test_a_list_on_its_first_choice_with_no_empty_one_is_the_sites_and_takes_the
     as answered, and went out as the person's answer whatever the profile said. The profile's answer goes in where it's
     another; where the list has no choice for it, the person is asked; where the profile says nothing, or the same, or
     the list starts on an empty choice (someone picked what it shows), it's left as it is."""
-    decliner = Profile({"eeo": {"gender": "Decline to self-identify"}, "personal": {"address": {"country": "United States"}}})
+    decliner = Profile({"eeo": {"gender": "Decline to self-identify"},
+                        "personal": {"address": {"country": "United States"}}})
     gender = {"id": "g", "label": "Gender", "kind": "select", "value": "Male",
               "options": ["Male", "Female", "I don't wish to answer"]}
     plan = plan_autofill([gender], decliner, {})
     assert [(t["id"], t["value"]) for t in plan["to_fill"]] == [("g", "I don't wish to answer")], plan
     no_decline = {**gender, "id": "n", "options": ["Male", "Female"]}
     assert [q["id"] for q in plan_autofill([no_decline], decliner, {})["needs_input"]] == ["n"]
-    same = {"id": "c", "label": "Country", "kind": "select", "value": "United States", "options": ["United States", "Canada"]}
+    same = {"id": "c", "label": "Country", "kind": "select", "value": "United States",
+            "options": ["United States", "Canada"]}
     picked = {**gender, "id": "p", "options": ["Select...", "Male", "Female", "I don't wish to answer"]}
     nothing = {"id": "s", "label": "Salutation", "kind": "select", "value": "Mr.", "options": ["Mr.", "Ms.", "Dr."]}
     plan = plan_autofill([same, picked, nothing], decliner, {})
@@ -1601,13 +1657,15 @@ def test_a_country_list_the_site_preset_to_another_country_takes_the_profiles():
     assert plan_autofill([{**country, "judged": True}], prof, {})["already_filled"] == ["c"]
     assert not same_country("Canada (+1)", "United States of America (+1)")
     assert not same_country("Mexico (+52)", "United States of America (+1)")
-    # (the review of 0.3.196) only the person's own address or phone: never a past job's, a school's or another address's
+    # (the review of 0.3.196) only the person's own address or phone: never a past job's, a school's or
+    # another address's
     for section in ("Work Experience", "Education", "Previous Address", "Mailing Address", "Licenses 1"):
         assert plan_autofill([{**country, "section": section}], prof, {})["to_fill"] == [], section
     for section in ("Address", "Phone", "My Information"):
         assert plan_autofill([{**country, "section": section}], prof, {})["to_fill"], section
     # a select with an empty choice to start on: someone picked what it shows
-    picked = {"id": "s", "kind": "select", "label": "Country", "value": "Canada", "options": ["Select...", "Canada", "United States"]}
+    picked = {"id": "s", "kind": "select", "label": "Country", "value": "Canada",
+              "options": ["Select...", "Canada", "United States"]}
     assert plan_autofill([picked], prof, {})["to_fill"] == []
     # once a job: a list looked at already (by label and section) is the person's since
     plan = plan_autofill([country], prof, {})
@@ -1637,7 +1695,8 @@ def test_a_list_the_page_marks_invalid_takes_the_profiles_answer_and_a_required_
     chosen; a required one is answered."""
     p = Profile({"personal": {"phone": "480-555-0199", "phone_country_code": "+1",
                               "address": {"country": "United States"}}, "eeo": {"gender": "Male"}})
-    codes = ["\U0001F1FA\U0001F1F8 (+1) United States", "\U0001F1F2\U0001F1FD (+52) Mexico", "\U0001F1E8\U0001F1E6 (+1) Canada"]
+    codes = ["\U0001F1FA\U0001F1F8 (+1) United States", "\U0001F1F2\U0001F1FD (+52) Mexico",
+             "\U0001F1E8\U0001F1E6 (+1) Canada"]
     code = {"id": "c", "label": "Country code", "kind": "combobox", "value": codes[1], "invalid": True,
             "required": True, "options": codes}
     birth = {"id": "b", "label": "3. Birth Assigned Gender . Required", "kind": "select", "value": "Not Specified",
@@ -1661,7 +1720,8 @@ def test_a_text_box_the_page_says_is_wrong_takes_the_profiles_answer_only_where_
     "+1##########", and called it invalid. Named in `redo`, a text box showing another value takes the
     profile's; one already showing the profile's answer, or one the profile doesn't answer, is left."""
     p = Profile({"personal": {"phone": "480-555-0199", "phone_country_code": "+1"}})
-    label = 'Phone Number [must include your location code using the "+", (e.g. +1##########), with no spaces or dashes]*'
+    label = ('Phone Number [must include your location code using the "+", (e.g. '
+             '+1##########), with no spaces or dashes]*')
     parsed = {"id": "p", "label": label, "kind": "text", "value": "4805550199", "required": True}
     plan = plan_autofill([parsed], p, {}, redo={"p"})
     assert [(t["id"], t["value"]) for t in plan["to_fill"]] == [("p", "+14805550199")], plan
@@ -1700,9 +1760,9 @@ def test_a_decline_finds_the_lists_own_way_to_decline_and_is_never_a_no():
     answer" wasn't taken for a decline: its "don't" made it a "No", and it went to "I am not a
     protected veteran", a status the person never gave. A list with no way to decline gets
     nothing (Qorvo's veteran list is only "No, I am not ..." and "Yes, I am ...")."""
-    declines = ("I don't wish to answer", "I don't want to answer", "I do not want to answer", "Decline to self-identify",
-                "I choose not to self-identify", "Prefer not to say", "I'd rather not say", "I wish not to answer",
-                "Not specified")
+    declines = ("I don't wish to answer", "I don't want to answer", "I do not want to answer",
+                "Decline to self-identify", "I choose not to self-identify", "Prefer not to say", "I'd rather not say",
+                "I wish not to answer", "Not specified")
     for said in declines:
         assert choose_option(said, DISABILITY) == "I do not want to answer", said
         assert choose_option(said, VETERAN) == "I don't wish to answer", said
@@ -1710,14 +1770,16 @@ def test_a_decline_finds_the_lists_own_way_to_decline_and_is_never_a_no():
         assert choose_option(said, ["Yes", "No", "Decline to self-identify"]) == "Decline to self-identify", said
         assert choose_option(said, ["Male", "Female", "Not Specified"]) == "Not Specified", said
         assert choose_option(said, ["Man", "Woman", "Non-binary", "I prefer not to answer"]) == "I prefer not to answer"
-        assert choose_option(said, ["No Selection", "No, I am not a Protected Veteran", "Yes, I am a Protected Veteran"]) \
-            is None, said
+        assert choose_option(said, ["No Selection", "No, I am not a Protected Veteran",
+                                    "Yes, I am a Protected Veteran"]) is None, said
         assert choose_option(said, ["Female", "Male"]) is None, said
     # a "no" about something else than answering is an answer, not a decline
-    assert choose_option("No", ["Yes, I am willing to relocate", "I do not wish to relocate"]) == "I do not wish to relocate"
+    assert (choose_option("No", ["Yes, I am willing to relocate", "I do not wish to relocate"])
+            == "I do not wish to relocate")
     # Pfeiffer Vacuum's SuccessFactors (run 56): "Prefers not to answer", "Not willing to answer"
-    assert choose_option("I don't wish to answer", ["No Selection", "Non-Veteran", "Not a Protected Veteran",
-                                                    "Prefers not to answer", "Protected Veteran"]) == "Prefers not to answer"
+    assert (choose_option("I don't wish to answer", ["No Selection", "Non-Veteran", "Not a Protected Veteran",
+                                                     "Prefers not to answer", "Protected Veteran"])
+            == "Prefers not to answer")
     assert choose_option("I do not want to answer", ["No Selection", "No disability", "Not willing to answer",
                                                      "Yes, with a disability (or previously had a disability)"]) \
         == "Not willing to answer"
@@ -1734,10 +1796,10 @@ def test_a_decline_is_found_where_workday_names_each_choice_with_its_country():
     decline for it."""
     gender = ["Select One", "Female (United States of America)", "Male (United States of America)",
               "Non-Binary (United States of America)", "Undeclared (United States of America)"]
-    race = ["Select One", "American Indian or Alaska Native (United States of America)", "Asian (United States of America)",
-            "Hispanic or Latino (United States of America)", "Not Declared (United States of America)",
-            "Not Specified (United States of America)", "Two or More Races (United States of America)",
-            "White (United States of America)"]
+    race = ["Select One", "American Indian or Alaska Native (United States of America)",
+            "Asian (United States of America)", "Hispanic or Latino (United States of America)",
+            "Not Declared (United States of America)", "Not Specified (United States of America)",
+            "Two or More Races (United States of America)", "White (United States of America)"]
     assert choose_option("Decline to self-identify", gender) == "Undeclared (United States of America)"
     assert choose_option("I don't wish to answer", race) == "Not Declared (United States of America)"
     assert choose_option("Female", gender) == "Female (United States of America)"
@@ -1780,25 +1842,28 @@ def test_a_self_identification_question_with_the_law_in_its_label_is_that_questi
     data["eeo"]["disability"] = "No"
     (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
     vevraa = ("U.S. – Protected Veteran Self-Identification This employer is a Government contractor subject to the "
-              "Vietnam Era Veterans' Readjustment Assistance Act of 1974, as amended (VEVRAA). For more information, call "
-              "the U.S. Department of Labor's Veterans' Employment and Training Service (VETS). If you believe you belong "
-              "to any of the categories of protected veterans, please indicate by selecting the appropriate value below.")
+              "Vietnam Era Veterans' Readjustment Assistance Act of 1974, as amended (VEVRAA). For more information, "
+              "call the U.S. Department of Labor's Veterans' Employment and Training Service (VETS). If you believe "
+              "you belong to any of the categories of protected veterans, please indicate by "
+              "selecting the appropriate value below.")
     micron = ["I IDENTIFY AS ONE OR MORE OF THE CLASSIFICATIONS OF PROTECTED VETERANS LISTED BELOW",
-              "I DO NOT WISH TO SELF-IDENTIFY", "I AM NOT A VETERAN", "I IDENTIFY AS A VETERAN, JUST NOT A PROTECTED VETERAN"]
+              "I DO NOT WISH TO SELF-IDENTIFY", "I AM NOT A VETERAN",
+              "I IDENTIFY AS A VETERAN, JUST NOT A PROTECTED VETERAN"]
     ans = resolve_field(f(vevraa, "combobox", options=micron), prof())
     assert (ans.rule, ans.value) == ("veteran", "I DO NOT WISH TO SELF-IDENTIFY")
     yes_no = ["Yes, I am a protected veteran", "No, I am not a protected veteran", "I don't wish to answer"]
     assert resolve_field(f(vevraa, "select", options=yes_no), prof()).value == "I don't wish to answer"
     # its list not read yet: the notice's words alone still don't make it an on-call question
     assert resolve_field(f(vevraa, "combobox"), prof()).rule == "veteran"
-    cc305 = ("Voluntary Self-Identification of Disability. Why are you being asked to complete this form? We are a federal "
-             "contractor required to provide equal employment opportunity to qualified people with disabilities. "
-             "Federal law requires employers to provide reasonable accommodations to qualified applicants. Please check "
-             "one of the boxes below")
+    cc305 = ("Voluntary Self-Identification of Disability. Why are you being asked to complete this form? We are a "
+             "federal contractor required to provide equal employment opportunity to qualified people with "
+             "disabilities. Federal law requires employers to provide reasonable accommodations to qualified "
+             "applicants. Please check one of the boxes below")
     ans = resolve_field(f(cc305, "radio_group", options=DISABILITY), prof())
     assert (ans.rule, ans.value) == ("disability", "No, I do not have a disability and have not had one in the past")
     # a question that only mentions a disability is still not the self-identification one
-    accommodation = ["Yes, I need an accommodation due to a disability", "No, I do not need an accommodation for a disability"]
+    accommodation = ["Yes, I need an accommodation due to a disability",
+                     "No, I do not need an accommodation for a disability"]
     assert resolve_field(f("Do you need an accommodation for a disability to interview?", "radio_group",
                            options=accommodation), prof()) is None
 
@@ -1814,7 +1879,8 @@ def test_a_self_identification_answer_is_picked_from_the_list_or_said_never_sear
     assert resolve_field({**gender, "options": ["Female", "Male", "I do not wish to disclose"]}, prof()).value == \
         "I do not wish to disclose"
     veteran = {**f("Pre-Offer : Are you a Protected Veteran?", "combobox", paged=True,
-                   options=["No Selection", "No, I am not a Protected Veteran", "Yes, I am a Protected Veteran"]), "id": "2"}
+                   options=["No Selection", "No, I am not a Protected Veteran",
+                            "Yes, I am a Protected Veteran"]), "id": "2"}
     country = {**f("Country", "combobox", search=True, options=["Canada", "Mexico"]), "id": "3"}
     plan = plan_autofill([gender, veteran, country], prof())
     assert [(q["label"], q.get("unmatched")) for q in plan["needs_input"]] == [
@@ -1826,9 +1892,11 @@ def test_a_short_list_of_places_is_read_with_the_rest_of_the_address():
     """A City list short enough to be read whole ("Chandler, Henderson, TX", "Chandler, Lincoln,
     OK", "Chandler, Maricopa, AZ") gave the first Chandler: the fill picks the one the rest of
     the address names, but the plan had already chosen Texas."""
-    cities = ["Chandler, Henderson, TX", "Chandler, Lincoln, OK", "Chandler, Maricopa, AZ", "Chandler Heights, Maricopa, AZ"]
+    cities = ["Chandler, Henderson, TX", "Chandler, Lincoln, OK", "Chandler, Maricopa, AZ",
+              "Chandler Heights, Maricopa, AZ"]
     assert resolve_field(f("City *", "select", options=cities), prof()).value == "Chandler, Maricopa, AZ"
-    assert resolve_field(f("County", "select", options=["Maricopa, CA", "Maricopa, AZ"]), prof()).value == "Maricopa, AZ"
+    assert (resolve_field(f("County", "select", options=["Maricopa, CA", "Maricopa, AZ"]), prof()).value
+            == "Maricopa, AZ")
     assert resolve_field(f("State", "select", options=["Arkansas", "Arizona"]), prof()).value == "Arizona"
 
 
@@ -1839,7 +1907,8 @@ def test_some_college_however_a_list_words_it():
     assert choose_option("Some college coursework", degrees) == "Some College, No Degree"
     assert choose_option("Some college coursework", ["Some high school", "College coursework, no degree"]) == \
         "College coursework, no degree"
-    assert choose_option("Some college", ["High school diploma or GED", "Associate degree", "Bachelor's degree"]) is None
+    assert choose_option("Some college",
+                         ["High school diploma or GED", "Associate degree", "Bachelor's degree"]) is None
     assert choose_option("Some high school", ["Some college, no degree", "Some high school, no diploma"]) == \
         "Some high school, no diploma"
 
@@ -1869,17 +1938,19 @@ def test_a_former_employee_question_naming_another_company_is_never_answered_fro
     yes_no = ["Yes", "No"]
     job = {"company": "Intel Corporation"}  # among the test profile's employers
     for asked in ("Are you a current or former employee of Ernst & Young?",
-                  "Have you ever been employed by Example Audit LLP?", "Have you previously worked for a Big Four firm?"):
+                  "Have you ever been employed by Example Audit LLP?",
+                  "Have you previously worked for a Big Four firm?"):
         assert resolve_field(f(asked, "radio_group", options=yes_no), prof(), job) is None, asked
     for asked in ("Are you a current or former employee?", "Have you ever been employed by this company?",
-                  "Have you previously worked for us?", "Are you a former employee of Intel or any of its subsidiaries?"):
+                  "Have you previously worked for us?",
+                  "Are you a former employee of Intel or any of its subsidiaries?"):
         assert resolve_field(f(asked, "radio_group", options=yes_no), prof(), job).value == "Yes", asked
 
 
 def test_worked_there_before_only_where_the_profile_names_the_employer_itself():
     """The fake-site walks (Oct 2026): the profile's "Example Fab Services" answered Example Fab's "Have you ever been
-    employed with Example Fab before?" with Yes, previously, as one name held the other. It's Yes only where a job in the
-    profile is at the employer itself, its whole name but for case, punctuation, "The" and its legal words ("Intel
+    employed with Example Fab before?" with Yes, previously, as one name held the other. It's Yes only where a job in
+    the profile is at the employer itself, its whole name but for case, punctuation, "The" and its legal words ("Intel
     Corporation" is Intel). A name that only holds the employer's, or is held in it, may be it or not: the question is
     the person's, never a Yes (nor a No). A name that's neither ("Intelligent Fabrication" for Intel) is No."""
     from job_apply.autofill import _same_employer
@@ -1906,13 +1977,16 @@ def test_worked_there_before_only_where_the_profile_names_the_employer_itself():
 
     assert worked(["Example Fab Services"], "Example Fab") is None  # (was Yes)
     assert worked(["Example Fab"], "Example Fab Services") is None
-    assert worked(["Intel"], "Intelligent Fabrication", "Have you ever been employed with Intelligent Fabrication?") == "No"
-    assert worked(["ASM Pacific Technology"], "ASM International", "Have you ever worked for ASM International?") is None
+    assert (worked(["Intel"], "Intelligent Fabrication",
+                   "Have you ever been employed with Intelligent Fabrication?") == "No")
+    assert worked(["ASM Pacific Technology"], "ASM International",
+                  "Have you ever worked for ASM International?") is None
     assert worked(["Intel"], "Intel Corporation", "Have you previously been employed by Intel?") == "Yes"
     assert worked(["Microchip Technology Inc."], "Microchip Technology",
                   "Have you previously been employed by Microchip?") == "Yes"
     # a job there now, at a name that only holds the employer's: whether it's this one is the person's
-    person = _person(work_history=[{"company": "Example Fab", "title": "Technician", "start": "2019-01", "end": "2021-05"},
+    person = _person(work_history=[{"company": "Example Fab", "title": "Technician", "start": "2019-01",
+                                    "end": "2021-05"},
                                    {"company": "Example Fab Services", "title": "Technician", "start": "2021-06",
                                     "end": "present"}])
     asm = ["I am CURRENTLY employed by Example Fab", "I was PREVIOUSLY employed by Example Fab",
@@ -1941,20 +2015,24 @@ def test_worked_there_before_only_where_the_profile_names_the_employer_itself():
     # two employers: No
     ("Intel", "Intelligent Fabrication", "No"), ("Arizona State University", "Arizona Public Service", "No"),
     ("American Express", "American Airlines", "No"), ("United Airlines", "United Health Group", "No"),
-    ("ASU", "APS", "No"), ("City of Las Vegas", "City of Henderson", "No"), ("Example Fab Services", "Northwind Litho", "No"),
+    ("ASU", "APS", "No"), ("City of Las Vegas", "City of Henderson", "No"),
+    ("Example Fab Services", "Northwind Litho", "No"),
     # (the third review's: never by a state's name, nor a generic second word after a common first one)
     ("Arizona Department of Transportation", "Arizona Department of Education", "No"),
-    ("Arizona Board of Regents", "Arizona Board of Nursing", "No"), ("Arizona Public Service", "Arizona Public Schools", "No"),
-    ("New York Life", "New York Times", "No"), ("New Mexico Gas", "New Mexico State University", "No"),
-    ("North Carolina State", "North Carolina Central", "No"), ("United States Postal Service", "United States Air Force", "No"),
-    ("Community Health Systems", "Community Health Network", "No"), ("National Park Service", "National Park Foundation", "No"),
+    ("Arizona Board of Regents", "Arizona Board of Nursing", "No"),
+    ("Arizona Public Service", "Arizona Public Schools", "No"), ("New York Life", "New York Times", "No"),
+    ("New Mexico Gas", "New Mexico State University", "No"), ("North Carolina State", "North Carolina Central", "No"),
+    ("United States Postal Service", "United States Air Force", "No"),
+    ("Community Health Systems", "Community Health Network", "No"),
+    ("National Park Service", "National Park Foundation", "No"),
     # a two-letter first word may be the initials of a name's first words: asked, never No, though most such pairs are
-    # two employers (the fourth review: "GD Mission Systems" is General Dynamics Mission Systems', "GE Aerospace" General
-    # Electric's, and a wrong No is a false answer where a wrong ask costs a question). Never Yes
-    ("TTM Technologies", "TT Electronics", None), ("SK Hynix", "Southwest Key", None), ("JB Hunt", "Johnson Brothers", None),
-    ("GE Aerospace", "Global Equities", None), ("AB Electronics", "American Bank", None),
-    ("ON Semiconductor", "Oracle Network", None), ("ON Semiconductor", "Onsite Nursing", None),
-    ("EE Times", "Electrical Engineering", None), ("PF Changs", "Phoenix Fire", None), ("BD Medical", "Banner Desert", None),
+    # two employers (the fourth review: "GD Mission Systems" is General Dynamics Mission Systems', "GE Aerospace"
+    # General Electric's, and a wrong No is a false answer where a wrong ask costs a question). Never Yes
+    ("TTM Technologies", "TT Electronics", None), ("SK Hynix", "Southwest Key", None),
+    ("JB Hunt", "Johnson Brothers", None), ("GE Aerospace", "Global Equities", None),
+    ("AB Electronics", "American Bank", None), ("ON Semiconductor", "Oracle Network", None),
+    ("ON Semiconductor", "Onsite Nursing", None), ("EE Times", "Electrical Engineering", None),
+    ("PF Changs", "Phoenix Fire", None), ("BD Medical", "Banner Desert", None),
     ("ST Microelectronics", "Sound Transit", None), ("JE Dunn", "Jones Electric", None),
     ("GE", "General Electric", None),
     # (the fourth review's: real same employers that round 3 made a firm No)
@@ -1963,7 +2041,8 @@ def test_worked_there_before_only_where_the_profile_names_the_employer_itself():
     ("GE", "General Electric Aviation", None), ("HP Enterprise", "Hewlett Packard Enterprise", None),
     ("TI", "Texas Instruments Tucson", None), ("JB Hunt", "J.B. Hunt Transport", None),
     ("TE Connectivity", "Tyco Electronics", None), ("UA", "University of Arizona Health Sciences", None),
-    ("Arizona Public Service", "Arizona Public Svc", None), ("Texas Instruments - Sherman", "Texas Instruments Tucson", None),
+    ("Arizona Public Service", "Arizona Public Svc", None),
+    ("Texas Instruments - Sherman", "Texas Instruments Tucson", None),
     ("Arizona State Univ", "Arizona State University", None),
     # the employer itself: Yes
     ("Wells Fargo & Company", "Wells Fargo", "Yes"), ("Texas Instruments Incorporated", "Texas Instruments", "Yes"),
@@ -1971,7 +2050,8 @@ def test_worked_there_before_only_where_the_profile_names_the_employer_itself():
 def test_an_employer_whose_name_may_be_this_ones_is_asked_never_answered_no(ours, theirs, answer):
     """Worked there before, from a profile job at `ours`, for an employer named `theirs`: No only where neither name may
     be the other's (_may_be_employer: one holding the other, the same but for spaces, one the other's initials, a first
-    word of their own in common, never a state's or a common one). "ASU" for Arizona State University was answered No."""
+    word of their own in common, never a state's or a common one). "ASU" for Arizona State University
+    was answered No."""
     from job_apply.autofill import _may_be_employer, works_there_now
 
     person = _person(work_history=[{"company": ours, "title": "Technician", "start": "2019-01", "end": "2022-05"}])
@@ -1998,13 +2078,15 @@ def test_not_on_the_staff_of_an_employer_the_persons_own_may_be_is_asked():
     intel = _person(work_history=[{"company": "Intel", "title": "Technician", "start": "2020-01", "end": "present"}])
     ti = {"label": "Current employees only: have you told your manager?",
           "options": ["Yes", "No", "I am not a current TI employee"]}
-    assert _not_staff_choice(ti, intel, {"company": "Texas Instruments"}) == "I am not a current TI employee"  # (as before)
+    # (as before)
+    assert _not_staff_choice(ti, intel, {"company": "Texas Instruments"}) == "I am not a current TI employee"
 
 
 def test_a_past_job_at_the_employer_and_one_now_that_may_be_it_is_asked():
     """A past job at Banner Health and one now at Banner Bank, applying to Banner Health: "Yes, previously" may be
     "currently" (Banner Bank may be Banner Health's, by the wider may-be), so it's the person's."""
-    person = _person(work_history=[{"company": "Banner Health", "title": "Technician", "start": "2015-01", "end": "2019-01"},
+    person = _person(work_history=[{"company": "Banner Health", "title": "Technician", "start": "2015-01",
+                                    "end": "2019-01"},
                                    {"company": "Banner Bank", "title": "Teller", "start": "2019-02", "end": "present"}])
     options = ["I am CURRENTLY employed by Banner Health", "I was PREVIOUSLY employed by Banner Health",
                "I have NEVER been employed by Banner Health"]
@@ -2019,7 +2101,8 @@ def test_a_current_company_is_an_employer_worked_for():
     for asked in ("Have you ever been employed by Intel?", "Are you a current or former employee?"):
         assert _answer(asked, person, kind="radio_group", options=["Yes", "No"], job={"company": "Intel Corporation"}) \
             == "Yes", asked
-    asm = ["I am CURRENTLY employed by Intel", "I was PREVIOUSLY employed by Intel", "I have NEVER been employed by Intel"]
+    asm = ["I am CURRENTLY employed by Intel", "I was PREVIOUSLY employed by Intel",
+           "I have NEVER been employed by Intel"]
     assert _answer("Have you ever been employed with Intel before?", person, kind="radio_group", options=asm,
                    job={"company": "Intel"}) == "I am CURRENTLY employed by Intel"
 
@@ -2062,10 +2145,10 @@ def test_recurring_background_questions_are_answered_from_a_no_in_the_profile():
             "Are you a current Federal, State or Local Government employee; including military (other than the DOD) or "
             "have you at any time in the past 5 years been an employee of one of these entities?",
             "To the best of your knowledge and belief, are you aware of a contract or agreement with your current "
-            "employer (or other company), such as a non-competition, non-disclosure, or non-solicitation agreement, that "
-            "impact or interfere with your ability to work for the Company?",
-            "Do you own, control, or have an economic interest in any intellectual property rights (patents, trademarks, "
-            "or copyrights)?",
+            "employer (or other company), such as a non-competition, non-disclosure, or non-solicitation agreement, "
+            "that impact or interfere with your ability to work for the Company?",
+            "Do you own, control, or have an economic interest in any intellectual property rights (patents, "
+            "trademarks, or copyrights)?",
             "Do you have any friends/relatives presently employed by Example Fab?",
             "Are you currently serving on the board of directors of any for-profit company?"):
         assert answer(asked) == "No", asked
@@ -2168,8 +2251,8 @@ def test_a_phone_box_of_another_type_is_the_persons_even_when_required():
     got, plan = _numbers_in([_KFORCE_WORK, "Cell Phone"], prof(), required=True)
     assert got == {"Cell Phone": "480-555-0123"}, got
     assert [(q["label"], q.get("required")) for q in plan["needs_input"]] == [(_KFORCE_WORK, True)]
-    for other in ("Home Phone", "Work Phone", "Business Phone", "Office Phone Number", "Phone (Home)", "Phone Number - Work",
-                  "Telephone (Work)", "Home Number"):
+    for other in ("Home Phone", "Work Phone", "Business Phone", "Office Phone Number", "Phone (Home)",
+                  "Phone Number - Work", "Telephone (Work)", "Home Number"):
         assert other not in _numbers_in([other, "Cell Phone"], prof())[0], other
     home = Profile({"personal": {"phone": "480-555-0123", "phone_type": "Home"}})
     for other in ("Mobile Phone", "Cell Phone Number", "Mobile", "Cellular", "Phone (Mobile)", "Work Phone Number"):
@@ -2182,8 +2265,8 @@ def test_a_phone_box_that_names_no_type_or_the_profiles_is_filled():
     number = "480-555-0123"
     for label in ("Phone", "Phone Number", "Primary Phone", "Telephone", "Phone Number (including country code)"):
         assert resolve_field(f(label), prof()).value in (number, f"+1 {number}"), label
-    for label in ("Mobile Phone", "Mobile", "Cell Phone", "Cellular Number", "Mobile Number *", "Phone (Mobile)", _KFORCE_CELL,
-                  "Cell Phone Number Please include the area code"):
+    for label in ("Mobile Phone", "Mobile", "Cell Phone", "Cellular Number", "Mobile Number *", "Phone (Mobile)",
+                  _KFORCE_CELL, "Cell Phone Number Please include the area code"):
         assert resolve_field(f(label), prof()).value == number, label
     home = Profile({"personal": {"phone": number, "phone_type": "Home phone"}})
     assert resolve_field(f("Home Phone Number"), home).value == number
@@ -2194,18 +2277,19 @@ def test_a_phone_box_that_names_no_type_or_the_profiles_is_filled():
 
 
 def test_a_long_box_that_asks_for_the_phone_number_takes_the_profiles():
-    """Edward Jones' BrassRing (run 86): its personal information step asks, in a long label, "... Please enter the phone
-    number you would like to use to receive your code(s) in the field below. Please enter the phone number in the
+    """Edward Jones' BrassRing (run 86): its personal information step asks, in a long label, "... Please enter the
+    phone number you would like to use to receive your code(s) in the field below. Please enter the phone number in the
     following format: ###-###-####. NOTE: Phone number MUST include dashes." No rule took a label that long, so it went
     on the card. It's the profile's phone, written with dashes where the box shows ###-###-####."""
-    label = ("As you go through the Selection Process, you may be required to enter an Authentication Code sent to you by "
-             "Example Corp in order to sign documents. Please enter the phone number you would like to use to receive "
-             "your code(s) in the field below. Please enter the phone number in the following format: ###-###-####. "
-             "NOTE: Phone number MUST include dashes.")
+    label = ("As you go through the Selection Process, you may be required to enter an Authentication Code sent to you "
+             "by Example Corp in order to sign documents. Please enter the phone number you would like to use to "
+             "receive your code(s) in the field below. Please enter the phone number in the following format: "
+             "###-###-####. NOTE: Phone number MUST include dashes.")
     for written in ("480-555-0123", "4805550123", "+1 480 555 0123", "(480) 555-0123"):
         p = Profile({"personal": {"phone": written, "phone_country_code": "+1"}})
         assert resolve_field(f(label), p).value == "480-555-0123", written
-    # never another's number, another kind's, a code's, an explanation's, or one that agrees to texts or calls (the review)
+    # never another's number, another kind's, a code's, an explanation's, or one that agrees to texts
+    # or calls (the review)
     for other in ("Please enter your phone number verification code below, as sent to you by text message",
                   "Please enter your mobile number to sign up for job alerts by text message from Example Corp",
                   "Please enter the phone number of your next of kin, in case we cannot reach you directly",
@@ -2317,7 +2401,8 @@ def test_an_expected_graduation_date_is_never_a_past_year():
     ended = f"{today.year}-01" if today.month > 1 else f"{today.year - 1}-12"  # earlier this year: done
     path.write_text(yaml.safe_dump({**data, "education_history": [{**school, "end": ended}]}), encoding="utf-8")
     assert resolve_field(asked, prof()).value == "I am currently not attending school"
-    path.write_text(yaml.safe_dump({**data, "education_history": [{**school, "end": f"{today.year + 1}-05"}]}), encoding="utf-8")
+    path.write_text(yaml.safe_dump({**data, "education_history": [{**school, "end": f"{today.year + 1}-05"}]}),
+                    encoding="utf-8")
     assert resolve_field(f("Expected graduation date"), prof()).value == str(today.year + 1)
 
 
@@ -2447,7 +2532,8 @@ def test_a_degree_the_person_lacks_is_answered_no():
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
 
     def with_education(highest, history):
-        path.write_text(yaml.safe_dump({**data, "education": {"highest_degree": highest}, "education_history": history}), encoding="utf-8")
+        path.write_text(yaml.safe_dump({**data, "education": {"highest_degree": highest},
+                                        "education_history": history}), encoding="utf-8")
         return Profile.load()
 
     def answer(label, profile, kind="radio_group"):
@@ -2456,12 +2542,14 @@ def test_a_degree_the_person_lacks_is_answered_no():
 
     some_college = with_education("Some college", [{"school": "Example Community College", "degree": "", "end": 2019}])
     assert answer("Do you have a Bachelor's degree?", some_college) == "No"
-    assert answer("Do you have a Bachelor's degree or higher (Master\u2019s degree, Ph.D., etc.)? *", some_college) == "No"
+    assert (answer("Do you have a Bachelor's degree or higher (Master\u2019s degree, Ph.D., etc.)? *",
+                   some_college) == "No")
     assert answer("Do you have an Associate's degree or higher?", some_college) == "No"
     assert answer("Master's degree preferred", some_college) == "No"
     assert answer("Do you have a high school diploma or GED?", some_college) is None  # not said
     for asked in ("Bachelor's Degree in Accounting or Finance Required", "Do you have a Bachelor of Science degree?",
-                  "Do you have a Bachelor's degree from an accredited university?", "Bachelor's degree or equivalent experience"):
+                  "Do you have a Bachelor's degree from an accredited university?",
+                  "Bachelor's degree or equivalent experience"):
         assert answer(asked, some_college) is None, asked
     associate = with_education("Associate's Degree", [])
     assert answer("Do you have a Bachelor's degree?", associate) == "No"
@@ -2469,18 +2557,21 @@ def test_a_degree_the_person_lacks_is_answered_no():
     # a school listing a degree it can't place, or one at the level asked, stops the No
     for history in ([{"degree": "Bachelor's Degree"}], [{"degree": "BSN", "end": 2019}],
                     [{"degree": "BS", "status": "Graduated (honors)", "end": 2019}]):
-        assert answer("Do you have a Bachelor's degree?", with_education("Associate's Degree", history)) is None, history
+        assert answer("Do you have a Bachelor's degree?",
+                      with_education("Associate's Degree", history)) is None, history
     # a highest degree written any other way isn't read
     for highest in ("Bachelor's Degree (BS)", "Bachelor's (not finished)", "PhD ABD", "Bachelor's Degree Equivalent"):
         assert answer("Do you have a Master's degree?", with_education(highest, [])) is None, highest
     # a degree's details aren't the question
     assert answer("Bachelor's Degree Major", some_college, "text") is None
     # only a plain "No", with the choices shown: never one that says more than the profile
-    for choices in (["Yes", "No, but I have equivalent work experience"], ["Yes", "No, but I am currently enrolled"], []):
+    for choices in (["Yes", "No, but I have equivalent work experience"],
+                    ["Yes", "No, but I am currently enrolled"], []):
         a = resolve_field(f("Do you have a Bachelor's degree?", "combobox", options=choices), some_college)
         assert a is None, choices
     # a school whose entry doesn't say its degree stops the No
-    unsaid = with_education("Associate's Degree", [{"school": "Example State University", "major": "Finance", "end": 2020}])
+    unsaid = with_education("Associate's Degree",
+                            [{"school": "Example State University", "major": "Finance", "end": 2020}])
     assert answer("Do you have a Bachelor's degree?", unsaid) is None
     assert answer("Do you have a Bachelor's degree?", with_education("College coursework, no degree", [])) == "No"
     assert answer("Do you have a high school diploma?", with_education("Some high school", [])) == "No"
@@ -2520,7 +2611,8 @@ def test_a_confirmed_degree_answers_yes():
     assert answer("Do you have an Associate's degree?", finance) is None  # not "or higher"
     # "or higher" with examples of what's higher (Carvana, Oct 2026) is the same question
     assert answer("Do you have a Bachelor's degree or higher (Master\u2019s degree, Ph.D., etc.)? *", finance) == "Yes"
-    assert answer("Do you have a Bachelor's degree or higher (Master's degree, Ph.D., etc.)? (Required)", finance) == "Yes"
+    assert (answer("Do you have a Bachelor's degree or higher (Master's degree, Ph.D., etc.)? (Required)",
+                   finance) == "Yes")
     assert answer("Do you have an Associate's degree or higher (e.g., Bachelor's, Master's)?", finance) == "Yes"
     assert answer("Do you have an Associate's degree or higher (i.e. Bachelor degree or M.B.A.)?", finance) == "Yes"
     assert answer("Do you have a Master's degree or higher (Ph.D., Ed.D., Doctoral degree, etc.)?", finance) == "No"
@@ -2532,7 +2624,8 @@ def test_a_confirmed_degree_answers_yes():
                   "Do you have a Master's degree or higher (MD, JD)?"):
         assert answer(asked, finance) is None, asked
     engineer = with_degrees([{"level": "master", "field": "Engineering"}], "Master's Degree")
-    for asked in ("Do you have a Master's degree or higher (MBA)?", "Do you have a Master's degree or higher (M.B.A.)?"):
+    for asked in ("Do you have a Master's degree or higher (MBA)?",
+                  "Do you have a Master's degree or higher (M.B.A.)?"):
         assert answer(asked, engineer) is None, asked
     assert answer("Do you have a Bachelor's degree or higher (MBA, Ph.D.)?", engineer) == "Yes"
     assert answer("Do you have a Master's degree?", finance) == "No"  # the most finished is a bachelor's
@@ -2552,8 +2645,10 @@ def test_a_confirmed_degree_answers_yes():
     assert answer("Do you have a high school diploma or equivalent?", ged) == "Yes"
     assert answer("Do you have a high school diploma or equivalent experience?", ged) is None
     assert answer("Do you have a Bachelor's degree?", ged) == "No"
-    assert answer("Do you have a high school diploma?", with_degrees([{"level": "high_school", "field": "GED"}], "GED")) is None
-    diploma = with_degrees([{"level": "high_school"}], "High school diploma", [{"degree": "High school diploma", "end": 2015}])
+    assert answer("Do you have a high school diploma?",
+                  with_degrees([{"level": "high_school", "field": "GED"}], "GED")) is None
+    diploma = with_degrees([{"level": "high_school"}], "High school diploma",
+                           [{"degree": "High school diploma", "end": 2015}])
     assert answer("Do you have a high school diploma?", diploma) == "Yes"
     assert answer("Do you have a high school diploma or equivalent?", diploma) == "Yes"
     assert answer("Do you have a Bachelor's degree?", diploma) == "No"
@@ -2561,7 +2656,8 @@ def test_a_confirmed_degree_answers_yes():
     for degrees in ([{"level": "Bachelor's (in progress)"}], [{"level": "MA"}], [{"level": "BS"}],
                     [{"level": "bachelor", "field": "Finance", "status": "in progress"}],
                     [{"level": "bachelor", "field": "Finance (expected 2027)"}],
-                    [{"level": "bachelor", "field": "Finance coursework"}], [{"level": "bachelor", "field": "Finance - ABD"}],
+                    [{"level": "bachelor", "field": "Finance coursework"}],
+                    [{"level": "bachelor", "field": "Finance - ABD"}],
                     [{"level": "bachelor", "field": "Finance - withdrew"}]):
         assert answer("Do you have a Bachelor's degree?", with_degrees(degrees, "Some college")) is None, degrees
     assert answer("Do you have a doctorate?", with_degrees([{"level": "doctorate", "field": "Juris Doctor"}])) is None
@@ -2572,7 +2668,8 @@ def test_a_confirmed_degree_answers_yes():
                       with_degrees([{"level": "high_school", "field": equivalent}], "Some college")) is None, equivalent
     assert answer("Do you have a high school diploma?", with_degrees([{"level": "high_school"}], "GED")) is None
     assert answer("Do you have a GED?", with_degrees([{"level": "ged", "field": "GED"}], "GED")) == "Yes"
-    assert answer("Do you have a doctorate?", with_degrees([{"level": "doctorate", "field": "Doctor of Medicine"}])) is None
+    assert answer("Do you have a doctorate?",
+                  with_degrees([{"level": "doctorate", "field": "Doctor of Medicine"}])) is None
     assert answer("Do you have a Bachelor's degree?",
                   with_degrees([{"level": "bachelor", "field": "Finance (Spring '27)"}], "Some college")) is None
     assert answer("Do you have a high school diploma?", with_degrees([{"level": "high_school"}], "HiSET")) is None
@@ -2586,7 +2683,8 @@ def test_a_confirmed_degree_answers_yes():
     assert answer("Do you have a Master's degree?",
                   with_degrees([{"level": "master", "field": "Teaching Certification"}], "Master's Degree")) == "Yes"
     # what is read: a degree's name as the level, a field as a diploma names it, a lone entry
-    assert answer("Do you have a Bachelor's degree?", with_degrees([{"level": "Bachelor's", "field": "Finance"}])) == "Yes"
+    assert (answer("Do you have a Bachelor's degree?",
+                   with_degrees([{"level": "Bachelor's", "field": "Finance"}])) == "Yes")
     assert answer("Do you have a Bachelor's degree?",
                   with_degrees([{"level": "bachelor", "field": "Business Administration (Finance)"}])) == "Yes"
     assert answer("Do you have a Bachelor's degree?", with_degrees({"level": "bachelor", "field": "Finance"})) == "Yes"
@@ -2598,7 +2696,8 @@ def test_a_confirmed_degree_answers_yes():
     assert answer("Do you have a Bachelor's degree?", with_degrees([{"level": "high_school"}], "")) is None
     assert answer("Do you have a Master's degree?", with_degrees([{"level": "bachelor"}], "MBA")) is None
     # without confirmed degrees, a free-text one never answers Yes
-    free_text = with_degrees([], "Bachelor's Degree", [{"degree": "Bachelor's Degree", "major": "Finance", "end": 2020}])
+    free_text = with_degrees([], "Bachelor's Degree",
+                             [{"degree": "Bachelor's Degree", "major": "Finance", "end": 2020}])
     assert answer("Do you have a Bachelor's degree?", free_text) is None
 
 
@@ -2611,7 +2710,8 @@ def test_a_citizens_visa_questions():
 
     path = config.profile_path()
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    path.write_text(yaml.safe_dump({**data, "work_authorization": {**data["work_authorization"], "us_citizen": True}}), encoding="utf-8")
+    path.write_text(yaml.safe_dump({**data, "work_authorization": {**data["work_authorization"], "us_citizen": True}}),
+                    encoding="utf-8")
     yes_no = ["Yes", "No"]
 
     def answer(label, kind="radio_group", options=yes_no):
@@ -2631,18 +2731,20 @@ def test_a_citizens_visa_questions():
            "being asked to comply with the regulation. You may read more about this here: U.S. Export Administration "
            "Regulation (EAR) 15 C.F.R. \u00a7 730 -774. Please, select which option applies to you.*")
     ear_options = ["Alien Authorized to Work", "Citizen or National of the United States",
-                   "U.S. Lawful Permanent Resident (Greencard holder)", "Person granted Refugee status in the United States",
-                   "None of the above"]
+                   "U.S. Lawful Permanent Resident (Greencard holder)",
+                   "Person granted Refugee status in the United States", "None of the above"]
     assert answer(ear, "combobox", ear_options) == "Citizen or National of the United States"
     # the same words before an alias (review), and a question about the role isn't the person's status
-    assert choose_option("U.S. Citizen", ["U.S. Citizen or National", "U.S. Citizen", "Non-US Citizen"]) == "U.S. Citizen"
+    assert (choose_option("U.S. Citizen", ["U.S. Citizen or National", "U.S. Citizen", "Non-US Citizen"])
+            == "U.S. Citizen")
     assert answer("Is this role subject to export control regulations? Select the option that applies", "select",
                   ["U.S. Citizen", "Not subject"]) is None
     # "Citizenship status" is still the citizenship rule's, from the profile's country
     path.write_text(yaml.safe_dump({**data, "work_authorization": {**data["work_authorization"], "us_citizen": True,
                                                                    "citizenship": "United States"}}), encoding="utf-8")
     assert answer("Citizenship status", "select", ["United States", "Other"]) == "United States"
-    path.write_text(yaml.safe_dump({**data, "work_authorization": {**data["work_authorization"], "us_citizen": False}}), encoding="utf-8")
+    path.write_text(yaml.safe_dump({**data, "work_authorization": {**data["work_authorization"], "us_citizen": False}}),
+                    encoding="utf-8")
     assert answer("What is your current visa status?", "select", statuses) is None
     assert answer("Do you currently hold an H-1B visa?") is None
     assert answer(ear, "combobox", ear_options) is None
@@ -2657,7 +2759,8 @@ def test_a_drivers_license_question():
 
     path = config.profile_path()
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    path.write_text(yaml.safe_dump({**data, "personal": {**data["personal"], "drivers_license": True}}), encoding="utf-8")
+    path.write_text(yaml.safe_dump({**data, "personal": {**data["personal"], "drivers_license": True}}),
+                    encoding="utf-8")
 
     def answer(label, kind="radio_group"):
         a = resolve_field(f(label, kind, options=["Yes", "No"]), prof())
@@ -2670,7 +2773,8 @@ def test_a_drivers_license_question():
     assert answer("Do you have a valid commercial driver's license (CDL)?") is None
     assert answer("Do you have a valid driver's license and reliable transportation?") is None
     assert answer("Driver's License Number", "text") is None
-    path.write_text(yaml.safe_dump({**data, "personal": {**data["personal"], "drivers_license": False}}), encoding="utf-8")
+    path.write_text(yaml.safe_dump({**data, "personal": {**data["personal"], "drivers_license": False}}),
+                    encoding="utf-8")
     assert answer("Do you have a valid driver’s license?") == "No"
 
 
@@ -2686,7 +2790,8 @@ def test_more_questions_the_profile_answers():
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     path.write_text(yaml.safe_dump({**data, "work_authorization": {**data["work_authorization"], "us_citizen": True},
                                     "personal": {**data["personal"], "drivers_license": True},
-                                    "preferences": {**data["preferences"], "earliest_start": "2 weeks after offer"}}), encoding="utf-8")
+                                    "preferences": {**data["preferences"], "earliest_start": "2 weeks after offer"}}),
+                    encoding="utf-8")
 
     def answer(label, kind="radio_group"):
         a = resolve_field(f(label, kind, **({"options": ["Yes", "No"]} if kind != "text" else {})), prof())
@@ -2696,15 +2801,17 @@ def test_more_questions_the_profile_answers():
     assert answer("Where are you currently located?*", "text") == "Chandler, AZ"
     # a hub list or a question about coming in isn't the address
     assert answer("Where are you currently located?") is None
-    assert answer("Where are you currently located? This role is onsite 4 days/week at one of our hubs.", "text") is None
-    assert answer("Will you require visa sponsorship, from Grant Thornton or otherwise, now or in the future to maintain "
-                  "your work authorization?") == "No"
+    assert answer("Where are you currently located? This role is onsite 4 days/week at one of our hubs.",
+                  "text") is None
+    assert answer("Will you require visa sponsorship, from Grant Thornton or otherwise, now or in the future to "
+                  "maintain your work authorization?") == "No"
     # (APS's SuccessFactors, run 56: what the sponsorship is for, "in order to have" it)
     assert answer("* Do you now, or will you in the future, require sponsorship in order to have work authorization in "
                   "the United States?") == "No"
     # ...but a question that also asks whether they can work now stays theirs (the review of 0.3.146)
     for both in ("Are you able to work in the US now, or will you need sponsorship to get work authorization?",
-                 "Will you require sponsorship to get work authorization, and are you currently able to work in the US?",
+                 "Will you require sponsorship to get work authorization, and are you "
+                 "currently able to work in the US?",
                  "Do you currently have, or will you require sponsorship to receive, work authorization?",
                  "Are you able to work in the US, or will you require sponsorship in order to have work authorization?",
                  "Are you able to work in the US now, or will you need sponsorship to obtain work authorization?"):
@@ -2742,14 +2849,15 @@ def test_questions_from_the_finance_run():
     path = config.profile_path()
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     path.write_text(yaml.safe_dump({**data, "eeo": {**data["eeo"], "sexual_orientation": "Decline to self-identify"},
-                                    "preferences": {**data["preferences"], "desired_salary": "$85,000"}}), encoding="utf-8")
+                                    "preferences": {**data["preferences"], "desired_salary": "$85,000"}}),
+                    encoding="utf-8")
 
     def answer(label, kind="combobox", options=("Yes", "No")):
         a = resolve_field(f(label, kind, **({"options": list(options)} if kind != "text" else {})), prof())
         return a and a.value
 
-    assert answer("LinkedIn profile (if you do not have one or if you prefer not to provide one, enter N/A):*", "text") == \
-        "https://www.linkedin.com/in/samrivera"
+    assert (answer("LinkedIn profile (if you do not have one or if you prefer not to provide one, enter N/A):*", "text")
+            == "https://www.linkedin.com/in/samrivera")
     assert answer("Do you currently reside in the United States? (Please note, your answer to this question and the "
                   "related sub-questions, as applicable, will be used to determine your eligibility.)") == "Yes"
     # a note that isn't an aside after the question stays part of it
@@ -2757,7 +2865,8 @@ def test_questions_from_the_finance_run():
     assert answer("Preferred Last Name", "text") == "Rivera"
     assert answer("Can you provide verification of both your identity and authorization to work in the United States, "
                   "to the extent required by law?*") == "Yes"
-    assert answer("Can you provide verification of authorization to work in a country other than the United States?") is None
+    assert answer("Can you provide verification of authorization to work in a country other "
+                  "than the United States?") is None
     # Onto's Workday says only "eligibility", after "If hired"; eligibility for something else isn't it
     assert answer("If hired, can you provide proof of eligibility?*", "listbox", ("Select One", "Yes", "No")) == "Yes"
     assert answer("Upon hire, can you provide documentation of your eligibility?") == "Yes"
@@ -2769,7 +2878,8 @@ def test_questions_from_the_finance_run():
     assert answer("Do you consider yourself a member of the Lesbian, Gay, or Bisexual (LGBTQ) community?*",
                   options=("Yes", "No", "I don't wish to answer")) == "I don't wish to answer"
     # a family member's isn't the person's
-    assert answer("Is your spouse a member of the LGBTQ community?", options=("Yes", "No", "I don't wish to answer")) is None
+    assert answer("Is your spouse a member of the LGBTQ community?",
+                  options=("Yes", "No", "I don't wish to answer")) is None
 
 
 def test_some_college_is_post_secondary_with_no_degree():
@@ -2790,7 +2900,9 @@ def test_where_you_are_and_when_you_can_start_among_choices():
 
     path = config.profile_path()
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "2 weeks after offer"}}), encoding="utf-8")
+    path.write_text(yaml.safe_dump({**data,
+                                    "preferences": {**data["preferences"], "earliest_start": "2 weeks after offer"}}),
+                    encoding="utf-8")
 
     def answer(label, options, kind="combobox"):
         a = resolve_field(f(label, kind, options=options), prof())
@@ -2801,14 +2913,18 @@ def test_where_you_are_and_when_you_can_start_among_choices():
     assert answer("Where are you currently located?", ["Phoenix hub", "Seattle hub", "Remote"]) is None
     waits = ["Immediate", "2 Week Notice", "30 Days", "60 Days", "90 Days"]
     assert answer("When are you available to start?", waits) == "2 Week Notice"
-    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "1 month"}}), encoding="utf-8")
+    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "1 month"}}),
+                    encoding="utf-8")
     assert answer("When are you available to start?", waits) == "30 Days"
-    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "Immediately"}}), encoding="utf-8")
+    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "Immediately"}}),
+                    encoding="utf-8")
     assert answer("When are you available to start?", waits) == "Immediate"
-    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "3 weeks"}}), encoding="utf-8")
+    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "3 weeks"}}),
+                    encoding="utf-8")
     assert answer("When are you available to start?", waits) is None  # never a sooner or later start
     # a range isn't one wait: "2-4 Weeks" is no answer for a month
-    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "1 month"}}), encoding="utf-8")
+    path.write_text(yaml.safe_dump({**data, "preferences": {**data["preferences"], "earliest_start": "1 month"}}),
+                    encoding="utf-8")
     assert answer("When are you available to start?", ["Immediate", "2-4 Weeks", "60 Days"]) is None
     assert answer("When are you available to start?", ["Immediate", "1 to 2 months", "30 Days"]) == "30 Days"
 
@@ -2841,7 +2957,8 @@ def test_a_questions_own_decline_box_is_ticked_for_a_profile_that_declines():
     assert not plan_autofill(other, declines)["to_fill"]
 
 
-@pytest.mark.parametrize("disability", ["No", "None", "No disability", "I don't have a disability", "I do not have a disability"])
+@pytest.mark.parametrize("disability",
+                         ["No", "None", "No disability", "I don't have a disability", "I do not have a disability"])
 def test_a_profile_without_a_disability_picks_the_no_choice(disability):
     """Note 18 (live test 2, issue #112): a profile without a disability got Workday's "I do not want to answer".
     However the profile words it ("None" was read as no answer), the form's "No" choice is picked, never its
@@ -2871,7 +2988,8 @@ def test_where_the_person_lives_and_their_work_authorization_asked_as_questions(
     p = Profile({"personal": {"address": {"city": "Chandler", "state": "Arizona"}},
                  "work_authorization": {"authorized_to_work": True, "requires_sponsorship": False}})
     def ask(label, kind="textarea", options=None):
-        a = resolve_field({"label": label, "kind": kind, "required": True, **({"options": options} if options else {})}, p)
+        a = resolve_field({"label": label, "kind": kind, "required": True,
+                           **({"options": options} if options else {})}, p)
         return a and a.value
     assert ask("Do you have authorization to work in the U.S.?*", "listbox", ["Select One", "Yes", "No"]) == "Yes"
     assert ask("Will you now or in the future require sponsorship to obtain authorization to work in the U.S.?",
@@ -2903,8 +3021,8 @@ def test_a_degree_still_to_come_is_never_filled_as_one():
     # a city that isn't where the person lives
     ("City of Birth", "text"), ("Hometown", "text"), ("City where your passport was issued", "text"),
     # a move already under way, or at the person's expense, isn't the willingness the profile says
-    ("Are you in the process of relocating to the Phoenix area?", "text"), ("Are you currently relocating to Arizona?", "text"),
-    ("Are you willing to relocate at your own expense?", "text"),
+    ("Are you in the process of relocating to the Phoenix area?", "text"),
+    ("Are you currently relocating to Arizona?", "text"), ("Are you willing to relocate at your own expense?", "text"),
     # shift work done before is experience, not a willingness
     ("Have you worked shift work before?", "text"), ("Have you ever worked a rotating shift?", "text"),
     # getting to work isn't travelling for it
@@ -2921,8 +3039,8 @@ def test_a_degree_still_to_come_is_never_filled_as_one():
 ])
 def test_questions_that_look_like_the_profiles_but_are_not(label, kind):
     """The review of Oct 15's wording slips: each was answered from the profile with something it doesn't say (the
-    desired salary for a past job's, the home city for a city of birth, the willingness to relocate for a move under way,
-    the travel answer for a commute, the person's own email for a recruiter's...). Each is left for the person."""
+    desired salary for a past job's, the home city for a city of birth, the willingness to relocate for a move under
+    way, the travel answer for a commute, the person's own email for a recruiter's...). Each is left for the person."""
     p = _person(preferences={"desired_salary": 65000, "willing_to_relocate": True, "willing_to_travel": True,
                              "flexible_schedule": True, "how_did_you_hear": "LinkedIn"},
                 eeo={"disability": "No, I do not have a disability"})
@@ -2945,7 +3063,8 @@ def test_the_same_profile_still_answers_its_own_questions():
     assert _answer("Email", p) == "sam@example.com"
     assert _answer("Phone number", p) == "480-555-0100"
     assert _answer("Website", p) == "https://sam.example.com"
-    assert _answer("Work Authorization Status", p) == "U.S. Citizen"  # (a citizen's status, not "Yes, for any employer")
+    # (a citizen's status, not "Yes, for any employer")
+    assert _answer("Work Authorization Status", p) == "U.S. Citizen"
     assert _answer("Work Authorization Status", _person(work_authorization={"authorized_to_work": True,
                                                                              "requires_sponsorship": False})) is None
     # (the review of 0.3.187: what the guards above must leave answered)
@@ -3007,16 +3126,18 @@ def test_a_common_questions_answer_never_goes_into_an_explanation():
                                    {"to": 2099}, {"dates": "2023 - Present"}, {"end": "May 2099 (expected)"},
                                    {"end_date": "present"}, {"end": "spring of next year"}])
 def test_a_degree_still_under_way_is_not_the_highest_education(dates):
-    """A Bachelor's whose school ends later, or is under way, isn't the person's highest education yet: "Highest level of
-    education completed" got "Bachelor's" (the review of Oct 15; never overstate education). Its expected graduation is
-    still the school's year."""
-    p = _person(education={}, education_history=[{"school": "Example State University", "degree": "BS Electrical Engineering",
-                                                  "major": "EE", "start": 2023, **dates}])
+    """A Bachelor's whose school ends later, or is under way, isn't the person's highest education yet: "Highest level
+    of education completed" got "Bachelor's" (the review of Oct 15; never overstate education). Its expected graduation
+    is still the school's year."""
+    p = _person(education={},
+                education_history=[{"school": "Example State University", "degree": "BS Electrical Engineering",
+                                    "major": "EE", "start": 2023, **dates}])
     options = ["High School", "Associate's", "Bachelor's", "Master's"]
     assert _answer("Highest level of education completed", p, kind="select", options=options) is None
     assert _answer("Highest Degree", p) is None
-    done = _person(education={}, education_history=[{"school": "Example State University", "degree": "BS Electrical Engineering",
-                                                     "major": "EE", "start": 2016, "end": 2020}])
+    done = _person(education={},
+                   education_history=[{"school": "Example State University", "degree": "BS Electrical Engineering",
+                                       "major": "EE", "start": 2016, "end": 2020}])
     assert _answer("Highest level of education completed", done, kind="select", options=options) == "Bachelor's"
 
 
@@ -3925,7 +4046,8 @@ def test_a_us_citizen_question_beside_another_question_anywhere_in_the_label_is_
     # (only what's on the short list beside it: still the citizen question)
     for label in ("Are you a US citizen? Please select Yes or No.", "Are you a US citizen? Choose Yes or No.",
                   "Are you a US citizen? Select one.", "Citizenship: Are you a US citizen?",
-                  "U.S. Citizenship - Are you a U.S. citizen?", "Are you a US citizen? Proof of citizenship will be required.",
+                  "U.S. Citizenship - Are you a U.S. citizen?",
+                  "Are you a US citizen? Proof of citizenship will be required.",
                   "Are you a U.S. citizen? U.S. citizenship is required for this position.",
                   "Are you a US citizen? This position requires US citizenship."):
         assert (_answer(label, citizen, **yes_no), _answer(label, pr, **yes_no)) == ("Yes", "No"), label
@@ -3954,7 +4076,8 @@ def test_a_us_citizen_question_beside_anything_off_the_short_list_is_left_for_th
                   "Are you a US citizen? A bachelor's degree is required for this role.",
                   "TS/SCI required: Are you a US citizen?",
                   "Are you a U.S. citizen? Please note that this position requires U.S. citizenship.",
-                  "Are you a US citizen? Indicate below.", "Are you a US citizen? State law requires us to verify eligibility.",
+                  "Are you a US citizen? Indicate below.",
+                  "Are you a US citizen? State law requires us to verify eligibility.",
                   "Are you a US citizen? If hired, proof of citizenship will be required.",
                   "Are you a US citizen? Will be verified upon hire.", "Are you a US citizen (as required by ITAR)?",
                   "Are you a US citizen? (e.g. born or naturalized)"):
@@ -4034,7 +4157,8 @@ def test_a_us_citizen_question_with_its_yes_or_no_written_after_it_is_still_answ
     for label in ("Are you a US citizen: Yes/No", "Are you a U.S. citizen: Yes/No", "Are you a US citizen, yes or no?",
                   "Are you a U.S. citizen - Yes / No", "Are you a USA citizen (yes/no)?"):
         assert (_answer(label, citizen, **yes_no), _answer(label, pr, **yes_no)) == ("Yes", "No"), label
-    assert _answer("Are you a US citizen, yes or no, and able to obtain a security clearance?", citizen, **yes_no) is None
+    assert _answer("Are you a US citizen, yes or no, and able to obtain a security clearance?", citizen,
+                   **yes_no) is None
 
 
 def test_a_us_citizen_question_is_read_as_the_form_gives_it_and_by_the_citizen_rules_alone():
@@ -4081,7 +4205,8 @@ def test_a_us_citizen_question_is_read_as_the_form_gives_it_and_by_the_citizen_r
         assert a is not None and (a.value, a.rule) == ("Yes", "us_person"), (label, a)
         assert _answer(label, visa, **yes_no) == "No", label
     # (nor the U.S. person's rule, where a label leaves the others out)
-    assert _answer("Do you hold U.S. citizenship (not lawful permanent residence or a green card)?", pr, **yes_no) != "Yes"
+    assert (_answer("Do you hold U.S. citizenship (not lawful permanent residence or a green card)?", pr,
+                    **yes_no) != "Yes")
 
 
 def test_the_us_person_question_is_held_to_the_same_short_list():
@@ -4173,8 +4298,8 @@ def test_a_us_person_wording_the_check_doesnt_know_is_left_and_a_list_without_re
                   "Are you a U.S. person as defined by ITAR (citizen, permanent resident, protected individual)?",
                   "Are you a U.S. Person as defined by U.S. export control laws?",
                   "Are you a U.S. person, as defined by the Export Administration Regulations (EAR) and ITAR?",
-                  "Are you a 'U.S. person'?", "U.S. Citizen or Permanent Resident", "3) US citizen / permanent resident",
-                  "Export Control: U.S. Person"):
+                  "Are you a 'U.S. person'?", "U.S. Citizen or Permanent Resident",
+                  "3) US citizen / permanent resident", "Export Control: U.S. Person"):
         a = resolve_field(f(label, **yes_no), pr, {"company": "Acme"})
         assert a is not None and (a.value, a.rule) == ("Yes", "us_person"), (label, a)
         assert [_answer(label, p, **yes_no) for p in (citizen, visa)] == ["Yes", "No"], label

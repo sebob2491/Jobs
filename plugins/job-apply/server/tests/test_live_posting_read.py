@@ -40,7 +40,7 @@ async def main():
         print("RESULT", e)
 
 asyncio.run(main())
-"""
+"""  # noqa: E501
 
 
 def test_an_icims_posting_is_read_in_a_tab_as_the_desk_reads_it():

@@ -38,7 +38,7 @@ AS_BOARD = """<h1>Job Openings</h1><table class="table"><thead><tr><th>Job Title
 <tr><td><a href="/x/detail/a2ejxq3cpz4b">Field Service Engineer - Chandler</a></td><td>Chandler, AZ</td></tr>
 <tr><td><a href="/x/detail/a2ejxq3c5xpg">Field Service Engineer - Austin</a></td><td>Austin, TX</td></tr>
 <tr><td><a href="/x/detail/a2ejxq3tau2q">Administrative Coordinator &amp; Translator - Hillsboro</a></td><td>Hillsboro, OR</td></tr>
-</tbody></table>"""
+</tbody></table>"""  # noqa: E501
 # Daifuku's iCIMS portal: the search results inside its frame (in_iframe=1)
 ICIMS_ROW = """<div class="row">
  <div class="col-xs-6 header left"> <span class="sr-only field-label">Job Locations</span> <span> {where}</span> </div>
@@ -46,7 +46,7 @@ ICIMS_ROW = """<div class="row">
   <span title="9/24/2026 6:18 PM"> 2 weeks ago<span class="sr-only">(9/24/2026 6:18 PM)</span></span> </div>
  <div class="col-xs-12 title"> <a href="https://careers-icco.icims.com/jobs/{id}/{slug}/job?in_iframe=1"
    class="iCIMS_Anchor" title="{id} - {title}"><span class="sr-only field-label">External Title</span> <h3>{title}</h3></a> </div>
-</div>"""
+</div>"""  # noqa: E501
 ICIMS_PAGE = ('<div class="iCIMS_JobsTable">'
               + ICIMS_ROW.format(where="US-AZ-Chandler", id=19224, slug="field-service-engineer-1",
                                  title="Field Service Engineer 1")
@@ -98,7 +98,8 @@ def handler(request: httpx.Request) -> httpx.Response:
             {"id": 2, "title": "Accountant", "absolute_url": "https://www.ghco.com/careers?gh_jid=2",
              "location": {"name": "Phoenix, AZ"}},
             {"id": 3, "title": "Equipment Engineering Technician",
-             "absolute_url": "https://job-boards.greenhouse.io/ghco/jobs/3", "location": {"name": "Multiple Locations"}},
+             "absolute_url": "https://job-boards.greenhouse.io/ghco/jobs/3",
+             "location": {"name": "Multiple Locations"}},
             {"id": 4, "title": "Field Service Engineer", "absolute_url": "https://job-boards.greenhouse.io/ghco/jobs/4",
              "location": {"name": "Remote - US"}},
         ]})
@@ -122,9 +123,10 @@ def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"status": 200, "data": {"count": 10, "positions": positions}})
     if url.startswith("https://api.smartrecruiters.com/v1/companies/SRCO1/postings"):
         return httpx.Response(200, json={"totalFound": 2, "content": [
-            {"id": "744000001", "name": "Regional Lead - Installs", "refNumber": "REF1", "releasedDate": "2026-09-30T10:00:00Z",
-             "location": {"city": "Chandler", "region": "AZ", "country": "us"}},
-            {"id": "744000002", "name": "Install Engineer", "location": {"city": "Phoenix", "region": "AZ", "country": None}}]})
+            {"id": "744000001", "name": "Regional Lead - Installs", "refNumber": "REF1",
+             "releasedDate": "2026-09-30T10:00:00Z", "location": {"city": "Chandler", "region": "AZ", "country": "us"}},
+            {"id": "744000002", "name": "Install Engineer",
+             "location": {"city": "Phoenix", "region": "AZ", "country": None}}]})
     if url.startswith("https://abcd.fa.us2.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitions"):
         # exactly the request the career site makes, or Oracle ignores the keyword
         assert "finder=findReqs;siteNumber=CX_1,facetsList=WORK_LOCATIONS%3B" in url
@@ -137,7 +139,8 @@ def handler(request: httpx.Request) -> httpx.Response:
             {"Id": "25011323", "Title": "Field Service Technician", "PrimaryLocation": "United States",
              "secondaryLocations": [{"Name": "Richardson, TX, United States", "CountryCode": "US"}]},
             {"Id": "25011777", "Title": "Field Service Technician", "PrimaryLocation": "Austin, TX, United States",
-             "otherWorkLocations": [{"LocationName": "TUC-1", "TownOrCity": "Tucson", "Region2": "AZ", "Country": "US"}]},
+             "otherWorkLocations": [{"LocationName": "TUC-1", "TownOrCity": "Tucson", "Region2": "AZ",
+                                     "Country": "US"}]},
         ]}]})
     if url.startswith("https://wd1.myworkdaysite.com/wday/cxs/wsco/WS_Careers/jobs"):
         return httpx.Response(200, json={"total": 1, "jobPostings": [
@@ -224,7 +227,8 @@ def test_search_all_backends():
     assert gh["Field Service Engineer II"]["url"] == "https://job-boards.greenhouse.io/ghco/jobs/1"
     assert gh["Field Service Engineer II"]["company_url"] == "https://www.ghco.com/careers?gh_jid=1"
     assert "company_url" not in gh["Equipment Engineering Technician"]
-    assert gh["Equipment Engineering Technician"]["notes"] == ["location given as 'Multiple Locations'; check the posting"]
+    assert (gh["Equipment Engineering Technician"]["notes"]
+            == ["location given as 'Multiple Locations'; check the posting"])
     assert gh["Field Service Engineer"]["notes"] == ["location given as 'Remote - US'; check the posting"]
     assert sum("greenhouse" in str(r.url) and "ghco" in str(r.url) for r in seen) == 1  # whole board, fetched once
 
@@ -256,7 +260,8 @@ def test_search_all_backends():
 
     assert out["browser_only"] == [{"company": "Browser Co", "careers_url": "https://careers.browserco.com"}]
     assert set(out["errors"]) == {"Broken Co", "Odd Lever Co"}  # each fails alone; the rest still return
-    assert out["errors"]["Broken Co"] == "SearchError: HTTP 404 from https://boards-api.greenhouse.io/v1/boards/broken/jobs"
+    assert (out["errors"]["Broken Co"]
+            == "SearchError: HTTP 404 from https://boards-api.greenhouse.io/v1/boards/broken/jobs")
 
 
 def test_workday_area_without_matches_returns_nothing():
@@ -273,9 +278,11 @@ def test_workday_location_filter_outcomes():
     # town) and leave out the towns the plugin doesn't name (Banner's Workday, the review of Oct 15: 222 vs 192)
     banner = [{"facetParameter": "locationMainGroup", "descriptor": "Locations", "values": [
         {"facetParameter": "locationRegionStateProvince", "descriptor": "State", "values": [
-            {"descriptor": "Arizona", "id": "state-az", "count": 222}, {"descriptor": "Colorado", "id": "state-co", "count": 40}]},
+            {"descriptor": "Arizona", "id": "state-az", "count": 222},
+            {"descriptor": "Colorado", "id": "state-co", "count": 40}]},
         {"facetParameter": "locations", "descriptor": "City", "values": [
-            {"descriptor": "Phoenix, AZ", "id": "loc-phx", "count": 150}, {"descriptor": "Mesa, AZ", "id": "loc-mesa", "count": 100},
+            {"descriptor": "Phoenix, AZ", "id": "loc-phx", "count": 150},
+            {"descriptor": "Mesa, AZ", "id": "loc-mesa", "count": 100},
             {"descriptor": "Denver, CO", "id": "loc-den", "count": 40}]}]}]
     assert _workday_location_facets(banner, az) == {"locationRegionStateProvince": ["state-az"]}
     # (an area of cities alone asks for those cities, not the whole state)
@@ -306,10 +313,12 @@ def test_a_workday_place_filter_that_finds_nothing_it_counted_is_read_around():
             if body["appliedFacets"]:
                 return httpx.Response(200, json={"total": 0, "jobPostings": [], "facets": facets})
             return httpx.Response(200, json={"total": 3, "facets": facets, "jobPostings": [
-                {"title": "Senior Field Service Engineer (Phoenix, AZ Metro)", "externalPath": "/job/Remote---US/SFSE_R7270",
-                 "locationsText": "2 Locations", "bulletFields": ["R7270"]},
+                {"title": "Senior Field Service Engineer (Phoenix, AZ Metro)",
+                 "externalPath": "/job/Remote---US/SFSE_R7270", "locationsText": "2 Locations",
+                 "bulletFields": ["R7270"]},
                 {"title": "Field Service Engineer", "externalPath": "/job/Fremont/FSE_R1", "locationsText": "Fremont"},
-                {"title": "Field Service Engineer", "externalPath": "/job/Fremont/FSE_R2", "locationsText": "Fremont"}]})
+                {"title": "Field Service Engineer", "externalPath": "/job/Fremont/FSE_R2",
+                 "locationsText": "Fremont"}]})
         calls.append(url)  # (asserted below: an error here is taken for an unreadable posting)
         return httpx.Response(200, json={"jobPostingInfo": {"location": "Remote - US",
                                                             "additionalLocations": ["Remote - Arizona"]}})
@@ -338,17 +347,23 @@ def test_a_posting_the_sites_own_area_filter_found_is_kept_however_the_site_name
     # plugin's and others', whose counts add up higher; locations the facilities)
     facets = [{"facetParameter": "locationMainGroup", "values": [
         {"facetParameter": "locationHierarchy2", "values": [{"descriptor": "Arizona", "id": "state-az", "count": 1033},
-                                                             {"descriptor": "Colorado", "id": "state-co", "count": 300}]},
+                                                             {"descriptor": "Colorado", "id": "state-co",
+                                                              "count": 300}]},
         {"facetParameter": "locationHierarchy1", "values": [
-            {"descriptor": "Phoenix", "id": "town-phx", "count": 600}, {"descriptor": "Mesa", "id": "town-mesa", "count": 400},
-            {"descriptor": "Buckeye", "id": "town-buckeye", "count": 150}, {"descriptor": "Tucson", "id": "town-tucson", "count": 100},
-            {"descriptor": "Ajo", "id": "town-ajo", "count": 5}, {"descriptor": "Page", "id": "town-page", "count": 8}]},
+            {"descriptor": "Phoenix", "id": "town-phx", "count": 600},
+            {"descriptor": "Mesa", "id": "town-mesa", "count": 400},
+            {"descriptor": "Buckeye", "id": "town-buckeye", "count": 150},
+            {"descriptor": "Tucson", "id": "town-tucson", "count": 100},
+            {"descriptor": "Ajo", "id": "town-ajo", "count": 5},
+            {"descriptor": "Page", "id": "town-page", "count": 8}]},
         {"facetParameter": "locations", "values": [
             {"descriptor": "Banner Heart Hosp (6750 E Baywood Ave)", "id": "loc-heart", "count": 20},
             {"descriptor": "Banner Thunderbird Med Ctr", "id": "loc-tbird", "count": 30}]}]}]
     postings = [
-        {"title": "Registered Nurse", "externalPath": "/job/Banner-Heart-Hosp/RN_R1", "locationsText": "Banner Heart Hosp (6750 E Baywood Ave)"},
-        {"title": "HR Generalist", "externalPath": "/job/Banner-Thunderbird/HR_R2", "locationsText": "Banner Thunderbird Med Ctr"},
+        {"title": "Registered Nurse", "externalPath": "/job/Banner-Heart-Hosp/RN_R1",
+         "locationsText": "Banner Heart Hosp (6750 E Baywood Ave)"},
+        {"title": "HR Generalist", "externalPath": "/job/Banner-Thunderbird/HR_R2",
+         "locationsText": "Banner Thunderbird Med Ctr"},
         {"title": "Recruiter", "externalPath": "/job/Page/REC_R3", "locationsText": "Page"},
         {"title": "Nurse Recruiter", "externalPath": "/job/USA/NR_R4", "locationsText": "United States of America"}]
 
@@ -367,7 +382,8 @@ def test_a_posting_the_sites_own_area_filter_found_is_kept_however_the_site_name
     # country is still noted for the person)
     assert sorted((r["title"], r["location"], r.get("notes")) for r in out["results"]) == [
         ("HR Generalist", "Banner Thunderbird Med Ctr", []),
-        ("Nurse Recruiter", "United States of America", ["location given as 'United States of America'; check the posting"]),
+        ("Nurse Recruiter", "United States of America",
+         ["location given as 'United States of America'; check the posting"]),
         ("Recruiter", "Page", []), ("Registered Nurse", "Banner Heart Hosp (6750 E Baywood Ave)", [])], out
     assert calls == [{}, {"locationHierarchy2": ["state-az"]}], calls
     assert all(r["in_area"] is True for r in out["results"]), out  # (recommend() reads it: never held for its place)
@@ -414,29 +430,36 @@ def test_posting_apis():
         if url == "https://api.smartrecruiters.com/v1/companies/ASML1/postings/744000001":
             return httpx.Response(200, json={
                 "name": "Regional Lead - Installs", "company": {"name": "ASML"}, "refNumber": "REF1",
-                "location": {"city": "Chandler", "region": "AZ", "country": "us"}, "releasedDate": "2026-09-30T10:00:00Z",
+                "location": {"city": "Chandler", "region": "AZ", "country": "us"},
+                "releasedDate": "2026-09-30T10:00:00Z",
                 "applyUrl": "https://jobs.smartrecruiters.com/oneclick-ui/company/ASML1/publication/x",
                 "typeOfEmployment": {"label": "Full-time"},
-                "jobAd": {"sections": {"jobDescription": {"title": "Job Description", "text": "<p>Lead EUV installs.</p>"},
-                                       "qualifications": {"title": "Qualifications", "text": "<ul><li>5 years</li></ul>"}}}})
-        if url.startswith("https://hctz.fa.us2.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails"):
+                "jobAd": {"sections": {"jobDescription": {"title": "Job Description",
+                                                          "text": "<p>Lead EUV installs.</p>"},
+                                       "qualifications": {"title": "Qualifications",
+                                                          "text": "<ul><li>5 years</li></ul>"}}}})
+        if url.startswith("https://hctz.fa.us2.oraclecloud.com/hcmRestApi/resources/latest/"
+                          "recruitingCEJobRequisitionDetails"):
             assert "finder=ById;Id=%222506217%22,siteNumber=CX_1001" in url
             return httpx.Response(200, json={"items": [{
                 "Id": "2506217", "Title": "Equipment Technician", "PrimaryLocation": "Phoenix, AZ, United States",
-                "ExternalDescriptionStr": "<p>Maintain probers.</p>", "ExternalQualificationsStr": "<ul><li>AAS</li></ul>",
-                "ExternalPostedStartDate": "2026-09-30"}]})
+                "ExternalDescriptionStr": "<p>Maintain probers.</p>",
+                "ExternalQualificationsStr": "<ul><li>AAS</li></ul>", "ExternalPostedStartDate": "2026-09-30"}]})
         if url == "https://careers.example-semi.com/en/sites/CX_1001/job/2506217":  # the company's own address
-            return httpx.Response(200, text='<html><head><link rel="preconnect" href="https://hctz.fa.us2.oraclecloud.com">'
-                                            '</head><body><div id="app"></div></body></html>')
+            return httpx.Response(200, text='<html><head><link rel="preconnect" '
+                                            'href="https://hctz.fa.us2.oraclecloud.com"></head>'
+                                            '<body><div id="app"></div></body></html>')
         if url.startswith("https://api.lever.co/v0/postings/leverco/0b1c2d3e-0000-1111-2222-333344445555"):
-            return httpx.Response(200, json={"text": "Field Service Engineer", "categories": {"location": "Phoenix, AZ"},
-                                              "descriptionPlain": "Service our tools in the field.",
-                                              "lists": [{"text": "Requirements", "content": "<li>3 years</li>"}],
-                                              "additionalPlain": "This role requires U.S. citizenship (ITAR)."})
+            return httpx.Response(200,
+                                  json={"text": "Field Service Engineer", "categories": {"location": "Phoenix, AZ"},
+                                         "descriptionPlain": "Service our tools in the field.",
+                                         "lists": [{"text": "Requirements", "content": "<li>3 years</li>"}],
+                                         "additionalPlain": "This role requires U.S. citizenship (ITAR)."})
         if url.startswith("https://boards-api.greenhouse.io/v1/boards/asm/jobs/4885531101"):
             return httpx.Response(200, json={"title": "Digital Solutions Engineer", "company_name": "ASM",
                                               "absolute_url": "https://www.asm.com/open-vacancies/?gh_jid=4885531101",
-                                              "location": {"name": "US > Arizona > Phoenix"}, "content": "&lt;p&gt;Hi&lt;/p&gt;"})
+                                              "location": {"name": "US > Arizona > Phoenix"},
+                                              "content": "&lt;p&gt;Hi&lt;/p&gt;"})
         raise AssertionError(url)
 
     async def go():
@@ -444,10 +467,12 @@ def test_posting_apis():
             sr = await fetch_posting("https://jobs.smartrecruiters.com/ASML1/744000001-regional-lead", client=client)
             gh = await fetch_posting("https://job-boards.greenhouse.io/asm/jobs/4885531101", client=client)
             orc = await fetch_posting(
-                "https://hctz.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/job/2506217", client=client)
+                "https://hctz.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/job/2506217",
+                client=client)
             # a company's own address for its Oracle site: the API call goes to where it points
             own = await fetch_posting("https://careers.example-semi.com/en/sites/CX_1001/job/2506217", client=client)
-            lever = await fetch_posting("https://jobs.lever.co/leverco/0b1c2d3e-0000-1111-2222-333344445555", client=client)
+            lever = await fetch_posting("https://jobs.lever.co/leverco/0b1c2d3e-0000-1111-2222-333344445555",
+                                        client=client)
             return sr, gh, orc, own, lever
 
     sr, gh, orc, own, lever = asyncio.run(go())
@@ -530,7 +555,8 @@ def test_tool_falls_back_to_browser_for_eightfold(srv, monkeypatch):
     import job_apply.server as server
 
     async def fake(query, names, location, limit, **kw):
-        return {"results": [], "errors": {"Lam Research": "SearchError: HTTP 403 from https://careers.lamresearch.com/api"},
+        return {"results": [],
+                "errors": {"Lam Research": "SearchError: HTTP 403 from https://careers.lamresearch.com/api"},
                 "browser_only": []}
 
     pages = []
@@ -549,8 +575,8 @@ def test_tool_falls_back_to_browser_for_eightfold(srv, monkeypatch):
     # ranked, not filtered: Eightfold's own relevance already chose these
     assert [(r["title"], r["title_match"]) for r in out["results"]] == \
         [("Field Service Engineer 2", True), ("Payroll Specialist", False)]
-    assert pages == [("https://careers.lamresearch.com/careers?query=field+service&domain=lamresearch.com&location=Arizona",
-                      "/api/pcsx/search")]
+    assert pages == [("https://careers.lamresearch.com/careers?query=field+service&domain=lamresearch.com"
+                      "&location=Arizona", "/api/pcsx/search")]
 
 
 def test_parse_eightfold_shapes():
@@ -615,7 +641,8 @@ def test_a_site_that_asks_to_be_left_a_while_is_tried_again_after_that_while(mon
     def busy(request: httpx.Request) -> httpx.Response:
         tries.append(1)
         if len(tries) == 1:
-            after = "3" if asked == "3" else format_datetime(datetime.now(timezone.utc) + timedelta(seconds=4), usegmt=True)
+            after = ("3" if asked == "3"
+                     else format_datetime(datetime.now(timezone.utc) + timedelta(seconds=4), usegmt=True))
             return httpx.Response(429, headers={"Retry-After": after})
         return workday(json.loads(request.content))
 
@@ -779,14 +806,15 @@ def test_asml_sitecore_answer_and_request():
         ("Field Service Engineer", "Hefei, China", "2025-09-25", "J-00327683"),
         ("Field Service Engineer - EUV", "Phoenix, AZ, US", "2026-09-14", "J-00329630"),
     ]  # the article isn't a job
-    facets_only = {"widget": {"items": [{"rfk_id": "asml_job_search", "search": {"limit": 25, "facet": {"all": True}}}]}}
+    facets_only = {"widget": {"items": [{"rfk_id": "asml_job_search",
+                                         "search": {"limit": 25, "facet": {"all": True}}}]}}
     keyword = {"widget": {"items": [{"rfk_id": "asml_job_search", "search": {
         "limit": 25, "offset": 0, "query": {"keyphrase": "field service", "operator": "and"}}}]}}
     assert not sitecore_wants(facets_only) and sitecore_wants(keyword)
     assert sitecore_rewrite(facets_only) is None  # left alone
     assert sitecore_rewrite(keyword)["widget"]["items"][0]["search"]["limit"] == 100
-    assert sitecore_page_url({"url": "https://www.asml.com/en/careers/find-your-job?query={query}"}, "field service") == \
-        "https://www.asml.com/en/careers/find-your-job?query=field%20service"
+    assert (sitecore_page_url({"url": "https://www.asml.com/en/careers/find-your-job?query={query}"}, "field service")
+            == "https://www.asml.com/en/careers/find-your-job?query=field%20service")
 
     async def go():
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -816,7 +844,8 @@ def captured(srv, monkeypatch, answer, body=None) -> list[SimpleNamespace]:
 def test_search_tool_runs_asml_in_the_browser(srv, monkeypatch):
     calls = captured(srv, monkeypatch, ASML_ANSWER)
     monkeypatch.setattr(srv, "load_companies", lambda: [
-        {"name": "ASML", "search": {"sitecore": {"url": "https://www.asml.com/en/careers/find-your-job?query={query}"}}}])
+        {"name": "ASML",
+         "search": {"sitecore": {"url": "https://www.asml.com/en/careers/find-your-job?query={query}"}}}])
     out = asyncio.run(srv.search_company_jobs("field service | customer engineer", companies=["ASML"], location="AZ"))
     assert [r["title"] for r in out["results"]] == ["Field Service Engineer - EUV"]  # Hefei is filtered out
     assert out["results"][0]["company"] == "ASML" and "needs_browser" not in out
@@ -1003,8 +1032,8 @@ def test_workday_entries_that_arent_postings_are_left_out():
     def answer(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"total": 2, "jobPostings": [
             {"title": "", "locationsText": "", "postedOn": "", "bulletFields": []},
-            {"title": "Field Service Engineer", "externalPath": "/job/Chandler-AZ/FSE_R1", "locationsText": "Chandler, AZ",
-             "postedOn": "Posted Today", "bulletFields": ["R1"]}]})
+            {"title": "Field Service Engineer", "externalPath": "/job/Chandler-AZ/FSE_R1",
+             "locationsText": "Chandler, AZ", "postedOn": "Posted Today", "bulletFields": ["R1"]}]})
 
     async def go():
         async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
@@ -1114,13 +1143,15 @@ def ukg_place(city, code, description):
 
 
 UKG_ANSWER = {"totalCount": 3, "opportunities": [
-    {"Id": "a0a2a8f5", "Title": "NRCA Optical Scientist Graduate-Level Intern (Summer 2027)", "RequisitionNumber": "NRCAO001457",
-     "Locations": [ukg_place("Oro Valley", "AZ", "Tucson, Arizona")], "PostedDate": "2026-09-29T22:59:48.553Z"},
+    {"Id": "a0a2a8f5", "Title": "NRCA Optical Scientist Graduate-Level Intern (Summer 2027)",
+     "RequisitionNumber": "NRCAO001457", "Locations": [ukg_place("Oro Valley", "AZ", "Tucson, Arizona")],
+     "PostedDate": "2026-09-29T22:59:48.553Z"},
     {"Id": "532a7dc9", "Title": "Field Service Engineer", "RequisitionNumber": "FIELD001451",
      "Locations": [ukg_place("Chandler", "AZ", "Arizona"), ukg_place(None, "AZ", "Phoenix, AZ")],
      "PostedDate": "2026-07-10T18:41:41.306Z"},
     {"Id": "77aa", "Title": "Field Service Engineer", "RequisitionNumber": "FIELD001460",
-     "Locations": [{"LocalizedDescription": "Hillsboro, OR", "Address": {"City": "Hillsboro", "State": {"Code": "OR"}}}],
+     "Locations": [{"LocalizedDescription": "Hillsboro, OR",
+                    "Address": {"City": "Hillsboro", "State": {"Code": "OR"}}}],
      "PostedDate": "2026-08-01T00:00:00Z"}]}
 
 
@@ -1164,18 +1195,19 @@ def rmk_job(job_id, title, slug, start="7/27/26"):
 RMK_ANSWER = {"totalJobs": 4, "jobSearchResult": [
     rmk_job("160986", "Workshop Technician - CA", "Workshop-Technician-CA", "5/27/26"),
     rmk_job("172120", "Onsite Service Engineer - AZ", "Onsite-Service-Engineer-AZ"),
-    rmk_job("172852", "Assembly &amp; Test Technician (Edwards Vacuum)", "Assembly-&amp;-Test-Technician-%28Edwards-Vacuum%29",
-            "8/7/26"),
+    rmk_job("172852", "Assembly &amp; Test Technician (Edwards Vacuum)",
+            "Assembly-&amp;-Test-Technician-%28Edwards-Vacuum%29", "8/7/26"),
     {"response": {"unifiedStandardTitle": "no id"}}]}
 
 
 def edwards_posting(title, *lines):
     """An Edwards posting's header as SuccessFactors draws it: unlabelled lines under the title."""
     token = ('<div class="joblayouttoken displayDTM marginTopNone"><div class="inner"><div class="row">'
-             '<div class="col-xs-12 fontalign-left"><span class="rtltextaligneligible"{attr} lang="en-US">{text} </span>'
-             '</div></div></div></div>')
+             '<div class="col-xs-12 fontalign-left"><span class="rtltextaligneligible"{attr} lang="en-US">{text} '
+             '</span></div></div></div></div>')
     return ('<html><body><div class="jobDisplay">' + token.format(attr=' itemprop="title"', text=title)
-            + "".join(token.format(attr="", text=line) for line in lines) + "<p>Job Description</p></div></body></html>")
+            + "".join(token.format(attr="", text=line) for line in lines)
+            + "<p>Job Description</p></div></body></html>")
 
 
 def test_successfactors_search_is_read_in_the_browser(srv, monkeypatch):
@@ -1336,7 +1368,8 @@ def test_successfactors_search_pages_use_the_sites_own_state_search():
     out = run_sf(handler, query="engineer", location="AZ")
     assert asked == [{"q": "engineer", "startrow": "0", "locationsearch": "Arizona"}]
     got = {r["title"]: r for r in out["results"]}
-    assert got["Analog Design Intern"]["url"] == "https://careers.qorvo.com/job/Chandler-Analog-Design-Intern/1421977600/"
+    assert (got["Analog Design Intern"]["url"]
+            == "https://careers.qorvo.com/job/Chandler-Analog-Design-Intern/1421977600/")
     assert got["Analog Design Intern"]["location"] == "Chandler, AZ, US, 85226"
     assert got["Sr Principal Design Engineer"]["location"] == "Greensboro, NC, US, 27409 (+3 more); Arizona"
     assert all(not r["notes"] for r in out["results"]) and len(got) == 4
@@ -1381,7 +1414,8 @@ SFC_ROW = ('<tr class="jobResultItem"><td><div role="heading" aria-level="3"><a 
 
 
 def sfc_page(rows):
-    return f'<html><body><span class="jobCount">{len(rows)} Jobs</span><table><tbody>{"".join(rows)}</tbody></table></body></html>'
+    return (f'<html><body><span class="jobCount">{len(rows)} Jobs</span><table>'
+            f'<tbody>{"".join(rows)}</tbody></table></body></html>')
 
 
 def test_amkor_list_is_read_in_the_browser_and_its_postings_say_where(srv, monkeypatch):
@@ -1409,14 +1443,16 @@ def test_amkor_list_is_read_in_the_browser_and_its_postings_say_where(srv, monke
 
     monkeypatch.setattr(srv.browser, "listing_pages", fake_pages)
     monkeypatch.setattr(search_module, "read_page", fake_read)
-    out = asyncio.run(srv.search_company_jobs("field service | equipment technician", companies=["Amkor"], location="AZ"))
+    out = asyncio.run(srv.search_company_jobs("field service | equipment technician", companies=["Amkor"],
+                                              location="AZ"))
     got = {r["title"]: (r["location"], r["posted"], r["notes"]) for r in out["results"]}
     assert got == {  # Austin is left out, the analyst wasn't asked for, an unreadable posting is flagged
         "Equipment Technician (ATA)": ("Peoria, AZ", "2026-10-01", []),
         "Equipment Technician": ("Tempe, AZ", "2026-09-28", []),
         "Field Service Engineer II": ("", "2026-09-27", ["no location given; check the posting"])}
     assert len(reads) == 4  # the matches only
-    page = "https://career8.successfactors.com/career?company=amkor&career_ns=job_listing_summary&navBarLevel=JOB_SEARCH"
+    page = ("https://career8.successfactors.com/career?company=amkor&career_ns=job_listing_summary"
+            "&navBarLevel=JOB_SEARCH")
     assert asked == [(page, "tr.jobResultItem", ("li.per_page select", "50"), "li.paginationArrowContainer.next > a")]
     tech = next(r for r in out["results"] if r["title"] == "Equipment Technician (ATA)")
     assert tech["url"] == ("https://career8.successfactors.com/career?career_ns=job_listing&company=amkor"
@@ -1446,7 +1482,8 @@ def infor_card(job_id, title, where, begin, link=True):
 def test_benchmark_board_is_read_in_the_browser(srv, monkeypatch):
     """Benchmark's Infor board answers its own page, 10 postings at a time: that call is asked
     for 200, and titles and places are matched here."""
-    cfg_url = next(c for c in search_module.load_companies() if c["name"] == "Benchmark Electronics")["search"]["infor"]["url"]
+    cfg_url = next(c for c in search_module.load_companies()
+                   if c["name"] == "Benchmark Electronics")["search"]["infor"]["url"]
     calls = captured(srv, monkeypatch, {"dataViewSet": {"pagingInfo": {"pageSize": 200, "hasNext": False}, "data": [
         infor_card("12460", "Manufacturing Technician I", "Arizona:Mesa", "20260930"),
         infor_card("12529", "Precision Inspector II", "Arizona:Tempe", "20261006"),
@@ -1457,11 +1494,13 @@ def test_benchmark_board_is_read_in_the_browser(srv, monkeypatch):
     got = {r["title"]: (r["location"], r["posted"], r["url"]) for r in out["results"]}
     assert got == {  # Rochester left out; the assembler wasn't asked for
         "Manufacturing Technician I": ("Mesa, AZ", "2026-09-30", (
-            "https://css-benchmark-prd.inforcloudsuite.com/hcm/Jobs/navigation/JobPosting%5BJobPostingSet%5D%281%2C12460"
-            "%2C1%29.JobPostingDisplayNav?csk.HROrganization=1&csk.JobBoard=EXTERNAL&web10x=true")),
+            "https://css-benchmark-prd.inforcloudsuite.com/hcm/Jobs/navigation/"
+            "JobPosting%5BJobPostingSet%5D%281%2C12460%2C1%29.JobPostingDisplayNav?csk.HROrganization=1"
+            "&csk.JobBoard=EXTERNAL&web10x=true")),
         "Precision Inspector II": ("Tempe, AZ", "2026-10-06", (
-            "https://css-benchmark-prd.inforcloudsuite.com/hcm/Jobs/navigation/JobPosting%5BJobPostingSet%5D%281%2C12529"
-            "%2C1%29.JobPostingDisplayNav?csk.HROrganization=1&csk.JobBoard=EXTERNAL&web10x=true"))}
+            "https://css-benchmark-prd.inforcloudsuite.com/hcm/Jobs/navigation/"
+            "JobPosting%5BJobPostingSet%5D%281%2C12529%2C1%29.JobPostingDisplayNav?csk.HROrganization=1"
+            "&csk.JobBoard=EXTERNAL&web10x=true"))}
     assert [(c.url, c.url_part, c.rewrite_url(INFOR_CALL)) for c in calls] == [
         (cfg_url, "JobPosting.JobSearchCardViewList", INFOR_CALL.replace("pagesize=10", "pagesize=200"))]
     assert not out["errors"]
@@ -1541,7 +1580,8 @@ def test_a_workday_remote_us_job_is_kept_when_the_site_lists_no_area_place():
     but a "Remote - United States" one could be done from it. A posting whose place is null
     doesn't fail the company's search."""
     facets = [{"facetParameter": "locations", "values": [
-        {"id": "tx", "descriptor": "Austin, TX", "count": 2}, {"id": "us", "descriptor": "Remote - United States", "count": 1}]}]
+        {"id": "tx", "descriptor": "Austin, TX", "count": 2},
+        {"id": "us", "descriptor": "Remote - United States", "count": 1}]}]
     postings = [
         {"title": "Field Service Engineer", "externalPath": "/job/x/FSE_R1", "locationsText": "Remote - United States",
          "postedOn": "Posted Today", "bulletFields": ["R1"]},
@@ -1582,12 +1622,15 @@ def test_eightfold_and_smartrecruiters_read_on_for_the_area():
             start = int(q.get("start") or 0)
             asked["eightfold"].append(start)
             positions = [{"id": n, "name": f"Field Service Engineer {n}", "locations": [place(n)],
-                          "canonicalPositionUrl": f"https://careers.efco.com/careers/job/{n}"} for n in range(start, min(start + 10, 150))]
+                          "canonicalPositionUrl": f"https://careers.efco.com/careers/job/{n}"}
+                         for n in range(start, min(start + 10, 150))]
             return httpx.Response(200, json={"data": {"positions": positions, "count": 150}})
         offset = int(q.get("offset") or 0)
         asked["smartrecruiters"].append(offset)
-        content = [{"id": str(n), "name": f"Field Service Engineer {n}", "location": {"city": "Chandler" if n in (120, 130) else "Boise",
-                    "region": "AZ" if n in (120, 130) else "ID", "country": "us"}, "releasedDate": "2026-10-01T00:00:00Z"}
+        content = [{"id": str(n), "name": f"Field Service Engineer {n}",
+                    "location": {"city": "Chandler" if n in (120, 130) else "Boise",
+                    "region": "AZ" if n in (120, 130) else "ID", "country": "us"},
+                    "releasedDate": "2026-10-01T00:00:00Z"}
                    for n in range(offset, min(offset + 100, 150))]
         return httpx.Response(200, json={"content": content, "totalFound": 150})
 
@@ -1607,8 +1650,8 @@ def test_eightfold_and_smartrecruiters_read_on_for_the_area():
 
 
 def test_oracle_keeps_two_places_of_one_city_name():
-    merged = search_module._merge_places(["Peoria, IL, United States", "Peoria, AZ, US", "Scottsdale, AZ, United States",
-                                          "Scottsdale, AZ, US"])
+    merged = search_module._merge_places(["Peoria, IL, United States", "Peoria, AZ, US",
+                                          "Scottsdale, AZ, United States", "Scottsdale, AZ, US"])
     assert merged == "Peoria, IL, United States; Peoria, AZ, US; Scottsdale, AZ, United States"
 
 
@@ -1638,7 +1681,8 @@ def test_a_city_named_alone_beside_its_fuller_self_is_one_place():
 
 
 def test_a_company_is_picked_by_the_start_of_its_name():
-    companies = [{"name": n} for n in ["Applied Materials", "ASM (ASM America)", "ASML", "Microchip Technology", "Micron"]]
+    companies = [{"name": n}
+                 for n in ["Applied Materials", "ASM (ASM America)", "ASML", "Microchip Technology", "Micron"]]
     pick = search_module._pick
     assert [c["name"] for c in pick(companies, ["Applied Material"])] == ["Applied Materials"]
     assert [c["name"] for c in pick(companies, ["Micro"])] == ["Microchip Technology", "Micron"]
@@ -1652,7 +1696,8 @@ def test_a_persons_own_employer_list_is_searched_instead(job_apply_home):
     builtin = search_module.load_companies()
     assert any(c["name"] == "Intel" for c in builtin)
     own = job_apply_home / "companies.yaml"
-    own.write_text("companies:\n  - name: Example Health\n    careers_url: https://example.wd1.myworkdayjobs.com/Careers\n"
+    own.write_text("companies:\n  - name: Example Health\n"
+                   "    careers_url: https://example.wd1.myworkdayjobs.com/Careers\n"
                    "    search: {workday: https://example.wd1.myworkdayjobs.com/Careers}\n"
                    "  - name: Intel\n    careers_url: https://jobs.example.com/intel\n", encoding="utf-8")
     assert [c["name"] for c in search_module.load_companies()] == ["Example Health", "Intel"]
@@ -1674,13 +1719,16 @@ def test_a_persons_own_file_can_name_the_plugins_lists(job_apply_home, monkeypat
     root = tmp_path / "plugin"
     (root / "data" / "lists").mkdir(parents=True)
     (root / "data" / "companies.yaml").write_text("companies:\n  - {name: Intel, careers_url: https://a.example}\n"
-                                                  "  - {name: Microchip, careers_url: https://b.example}\n", encoding="utf-8")
+                                                  "  - {name: Microchip, careers_url: https://b.example}\n",
+                                                  encoding="utf-8")
     (root / "data" / "lists" / "phoenix-metro.yaml").write_text(
-        "companies:\n  - {name: Example Health, careers_url: https://c.example}\n  - {name: Intel, careers_url: https://d.example}\n", encoding="utf-8")
+        "companies:\n  - {name: Example Health, careers_url: https://c.example}\n"
+        "  - {name: Intel, careers_url: https://d.example}\n", encoding="utf-8")
     monkeypatch.setattr(config, "PLUGIN_ROOT", root)
     assert list(search_module.employer_lists()) == ["semiconductor-az", "phoenix-metro"]
     own = job_apply_home / "companies.yaml"
-    own.write_text("lists: [phoenix-metro, semiconductor-az]\ncompanies:\n  - {name: Example Bank, careers_url: https://e.example}\n", encoding="utf-8")
+    own.write_text("lists: [phoenix-metro, semiconductor-az]\ncompanies:\n"
+                   "  - {name: Example Bank, careers_url: https://e.example}\n", encoding="utf-8")
     got = search_module.load_companies()
     assert [(c["name"], c["careers_url"]) for c in got] == [
         ("Example Bank", "https://e.example"), ("Example Health", "https://c.example"), ("Intel", "https://d.example"),
@@ -1709,8 +1757,10 @@ def test_a_persons_own_entries_stay_as_written_and_cover_the_lists_same_sites(jo
     monkeypatch.setattr(config, "PLUGIN_ROOT", root)
     own = job_apply_home / "companies.yaml"
     own.write_text("lists: [phoenix-metro]\ncompanies:\n"
-                   "  - {name: Robert Half, careers_url: https://c.example, search: {workday: 'https://rh.wd1.myworkdayjobs.com/A'}}\n"
-                   "  - {name: Robert Half, careers_url: https://d.example, search: {workday: 'https://rh.wd1.myworkdayjobs.com/B'}}\n"
+                   "  - {name: Robert Half, careers_url: https://c.example,"
+                   " search: {workday: 'https://rh.wd1.myworkdayjobs.com/A'}}\n"
+                   "  - {name: Robert Half, careers_url: https://d.example,"
+                   " search: {workday: 'https://rh.wd1.myworkdayjobs.com/B'}}\n"
                    "  - name: Mayo Clinic\n    careers_url: https://e.example\n"
                    "    search: {oracle: {host: fa.example.oraclecloud.com, site: CX_1}}\n", encoding="utf-8")
     assert [c["careers_url"] for c in search_module.load_companies()] == \
@@ -1737,8 +1787,8 @@ def _icims_results(rows: list[tuple[str, str]], page: int, last: int) -> str:
     out = []
     for n, (title, place) in enumerate(rows):
         out.append(f'<div class="row"><div class="col-xs-6 header left"></div>'
-                   f'<div class="col-xs-12 title"><a class="iCIMS_Anchor" href="https://careers-x.icims.com/jobs/{page}{n}/'
-                   f'job-{page}-{n}/job?in_iframe=1"><h3>{title}</h3></a></div>'
+                   '<div class="col-xs-12 title"><a class="iCIMS_Anchor" href="https://careers-x.icims.com/jobs/'
+                   f'{page}{n}/job-{page}-{n}/job?in_iframe=1"><h3>{title}</h3></a></div>'
                    '<div class="col-xs-12 additionalFields"><dl class="iCIMS_JobHeaderGroup">'
                    '<div class="iCIMS_JobHeaderTag"><dt class="iCIMS_JobHeaderField">Category</dt>'
                    '<dd class="iCIMS_JobHeaderData"><span>Recruiting</span></dd></div>'
@@ -1756,7 +1806,8 @@ def test_an_icims_rows_place_is_read_from_its_details_and_later_pages_are_read()
     page 3 of a national search (only page 1 was read)."""
     from job_apply.search import ICIMS_PAGES, icims_search, parse_icims
 
-    rows = parse_icims(_icims_results([("On Premise Recruiter", "US-WI-Stoughton")], 0, 0), "https://careers-x.icims.com")
+    rows = parse_icims(_icims_results([("On Premise Recruiter", "US-WI-Stoughton")], 0, 0),
+                       "https://careers-x.icims.com")
     assert [(r.title, r.location) for r in rows] == [("On Premise Recruiter", "US-WI-Stoughton")]
 
     asked = []
@@ -1879,7 +1930,8 @@ def test_a_taleo_career_section_is_searched_with_its_own_pages_request():
         rows = [row(i, "Texas-Dallas") for i in range(25)] if body["pageNo"] == 1 else [
             row(30, "Arizona-Phoenix"), row(31, "Florida-EE Specific City - WFH", "Sep 1, 2026")]
         return httpx.Response(200, json={"requisitionList": rows,
-                                         "pagingData": {"currentPageNo": body["pageNo"], "pageSize": 25, "totalCount": 90}})
+                                         "pagingData": {"currentPageNo": body["pageNo"], "pageSize": 25,
+                                                        "totalCount": 90}})
 
     async def go():
         async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
@@ -1900,7 +1952,7 @@ VALLEYWISE_PAGE = """<div class="jobs-section__item p-3"><div class="row"><div c
  Mesa, AZ, United States </div><div class="col-xs-12 col-sm-6 jobcardtext"><i class="fas fa-sitemap" title="Department"></i>
  BH Specialty Clinic - Mesa </div></div></div></div></div>
 <div class="jobs-section__item p-3"><h4><a href="/jobs/2230959-hr-specialist">HR Specialist</a></h4>
-<div class="jobcardtext"><i class="fas fa-map-marker"></i> Phoenix, AZ, United States</div></div>"""
+<div class="jobcardtext"><i class="fas fa-map-marker"></i> Phoenix, AZ, United States</div></div>"""  # noqa: E501
 
 
 def test_a_talemetry_job_site_is_read_page_by_page():
@@ -1964,7 +2016,8 @@ def test_a_taleo_rows_odd_columns():
         return httpx.Response(200, json={"requisitionList": [
             {"contestNo": "1", "linkedColumn": None, "locationsColumns": [1],
              "column": ["Recruiter", "Arizona-Tempe", "Sep 30, 2026"]},
-            {"contestNo": "2", "linkedColumn": 0, "locationsColumns": [1, 7], "column": ["HR Generalist", '"Texas-Dallas"']}],
+            {"contestNo": "2", "linkedColumn": 0, "locationsColumns": [1, 7],
+             "column": ["HR Generalist", '"Texas-Dallas"']}],
             "pagingData": {"pageSize": 25}})
 
     async def go():
@@ -2019,7 +2072,7 @@ JOBVITE_PAGE = """<table><tbody>
             </div></div>
 <div class="jv-job-item"><div class="jv-job-list-name"><a href="/kco/job/o2pNAfwy">Senior Financial Planning Analyst</a></div>
 <div class="jv-job-list-location"> Phoenix, Arizona </div></div>
-</tbody></table>"""
+</tbody></table>"""  # noqa: E501
 
 
 def test_a_jobvite_board_is_read_whole_and_filtered_by_title():
@@ -2055,10 +2108,12 @@ def test_amazon_jobs_is_searched_around_a_place():
             {"title": "HR Business Partner", "job_path": "/en/jobs/10493265/hr-business-partner",
              "normalized_location": "Phoenix, Arizona, USA", "posted_date": "August  5, 2026", "id_icims": "10493265",
              "locations": [place("Phoenix", "Arizona"), place("PHOENIX", "Arizona")]},  # (one place)
-            {"title": "HR Manager", "job_path": "/en/jobs/2/hr-manager", "normalized_location": "Seattle, Washington, USA",
-             "posted_date": "Sep 24, 2026", "locations": [place("Seattle", "Washington"), place("Tempe", "Arizona")]},
-            {"title": "Recruiter", "job_path": "/en/jobs/1/recruiter", "normalized_location": "Seattle, Washington, USA",
-             "posted_date": "Sep 24, 2026", "locations": [place("Seattle", "Washington")]}]})
+            {"title": "HR Manager", "job_path": "/en/jobs/2/hr-manager",
+             "normalized_location": "Seattle, Washington, USA", "posted_date": "Sep 24, 2026",
+             "locations": [place("Seattle", "Washington"), place("Tempe", "Arizona")]},
+            {"title": "Recruiter", "job_path": "/en/jobs/1/recruiter",
+             "normalized_location": "Seattle, Washington, USA", "posted_date": "Sep 24, 2026",
+             "locations": [place("Seattle", "Washington")]}]})
 
     async def go(location):
         async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
@@ -2082,7 +2137,8 @@ def test_amazon_jobs_is_searched_around_a_place():
 def test_a_jobvite_boards_longer_categories_are_read_past_their_first_twenty():
     """Knight-Swift's board lists 20 openings a category; its Operations and Shop categories go
     on, through "Show More", on search pages of their own (31 of 97 openings, Oct 2026)."""
-    board = JOBVITE_PAGE.replace("</tbody></table>", '<a href="/kco/search?c=Shop&amp;p=0">Show More</a></tbody></table>')
+    board = JOBVITE_PAGE.replace("</tbody></table>",
+                                 '<a href="/kco/search?c=Shop&amp;p=0">Show More</a></tbody></table>')
     shop = """<table class="jv-job-list jv-search-list"><tr><td class="jv-job-list-name">
     <a href="/kco/job/oShop1">Shop Recruiter</a></td><td class="jv-job-list-location"> Laredo, Texas </td></tr>
     <tr><td class="jv-job-list-name"><a href="/kco/job/oShop2">Diesel Technician</a></td>
@@ -2113,7 +2169,8 @@ def test_a_jobvite_board_page_is_parsed_once(monkeypatch):
             parsed.append(markup)
             super().__init__(markup, *a, **kw)
     monkeypatch.setattr(search_module, "BeautifulSoup", Counted)
-    board = JOBVITE_PAGE.replace("</tbody></table>", '<a href="/kco/search?c=Shop&amp;p=0">Show More</a></tbody></table>')
+    board = JOBVITE_PAGE.replace("</tbody></table>",
+                                 '<a href="/kco/search?c=Shop&amp;p=0">Show More</a></tbody></table>')
 
     def answer(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, text="<table></table>" if "search" in str(request.url) else board)
@@ -2163,7 +2220,7 @@ SF_TILES = """<div id="tile-search-results-label">Showing 1 to 2 of 2 Jobs</div>
 <li class="job-tile job-id-1 job-row-index-2" data-url="/job/Austin-Recruiter-TX/1/">
  <a class="jobTitle-link" href="/job/Austin-Recruiter-TX/1/">Recruiter</a>
  <div class="section-field location"><div id="job-1-desktop-section-location-value">Austin, TX, US</div></div></li>
-</ul>"""
+</ul>"""  # noqa: E501
 
 
 def test_a_successfactors_site_that_draws_its_results_as_tiles():
@@ -2178,9 +2235,12 @@ def test_a_successfactors_site_that_draws_its_results_as_tiles():
          "https://careers.srpnet.com/job/Tempe-Compensation-Analyst-AZ-85280/1424491000/", "1424491000"),
         ("Recruiter", "Austin, TX, US", "", "https://careers.srpnet.com/job/Austin-Recruiter-TX/1/", "1")]
     assert total == 2  # its own label: "Showing 1 to 2 of 2 Jobs"
-    town = SF_TILES.replace('<div class="section-field location"><div id="job-1-desktop-section-location-value">Austin, TX, US</div></div>',
-                            '<div class="section-field city"><div id="job-1-desktop-section-city-value">Austin</div></div>'
-                            '<div class="section-field state"><div id="job-1-desktop-section-state-value">TX</div></div>')
+    town = SF_TILES.replace('<div class="section-field location">'
+                            '<div id="job-1-desktop-section-location-value">Austin, TX, US</div></div>',
+                            '<div class="section-field city">'
+                            '<div id="job-1-desktop-section-city-value">Austin</div></div>'
+                            '<div class="section-field state">'
+                            '<div id="job-1-desktop-section-state-value">TX</div></div>')
     assert _parse_sf(town, "https://careers.srpnet.com")[0][1].location == "Austin, TX"  # town and state fields
 
     asked = []
@@ -2209,8 +2269,8 @@ def test_an_eightfold_site_without_its_newer_search_uses_the_older_one():
         if request.url.path == "/api/pcsx/search":
             return httpx.Response(403, json={"message": "PCSX is not enabled for this user."})
         start = int(request.url.params["start"])
-        positions = [{"id": str(1000 + start + i), "name": f"Sales Manager {start + i}", "locations": ["Chandler,United States"],
-                      "t_create": 1791210658, "display_job_id": str(start + i),
+        positions = [{"id": str(1000 + start + i), "name": f"Sales Manager {start + i}",
+                      "locations": ["Chandler,United States"], "t_create": 1791210658, "display_job_id": str(start + i),
                       "canonicalPositionUrl": f"https://ins.eightfold.ai/careers/job/{1000 + start + i}"}
                      for i in range(10 if start == 0 else 2)]
         return httpx.Response(200, json={"count": 12, "positions": positions})
@@ -2563,7 +2623,8 @@ def test_a_cornerstone_posting_is_read_from_its_job_requisition_service():
             "displayTitle": "Regional Environmental Specialist", "ref": "req33392", "allowApply": True,
             "externalDescription": "<ul><li>Implement environmental compliance programs across assigned facilities"
                                    "</li><li>Travel up to 50%</li></ul>" + "<p>Air permits and reporting.</p>" * 12,
-            "primaryLocation": {"title": "US-CA - Wilmington, CA", "city": "Wilmington", "state": "CA", "country": "US"},
+            "primaryLocation": {"title": "US-CA - Wilmington, CA", "city": "Wilmington", "state": "CA",
+                                "country": "US"},
             "additionalLocations": [{"city": "Tempe", "state": "AZ", "country": "US"}],
             "openDate": "2026-09-18T18:22:32", "companyApplyUrl": url}})
 
@@ -2571,7 +2632,8 @@ def test_a_cornerstone_posting_is_read_from_its_job_requisition_service():
         async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
             return await fetch_posting(url, client=client)
     posting = asyncio.run(go())
-    assert asked == [url, "https://acme.csod.com/services/x/job-requisition/v2/requisitions/33392/jobDetails?cultureId=1"]
+    assert (asked == [url, "https://acme.csod.com/services/x/job-requisition/v2/requisitions/"
+                           "33392/jobDetails?cultureId=1"])
     assert (posting.parse_method, posting.ats, posting.title, posting.location, posting.posted_at, posting.external_id,
             posting.apply_url) == ("csod-api", "csod", "Regional Environmental Specialist", "Wilmington, CA; Tempe, AZ",
                                    "2026-09-18", "33392", url)
@@ -2619,18 +2681,20 @@ def test_a_phenom_site_is_searched_with_its_own_call_and_state_filter(monkeypatc
     async def go(location):
         async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
             return await search_companies("technician", location=location, client=client, companies=[
-                {"name": "EMD", "search": {"phenom": {"host": "careers.example.com", "country": "us", "lang": "en_us"}}}])
+                {"name": "EMD",
+                 "search": {"phenom": {"host": "careers.example.com", "country": "us", "lang": "en_us"}}}])
     out = asyncio.run(go("AZ"))
     assert not out["errors"]
     assert [(a["from"], a["size"], a["keywords"], a["selected_fields"], a["ddoKey"]) for a in asked] == [
-        (0, 2, "technician", {"state": ["Arizona"]}, "refineSearch"), (2, 2, "technician", {"state": ["Arizona"]}, "refineSearch")]
+        (0, 2, "technician", {"state": ["Arizona"]}, "refineSearch"),
+        (2, 2, "technician", {"state": ["Arizona"]}, "refineSearch")]
     assert sorted((r["title"], r["location"], r["url"], r["posted"]) for r in out["results"]) == [
-        ("Equipment Technician/Engineer", "Tempe, Arizona, United States", "https://careers.example.com/us/en/job/304571",
-         "2026-10-07"),
+        ("Equipment Technician/Engineer", "Tempe, Arizona, United States",
+         "https://careers.example.com/us/en/job/304571", "2026-10-07"),
         ("Facilities Engineering Technician", "Tempe, Arizona, United States; Chandler, Arizona, United States",
          "https://careers.example.com/us/en/job/302024", "2026-10-07"),
-        ("Operations Technician - 5pm-5am", "Tempe, Arizona, United States", "https://careers.example.com/us/en/job/304370",
-         "2026-10-07")]
+        ("Operations Technician - 5pm-5am", "Tempe, Arizona, United States",
+         "https://careers.example.com/us/en/job/304370", "2026-10-07")]
     asked.clear()
     asyncio.run(go(None))
     assert {str(a["selected_fields"]) for a in asked} == {"{}"}  # anywhere: no state filter
@@ -2657,7 +2721,8 @@ def test_a_phenom_error_inside_its_answer_is_said_and_one_place_written_alone_is
                 return await search_companies("technician", location="AZ", client=client, companies=[
                     {"name": "EMD", "search": {"phenom": {"host": "careers.example.com"}}}])
         return asyncio.run(go())
-    assert search()["errors"] == {"EMD": "SearchError: No job list from https://careers.example.com/widgets (status 400)"}
+    assert (search()["errors"]
+            == {"EMD": "SearchError: No job list from https://careers.example.com/widgets (status 400)"})
     assert [r["location"] for r in search()["results"]] == ["Tempe, Arizona, United States"]
 
 
@@ -2686,7 +2751,8 @@ def avature_results(rows: list[str]) -> httpx.Response:
     body = "".join(rows) or ('<article class="article article--result--nojobs"><div class="list__item__description">'
                              'No jobs found</div></article>')
     return httpx.Response(200, text=f'<div class="list-controls__legend"><span class="jobListTotalRecords">'
-                                    f'{len(rows)}+</span> jobs</div><div class="section__content__results">{body}</div>')
+                                    f'{len(rows)}+</span> jobs</div>'
+                                    f'<div class="section__content__results">{body}</div>')
 
 
 def avature_posting(places: list[str]) -> httpx.Response:
@@ -2695,7 +2761,7 @@ def avature_posting(places: list[str]) -> httpx.Response:
     return httpx.Response(200, text=f"""<h2 class="article__header__text__title">A job</h2>
     <div class="article__header__text__subtitle"><a class="link toggleLocations">Same job available in {len(places)} locations</a>
     <div class="article__header--locations article__header--locations-none"><div class="fluid-cols fluid-cols--cols2">
-    {listed}</div></div></div>""")
+    {listed}</div></div></div>""")  # noqa: E501
 
 
 def deloitte_search(answer, query: str, location: str | None = "AZ") -> dict:
@@ -2745,7 +2811,8 @@ def test_deloittes_avature_portal_is_searched_in_the_state_and_its_postings_read
          "avature", True),
         ("Staff Accountant", f"{gilbert}; {tempe} (+1 more)",
          "https://apply.deloitte.com/en_US/careers/JobDetail/Staff-Accountant/101", "avature", True),
-        ("Tax Accountant", tempe, "https://apply.deloitte.com/en_US/careers/JobDetail/Tax-Accountant/103", "avature", True)]
+        ("Tax Accountant", tempe, "https://apply.deloitte.com/en_US/careers/JobDetail/Tax-Accountant/103",
+         "avature", True)]
     assert rows["112"]["notes"] == ["location given as 'Multiple Locations'; check the posting"]
     assert rows["104"]["location"] == f"{tempe} (+1 more)" and not rows["104"]["title_match"]
     assert "102" not in rows and "111" not in rows  # its page names no Arizona place; Denver
@@ -2833,8 +2900,8 @@ def test_an_employer_with_two_workday_sites_searches_both(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         site = "Exp" if "/Exp/" in str(request.url) else "Entry"
         return httpx.Response(200, json={"total": 1, "jobPostings": [{
-            "title": f"Audit Associate ({site})", "externalPath": f"/job/AZ-Phoenix/Audit_{site}", "locationsText": "AZ-Phoenix",
-            "postedOn": "Posted Today", "bulletFields": [f"{site}1"]}]})
+            "title": f"Audit Associate ({site})", "externalPath": f"/job/AZ-Phoenix/Audit_{site}",
+            "locationsText": "AZ-Phoenix", "postedOn": "Posted Today", "bulletFields": [f"{site}1"]}]})
 
     async def go():
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -2854,7 +2921,8 @@ def test_an_employer_with_two_workday_sites_searches_both(monkeypatch):
             return await search_module._workday(client, ["https://pwc.wd3.myworkdayjobs.com/Exp",
                                                          "https://pwc.wd3.myworkdayjobs.com/Entry"], "audit", 10, [])
 
-    assert [x.url for x in asyncio.run(go_half())] == ["https://pwc.wd3.myworkdayjobs.com/Entry/job/AZ-Phoenix/Audit_Entry"]
+    assert ([x.url for x in asyncio.run(go_half())]
+            == ["https://pwc.wd3.myworkdayjobs.com/Entry/job/AZ-Phoenix/Audit_Entry"])
 
 
 def test_a_talentbrew_site_is_searched_in_the_state(monkeypatch):
@@ -2889,7 +2957,8 @@ def test_a_talentbrew_site_is_searched_in_the_state(monkeypatch):
 
     found = asyncio.run(go(location_terms("AZ")))
     assert [(x.title, x.location, x.posted, x.ats) for x in found] == [
-        ("Staff Accountant", "Phoenix, AZ", "2026-09-16", "icims"), ("Payroll Specialist", "Chandler, AZ", "2026-09-16", "icims")]
+        ("Staff Accountant", "Phoenix, AZ", "2026-09-16", "icims"),
+        ("Payroll Specialist", "Chandler, AZ", "2026-09-16", "icims")]
     assert found[0].url == "https://careers.example.org/job/phoenix/staff-accountant/35300/1"
     assert seen[0].params["Keywords"] == "accountant" and seen[0].params["OrganizationIds"] == "35300"
     # anywhere: the nationwide answer as it comes
@@ -2903,9 +2972,11 @@ def test_a_career_pages_site_is_read_page_by_page(monkeypatch):
 
     monkeypatch.setattr(search_module, "CAREERPAGES_PAUSE", 0)
     monkeypatch.setattr(search_module, "_CHALLENGED", {})
-    row = ('<tr role="link" data-action="click-&gt;jobs--table-results#navigate" data-job-url="https://jobs.example.gov/jobs/{slug}">'
-           '<td class="job-search-results-title"><a aria-label="Title: {title}" href="https://jobs.example.gov/jobs/{slug}">{title}</a></td>'
-           '<td aria-label="Requisition Identifier: {req}">{req}</td><td class="job-search-results-location"><ul>{places}</ul></td></tr>')
+    row = ('<tr role="link" data-action="click-&gt;jobs--table-results#navigate"'
+           ' data-job-url="https://jobs.example.gov/jobs/{slug}"><td class="job-search-results-title">'
+           '<a aria-label="Title: {title}" href="https://jobs.example.gov/jobs/{slug}">{title}</a></td>'
+           '<td aria-label="Requisition Identifier: {req}">{req}</td><td class="job-search-results-location">'
+           '<ul>{places}</ul></td></tr>')
 
     def rows(slug, title, req, *places):
         return row.format(slug=slug, title=title, req=req,
@@ -3026,7 +3097,8 @@ def test_a_workday_posting_with_no_place_in_the_search_takes_it_from_its_address
                                                                     {"descriptor": "TX - Burnet"}}})
             return httpx.Response(200, json={"jobPostingInfo": {"location": "Tempe, AZ"}})
         return httpx.Response(200, json={"total": 4, "jobPostings": [
-            {"title": "Technician II", "externalPath": "/job/Deer-Valley---19829-N-27th-Ave-Phoenix-AZ-85027/Technician-II_JR1",
+            {"title": "Technician II",
+             "externalPath": "/job/Deer-Valley---19829-N-27th-Ave-Phoenix-AZ-85027/Technician-II_JR1",
              "postedOn": "Posted Today", "bulletFields": ["JR1"]},
             {"title": "Patient Care Tech", "externalPath": "/job/Various-Locations--Phoenix-AZ/Patient-Care-Tech_JR2",
              "postedOn": "Posted Today", "bulletFields": ["JR2"]},
@@ -3042,7 +3114,8 @@ def test_a_workday_posting_with_no_place_in_the_search_takes_it_from_its_address
     found = asyncio.run(go())
     assert [x.location for x in found] == ["Deer Valley - 19829 N 27th Ave Phoenix, AZ 85027",
                                            "Various Locations - Phoenix, AZ", "Tempe, AZ", "TX - Burnet"]
-    assert looked == ["/wday/cxs/hhco/Careers/job/Engineering-Technician_JR3",  # only the ones their addresses don't place
+    # only the ones their addresses don't place
+    assert looked == ["/wday/cxs/hhco/Careers/job/Engineering-Technician_JR3",
                       "/wday/cxs/hhco/Careers/job/Process-Technician_JR4"]
 
 
@@ -3105,7 +3178,8 @@ def test_a_whole_board_with_no_openings_at_all_is_said(kind, cfg, board):
 
 
 @pytest.mark.parametrize("kind, cfg, page", [
-    ("applicantstack", "asco", '<div id="ascontent"><div id="contenttitle">Job Openings</div><p>No openings.</p></div>'),
+    ("applicantstack", "asco",
+     '<div id="ascontent"><div id="contenttitle">Job Openings</div><p>No openings.</p></div>'),
     ("phoenixchildrens", "https://careers.pchco.org", '<div class="positions"><div class="blog-items"></div></div>'),
     ("jobvite", "kco", '<article class="jv-page-body"><p>There are no open positions.</p></article>')])
 def test_a_whole_board_on_its_own_page_with_none_on_it_has_none(kind, cfg, page):
@@ -3132,7 +3206,8 @@ def test_a_talemetry_search_that_finds_nothing_says_so_and_a_changed_page_is_sai
 
 
 def test_randstads_page_without_its_search_results_is_said():
-    empty = RANDSTAD_PAGE.split('"searchResults"')[0] + '"searchResults":{"totalSize":0,"hits":[]}};</script></body></html>'
+    empty = (RANDSTAD_PAGE.split('"searchResults"')[0]
+             + '"searchResults":{"totalSize":0,"hits":[]}};</script></body></html>')
     cfg = "https://www.randco.com/jobs/internal"
     out = one_search("randstad", cfg, lambda request: httpx.Response(200, text=empty), location="AZ")
     assert out["results"] == [] and out["errors"] == {}
@@ -3154,8 +3229,8 @@ def sf_none(recent_rows, site_name="APS"):
     and, under it, the site's most recent jobs, of any kind."""
     return (f'<html><body><div class="alert alert-block" id="noresults"><div id="attention"><label>There are currently '
             f'no open positions matching "<span class="attention securitySearchString">zzqxjv AND AZ</span>".</label>'
-            f'</div><div id="noresults-message"><label>The {len(recent_rows)} most recent jobs posted by {site_name} are '
-            f'listed below for your convenience.</label></div></div>'
+            f'</div><div id="noresults-message"><label>The {len(recent_rows)} most recent jobs posted by {site_name} '
+            f'are listed below for your convenience.</label></div></div>'
             + sf_page(recent_rows, 1, len(recent_rows))[len("<html><body>"):])
 
 
@@ -3254,7 +3329,8 @@ def test_a_successfactors_postings_on_site_line_says_where_its_done():
 
     async def capture(url, url_part, timeout=25000, want=None, rewrite=None):
         rewrite(json.loads(json.dumps(RMK_PAGE_BODY)))
-        return {"totalJobs": 1, "jobSearchResult": [rmk_job("171942", "Field Service Engineer", "Field-Service-Engineer")]}
+        return {"totalJobs": 1,
+                "jobSearchResult": [rmk_job("171942", "Field Service Engineer", "Field-Service-Engineer")]}
 
     found: list[Listing] = []
     asyncio.run(rmk_search(capture, {"url": "https://jobs.example.com/search/?q="}, "field service", found, read=read))

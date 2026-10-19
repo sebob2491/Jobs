@@ -98,7 +98,8 @@ def test_a_resume_is_rendered_as_written_not_as_markup():
     assert "&lt;PLC&gt;" in body and "&lt;HMI&gt;" in body
     assert "<script" not in body and "<img" not in body
     assert "24*7 coverage on 3*NXE" in body and "<h1>1 in the region" not in body
-    assert "<h1>Sam Rivera</h1>" in body and 'href="https://linkedin.com/in/sam"' in body and "mailto" in html_unescape(body)
+    assert ("<h1>Sam Rivera</h1>" in body and 'href="https://linkedin.com/in/sam"' in body
+            and "mailto" in html_unescape(body))
 
 
 def html_unescape(text):

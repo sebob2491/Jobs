@@ -57,8 +57,8 @@ def test_a_module_under_its_floor_fails_the_check(tmp_path):
     lines, under = cf.check(data, {"job_apply.alpha": 85.0, "job_apply.beta": 98.0, "job_apply": 0.0}, tmp_path)
     assert under == ["job_apply.alpha"]
     text = "\n".join(lines)
-    assert "**Under the floor:** job_apply.alpha." in text and "| job_apply.alpha | 84.6% | 13 | 85.0% | under the floor |" \
-        in text, text
+    assert ("**Under the floor:** job_apply.alpha." in text
+            and "| job_apply.alpha | 84.6% | 13 | 85.0% | under the floor |" in text), text
 
 
 def test_a_module_without_a_floor_is_named_not_failed(tmp_path):

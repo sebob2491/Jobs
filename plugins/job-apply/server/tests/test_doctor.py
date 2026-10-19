@@ -299,7 +299,8 @@ def test_a_profile_it_cant_read_is_a_problem_not_a_crash(fine, loop, job_apply_h
     which took the doctor command and tool down with it. It's a problem with the profile, said
     without its values."""
     write_profile(job_apply_home, answers=5)
-    (job_apply_home / "answers.yaml").write_text("answers:\n- match: Sam Rivera's question\n  answer: 'yes'\n", encoding="utf-8")
+    (job_apply_home / "answers.yaml").write_text("answers:\n- match: Sam Rivera's question\n  answer: 'yes'\n",
+                                                 encoding="utf-8")
     c = check(report(), "profile")
     assert c.status == doctor.PROBLEM and "can't read (TypeError)" in c.say and "set up job-apply" in c.fix
     out = run(srv.doctor())
@@ -315,7 +316,8 @@ def test_the_home_folder_is_shown_as_tilde(fine, loop, monkeypatch, tmp_path, ca
     (home / ".job-apply").mkdir(parents=True)
     monkeypatch.setattr(doctor.Path, "home", lambda: home)
     monkeypatch.setenv("JOB_APPLY_HOME", str(home / ".job-apply"))
-    monkeypatch.setattr(config, "PLUGIN_ROOT", home / ".claude" / "plugins" / "cache" / "sebob-jobs" / "job-apply" / "0.3.92")
+    monkeypatch.setattr(config, "PLUGIN_ROOT",
+                        home / ".claude" / "plugins" / "cache" / "sebob-jobs" / "job-apply" / "0.3.92")
     monkeypatch.setattr(doctor, "bundled_chromium_installed", lambda: False)  # so the command to get one is shown
     text = report().text()
     sep = os.sep

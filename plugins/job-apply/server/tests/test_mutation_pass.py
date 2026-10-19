@@ -195,7 +195,8 @@ def test_the_command_line_writes_the_rows_and_a_summary_and_checks_the_floor(pac
     found = mp.mutants(package, ["rules.decide"])
     stale = _equivalent(found[0]).replace("before: ", "before: gone ")
     equivalents.write_text(stale, encoding="utf-8")
-    command = f'"{Path(sys.executable).as_posix()}" "{check.as_posix()}"'  # (no backslash for shlex to read, on Windows)
+    # (no backslash for shlex to read, on Windows)
+    command = f'"{Path(sys.executable).as_posix()}" "{check.as_posix()}"'
     args = ["--src", str(package), "--targets", "rules.decide", "--command", command,
             "--cwd", str(tmp_path), "--out", str(out), "--summary", str(summary), "--equivalents", str(equivalents),
             "--jobs", "2"]

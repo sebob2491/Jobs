@@ -105,9 +105,9 @@ def browser_available() -> bool:
 # itself keeps its own value (its setattr comes after this one), and one timed against the real waits on purpose opts
 # out with @pytest.mark.real_waits.
 FAST_WAITS = {
-    "pipeline": {"LATE_BUTTONS_WAIT": 5, "SIGN_IN_SETTLE": 7, "RESET_SETTLE": 7, "STEP_SAVE_WAIT": 6, "STEP_LOAD_WAIT": 8,
-                 "BLANK_PAGE_WAIT": 8, "SIGN_IN_STEP_WAIT": 8, "ACCOUNT_WAIT": 7, "ACCOUNT_STEP_WAIT": 5, "NOTICE_WAIT": 3,
-                 "NEW_TAB_WAIT": 3, "ACCOUNT_DRAW_WAIT": 3,
+    "pipeline": {"LATE_BUTTONS_WAIT": 5, "SIGN_IN_SETTLE": 7, "RESET_SETTLE": 7, "STEP_SAVE_WAIT": 6,
+                 "STEP_LOAD_WAIT": 8, "BLANK_PAGE_WAIT": 8, "SIGN_IN_STEP_WAIT": 8, "ACCOUNT_WAIT": 7,
+                 "ACCOUNT_STEP_WAIT": 5, "NOTICE_WAIT": 3, "NEW_TAB_WAIT": 3, "ACCOUNT_DRAW_WAIT": 3,
                  # (the Applier's poll and its settles: a mock site answers at once)
                  "POLL_SECONDS": 0.3, "ONCE_SETTLE": 0.2, "REFUSAL_SETTLE": 0.5, "INDICATOR_GONE_SETTLE": 0.5,
                  "LEFT_SIGN_IN_SETTLE": 0.5},

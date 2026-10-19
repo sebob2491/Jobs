@@ -27,8 +27,10 @@ def test_a_consent_the_desk_never_gives_is_a_finding_and_the_ones_it_does_are_no
     assert la.consent_given("agreed to Example's “Newsletter and marketing emails” for you (settings.accept_notices)")
     assert la.consent_given("pressed “I agree to arbitration” to finish creating your account on Example")
     assert la.consent_given("ticked “I acknowledge my employment is at-will” to make your account")
-    assert not la.consent_given("ticked “I agree to the Privacy Notice and Terms of Use” to make your account on Example")
-    assert not la.consent_given("agreed to Example's notice “Use of AI in recruiting” for you (settings.accept_notices)")
+    assert not la.consent_given("ticked “I agree to the Privacy Notice and Terms of Use” "
+                                "to make your account on Example")
+    assert not la.consent_given("agreed to Example's notice “Use of AI in recruiting” for "
+                                "you (settings.accept_notices)")
     assert not la.consent_given("left “Send me job alerts” unticked: never a newsletter")
     assert not la.consent_given("clicked “Apply” (a newsletter box sits in the footer)")  # not a consent's verb
     assert not la.consent_given("filled 9 boxes; the talent community box stays yours")
@@ -61,7 +63,8 @@ def test_a_secret_in_a_file_is_said_by_name_never_by_value(tmp_path, monkeypatch
     (folder / "shot.png").write_bytes(b"\x89PNG\0\0jobdesk.test@example.com")  # binary: not read
     found = la.folder_findings(folder, {n: __import__("os").environ.get(n, "") for n in la.SECRETS})
     assert sorted(found) == [f"{(folder / 'pages' / 'example.html').as_posix()}: LIVE_TEST_EMAIL's value, unmasked",
-                             f"{(folder / 'pages' / 'form.html').as_posix()}: LIVE_TEST_SITE_PASSWORD's value, unmasked"]
+                             f"{(folder / 'pages' / 'form.html').as_posix()}: "
+                             "LIVE_TEST_SITE_PASSWORD's value, unmasked"]
     assert not any("Xk9" in f or "jobdesk.test@" in f for f in found)
 
 
@@ -73,7 +76,8 @@ def test_main_fails_with_error_lines_only_when_something_was_found(tmp_path, cap
     (folder / "run.log").write_text(text(rec("Clean Co", ["filled 9 boxes"])), encoding="utf-8")
     assert la.main(["--log", f"pipeline={folder / 'run.log'}", "--folder", str(folder)]) == 0
     assert "audit: nothing found (1 records, 1 files)" in capsys.readouterr().out
-    (folder / "run.log").write_text(text(rec("Example Fab", ["ticked “Join our talent community” to make your account"])),
+    (folder / "run.log").write_text(text(rec("Example Fab",
+                                             ["ticked “Join our talent community” to make your account"])),
                                     encoding="utf-8")
     assert la.main(["--log", f"pipeline={folder / 'run.log'}", "--folder", str(folder)]) == 1
     out = capsys.readouterr().out
@@ -89,8 +93,9 @@ WORKDAY_REVIEW = """<html><body><h2>Review</h2><p>Legal Name Jobdesk Test</p><p>
 <h4>Certifications</h4><p>No Response</p>{more}
 <script>var hint = "From 01/1999 Degree Doctorate";</script><style>.x::before {{ content: "Example Bank"; }}</style>
 <select><option>Choose...</option><option selected>Bachelor's</option><option>Master's Degree</option></select>
-</body></html>"""
-PROFILE = {"name": "Jobdesk Test", "levels": ["high_school", "bachelor"], "others": ["Example Staffing", "Example Bank"],
+</body></html>"""  # noqa: E501
+PROFILE = {"name": "Jobdesk Test", "levels": ["high_school", "bachelor"],
+           "others": ["Example Staffing", "Example Bank"],
            "work": [{"title": "Equipment Technician", "company": "Example Fab", "start": "2021-03", "end": "present"}],
            "education": [{"school": "Arizona State University", "degree": "Bachelor of Science", "start": "2016",
                           "end": "2020"}]}
@@ -156,10 +161,12 @@ def test_the_values_check_reads_each_review_page_its_machine_saved(tmp_path, cap
     for name in la.SECRETS:
         monkeypatch.delenv(name, raising=False)
     folder = tmp_path / "live-accounts-1"
-    for employer, start in (("early-warning-services", "02/2021"), ("tokyo-electron-tel", "03/2021"), ("kla", "02/2021")):
+    for employer, start in (("early-warning-services", "02/2021"), ("tokyo-electron-tel", "03/2021"),
+                            ("kla", "02/2021")):
         (folder / "shard-2" / "pipeline" / employer).mkdir(parents=True)
         (folder / "shard-2" / "pipeline" / employer / "page.html").write_text(
-            WORKDAY_REVIEW.format(start=start, to="", degree="Bachelor of Science", efrom="2016", more=""), encoding="utf-8")
+            WORKDAY_REVIEW.format(start=start, to="", degree="Bachelor of Science", efrom="2016", more=""),
+            encoding="utf-8")
     ready = {**rec("Early Warning Services", ["reached the review page"]), "profile": PROFILE}
     fine = {**rec("Tokyo Electron (TEL)", ["reached the review page"]), "profile": PROFILE}
     old = rec("KLA", ["reached the review page"])  # (no profile noted: an older run's)
@@ -206,8 +213,8 @@ def test_a_posting_read_without_its_title_place_or_text_is_said_per_job_system(t
     assert "postings: 3 of 4 not read whole" in out, out
 
 
-PRIVACY = ("Example Fab collects your name, contact details and work history to consider your application. We may share "
-           "them with our affiliates and service providers, and our site uses cookies. Read our Privacy Notice.")
+PRIVACY = ("Example Fab collects your name, contact details and work history to consider your application. We may "
+           "share them with our affiliates and service providers, and our site uses cookies. Read our Privacy Notice.")
 WAIVER = ("By pressing I Agree you consent to our Terms of Use. Any dispute about your application will be settled by "
           "binding arbitration, and you waive the right to a jury trial.")
 
@@ -292,20 +299,22 @@ def test_a_box_holding_the_applicants_own_detail_where_the_rules_put_none_is_sai
                                   {"id": "b", "kind": "text", "label": "Mobile Phone", "value": "480-555-0199"},
                                   {"id": "c", "kind": "text", "label": "Reference Name", "value": "Testy McTestface"}])
     # (labels that ask for the detail though no rule of the desk's names them: no finding, the review of c4edd30)
-    snapshot(folder, "asked-co", [{"id": str(i), "kind": "text", "label": label, "value": value} for i, (label, value) in
-                                  enumerate([("Home Phone", "480-555-0199"), ("Contact Number", "480-555-0199"),
-                                             ("Sign-in Email", "testy.mctestface.0a1b2c@example.com"),
-                                             ("City, State or Zip", "85225"), ("Applicant Name", "Testy McTestface"),
-                                             ("Preferred Name", "Testy McTestface"), ("Sign", "Jobdesk Test"),
-                                             ("Website", "https://www.linkedin.com/in/example-test-profile"),
-                                             ("Social Media Profile", "linkedin.com/in/example-test-profile")])])
+    snapshot(folder, "asked-co",
+             [{"id": str(i), "kind": "text", "label": label, "value": value} for i, (label, value) in
+              enumerate([("Home Phone", "480-555-0199"), ("Contact Number", "480-555-0199"),
+                         ("Sign-in Email", "testy.mctestface.0a1b2c@example.com"),
+                         ("City, State or Zip", "85225"), ("Applicant Name", "Testy McTestface"),
+                         ("Preferred Name", "Testy McTestface"), ("Sign", "Jobdesk Test"),
+                         ("Website", "https://www.linkedin.com/in/example-test-profile"),
+                         ("Social Media Profile", "linkedin.com/in/example-test-profile")])])
     snapshot(folder, "right-co", [
         {"id": "a", "kind": "text", "label": "Phone Number*", "value": "(480) 555-0199"},
         {"id": "b", "kind": "text", "label": "Email Address", "value": "testy.mctestface.0a1b2c@example.com"},
         {"id": "c", "kind": "text", "label": "User Name", "value": "<test-email>"},
         {"id": "d", "kind": "text", "label": "Postal Code", "value": "85225"},
         {"id": "e", "kind": "text", "label": "Address Line 1", "value": "175 S Arizona Ave"},
-        {"id": "f", "kind": "text", "label": "LinkedIn Profile", "value": "https://www.linkedin.com/in/example-test-profile"},
+        {"id": "f", "kind": "text", "label": "LinkedIn Profile",
+         "value": "https://www.linkedin.com/in/example-test-profile"},
         {"id": "g", "kind": "text", "label": "Electronic Signature", "value": "Jobdesk Test"},
         {"id": "h", "kind": "text", "label": "Employee ID", "value": "N/A"},
         {"id": "i", "kind": "password", "label": "Password", "value": "(set)"}])
@@ -313,7 +322,8 @@ def test_a_box_holding_the_applicants_own_detail_where_the_rules_put_none_is_sai
     snapshot(folder, "fixture-co", [])
     records = [rec("Wrong Co", ["filled 9 boxes"]), rec("Right Co", ["filled 9 boxes"]), rec("Asked Co", ["filled"]),
                rec("Unsaved Co", ["filled 9 boxes"], status="needs_you"),
-               {**rec("Broken Co", ["filled 9 boxes"], status="needs_you"), "snapshot_error": "TimeoutError: page closed"},
+               {**rec("Broken Co", ["filled 9 boxes"], status="needs_you"),
+                "snapshot_error": "TimeoutError: page closed"},
                # (its page saved, and the fixture made from it failed: said as that, the review of c4edd30)
                {**rec("Fixture Co", ["filled 9 boxes"], status="needs_you"), "fixture_error": "OSError: disk full"}]
     assert la.stop_pages("hr", {"Odd Co": {"company": "Odd Co", "rounds": ["not a round"]}}, [folder]) == (0, 0, [])
@@ -326,7 +336,8 @@ def test_a_box_holding_the_applicants_own_detail_where_the_rules_put_none_is_sai
     assert "::warning::hr/Wrong Co: box \"Employee ID\" holds the profile's phone" in out
     assert "::warning::hr/Unsaved Co: the page it stopped on wasn't saved" in out
     assert "::warning::hr/Broken Co: the page it stopped on wasn't saved (TimeoutError: page closed)" in out
-    assert "::warning::hr/Fixture Co: the page it stopped on was saved, but its fixture failed (OSError: disk full)" in out
+    assert ("::warning::hr/Fixture Co: the page it stopped on was saved, but its fixture "
+            "failed (OSError: disk full)" in out)
     assert "Right Co" not in out and "Asked Co" not in out and "::error::" not in out
     assert "; pages: 1 of 3 stops saved" in out
 

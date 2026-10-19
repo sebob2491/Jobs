@@ -141,7 +141,8 @@ class FakeAts:
         got = []
         for m in mail:
             domain = m["sender"].rpartition("@")[2].lower()
-            if m["kind"] != want or m["received"] < since - look_back or (before is not None and m["received"] >= before):
+            if (m["kind"] != want or m["received"] < since - look_back
+                    or (before is not None and m["received"] >= before)):
                 continue
             if not any(domain == d or domain.endswith("." + d) for d in senders):
                 continue
@@ -231,7 +232,8 @@ def test_oracle_recruiting_walk(srv, fake_ats, job_apply_home):
     assert r.page.url.endswith("/apply/section/3"), r.page.url
     assert "reached the review page" in r.log, r.log
     # (the code: sent once, read from the inbox, typed in)
-    assert [m["kind"] for m in fake_ats.inbox] == ["code"] and "code" in fake_ats.looked, (fake_ats.inbox, fake_ats.looked)
+    assert ([m["kind"] for m in fake_ats.inbox] == ["code"]
+            and "code" in fake_ats.looked), (fake_ats.inbox, fake_ats.looked)
     assert "entered the code from your email (sent from oraclecloud.com)" in r.log, r.log
     # (the questions: the one the profile can't answer was the person's)
     assert asked[:2] == ("needs_you", "questions") and asked[2] == [
@@ -241,7 +243,8 @@ def test_oracle_recruiting_walk(srv, fake_ats, job_apply_home):
     assert answers["2"]["email"] == "sam.rivera@example.com", answers
     assert answers["picked"]["region1"] == "Maricopa", answers
     final = answers["3"]
-    assert (final["authorized"], final["sponsorship"], final["adult"], final["shifts"]) == ("Yes", "No", "Yes", "Yes"), final
+    assert ((final["authorized"], final["sponsorship"], final["adult"], final["shifts"])
+            == ("Yes", "No", "Yes", "Yes")), final
     assert final["heard"] == "LinkedIn" and final["fullName"] == "Sam Rivera", final
     assert final["jobAlerts"] is False, final  # (never a job alerts box)
     assert fake_ats.said("cookies") == [{"what": "cookies", "choice": "declined"}], fake_ats.events
@@ -249,7 +252,8 @@ def test_oracle_recruiting_walk(srv, fake_ats, job_apply_home):
     no_submit(fake_ats, srv, r)
 
 
-@pytest.mark.parametrize("how", [{"accept_notices": False}, {"submit_mode": "dry_run"}], ids=["notices-off", "practice"])
+@pytest.mark.parametrize("how", [{"accept_notices": False}, {"submit_mode": "dry_run"}],
+                         ids=["notices-off", "practice"])
 def test_oracle_walk_leaves_its_terms_to_the_person_where_notices_are_theirs(srv, fake_ats, job_apply_home, how):
     """The same Oracle walk with settings.accept_notices off, or in practice mode (which agrees to nothing): the email
     step's terms box is the person's, put to them on the desk. It's left unticked and Next unpressed, so no code is
@@ -332,7 +336,8 @@ def test_icims_walk(srv, fake_ats, job_apply_home, monkeypatch, framed):
                 desk.answer(job["id"], [{"label": q["label"], "value": "Yes", "remember": False} for q in r.questions])
                 await until_stopped(r)
             frame = _frame(r, "/candidate") if framed else r.page.main_frame
-            return r, at_captcha, before, still, asked, await frame.evaluate("() => window.answers()") if frame else None
+            return (r, at_captcha, before, still, asked,
+                    await frame.evaluate("() => window.answers()") if frame else None)
         finally:
             await applier.stop()
 
@@ -344,7 +349,8 @@ def test_icims_walk(srv, fake_ats, job_apply_home, monkeypatch, framed):
     assert fake_ats.said("captcha") == [], fake_ats.events  # (never a press in the challenge)
     assert made == [] and mail == [], (made, mail)  # (no account, no email, before the person has passed the check)
     assert any(line.startswith("agreed to Example Fab's “I Acknowledge the Privacy Notice”") for line in log), log
-    # (past the check: the account made with the saved password, framed in iCIMS' own frame too, and on to the questions)
+    # (past the check: the account made with the saved password, framed in iCIMS' own frame too, and on
+    # to the questions)
     assert asked[:3] == ("needs_you", "questions", ["Do you have a valid driver's license? *"]), asked
     [account] = fake_ats.said("account")
     assert (account["email"], account["password"], account["alerts"]) == (
@@ -400,7 +406,8 @@ def test_greenhouse_walk(srv, fake_ats, job_apply_home):
     assert asked[:3] == ("needs_you", "questions", [consent]), asked
     assert (r.status, r.need) == ("ready", ""), (r.status, r.need, r.reason, r.log)
     assert "reached the review page" in r.log, r.log
-    assert (answers["first_name"], answers["last_name"], answers["email"]) == ("Sam", "Rivera", "sam.rivera@example.com")
+    assert ((answers["first_name"], answers["last_name"], answers["email"])
+            == ("Sam", "Rivera", "sam.rivera@example.com"))
     assert answers["candidate-location"] == "Chandler, Arizona, United States", answers
     assert answers["country"] == "United States" and answers["resume"] == "resume.pdf", answers
     assert answers["question_authorized"] == "I am authorized to work in this country for any employer", answers
@@ -447,7 +454,8 @@ def test_successfactors_walk(srv, fake_ats, job_apply_home, monkeypatch):
                 desk.answer(job["id"], [{"label": q["label"], "value": "3", "remember": False} for q in r.questions])
                 await until_stopped(r)
             kept = await r.page.evaluate("() => Object.fromEntries(Object.keys(sessionStorage).filter(k => "
-                                         "k.startsWith('sf.')).map(k => [k.slice(3), JSON.parse(sessionStorage.getItem(k))]))")
+                                         "k.startsWith('sf.')).map(k => [k.slice(3), "
+                                         "JSON.parse(sessionStorage.getItem(k))]))")
             return r, asked, kept, await r.page.evaluate("() => window.answers ? window.answers() : null")
         finally:
             await applier.stop()
@@ -462,7 +470,8 @@ def test_successfactors_walk(srv, fake_ats, job_apply_home, monkeypatch):
     assert (r.status, r.need) == ("needs_you", "your_submit"), (r.status, r.need, r.reason, r.log)
     assert "“Apply”, so it's yours to press" in r.reason, r.reason
     assert (answers["firstName"], answers["lastName"], answers["email"]) == ("Sam", "Rivera", "sam.rivera@example.com")
-    assert (answers["state"], answers["country"], answers["resume"]) == ("Arizona", "United States", "resume.pdf"), answers
+    assert ((answers["state"], answers["country"], answers["resume"])
+            == ("Arizona", "United States", "resume.pdf")), answers
     assert (answers["authorized"], answers["sponsorship"], answers["cleanroom"]) == ("Yes", "No", "Yes"), answers
     assert answers["pumps"] == "3" and answers["gender"] == "Decline to self-identify", answers
     no_submit(fake_ats, srv, r)
@@ -505,13 +514,15 @@ def test_ukg_walk(srv, fake_ats, job_apply_home, monkeypatch):
                 desk.answer(job["id"], [{"label": q["label"], "value": "Yes", "remember": False} for q in r.questions])
                 await until_stopped(r)
             kept = await r.page.evaluate("() => Object.fromEntries(Object.keys(sessionStorage).filter(k => "
-                                         "k.startsWith('ukg.')).map(k => [k.slice(4), JSON.parse(sessionStorage.getItem(k))]))")
+                                         "k.startsWith('ukg.')).map(k => [k.slice(4), "
+                                         "JSON.parse(sessionStorage.getItem(k))]))")
             return r, asked, kept
         finally:
             await applier.stop()
 
     r, asked, kept = run(go())
-    assert asked[:3] == ("needs_you", "questions", ["Are you willing to work overtime and weekends as needed? *"]), asked
+    assert (asked[:3]
+            == ("needs_you", "questions", ["Are you willing to work overtime and weekends as needed? *"])), asked
     assert (kept.get("created"), kept.get("texts"), kept.get("presses")) == (True, False, 1), kept
     assert any(line.startswith("created your account on") for line in r.log), r.log
     assert (r.status, r.need) == ("ready", ""), (r.status, r.need, r.reason, r.log)
@@ -548,7 +559,8 @@ def test_ukg_walk_leaves_the_account_to_the_person_where_accounts_are_theirs(srv
             await applier.stop()
 
     r, (pressed, created) = run(go())
-    assert (r.status, r.need) == ("needs_you", "sign_in") and r.page.url.endswith("/signup.html?register"), (r.reason, r.log)
+    assert ((r.status, r.need) == ("needs_you", "sign_in")
+            and r.page.url.endswith("/signup.html?register")), (r.reason, r.log)
     assert (pressed, created) == (0, None), (pressed, created, r.log)
     assert "filled the Create Account form with your details and saved password" in r.log, r.log
     assert not any(line.startswith(("pressed “Continue”", "created your account")) for line in r.log), r.log

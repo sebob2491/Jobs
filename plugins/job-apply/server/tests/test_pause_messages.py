@@ -17,7 +17,8 @@ ACTION = re.compile(r"\b(press|answer|sign in|log in|create|reload|solve|fill|ch
 
 def _driver_source() -> str:
     """The driver's source: pipeline.py and its mixins (pipeline_*.py, Applier's bases), read as one, less what a mixin
-    declares of the applier's own for the type checker (`if TYPE_CHECKING:`), which would stand for the methods it names."""
+    declares of the applier's own for the type checker (`if TYPE_CHECKING:`), which would stand for the
+    methods it names."""
     mixins = [re.sub(r"(?ms)^    if TYPE_CHECKING:.*?(?=^    \S)", "", p.read_text(encoding="utf-8"))
               for p in sorted(PIPELINE.parent.glob("pipeline_*.py"))]
     return "\n".join([PIPELINE.read_text(encoding="utf-8"), *mixins])
@@ -215,7 +216,8 @@ def test_the_stops_said_in_one_place_say_what_to_do_too():
 def test_the_audit_tells_a_stop_with_an_action_from_one_without():
     assert _ends_without_action("The page didn't move on. The site said nothing more about it.")
     assert _ends_without_action("Something went wrong on the site. Look at it and read what it says.")
-    assert not _ends_without_action("The page didn't move on. Check it in the desk's browser window, then press Carry on.")
+    assert not _ends_without_action("The page didn't move on. Check it in the desk's "
+                                    "browser window, then press Carry on.")
     assert not _ends_without_action("The page didn't move on: {}.")  # (the action is where the {} is built)
 
 

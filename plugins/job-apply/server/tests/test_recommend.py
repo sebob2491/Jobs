@@ -100,7 +100,8 @@ def test_requirements_from_posting_text():
 
 def test_scores_read_like_the_brief():
     p = tech()
-    fse2 = score_listing({"title": "Field Service Engineer 2", "location": "US-AZ-Chandler (1002)", "posted": "2026-10-01"},
+    fse2 = score_listing({"title": "Field Service Engineer 2", "location": "US-AZ-Chandler (1002)",
+                          "posted": "2026-10-01"},
                          p, LAM_FSE2, TODAY)
     early = score_listing({"title": "Field Service Engineer, Early Career Opportunity", "location": "US-AZ-Chandler",
                            "posted": "2026-07-23"}, p, LAM_EARLY, TODAY)
@@ -117,7 +118,8 @@ def test_scores_read_like_the_brief():
     assert not accountant.recommended and "not one of your target titles" in accountant.concerns
     cleared = score_listing({"title": "Field Service Engineer"}, p, DEFENSE, TODAY)
     assert cleared.blocked and not cleared.recommended
-    not_us = score_listing({"title": "Field Service Engineer"}, tech(work_authorization={"us_person": False}), LAM_FSE2, TODAY)
+    not_us = score_listing({"title": "Field Service Engineer"}, tech(work_authorization={"us_person": False}),
+                           LAM_FSE2, TODAY)
     assert not_us.blocked and "export-controlled: U.S. persons only" in not_us.concerns
     far = score_listing({"title": "Field Service Engineer"}, tech(preferences={"willing_to_travel": "up to 25%"}),
                         LAM_FSE2, TODAY)
@@ -137,8 +139,8 @@ def test_recommend_reads_the_top_postings():
     async def search(query, location, limit):
         asked.update(query=query, location=location, limit=limit)
         return {"results": [
-            {"company": "Lam Research", "title": "Field Service Engineer 2", "url": "https://x/fse2", "location": "Chandler, AZ",
-             "posted": "2026-10-01"},
+            {"company": "Lam Research", "title": "Field Service Engineer 2", "url": "https://x/fse2",
+             "location": "Chandler, AZ", "posted": "2026-10-01"},
             {"company": "Lam Research", "title": "Field Service Engineer, Early Career", "url": "https://x/early",
              "location": "Chandler, AZ", "posted": "2026-07-23"},
             {"company": "Acme", "title": "Accountant", "url": "https://x/acct", "location": "Phoenix, AZ"},
@@ -160,13 +162,16 @@ def test_recommend_reads_the_top_postings():
     top = out["results"][0]
     assert top["fit"]["recommended"] and top["posting"]["apply_url"] == "https://x/fse2/apply"
     assert out["results"][-1]["title"] == "Accountant" and not out["results"][-1]["fit"]["recommended"]
-    assert out["errors"] == {"Broken Co": "SearchError: HTTP 500"} and out["browser_only"] == [{"company": "TSMC Arizona"}]
+    assert (out["errors"] == {"Broken Co": "SearchError: HTTP 500"}
+            and out["browser_only"] == [{"company": "TSMC Arizona"}])
 
 
 def test_requirements_read_the_way_postings_write_them():
     # curly apostrophes (Workday, Oracle) and "A.S." are degrees too
-    assert requirements("Minimum Qualifications\n- Bachelor’s degree in Mechanical Engineering.")["degree"] == "bachelor"
-    assert requirements("Requirements\n- A.S. in electronics or 2+ years of military training.")["degree"] == "associate"
+    assert (requirements("Minimum Qualifications\n- Bachelor’s degree in Mechanical Engineering.")["degree"]
+            == "bachelor")
+    assert (requirements("Requirements\n- A.S. in electronics or 2+ years of military training.")["degree"]
+            == "associate")
     assert requirements("Required: a degree in electrical engineering.")["degree"] == "bachelor"
     # only the preferred part of a sentence is skipped
     both = requirements("Qualifications\nBachelor's degree required, Master's preferred.")
@@ -197,7 +202,8 @@ def test_requirements_in_markdown_and_beside_application_questions():
                        "- Do you hold an active security clearance?")
     assert not asm["us_person"] and not asm["clearance"] and asm["years"] == 3
     # Intel: one of several degrees
-    assert requirements("Minimum qualifications:\n- Associate's or Bachelor's degree in a STEM field.")["degree"] == "associate"
+    assert (requirements("Minimum qualifications:\n- Associate's or Bachelor's degree in a STEM field.")["degree"]
+            == "associate")
 
 
 def test_the_way_around_a_degree_said_another_way_and_lists_that_arent_one():
@@ -208,7 +214,8 @@ def test_the_way_around_a_degree_said_another_way_and_lists_that_arent_one():
         return r["degree"], r["degree_or_equivalent"]
     assert read("- Bachelor's degree in Electronics.\nEquivalent combination of education and experience "
                 "will be considered.") == ("bachelor", True)
-    assert read("- Bachelor's degree required. In lieu of a degree, 4 additional years of experience.") == ("bachelor", True)
+    assert (read("- Bachelor's degree required. In lieu of a degree, 4 additional years of experience.")
+            == ("bachelor", True))
     assert read("- Bachelor's degree; military experience may be substituted for the degree.") == ("bachelor", True)
     assert read("- Associate degree in electronics; relevant experience in lieu of a degree is acceptable, "
                 "field service experience preferred.") == ("associate", True)
@@ -226,17 +233,19 @@ def test_degrees_with_other_ways_in():
     (the wording of Applied Materials', ASM's and Onto's postings)."""
     for text in ("- Completion of an Associate degree, military technical training, field service experience, "
                  "or trade certification",
-                 "- Technical school diploma or associate degree from a two\u2011year program in Electronics, or at least "
-                 "three years of progressively responsible, hands\u2011on experience",
-                 "- Alternatively: Associate degree or technical certification with 5+ years of field service experience."):
+                 "- Technical school diploma or associate degree from a two\u2011year program in Electronics, or at "
+                 "least three years of progressively responsible, hands\u2011on experience",
+                 "- Alternatively: Associate degree or technical certification with 5+ years "
+                 "of field service experience."):
         req = requirements("Qualifications\n" + text)
         assert req["degree"] == "associate" and req["degree_or_equivalent"], text
-    ladder = requirements("Qualifications\n- Technical school diploma (2\u2011year program), OR BS with 1\u20133 years of "
-                          "experience, OR 7+ years of relevant technical experience.")
+    ladder = requirements("Qualifications\n- Technical school diploma (2\u2011year program), OR BS with 1\u20133 years "
+                          "of experience, OR 7+ years of relevant technical experience.")
     assert ladder["degree"] == "associate" and ladder["degree_or_equivalent"]
     hard = requirements("Qualifications\n- Completion of an Associate degree or Bachelors Degree")
     assert hard["degree"] == "associate" and not hard["degree_or_equivalent"]
-    with_years = requirements("- Bachelor's degree and 3+ years of hands-on technical experience in electronic systems.")
+    with_years = requirements("- Bachelor's degree and 3+ years of hands-on technical "
+                              "experience in electronic systems.")
     assert with_years["degree"] == "bachelor" and not with_years["degree_or_equivalent"]
 
 
@@ -272,17 +281,20 @@ def test_a_posting_the_sites_own_area_filter_found_isnt_held_for_the_place_it_na
 
     async def search(query, location, limit):
         return {"results": [
-            {"company": "Banner Health", "title": "Field Service Engineer 2", "url": "https://x/banner", "location": where,
-             "in_area": True},
-            {"company": "Moved Co", "title": "Field Service Engineer 2", "url": "https://x/elsewhere", "location": "Peoria, IL"}]}
+            {"company": "Banner Health", "title": "Field Service Engineer 2", "url": "https://x/banner",
+             "location": where, "in_area": True},
+            {"company": "Moved Co", "title": "Field Service Engineer 2", "url": "https://x/elsewhere",
+             "location": "Peoria, IL"}]}
 
     async def fetch(url):
         return Posting(url=url, description=LAM_FSE2, location=where if url == "https://x/banner" else "Peoria, IL")
 
     out = asyncio.run(recommend(p, search, read_postings=5, fetch=fetch, today=TODAY))
     fits = {r["url"]: r["fit"] for r in out["results"]}
-    assert not fits["https://x/banner"]["held"] and not any("says it's in" in c for c in fits["https://x/banner"]["concerns"]), fits
-    assert fits["https://x/elsewhere"]["held"] and "the posting says it's in Peoria, IL" in fits["https://x/elsewhere"]["concerns"]
+    assert (not fits["https://x/banner"]["held"]
+            and not any("says it's in" in c for c in fits["https://x/banner"]["concerns"])), fits
+    assert (fits["https://x/elsewhere"]["held"]
+            and "the posting says it's in Peoria, IL" in fits["https://x/elsewhere"]["concerns"])
 
 
 def test_recommend_holds_postings_it_could_not_check():
@@ -292,11 +304,15 @@ def test_recommend_holds_postings_it_could_not_check():
 
     async def search(query, location, limit):
         return {"results": [
-            {"company": "Lam Research", "title": "Field Service Engineer 2", "url": "https://x/fse2", "location": "Chandler, AZ"},
-            {"company": "Acme", "title": "Field Service Engineer", "url": "https://x/unread", "location": "Phoenix, AZ"},
-            {"company": "Moved Co", "title": "Field Service Engineer", "url": "https://x/elsewhere", "location": "3 Locations"},
+            {"company": "Lam Research", "title": "Field Service Engineer 2", "url": "https://x/fse2",
+             "location": "Chandler, AZ"},
+            {"company": "Acme", "title": "Field Service Engineer", "url": "https://x/unread",
+             "location": "Phoenix, AZ"},
+            {"company": "Moved Co", "title": "Field Service Engineer", "url": "https://x/elsewhere",
+             "location": "3 Locations"},
             # a page that builds itself with script: read, but no posting in it
-            {"company": "Script Co", "title": "Field Service Engineer", "url": "https://x/blank", "location": "Tempe, AZ"},
+            {"company": "Script Co", "title": "Field Service Engineer", "url": "https://x/blank",
+             "location": "Tempe, AZ"},
         ]}
 
     async def fetch(url):
@@ -424,9 +440,11 @@ def test_a_job_away_from_the_persons_places_says_so():
                   "Arizona", "AZ - Scottsdale Corporate", "tucson-az; Phoenix, AZ"):
         fit = score_listing({**fresh, "location": where}, stays, today=TODAY)
         assert fit.recommended and not any("away from" in c for c in fit.concerns), (where, fit)
-    assert any("Tucson, AZ" in c for c in score_listing({**fresh, "location": "tucson-az"}, stays, today=TODAY).concerns)
+    assert any("Tucson, AZ" in c
+               for c in score_listing({**fresh, "location": "tucson-az"}, stays, today=TODAY).concerns)
     # iCIMS writes the country and state first
-    assert any("Bagdad, AZ" in c for c in score_listing({**fresh, "location": "US-AZ-Bagdad"}, stays, today=TODAY).concerns)
+    assert any("Bagdad, AZ" in c
+               for c in score_listing({**fresh, "location": "US-AZ-Bagdad"}, stays, today=TODAY).concerns)
     for where in ("US-AZ-Ahwatukee", "US-AZ-Phoenix | US-TX-Austin"):
         assert score_listing({**fresh, "location": where}, stays, today=TODAY).recommended, where
 
@@ -445,7 +463,8 @@ def test_a_posting_asking_for_far_more_experience_isnt_preselected():
     grad = tech(preferences={"titles": ["Human Resources"], "locations": ["Phoenix, AZ"]},
                 education={"highest_degree": "Bachelor's Degree"},
                 work_history=[{"title": "HR Assistant", "company": "Example", "start": "2026-04", "end": "present"}])
-    either = score_listing(job, grad, "Requirements\nBachelor's degree or 4 years of related experience.\n", today=TODAY)
+    either = score_listing(job, grad, "Requirements\nBachelor's degree or 4 years of related experience.\n",
+                           today=TODAY)
     assert not either.blocked and either.recommended
 
 
@@ -478,7 +497,8 @@ def test_a_posting_that_turns_away_plain_requests_is_read_the_hard_way_last():
     out = asyncio.run(recommend(p, search, read_postings=2, fetch=fetch, fetch_hard=hard, today=TODAY))
     assert {r["company"]: r["posting"]["description"] == LAM_FSE2 for r in out["results"]} == {"Aerotek": True,
                                                                                                "Sprouts": True}
-    assert order.index("https://careers-x.icims.com/jobs/1/job") < order.index("hard https://careers-x.icims.com/jobs/1/job")
+    assert (order.index("https://careers-x.icims.com/jobs/1/job")
+            < order.index("hard https://careers-x.icims.com/jobs/1/job"))
     assert "hard https://y.icims.com/jobs/2/job" not in order  # its employer's own page read it first
 
 
@@ -515,9 +535,11 @@ def test_a_reading_with_no_posting_text_falls_through_and_hard_reads_are_few():
 
 
 def test_the_review_of_oct_15s_reading_slips():
-    """A posting that says a degree is NOT required asked for it; "EAR protection" (the safety gear, in capitals) read as
-    export control; "eligible for a Secret clearance" read as one needed now; and Phoenixville, PA was "in Phoenix"."""
-    for text in ("A bachelor's degree is not required for this role.", "This role does not require a bachelor's degree."):
+    """A posting that says a degree is NOT required asked for it; "EAR protection" (the safety gear, in capitals) read
+    as export control; "eligible for a Secret clearance" read as one needed now; and Phoenixville, PA was
+    "in Phoenix"."""
+    for text in ("A bachelor's degree is not required for this role.",
+                 "This role does not require a bachelor's degree."):
         assert requirements(text)["degree"] is None, text
     assert requirements("A bachelor's degree is required.")["degree"] == "bachelor"
     # (the review of 0.3.187: only the degree said not required is dropped)
@@ -525,7 +547,8 @@ def test_the_review_of_oct_15s_reading_slips():
                  "Master's degree not required; Bachelor's degree required.",
                  "Bachelor's degree in engineering required (a Master's degree is not required)."):
         assert requirements(text)["degree"] == "bachelor", text
-    assert requirements("A degree is not required, but a high school diploma or GED is required.")["degree"] == "high_school"
+    assert (requirements("A degree is not required, but a high school diploma or GED is required.")["degree"]
+            == "high_school")
     assert not requirements("EAR/hearing protection required.")["us_person"]
     for text in ("Must be eligible for a Top Secret clearance.", "Eligible to hold a DoD Secret clearance."):
         got = requirements(text)
@@ -539,12 +562,14 @@ def test_the_review_of_oct_15s_reading_slips():
     prof = Profile({"preferences": {"locations": ["Phoenix, AZ"], "titles": ["Technician"]}})
     away = score_listing({"title": "Technician", "company": "Example", "location": "Phoenixville, PA"}, prof)
     assert "in Phoenix" not in away.reasons, away.reasons
-    assert "in Phoenix" in score_listing({"title": "Technician", "company": "Example", "location": "Phoenix, AZ"}, prof).reasons
+    assert "in Phoenix" in score_listing({"title": "Technician", "company": "Example", "location": "Phoenix, AZ"},
+                                         prof).reasons
 
 
 @pytest.mark.parametrize("entry, highest", [
     ({"school": "Example State University", "degree": "BS Electrical Engineering", "start": 2023, "end": 2099}, None),
-    ({"school": "Example State University", "degree": "BS Electrical Engineering", "start": 2023, "end": "present"}, None),
+    ({"school": "Example State University", "degree": "BS Electrical Engineering", "start": 2023,
+      "end": "present"}, None),
     ({"school": "Example State University", "degree": "BS Electrical Engineering", "start": 2016, "end": 2020}, None),
     ({"school": "Example State University", "degree": "", "start": 2016, "end": 2020}, "Bachelor's (in progress)"),
 ])
@@ -624,9 +649,11 @@ def test_a_scores_parts_add_up_to_it(title, place, posted, text, who):
 
 
 def test_a_score_kept_within_0_to_100_says_so_among_its_parts():
-    capped = score_listing({"title": "Junior Equipment Technician", "location": "Phoenix, AZ", "posted": "Posted Today"},
+    capped = score_listing({"title": "Junior Equipment Technician", "location": "Phoenix, AZ",
+                            "posted": "Posted Today"},
                            tech(experience={"total_years": 1}, education={"highest_degree": "BS"}),
-                           "Requirements\n- Bachelor's degree required.\n- 1+ years of experience in a fab.", today=TODAY)
+                           "Requirements\n- Bachelor's degree required.\n- 1+ years of experience in a fab.",
+                           today=TODAY)
     assert capped.score == 100 and capped.parts[-1]["why"] == "kept within 0 to 100" and capped.parts[-1]["points"] < 0
     floored = score_listing({"title": "Equipment Technician Intern", "location": "Bagdad, AZ", "posted": "2026-01-02"},
                             tech(work_authorization={"us_person": False}), NEEDS_MUCH, today=TODAY)
