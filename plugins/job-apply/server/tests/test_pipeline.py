@@ -4668,6 +4668,16 @@ def test_an_employers_mail_domains_are_only_its_own(job_apply_home):
     assert pipeline._employer_mail_domains("Odd One", {"test"}) == set()
 
 
+def test_an_employers_code_from_its_parents_or_its_sites_domain_is_its_own(job_apply_home):
+    """Run 145 (the Las Vegas list): NV Energy's Oracle Recruiting is its parent's (Berkshire Hathaway Energy's job
+    site), and mailed its code from oci.brkenergy.com; NNSS's (the Nevada National Security Site's) from nv.doe.gov.
+    Neither was read as the employer's, and both waited out a code the inbox had. Their entries name them."""
+    (job_apply_home / "companies.yaml").write_text(yaml.safe_dump({"lists": ["las-vegas"]}), encoding="utf-8")
+    assert "brkenergy.com" in pipeline._employer_mail_domains("NV Energy", set())
+    assert "nv.doe.gov" in pipeline._employer_mail_domains("Mission Support and Test Services (NNSS)", set())
+    assert "brkenergy.com" not in pipeline._employer_mail_domains("Mission Support and Test Services (NNSS)", set())
+
+
 def test_a_job_search_reached_mid_sign_in_opens_the_job_again_once(srv, monkeypatch, job_apply_home):
     """Edwards Vacuum's SuccessFactors (the probe of Oct 12): after the wait on a reset email, the site had already
     left its sign-in for its careers search (its session gone), and the desk, not going back through the sign-in,
