@@ -59,11 +59,12 @@ class DatesMixin:
         try:
             # (a part with no aria-valuemax is sized by its name: Month and Day two digits, Year four)
             infos = [await parts.nth(i).evaluate(
-                "el => ({id: el.getAttribute('data-ja-id'), mine: el.hasAttribute('data-ja-date-mine'), max: Number(el.getAttribute('aria-valuemax'))"
-                " || (/year|yyyy/i.test(el.getAttribute('aria-label') || el.placeholder || '') ? 9999"
-                " : /day|dd/i.test(el.getAttribute('aria-label') || el.placeholder || '') ? 31"
-                " : /month|mm/i.test(el.getAttribute('aria-label') || el.placeholder || '') ? 12 : 0),"
-                " now: el.getAttribute('aria-valuenow') || (el.value || '').replace(/\\D/g, '')})") for i in range(count)]
+                "el => ({id: el.getAttribute('data-ja-id'), mine: el.hasAttribute('data-ja-date-mine'), max: "
+                "Number(el.getAttribute('aria-valuemax')) || (/year|yyyy/i.test(el.getAttribute('aria-label') || "
+                "el.placeholder || '') ? 9999 : /day|dd/i.test(el.getAttribute('aria-label') || el.placeholder || '') "
+                "? 31 : /month|mm/i.test(el.getAttribute('aria-label') || el.placeholder || '') ? 12 : 0),"
+                " now: el.getAttribute('aria-valuenow') || (el.value || '').replace(/\\D/g, '')})")
+                     for i in range(count)]
             mine = next(i for i, info in enumerate(infos) if info["mine"])
             digits = re.sub(r"\D", "", text)
             if not digits:
@@ -127,8 +128,8 @@ class DatesMixin:
                         if covered:
                             await part.focus(timeout=browser.FOCUS_TIMEOUT)
                     # Workday types into the part with focus, whichever its date marks current (a live trace of
-                    # Intel's and Entegris', Oct 12: its arrows only moved focus away, wrapping to the year, so the month
-                    # went into the year): no arrows, only this part focused before its digits
+                    # Intel's and Entegris', Oct 12: its arrows only moved focus away, wrapping to the year, so the
+                    # month went into the year): no arrows, only this part focused before its digits
                     await said(f"part {i}: focused")
                     if slow:  # (the second time: a moment for the part to take its focus)
                         await page.wait_for_timeout(250)
@@ -142,7 +143,8 @@ class DatesMixin:
                 return [await parts.nth(i).evaluate(read_js) for i in range(count)]
 
             def off(read: list[Any]) -> list[int]:  # every part with an answer, not only those typed now
-                return [i for i in range(count) if want[i] and not (str(read[i]).isdigit() and int(read[i]) == int(want[i]))]
+                return [i for i in range(count) if want[i]
+                        and not (str(read[i]).isdigit() and int(read[i]) == int(want[i]))]
 
             def number(x: Any) -> str:  # (as a number: "05" and "5" alike, "0" and "" alike)
                 return str(int(x)) if str(x).isdigit() and int(x) else ""
@@ -182,7 +184,8 @@ class DatesMixin:
         finally:
             with contextlib.suppress(PlaywrightError):
                 await loc.evaluate("el => el.ownerDocument.querySelectorAll('[data-ja-date-part]').forEach((p) => {"
-                                   " p.removeAttribute('data-ja-date-part'); p.removeAttribute('data-ja-date-mine'); })")
+                                   " p.removeAttribute('data-ja-date-part'); "
+                                   "p.removeAttribute('data-ja-date-mine'); })")
         if wrong:
             shown = "/".join(str(r) or "?" for r in read)
             raise ValueError(f"typed {digits}, but the date reads {shown}; check it in the desk's browser window")

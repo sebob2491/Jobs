@@ -62,7 +62,8 @@ RETIRED_ANSWER_PATTERNS = {
     "credit (check|history|report)":
         r"^(?!.*\b(ever|bankrupt\w*|delinquen\w*|default\w*|judgments?|liens?|collections?|negative|derogatory|"
         r"anything|explain|describe|issues?|problems?)\b).*credit (check|history|report)",
-    "(employed|worked) (by|for) (a|any) .*government": r"^(?!.*\bcontract).*(employed|worked) (by|for) (a|any) .*government",
+    "(employed|worked) (by|for) (a|any) .*government": r"^(?!.*\bcontract).*(employed|"
+                                                       r"worked) (by|for) (a|any) .*government",
 }
 
 
@@ -217,7 +218,8 @@ def live_test_identity(email: Any) -> bool:
         return False
     given = email.strip().lower()
     local, _, domain = wanted.partition("@")
-    return given == wanted or re.fullmatch(rf"{re.escape(local)}\+[a-z0-9-]{{1,40}}@{re.escape(domain)}", given) is not None
+    return (given == wanted
+            or re.fullmatch(rf"{re.escape(local)}\+[a-z0-9-]{{1,40}}@{re.escape(domain)}", given) is not None)
 
 
 # Account handling's default, where a profile doesn't say (settings.manage_accounts)
@@ -267,7 +269,8 @@ def _jobs_at_once(raw: Any) -> tuple[int, str]:
     return _whole_number(raw, "jobs_at_once", JOBS_AT_ONCE_DEFAULT, JOBS_AT_ONCE_MAX)
 
 
-# The keys the desk reads under settings: (the template's); any other is said, as it has no effect ("accept_notice: false")
+# The keys the desk reads under settings: (the template's); any other is said, as it has no effect
+# ("accept_notice: false")
 KNOWN_SETTINGS = ("submit_mode", "auto_submit_ats", "browser_channel", "headless", "email_codes", "email_tracking",
                   "accept_cookies", "manage_accounts", "accept_notices", "jobs_at_once", "follow_up_days")
 
@@ -306,9 +309,9 @@ class Settings:
         raw, d = d, d if isinstance(d, dict) else {}
         mode, warnings = _submit_mode(d.get("submit_mode"))
         if malformed:  # (said: every setting is at its default, and the desk acts in no one's name until it's fixed)
-            warnings.append(f"settings: should be a section with each setting on its own line under it, as the template "
-                            f"has it, not {raw!r}: nothing in it can be read, so the desk makes no accounts and agrees "
-                            "to no notices until it's fixed.")
+            warnings.append("settings: should be a section with each setting on its own line under it, as the "
+                            f"template has it, not {raw!r}: nothing in it can be read, so the desk makes no accounts "
+                            "and agrees to no notices until it's fixed.")
         ats = d.get("auto_submit_ats") or []
         if isinstance(ats, str):  # "workday" or "workday, greenhouse", not a list
             ats = re.split(r"[,\s]+", ats)
@@ -403,7 +406,8 @@ class Profile:
         global _LOADED
         own = path is None
         path = path or profile_path()
-        key = (str(path), _bytes(path), str(answers_path()), _bytes(answers_path()), _bytes(QUESTION_BANK)) if own else None
+        key = ((str(path), _bytes(path), str(answers_path()), _bytes(answers_path()), _bytes(QUESTION_BANK))
+               if own else None)
         loaded = _LOADED
         if key is not None and loaded is not None and loaded[0] == key:
             return cls(copy.deepcopy(loaded[1]), path)
@@ -415,11 +419,13 @@ class Profile:
             except yaml.YAMLError as e:
                 mark = getattr(e, "problem_mark", None)
                 where = f" near line {mark.line + 1}" if mark is not None else ""
-                tip = (" A Windows path in double quotes needs its backslashes doubled, or single quotes: "
-                       "'C:\\Users\\you\\resume.pdf'.") if "\\" in path.read_text(encoding="utf-8", errors="replace") else ""
+                tip = ((" A Windows path in double quotes needs its backslashes doubled, or single quotes: "
+                        "'C:\\Users\\you\\resume.pdf'.")
+                       if "\\" in path.read_text(encoding="utf-8", errors="replace") else "")
                 raise ValueError(f"{path} has a typo{where}, so it can't be read.{tip}") from None
             if not isinstance(data, dict):
-                raise ValueError(f"{path} should hold sections like 'personal:' and 'settings:'; it can't be read as it is")
+                raise ValueError(f"{path} should hold sections like 'personal:' and "
+                                 "'settings:'; it can't be read as it is")
             _zip_as_written(data, path)
             _current_answer_patterns(data)
         if own:
@@ -716,7 +722,8 @@ def set_yaml_value(text: str, keys: tuple[str, ...], value: Any) -> str:
             return _checked(text, bom + "".join(lines), keys, value, before)
         section = before.get(keys[0]) or {}
         start = top + 1
-        stop = next((i for i in range(start, len(lines)) if lines[i].strip() and not lines[i].startswith((" ", "\t", "#"))),
+        stop = next((i for i in range(start, len(lines))
+                     if lines[i].strip() and not lines[i].startswith((" ", "\t", "#"))),
                     len(lines))
         child = next((ln for ln in lines[start:stop] if ln.strip() and not ln.lstrip().startswith("#")), "  x")
         indent = child[:len(child) - len(child.lstrip())] or "  "
@@ -898,7 +905,8 @@ def save_bank_answer(bank_id: str, answer: Any) -> None:
         raise ValueError(f"{answer!r} isn't one of that question's choices")
     data = _answers_file()
     old = data.get("answers")
-    entries = [a for a in (old if isinstance(old, list) else []) if not (isinstance(a, dict) and a.get("bank") == bank_id)]
+    entries = [a for a in (old if isinstance(old, list) else [])
+               if not (isinstance(a, dict) and a.get("bank") == bank_id)]
     if answer not in (None, ""):
         entries.insert(0, {"match": entry["match"], "answer": answer, "bank": bank_id})
     _write_answers(data, entries)

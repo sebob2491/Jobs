@@ -66,9 +66,9 @@ STEP_SAVE_WAIT = 20  # for a step pressed three times that's still saving (KLA's
 STEP_LOAD_WAIT = 30  # for a step still loading its questions, its loading dots on show (KLA's Workday)
 INDICATOR_GONE_SETTLE = 3  # seconds more, the indicator gone and nothing to press yet, for the step's button to follow
 BLANK_PAGE_WAIT = 30  # for a page with nothing on it yet to draw (Infineon's application, now and then)
-# times a page a press led to, with nothing drawn on it after the wait, is loaded again (on a pass at the job) before the
-# person is asked to (Eightfold's apply page after its Apply Now came up blank white, and drew its form once the person
-# reloaded it: issue #112, note 40)
+# times a page a press led to, with nothing drawn on it after the wait, is loaded again (on a pass at the job) before
+# the person is asked to (Eightfold's apply page after its Apply Now came up blank white, and drew its form once the
+# person reloaded it: issue #112, note 40)
 BLANK_RELOADS = 2
 SIGN_IN_STEP_WAIT = 25  # Workday's sign-in step can take longer to draw its buttons (Applied's)
 LEFT_SIGN_IN_SETTLE = 3  # seconds before a sign-in page that led elsewhere is taken for one with no sign-in
@@ -85,8 +85,8 @@ ROUND_NEEDS = {"bot_check", "captcha", "your_submit", "check_submit", "submit_fa
 # A bot check never holds the queue (the owner's call, Oct 11): its job waits in its tab, watched, while the other
 # jobs go on, and the person solves the checks waiting in a round of their own from the desk ("Bot checks"); each
 # job carries on by itself once its tab is past the check. The desk never solves one.
-# A pause that needs the person (a sign-in, an emailed code) holds the queue while they're at it. Nothing done in its tab
-# for HANDS_ON_IDLE (no one's at the browser) and the other jobs go ahead; it's watched still,
+# A pause that needs the person (a sign-in, an emailed code) holds the queue while they're at it. Nothing done in its
+# tab for HANDS_ON_IDLE (no one's at the browser) and the other jobs go ahead; it's watched still,
 # and carried on with once its tab is past the pause.
 HANDS_ON_IDLE = 5 * 60
 HANDS_ON_TIMEOUT = 45 * 60  # the longest it holds the queue, even for someone at work in the tab
@@ -117,8 +117,8 @@ RESET_MAIL_WAIT = 3 * 60
 # that one is used only if none comes
 RESET_FRESH_WAIT = 30
 # ...but only within this much of the request: one from further back is an earlier reset's, whatever the clocks say,
-# never opened (the review of 0.3.209: after the fresh wait, run 136's spent email was opened all the same). Its link was
-# the account's, so its wait running out is said on a card (Run.reset_spent), never taken for no email
+# never opened (the review of 0.3.209: after the fresh wait, run 136's spent email was opened all the same). Its link
+# was the account's, so its wait running out is said on a card (Run.reset_spent), never taken for no email
 RESET_CLOCK_SKEW = 45
 # How long a site may take over a new account before the page is looked at again (a Workday site goes on
 # to its Sign In page a few seconds after Create Account is pressed)
@@ -216,7 +216,8 @@ _QUEUE_LOCKS: dict[str, list[Any]] = {}
 
 def _take_queue_lock() -> str:
     """Keep the desk's queue in this process: "mine"; "theirs" while another process's desk keeps it (its lock held);
-    or "none" when the lock can't be had here at all (a folder that can't be written, or a file system with no locks)."""
+    or "none" when the lock can't be had here at all (a folder that can't be written, or a file system
+    with no locks)."""
     path = config.home() / QUEUE_LOCK
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -273,8 +274,8 @@ _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon 
 # solve, so it holds nothing up: the person applies elsewhere
 _RESET_DONE = re.compile(r"\b(?:your )?password (?:has been|was|is)(?: successfully)? (?:reset|changed|updated)\b|"
                          r"\bpassword (?:reset|change|changed|updated?) (?:was |is )?(?:a )?success", re.I)
-# A reset's page saying it set nothing (opened from its email, or once its button is pressed). Its link spent: "This link
-# has expired", "The password reset link is invalid or has expired", "This reset link is no longer active", "The
+# A reset's page saying it set nothing (opened from its email, or once its button is pressed). Its link spent: "This
+# link has expired", "The password reset link is invalid or has expired", "This reset link is no longer active", "The
 # password reset has timed out", "The link you clicked has already been used", "Invalid Password Reset Request". Or the
 # password one the site had before: "Password was recently used", "You can't reuse a recent password", "Password cannot
 # be the same as your previous 5 passwords". The usual words (none of Workday's is on record: KLA's, the reset probe's
@@ -283,8 +284,8 @@ _RESET_DONE = re.compile(r"\b(?:your )?password (?:has been|was|is)(?: successfu
 # a posting's "non-expired driver's license" beside a sign-in
 _LINK_SPENT = re.compile(r"\b(?:link|token|reset|url)s?\b[^.!?\n]{0,40}?\b(?:expired|no longer (?:valid|active)|"
                          r"(?:already )?been used|already used|invalid|not valid|timed out)\b|"
-                         r"\b(?:expired|invalid)(?: or expired)? (?:(?:password )?reset (?:link|token|request)|link|token|"
-                         r"url)\b|\b(?:this|your|the) (?:password )?(?:reset )?request (?:has )?expired\b|"
+                         r"\b(?:expired|invalid)(?: or expired)? (?:(?:password )?reset (?:link|token|request)|link|"
+                         r"token|url)\b|\b(?:this|your|the) (?:password )?(?:reset )?request (?:has )?expired\b|"
                          r"\bpassword reset failed\b", re.I)
 # ...unless said only of what may be, or what to do if it were
 _ONLY_IF = re.compile(r"^\W*(?:if|in case|should|when)\b|\b(?:may|might|could) be\b", re.I)
@@ -314,7 +315,8 @@ _ERROR_PAGE = re.compile(r"\bsomething went wrong\b|\btechnical details\b", re.I
 # now; IIS's "500 - Internal server error.", Tomcat's "HTTP Status 500 – Internal Server Error", Apache's "Proxy
 # Error", Varnish's "503 Backend fetch failed"); a bare number ("Error 503", "HTTP Error 502") only as the page's title
 _5XX = r"(?:(?:http\s+(?:status|error)\s+|error\s+)?50[0-4]\s*[-\u2013\u2014:.]?\s*)"
-_SERVER_ERROR = re.compile(r"^\s*" + _5XX + r"?(?:internal server error|bad gateway|proxy error|service (?:temporarily )?"
+_SERVER_ERROR = re.compile(r"^\s*" + _5XX
+                           + r"?(?:internal server error|bad gateway|proxy error|service (?:temporarily )?"
                            r"unavailable|gateway time-?out|server error|backend fetch failed)\.?\s*$", re.I)
 _SERVER_ERROR_CODE = re.compile(r"^\s*(?:http\s+(?:status|error)\s+|error\s+)?50[0-4]\s*\.?\s*$", re.I)
 # A page's own language picker: nothing to apply with (iCIMS's error page, run 74: "Language", English (US))
@@ -346,7 +348,8 @@ _CLOSED = re.compile(
 # expired, ..."), and after them, how it's filled or what it's closed for or to ("filled on a rolling basis", "closed
 # for maintenance", "closed to external applicants")
 _CLOSED_IF = re.compile(r"\b(?:until|till|unless|if|when|whenever|once|after|before|as soon as)\b", re.I)
-_CLOSED_HOW = re.compile(r"\s*(?:on (?:a |an )?(?:rolling|ongoing|first)|for (?:maintenance|the (?:day|weekend|holidays?)|"
+_CLOSED_HOW = re.compile(r"\s*(?:on (?:a |an )?(?:rolling|ongoing|first)|for (?:maintenance|"
+                         r"the (?:day|weekend|holidays?)|"
                          r"today|now)|on weekends|to (?:external|internal|outside)\b|quickly|soon|as soon)", re.I)
 # The site saying this person applied for this job before (issue #112, note 30: Workday's job page "You applied for
 # this job on <date>." over its View Application, an Eightfold application saying it was applied to already): a
@@ -357,7 +360,8 @@ _APPLIED_BEFORE = re.compile(
     r"\byou(?:'ve| have)? already (?:applied|submitted an application) (?:for|to) this "
     r"(?:job|position|role|posting|requisition|opening|vacancy)\b(?!\s*(?:\?|before|within|in the))", re.I)
 _WRAPPED = re.compile(r"(?:,|\b(?:or|and|the|an?|to|for|of|if|that|who|you|have|whether|unless|when|once))\s*$", re.I)
-_BOT_TEXT = re.compile(r"verify (?:that )?you are (?:a )?human|are you a robot|checking (?:if the site connection is secure|"
+_BOT_TEXT = re.compile(r"verify (?:that )?you are (?:a )?human|are you a robot|"
+                       r"checking (?:if the site connection is secure|"
                        r"your browser)|press (?:&|and) hold|complete the security check|unusual traffic from your|"
                        r"enable javascript and cookies to continue|request unsuccessful|you have been blocked", re.I)
 _CAPTCHA = re.compile(r"i'?m not a robot|i am human|hcaptcha|recaptcha challenge", re.I)
@@ -368,19 +372,22 @@ _VERIFY_EMAIL = re.compile(r"verif(?:y|ication)\b.{0,40}\b(?:e-?mail|account|lin
 # has neither (live, Oct 2026: Vanguard's, Banner Health's, HonorHealth's)
 _VERIFY_FIRST = re.compile(r"\bverify your (?:account|e-?mail(?: address)?)\b[^.?!]{0,40}\bbefore (?:you )?(?:can )?"
                            r"(?:sign(?:ing)?|log(?:ging)?) ?in\b|\byou need to verify your (?:account|e-?mail)\b|"
-                           r"\b(?:account|e-?mail(?: address)?) (?:has not|hasn'?t|is not|isn'?t|was not|wasn'?t) (?:been )?"
-                           r"(?:verified|confirmed|activated)\b", re.I)
+                           r"\b(?:account|e-?mail(?: address)?) (?:has not|hasn'?t|is not|isn'?t|was not|"
+                           r"wasn'?t) (?:been )?(?:verified|confirmed|activated)\b", re.I)
 # The site's word that it couldn't send that email (Workday's "Failed to resend verification email")
 _SEND_FAILED = re.compile(r"\b(?:failed|unable|couldn'?t|could not|can'?t|cannot) to (?:re-?)?send\b|"
-                          r"\b(?:failed|unable|couldn'?t|could not|can'?t|cannot) (?:to )?(?:re-?)?send(?:ing)?\b", re.I)
+                          r"\b(?:failed|unable|couldn'?t|could not|can'?t|cannot) (?:to )?(?:re-?)?send(?:ing)?\b",
+                          re.I)
 # The page's word that the verification email was just sent (Banner Health's "An email has been sent to you. Please
 # verify your account"): that one is waited for, not asked for again
 _VERIFY_SENT = re.compile(r"\b(?:e-?mail|link|message)\b[^.?!]{0,40}\b(?:has been|have been|was|were|is|been) "
                           r"(?:sent|e-?mailed)\b|\bwe(?:'ve| have)? (?:just )?(?:sent|e-?mailed)\b|"
-                          r"\bsent (?:you )?(?:an? )?(?:new )?(?:verification |confirmation |activation )?(?:e-?mail|link)\b", re.I)
+                          r"\bsent (?:you )?(?:an? )?(?:new )?(?:verification |confirmation |"
+                          r"activation )?(?:e-?mail|link)\b", re.I)
 # A sign-in page's button that sends the verification email again (Workday's "Resend Account Verification")
 _RESEND_VERIFY = re.compile(r"^(?:re-?send|request|send)(?: (?:the|a|an|me|my|another|new))*(?: account)?"
-                            r"(?: (?:e-?mail|verification|confirmation|activation))+(?: (?:e-?mail|link|again))?$", re.I)
+                            r"(?: (?:e-?mail|verification|confirmation|activation))+(?: (?:e-?mail|link|again))?$",
+                            re.I)
 
 
 # ------------------------------------------- emailed codes and sign-in buttons
@@ -394,7 +401,8 @@ _CODE_FIELD = re.compile(r"verification code|one[- ]time (?:pass)?code|passcode|
 # "Enter your phone number verification code", "the mobile number OTP", nor a "Re-enter your phone number" beside one:
 # the review's)
 _ASKS_A_PHONE = re.compile(r"(?<![\w-])enter (?:the|your|a) (?:\w+ ){0,2}(?:phone|mobile|cell|telephone) number\b"
-                           r"(?!'?s? (?:verification |security |one[- ]time |sms )?(?:code|otp|passcode|pin)\b)|#{3}-#{3}-#{4}",
+                           r"(?!'?s? (?:verification |security |one[- ]time |sms )?(?:code|otp|"
+                           r"passcode|pin)\b)|#{3}-#{3}-#{4}",
                            re.I)
 
 
@@ -418,7 +426,8 @@ _ACCOUNT_ON = re.compile(r"^(submit|continue|next|agree|i agree|accept|create(?:
 _ONE_TIME_CODE = re.compile(r"^(?:use an? )?(?:one[- ]time (?:pass)?code|e-?mail (?:me )?an? code)(?: instead)?$", re.I)
 _CODE_SENDS = re.compile(r"^submit$", re.I)
 _APPLICATION_WORD = re.compile(r"\bapplication\b|\bapply\b", re.I)
-_TRY_LATER = re.compile(r"\btoo many\b.{0,30}\b(?:attempts|requests|tries)\b|\btry again (?:later|in \d+)|\brate[- ]limit",
+_TRY_LATER = re.compile(r"\btoo many\b.{0,30}\b(?:attempts|requests|tries)\b|"
+                        r"\btry again (?:later|in \d+)|\brate[- ]limit",
                         re.I)
 
 
@@ -442,7 +451,8 @@ _PICTURE_CODE = re.compile(r"captcha|text in (?:the )?(?:image|picture)", re.I)
 # or contacted), the site saying the email already has an account (said of the account or
 # email, not "Already have an account? Sign in"), the way to a password reset (not a username
 # reminder), the buttons of a reset's pages, and its "we've emailed you a link"
-_MAKE_ACCOUNT = re.compile(r"^(create(?: an| my| your| a new)? account|register|sign ?up|create|submit|continue)$", re.I)
+_MAKE_ACCOUNT = re.compile(r"^(create(?: an| my| your| a new)? account|register|sign ?up|create|submit|continue)$",
+                           re.I)
 # and the button of its second step, on a page of its own (UKG Pro's "Create account" after a name and phone)
 _ACCOUNT_BUTTON = re.compile(r"^(create(?: an| my| your| a new)? account|register|sign ?up)$", re.I)
 _TERMS_ONLY = re.compile(r"terms|conditions|(?:privacy|data protection) (?:policy|notice|statement)"
@@ -450,19 +460,23 @@ _TERMS_ONLY = re.compile(r"terms|conditions|(?:privacy|data protection) (?:polic
                          # the first nightly at every employer, Oct 11, nine stopped on it) the account itself
                          # ("I agree to create(ing) a candidate home account"), a bare "I agree" or "I consent", the
                          # processing of one's personal data (a GDPR notice), the documents above read
-                         r"|\b(?:agree|consent)\w*\b.{0,40}\bcreat\w*\b.{0,60}\baccount\b|^\s*(?:yes,? )?i (?:agree|consent|accept)\W*$"
+                         r"|\b(?:agree|consent)\w*\b.{0,40}\bcreat\w*\b.{0,60}\baccount\b|"
+                         r"^\s*(?:yes,? )?i (?:agree|consent|accept)\W*$"
                          r"|\bgdpr\b|process\w* (?:of )?my personal data|acknowledge having read", re.I)
 _TERMS_BOX = re.compile(r"terms|conditions|privacy|consent|agree|acknowledge|policy|notice", re.I)
 # What tells a sign-up's page or box from an account's, where the desk only reads what step a page is
 # (_email_first_account, _email_account_view) or names a box still empty (_account_wants). What's ticked or agreed to
 # is _never_for_them's, and each word here is one of its (the tests check). A wider list here would move a step to
 # another way of being taken (an account's agreement read as the application), not keep a tick or a press from it
-_NOT_TERMS = re.compile(r"newsletter|mailing list|marketing|job alerts?|text messages?|\bsms\b|promotion|offers|subscribe|similar jobs|"
+_NOT_TERMS = re.compile(r"newsletter|mailing list|marketing|job alerts?|text messages?|\bsms\b|promotion|"
+                        r"offers|subscribe|similar jobs|"
                         r"talent (?:community|network)|keep me|stay informed|send me|contact(?:ed)? me|be contacted|"
-                        r"share my|other (?:\w+ )?(?:roles|positions|jobs|openings|opportunities)|affiliat|" + CALLS_OR_TEXTS, re.I)
+                        r"share my|other (?:\w+ )?(?:roles|positions|jobs|openings|opportunities)|affiliat|"
+                        + CALLS_OR_TEXTS, re.I)
 # How long a box's agreement lasts, which is no more than it (Air Liquide's Workday, live run 41, Oct 12: "You
 # acknowledge having read the documents above. Your agreement is valid for any future visits."): not "future" news
-_LASTS = re.compile(r"\byour (?:agreement|consent|acceptance) (?:is|will be|remains) valid for (?:any|all) future visits\b"
+_LASTS = re.compile(r"\byour (?:agreement|consent|acceptance) (?:is|will be|"
+                    r"remains) valid for (?:any|all) future visits\b"
                     # and a privacy notice received, which is no more than it (Boeing's Workday Create Account, run 44,
                     # Oct 13: "I have received the Boeing Applicant Privacy Notice."): not "receive" emails
                     # (only the verb taken out: the notice's own name is still read, "the Talent Pool Privacy Notice")
@@ -473,7 +487,8 @@ _READ_ABOVE = re.compile(r"\b(?:documents?|terms|text|information|notices?|state
 # A box that says only that the words above it were read (Avnet's Workday Create Account, run 44: "Yes, I have read and
 # understood." under "you acknowledge Avnet will collect and process your personal data as outlined in our Applicant
 # Data Protection and Privacy Statement"): ticked only where those words are the site's terms or privacy statement
-_READ_UNDERSTOOD = re.compile(r"^\W*(?:yes,? )?i have read,? and (?:understood|understand)(?: (?:it|this|them|the above))?\W*$",
+_READ_UNDERSTOOD = re.compile(r"^\W*(?:yes,? )?i have read,? and (?:understood|"
+                              r"understand)(?: (?:it|this|them|the above))?\W*$",
                               re.I)
 # What the words above any such box (a bare "I agree", "the documents above", "read and understood") must name for the
 # desk to tick it: the site's terms or privacy statement, or its processing of personal data; never the terms of
@@ -490,10 +505,10 @@ _ATTESTS_ABOVE = re.compile(r"of employment|certif|true and complete|background 
 #   a sign-up sends and the mail received beyond the application are an attestation's to read (_ATTESTED_KINDS), as
 #   before: elsewhere they're said in passing ("you consent to receive communications electronically")
 _AGREEMENT_KINDS = PRECISE | {FUTURE_ROLES}
-# - a Create Account box's own words (_more_than_terms): every kind but a paragraph's, and neither cookies nor their data
-#   kept, as before: a box that names the site's cookie policy beside its terms isn't a cookie banner, which keeps its
-#   own rule ("I have read and agree to the Terms and Conditions, Privacy Policy and Cookie Policy"), and how long the
-#   site keeps the account's data is its terms' ("... Acme may keep my data for 12 months": the review of 0.3.208)
+# - a Create Account box's own words (_more_than_terms): every kind but a paragraph's, and neither cookies nor their
+#   data kept, as before: a box that names the site's cookie policy beside its terms isn't a cookie banner, which keeps
+#   its own rule ("I have read and agree to the Terms and Conditions, Privacy Policy and Cookie Policy"), and how long
+#   the site keeps the account's data is its terms' ("... Acme may keep my data for 12 months": the review of 0.3.208)
 _BOX_KINDS = frozenset(NEVER) - {PARAGRAPH_WORDS, "cookies", "their data kept"}
 # - the words above a bare "I agree" (_terms_above): an agreement's, a paragraph's sign-up words, and what a sign-up
 #   sends (not the account's own mail: MAIL)
@@ -526,14 +541,18 @@ _UNDERSTOOD_AGREE = re.compile(r"^\W*(?:yes,? )?i (?:understand|acknowledge),? a
 # (Banner Health's Workday, live, Oct 2026: "Yes, I am a new candidate and not a current employee"; no
 # account without it, though it isn't marked required). That and nothing more: a box that says more
 # about the person is theirs
-_NEW_CANDIDATE = re.compile(r"^(?:yes,? )?i am (?:a |an )?(?:new|external) (?:candidate|applicant)(?:,? and (?:i am )?not "
-                            r"(?:a |an )?(?:current|existing) (?:employee|associate|team member))?|^(?:yes,? )?i am not "
-                            r"(?:a |an )?(?:current|existing) (?:employee|associate|team member)(?: of [\w&.' -]+)?", re.I)
-_ACCOUNT_EXISTS = re.compile(r"\b(?:account|e-?mail(?: address)?|user ?name|login)\b[^.?!]{0,40}\balready\b\s*(?:exists|"
+_NEW_CANDIDATE = re.compile(r"^(?:yes,? )?i am (?:a |an )?(?:new|external) (?:candidate|"
+                            r"applicant)(?:,? and (?:i am )?not (?:a |an )?(?:current|existing) (?:employee|associate|"
+                            r"team member))?|^(?:yes,? )?i am not "
+                            r"(?:a |an )?(?:current|existing) (?:employee|associate|team member)(?: of [\w&.' -]+)?",
+                            re.I)
+_ACCOUNT_EXISTS = re.compile(r"\b(?:account|e-?mail(?: address)?|user ?name|"
+                             r"login)\b[^.?!]{0,40}\balready\b\s*(?:exists|"
                              r"registered|in use|associated|taken|been (?:registered|used|taken))", re.I)
 _FORGOT = re.compile(r"\b(?:forgot|reset|recover)\b[^.?!]{0,20}\bpassword|trouble (?:signing|logging) in|"
                      r"can'?t (?:sign|log) in", re.I)
-_RESET_PAGE = re.compile(r"forgot|reset|recover|new password|change (?:your )?password|set (?:a |your )?(?:new )?password", re.I)
+_RESET_PAGE = re.compile(r"forgot|reset|recover|new password|change (?:your )?password|"
+                         r"set (?:a |your )?(?:new )?password", re.I)
 _RESET_ASK = re.compile(r"\b(?:send|reset|request|submit|continue|next|e-?mail me)\b", re.I)
 _RESET_SET = re.compile(r"\b(?:reset|update|change|save|set|submit|continue|confirm)\b", re.I)
 _NOT_A_STEP = re.compile(r"\b(?:back|cancel|sign in|log ?in|return)\b", re.I)
@@ -547,11 +566,12 @@ _MAKES_ACCOUNT = re.compile(r"\b(?:create|new|register|sign ?up|open)\b[^.]{0,20
 _RESET_SENT = re.compile(r"\b(?:sent|emailed)\b.{0,80}\b(?:link|e-?mail|instructions)|check your (?:e-?mail|inbox)|"
                          r"\byou(?:'ll| will) (?:receive|get) an? e-?mail\b|\bif an account exists\b", re.I)
 # A reset's page saying there's no account for the email ("There is no user with that username or email")
-_NO_ACCOUNT = re.compile(r"\bno (?:user|account|record|match)\b|\b(?:not|isn'?t|wasn'?t) (?:found|registered|recogni[sz]ed)|"
+_NO_ACCOUNT = re.compile(r"\bno (?:user|account|record|match)\b|"
+                         r"\b(?:not|isn'?t|wasn'?t) (?:found|registered|recogni[sz]ed)|"
                          r"\b(?:don'?t|do not|didn'?t|did not) recogni[sz]e (?:this|that|your|the) e-?mail|"
                          r"does(?:n'?t| not) (?:exist|have an account|match (?:any|an) account)|"
-                         r"\b(?:unknown|unrecogni[sz]ed) (?:user|e-?mail|account)|could(?:n'?t| not) find (?:an? |your )?"
-                         r"(?:account|user)", re.I)
+                         r"\b(?:unknown|unrecogni[sz]ed) (?:user|e-?mail|account)|could(?:n'?t| not) find (?:an? |"
+                         r"your )?(?:account|user)", re.I)
 # A page that can't be opened again: SuccessFactors' sign-in page (career?_s.crb=...), good for one visit
 _SPENT_PAGE = re.compile(r"an error occurred while processing your request|please go back to your original page|"
                          r"\b(?:session|page|link) (?:has )?expired\b", re.I)
@@ -560,7 +580,8 @@ _ACCOUNT_PAGE = re.compile(r"\b(create (?:an |your |a new )?account|sign up|regi
 _ACCOUNT_KINDS = {"text", "email", "tel", "select", "combobox", "listbox"}  # not check boxes or files
 # A Create Account's own details, the only ones filled beside security questions (_fill_account_details)
 _ACCOUNT_DETAIL_RULES = {"email", "first_name", "middle_name", "last_name", "preferred_last_name", "preferred_name",
-                         "preferred_full_name", "full_name", "phone_type", "phone_code", "phone_ext", "phone", "country"}
+                         "preferred_full_name", "full_name", "phone_type", "phone_code", "phone_ext",
+                         "phone", "country"}
 # A box that asks a question of its own ("In what town were you born?", "Name of your first pet")
 # (never a plain "First name": a first pet's, car's, school's or street's is a question's)
 _QUESTION_LIKE = re.compile(r"\?|^\s*(?:what|which|who|whose|where|when|why|how|in what|name of)\b|"
@@ -590,11 +611,11 @@ _SIDE_BOX =re.compile(r"job alerts?|alerts? by e-?mail|e-?mail alerts?|newslette
 # messages about jobs like this one" beside a consent): a button's alone. Never an account's or a reset's own ("Email
 # me a reset link", "Send me a code", "Resend verification email")
 _SIGN_UP_KINDS = ("signs up", "newsletter", "job alerts", "talent community", "marketing", "texts or calls")
-_SIGN_UP_BUTTON = re.compile(r"\bjobs like (?:this|these)\b|\b(?:e-?mail|send|text) me\b.{0,40}?\b(?:jobs?|openings|roles|"
-                             r"positions|opportunities|updates|alerts?|texts|news)\b|\bjobs? to my e-?mail\b|"
+_SIGN_UP_BUTTON = re.compile(r"\bjobs like (?:this|these)\b|\b(?:e-?mail|send|text) me\b.{0,40}?\b(?:jobs?|openings|"
+                             r"roles|positions|opportunities|updates|alerts?|texts|news)\b|\bjobs? to my e-?mail\b|"
                              r"\bsave (?:this |my )?search\b|\b(?:set up|create|get|add)\b.{0,12}\balerts?\b|"
-                             r"\b(?:notify|keep|update) me\b|\bget (?:notified|updates)\b|\bsign me up\b|\bopt[- ]?in\b|"
-                             r"\bstay (?:connected|in touch)\b|\bsubscribe\b|"
+                             r"\b(?:notify|keep|update) me\b|\bget (?:notified|updates)\b|\bsign me up\b|"
+                             r"\bopt[- ]?in\b|\bstay (?:connected|in touch)\b|\bsubscribe\b|"
                              r"\bsign ?up (?:for|to)\b(?! (?:an? |your |my )?account)",
                              re.I)
 
@@ -625,8 +646,8 @@ def _way_in(text: str) -> bool:
     """A posting's way into its application: an Apply (_ENTRY), or a saved draft's Continue Application."""
     return bool(_ENTRY.match(text) or _DRAFT_ENTRY.match(text))
 # The words of a button that sends an application once it's filled in: on a form, never the way in
-_APPLY_SENDS = re.compile(r"^(apply|apply now|apply online|easy apply|quick apply|apply for (?:this|the) (?:job|position|role)"
-                          r"(?: online)?|apply to (?:this )?job)$", re.I)
+_APPLY_SENDS = re.compile(r"^(apply|apply now|apply online|easy apply|quick apply|apply for (?:this|the) (?:job|"
+                          r"position|role)(?: online)?|apply to (?:this )?job)$", re.I)
 _AVOID = re.compile(r"autofill|with resume|resume parse|sign ?in|log ?in|create account|register|upload|back|"
                     r"previous|cancel|save for later|withdraw|delete|remove|search|share|print|email (?:me|this)", re.I)
 
@@ -652,9 +673,10 @@ _AGREES = re.compile(r"^(?:yes,? )?(?:i )?(?:agree|accept|consent|acknowledge)(?
 # and an application's attestation: that its information is true and complete ("I certify that the
 # information contained in the application … is correct"), or consent to the background check that
 # comes with applying. Never a newsletter's, job alerts' or marketing's (_attests_more)
-_ATTESTS = re.compile(r"\b(?:certif(?:y|ies)|attest|affirm|declare|acknowledge|confirm)\b.{0,200}?\b(?:information|answers?|"
-                      r"statements?|responses?|facts)\b.{0,200}?\b(?:true|correct|complete|accurate)\b|"
-                      r"\b(?:consent|authori[sz]e|agree)\b.{0,120}?\bbackground (?:check|screening|investigation)", re.I | re.S)
+_ATTESTS = re.compile(r"\b(?:certif(?:y|ies)|attest|affirm|declare|acknowledge|confirm)\b.{0,200}?\b(?:information|"
+                      r"answers?|statements?|responses?|facts)\b.{0,200}?\b(?:true|correct|complete|accurate)\b|"
+                      r"\b(?:consent|authori[sz]e|agree)\b.{0,120}?\bbackground (?:check|screening|investigation)",
+                      re.I | re.S)
 _ATTEST_KINDS = {"select", "listbox", "combobox", "checkbox", "checkbox_group", "radio_group"}
 # and, the owner's call (Oct 10), an employer's privacy notice and terms of use: a gate's "I Accept"
 # (Kforce's Taleo privacy agreement), "I Acknowledge the Privacy Notice" (Schwab's iCIMS), a dialog,
@@ -704,8 +726,9 @@ _OTHER_QUESTION = re.compile(r"\b(?:have|do|are|will|can|did|were|would|has|is) 
 # and an agreement's own asides ("I am aware that I can withdraw my consent", "I understand that I am providing my
 # information voluntarily", "I have a copy of it": the review of 0.3.176). Blanked before _CLAIMS and _OTHER_QUESTION
 # read a label
-_CONSEQUENCE = re.compile(r"\b(?:if|when|should|once) i am\b|\bi (?:understand|acknowledge)(?: that)? i am (?:subject|not guaranteed|"
-                          r"applying|required|being considered|providing)\b|\bdrug[- ]free\b|\beligibility for (?:employment|hire)\b|"
+_CONSEQUENCE = re.compile(r"\b(?:if|when|should|once) i am\b|\bi (?:understand|acknowledge)(?: that)? i am (?:subject|"
+                          r"not guaranteed|applying|required|being considered|providing)\b|\bdrug[- ]free\b|"
+                          r"\beligibility for (?:employment|hire)\b|"
                           r"\b(?:may|will|would) be required to (?:present|provide|show|obtain|pass|submit)\b[^.;]*|"
                           r"\bi am aware\b|\bi have a copy\b", re.I)
 # A Create Account box's age statement ("I am 16 years or older, and I have read the Privacy Notice": Microchip's
@@ -724,15 +747,16 @@ def _about_person(label: str) -> bool:
 # A bot check's badge on a page ("Protected by hCaptcha", reCAPTCHA's): a press it holds is the person's
 _BOT_BADGE = re.compile(r"\bh ?captcha\b|\brecaptcha\b", re.I)
 # A dialog that mentions personal data but isn't a notice to take in ("could not be saved", "overwrite?")
-_NOT_A_NOTICE = re.compile(r"\berror\b|could ?n[o']t|failed|signed? (?:you )?out|overwrite|existing (?:profile|account)|"
-                           r"\bdelete|\bremove|withdraw|expired?\b", re.I)
+_NOT_A_NOTICE = re.compile(r"\berror\b|could ?n[o']t|failed|signed? (?:you )?out|overwrite|existing (?:profile|"
+                           r"account)|\bdelete|\bremove|withdraw|expired?\b", re.I)
 
 # An attestation's words that certify the application's own information (beside which an at-will sentence may stand:
 # the second review of 0.3.170)
-_OWN_INFO_TRUE = re.compile(r"\b(?:information|answers?|responses?)\b[^.]{0,80}\b(?:true|correct|complete|accurate)\b", re.I)
-# What an attestation names in passing that signs no one up: the employer's affiliates and its offers of employment ("...
-# and authorize Acme and its affiliates to conduct a background check": the review's). Those words alone are taken out,
-# and only for the kinds they'd be read as (_PASSING_KINDS): every other kind is read in the whole label
+_OWN_INFO_TRUE = re.compile(r"\b(?:information|answers?|responses?)\b[^.]{0,80}\b(?:true|correct|complete|accurate)\b",
+                            re.I)
+# What an attestation names in passing that signs no one up: the employer's affiliates and its offers of employment
+# ("... and authorize Acme and its affiliates to conduct a background check": the review's). Those words alone are taken
+# out, and only for the kinds they'd be read as (_PASSING_KINDS): every other kind is read in the whole label
 _ATTESTED_IN_PASSING = re.compile(r"\baffiliat\w*|\boffers? of employment", re.I)
 _PASSING_KINDS = frozenset({"their data shared", "offers"})
 # - an attestation's label: the precise kinds and the mail it may sign up for. Not the future opportunities false
@@ -751,15 +775,16 @@ def _attests_more(label: str, group: bool = False) -> str | None:
     a group's _GROUP_LABEL_KINDS), less what such words name in passing: its affiliates and its offers of employment
     (_ATTESTED_IN_PASSING), and an at-will sentence beside a certification of the application's own information
     (_OWN_INFO_TRUE: the second review of 0.3.170). None when it's no more than that."""
-    kinds = (_GROUP_LABEL_KINDS if group else _ATTESTED_KINDS) - ({"at-will"} if _OWN_INFO_TRUE.search(label) else set())
+    kinds = (_GROUP_LABEL_KINDS if group else _ATTESTED_KINDS) - ({"at-will"}
+                                                                  if _OWN_INFO_TRUE.search(label) else set())
     return _never_for_them(label, only=kinds - _PASSING_KINDS) \
         or _never_for_them(_ATTESTED_IN_PASSING.sub(" ", label), only=kinds & _PASSING_KINDS)
 
 
 def _agrees_to_terms(text: str) -> bool:
     """Words that accept an employer's privacy notice or terms of use, and nothing more: nothing never agreed to for the
-    person (_never_for_them, _AGREEMENT_KINDS: a newsletter's or the like, the terms of employment, a waiver), not a fact
-    about the person, not another question."""
+    person (_never_for_them, _AGREEMENT_KINDS: a newsletter's or the like, the terms of employment, a waiver), not a
+    fact about the person, not another question."""
     return bool(_TERMS.search(text) and _ACCEPTS.search(text) and not _never_for_them(text, only=_AGREEMENT_KINDS)
                 and not _CLAIMS.search(text) and not _OTHER_QUESTION.search(text))
 
@@ -772,7 +797,8 @@ def _terms_notice(heading: str, text: str) -> tuple[bool, bool]:
     but all of it for a legal waiver or a sign-up in so many words (ANYWHERE)."""
     named = bool(_TERMS.search(heading))
     said = f"{heading} {text[:NOTICE_OPENING] if named else text}"
-    if _never_for_them(said, only=_AGREEMENT_KINDS) or _never_for_them(text, only=ANYWHERE) or _NOT_A_NOTICE.search(said):
+    if (_never_for_them(said, only=_AGREEMENT_KINDS) or _never_for_them(text, only=ANYWHERE)
+            or _NOT_A_NOTICE.search(said)):
         return False, False
     return named or bool(_TERMS.search(text) and _ACCEPTS.search(text)), named
 
@@ -806,8 +832,8 @@ class WentIn:
     left: dict[str, dict[str, str]] = field(default_factory=dict)  # optional questions left empty, by place
     agreed: list[str] = field(default_factory=list)  # notices, terms and attestations agreed to for the person
     accounts: list[str] = field(default_factory=list)  # accounts made
-    # a saved draft's answers the desk changed to the profile's, "<label>: <old> → <new>" (issue #112, note 38's review):
-    # here alone, as the draft's old answers are no detail of the profile's that a report's scrubber knows
+    # a saved draft's answers the desk changed to the profile's, "<label>: <old> → <new>" (issue #112, note 38's
+    # review): here alone, as the draft's old answers are no detail of the profile's that a report's scrubber knows
     changed: list[str] = field(default_factory=list)
     full: bool = False  # answers past WENT_IN_ANSWERS went in too, not kept here
     # Each box's place as first kept, by its page's address and its id (a box keeps its place while the page around it
@@ -968,8 +994,8 @@ class Run:
     # the reset email found was one whose link was opened already (_link_opened): an email came, so its wait running
     # out is said on a card, never taken for "no email: no account there"
     reset_spent: bool = False
-    # ...and, for the job, whatever password is saved since: the site emailed a reset for the account, or the desk set or
-    # opened one, so the account is there and never gets a Create Account (the re-review of 0.3.209: a password saved
+    # ...and, for the job, whatever password is saved since: the site emailed a reset for the account, or the desk set
+    # or opened one, so the account is there and never gets a Create Account (the re-review of 0.3.209: a password saved
     # since cleared the flags above, and its refusal pressed Create Account). Never cleared for the job
     account_known: bool = False
     # the card for a spent reset link was shown: its Resume goes back to the sign-in and tries the saved password, which
@@ -978,20 +1004,22 @@ class Run:
     reset_spent_said: bool = False
     refreshed: bool = False  # reloaded once for a page that asked for it ("Please refresh the page")
     start_reloaded: bool = False  # reloaded once for a posting page with no way on (the State of Arizona's, run 63)
-    reuploaded: bool = False  # a resume the page showed but never kept: its Delete tried, to upload it again (EMD's, once a job)
+    # a resume the page showed but never kept: its Delete tried, to upload it again (EMD's, once a job)
+    reuploaded: bool = False
     # the documents ("resume", "cover_letter") settled for this job: a file kept from before replaced with the one
-    # tailored for the job, or tried, or left as the person's, or the desk's own put in (_replace_kept). Once a job, so a
-    # page that draws the old file's name again isn't deleted from again and again
+    # tailored for the job, or tried, or left as the person's, or the desk's own put in (_replace_kept). Once a job, so
+    # a page that draws the old file's name again isn't deleted from again and again
     kept_replaced: set[str] = field(default_factory=set)
     opened_fresh: bool = False  # this pass opened the job in a new tab (its page the posting's own, by its address)
     account_in: bool = False  # an account made for this job, and signed in to (Run.account_made said)
-    load_reloaded: bool = False  # reloaded once for a step still loading after its wait (Workday's placeholders, run 57)
+    # reloaded once for a step still loading after its wait (Workday's placeholders, run 57)
+    load_reloaded: bool = False
     list_reloaded: bool = False  # reloaded once for a school's list with no choices at all (GCU's Degree list, run 61)
-    # gone in through the site's "Continue Application" (a draft it kept from an earlier visit, issue #112, note 38): its
-    # boxes are given the profile's answer where they show another, once a page (draft_pages), until draft_off: the
-    # person's Resume, or a stop other than one they answer without the application's boxes (a questions card, an emailed
-    # code, a sign-in, a bot check: _DRAFT_GOES_ON), after which what they change in the tab is theirs. draft_changed:
-    # a box the draft had filled holds another answer since (never sent by Submit for me: _finish)
+    # gone in through the site's "Continue Application" (a draft it kept from an earlier visit, issue #112, note 38):
+    # its boxes are given the profile's answer where they show another, once a page (draft_pages), until draft_off: the
+    # person's Resume, or a stop other than one they answer without the application's boxes (a questions card, an
+    # emailed code, a sign-in, a bot check: _DRAFT_GOES_ON), after which what they change in the tab is theirs.
+    # draft_changed: a box the draft had filled holds another answer since (never sent by Submit for me: _finish)
     draft: bool = False
     draft_off: bool = False
     draft_changed: bool = False
@@ -1007,8 +1035,8 @@ class Run:
     # re-review of 0.3.209)
     in_their_hands: bool = False
     invalid_redone: bool = False  # the review page's invalid lists answered again from the profile (once a job)
-    # its wait ran out in RESET_MAIL_WAIT with no email it could use: none came (no account there, most likely, so one is
-    # made), or only one whose link was opened already (reset_spent: said on a card)
+    # its wait ran out in RESET_MAIL_WAIT with no email it could use: none came (no account there, most likely, so one
+    # is made), or only one whose link was opened already (reset_spent: said on a card)
     reset_no_mail: bool = False
     reopened_elsewhere: bool = False  # its sign-in page, opened again, led elsewhere: the job opened again (once a job)
     schools_dropped: list[str] = field(default_factory=list)  # education blocks deleted (_drop_unfit_school)
@@ -1101,14 +1129,14 @@ class Run:
     began: int = 0
     # When each line of the log was logged (time.time(), 0 for one put there some other way), beside it and cut with it
     log_at: list[float] = field(default_factory=list)
-    # For its lines in the desk's history (history.HISTORY_FILE): the steps the desk pressed the way on from in this pass
-    # (_step_key's, each once), and how many times one of the desk's rounds took the person to it and they pressed its
-    # Resume, since it came to the desk
+    # For its lines in the desk's history (history.HISTORY_FILE): the steps the desk pressed the way on from in this
+    # pass (_step_key's, each once), and how many times one of the desk's rounds took the person to it and they pressed
+    # its Resume, since it came to the desk
     pass_steps: set[tuple] = field(default_factory=set)
     rounds: int = 0
     resumes: int = 0
-    # gone in, but not sent by the desk: the person's "I submitted it", the tracker saying so already, or the site saying
-    # it went in (its lines' outcome is "marked_applied", not "submitted")
+    # gone in, but not sent by the desk: the person's "I submitted it", the tracker saying so already, or the site
+    # saying it went in (its lines' outcome is "marked_applied", not "submitted")
     marked: bool = False
     # the jobs its "may be one already begun or applied to" card named (_held_for_maybe_same): the ones its Apply anyway
     # clears, never another (a restart asks again, the card worked out anew as it goes)
@@ -1117,19 +1145,16 @@ class Run:
     updated: float = field(default_factory=time.time)
 
     def public(self) -> dict[str, Any]:
-        return {**{k: v for k, v in self.__dict__.items() if k not in ("page", "tab_mark", "desk_at", "desk_code", "cookies_asked", "resetting",
-                                                                        "reset_asked", "reset_from", "reset_waited",
-                                                                        "reset_at", "reset_set", "reset_opened",
-                                                                        "reset_spent", "reset_spent_said", "account_known",
-                                                                        "reset_no_mail", "reopened_elsewhere", "reopened", "sign_in_tries", "sign_in_key",
-                                                                        "accounts_tried", "account_made", "account_in", "account_page",
-                                                                        "account_finished", "verifying", "verify_resent", "mail_looks", "mail_last",
-                                                                        "entries_short", "entries_told", "entries_ok",
-                                                                        "account_answers", "employer_mail", "others_mail",
-                                                                        "went_in", "agreed", "draft_pages", "submit_pressed",
-                                                                        "sending", "cut_short", "started",
-                                                                        "pass_steps", "rounds", "resumes", "marked",
-                                                                        "maybe_shown", "kept_replaced")},
+        return {**{k: v for k, v in self.__dict__.items()
+                   if k not in ("page", "tab_mark", "desk_at", "desk_code", "cookies_asked", "resetting", "reset_asked",
+                                "reset_from", "reset_waited", "reset_at", "reset_set", "reset_opened", "reset_spent",
+                                "reset_spent_said", "account_known", "reset_no_mail", "reopened_elsewhere", "reopened",
+                                "sign_in_tries", "sign_in_key", "accounts_tried", "account_made", "account_in",
+                                "account_page", "account_finished", "verifying", "verify_resent", "mail_looks",
+                                "mail_last", "entries_short", "entries_told", "entries_ok", "account_answers",
+                                "employer_mail", "others_mail", "went_in", "agreed", "draft_pages", "submit_pressed",
+                                "sending", "cut_short", "started", "pass_steps", "rounds", "resumes", "marked",
+                                "maybe_shown", "kept_replaced")},
                 # (only for the cards that show it: a job queued or under way has none, and 30 of them made the
                 # page's state megabytes, every poll)
                 "went_in": None if self.status in ("queued", "running") else self.went_in.public(),
@@ -1142,8 +1167,8 @@ class Run:
         `what`: "pressed", "typed", "picked" or "uploaded"; "" for a box's, by its kind (`data`: the page it's on).
         `target`: the button or the box (its words or its label), several (the last of them: where a fill ended), or
         its name written out. Only ever its words or label: never what was typed (a fill's value isn't read), and never
-        the label of a box the "What went in" panel keeps out (_kept_out, _guarded: a security question's, which says the
-        question chosen; a password's or an emailed code's), said only as what kind of box it was. Kept to
+        the label of a box the "What went in" panel keeps out (_kept_out, _guarded: a security question's, which says
+        the question chosen; a password's or an emailed code's), said only as what kind of box it was. Kept to
         LAST_ACTION_KEPT characters: a report or a stop's record scrubs it, then cuts it shorter."""
         try:
             last = target[-1] if isinstance(target, (list, tuple)) and target else target
@@ -1299,9 +1324,9 @@ def pick_next(actions: list[dict[str, Any]], in_form: bool) -> dict[str, Any] | 
     steps = [a for a in usable if _STEP.match(final_text(a["text"]))]
     entries = [a for a in usable if _ENTRY.match(final_text(a["text"])) and not _SOCIAL.search(a["text"])
                and not (_AVOID.search(a["text"]) and "manually" not in a["text"].lower())]
-    # a saved draft's "Continue Application", on a page (never a form's step), where it's the page's one way in: beside an
-    # Apply, or with others like it (a list of applications kept, each another job's, as a candidate home lists them),
-    # it's not (issue #112, note 38's review). Whose draft it is, _drive asks (_own_draft)
+    # a saved draft's "Continue Application", on a page (never a form's step), where it's the page's one way in: beside
+    # an Apply, or with others like it (a list of applications kept, each another job's, as a candidate home lists
+    # them), it's not (issue #112, note 38's review). Whose draft it is, _drive asks (_own_draft)
     drafts = [a for a in usable if _DRAFT_ENTRY.match(final_text(a["text"]))]
     if not in_form and not entries and len(drafts) == 1:
         entries = drafts
@@ -1416,7 +1441,8 @@ def _flagged(data: dict[str, Any]) -> list[str]:
     fields = data.get("fields")  # a click's summary carries only how many there are
     # (a question in a few words: Maricopa County's salary question, whole, left "is mar" of what was said, run 49)
     out += [f"\u201c{_short(f.get('label') or '')}\u201d is marked invalid"
-            for f in (fields if isinstance(fields, list) else []) if isinstance(f, dict) and f.get("invalid") and f.get("label")]
+            for f in (fields if isinstance(fields, list) else [])
+            if isinstance(f, dict) and f.get("invalid") and f.get("label")]
     return list(dict.fromkeys(out))
 
 
@@ -1426,8 +1452,10 @@ def _page_info(data: dict[str, Any]) -> dict[str, Any]:
     report that stops at its 40th box shows the last blocks as never read."""
     return {
         "url": data.get("url"), "title": data.get("title"), "headings": (data.get("headings") or [])[:8],
-        "actions": [a.get("text", "") + (" (disabled)" if a.get("disabled") else "") for a in data.get("actions") or []][:60],
-        "fields": [{**{k: f.get(k) for k in ("label", "kind", "required", "section", "sublabel") if f.get(k) is not None},
+        "actions": [a.get("text", "") + (" (disabled)" if a.get("disabled") else "")
+                    for a in data.get("actions") or []][:60],
+        "fields": [{**{k: f.get(k) for k in ("label", "kind", "required", "section", "sublabel")
+                       if f.get(k) is not None},
                     "empty": is_empty_value(f.get("value"))} for f in data.get("fields") or []][:150],
         "errors": (data.get("errors") or [])[:5],
     }
@@ -1447,11 +1475,12 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
     def __init__(self, srv: Any, keep_queue: bool = False):
         self.srv = srv  # the server module: its tools, tracker() and browser
         # The Job Desk's own queue is kept in QUEUE_FILE as it changes, and picked up again as the desk starts after a
-        # restart (keep_queue: the desk's; the live check's appliers and a test's own keep none). Whether this desk keeps
-        # it (QUEUE_LOCK, taken as it starts: None until then, and nothing is written before it's read back), or another
-        # desk does (queue_elsewhere); what was written last (the same queue isn't written again); and whether the desk
-        # is stopping: what that cuts short stays as it was kept, under way. The jobs queued again as it started (they
-        # wait for the person's Resume queue, said on the desk until then), and how old their kept queue was (days)
+        # restart (keep_queue: the desk's; the live check's appliers and a test's own keep none). Whether this desk
+        # keeps it (QUEUE_LOCK, taken as it starts: None until then, and nothing is written before it's read back), or
+        # another desk does (queue_elsewhere); what was written last (the same queue isn't written again); and whether
+        # the desk is stopping: what that cuts short stays as it was kept, under way. The jobs queued again as it
+        # started (they wait for the person's Resume queue, said on the desk until then), and how old
+        # their kept queue was (days)
         self.keep_queue = keep_queue
         self._queue_owner: bool | None = None
         self.queue_elsewhere = self.queue_unlockable = False
@@ -1467,9 +1496,10 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         self.runs: dict[int, Run] = {}
         self.tasks: deque[tuple[str, int]] = deque()
         self.auto_submit = False
-        self.hold_submits = False  # the desk's troubleshooting is on: nothing is sent, by the person's Submit or for them
-        # the openings the desk lists (set by the desk): one marked Not interested before its job was saved is that job's
-        # only when nothing listed makes it ambiguous (Tracker.not_interested_marks)
+        # the desk's troubleshooting is on: nothing is sent, by the person's Submit or for them
+        self.hold_submits = False
+        # the openings the desk lists (set by the desk): one marked Not interested before its job was saved is that
+        # job's only when nothing listed makes it ambiguous (Tracker.not_interested_marks)
         self.listed: Callable[[], list[dict[str, Any]]] = lambda: []
         self.tailor = False  # hold each job until Claude has written a resume for it
         # The person pressed Pause queue: no new job starts until Resume queue (in memory, like the queue it holds),
@@ -1505,9 +1535,9 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
 
     # ------------------------------------------------- queue and lifecycle
     def restore(self) -> None:
-        """The desk starting: keep its queue from now on, unless another desk does (QUEUE_LOCK), and, at its first start,
-        pick up the queue it kept before a restart (_restore_queue). Before it serves its page (Desk.start): a call from
-        a page left open must never meet the queue before it's back, nor write it over."""
+        """The desk starting: keep its queue from now on, unless another desk does (QUEUE_LOCK), and, at its first
+        start, pick up the queue it kept before a restart (_restore_queue). Before it serves its page (Desk.start): a
+        call from a page left open must never meet the queue before it's back, nor write it over."""
         self._closing = False
         if not self.keep_queue:
             return
@@ -1712,13 +1742,15 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
                  " from before the desk restarted")
         said = (f"{n} job{'s' if n != 1 else ''}{whose}{kept} {'are' if n != 1 else 'is'} back in the queue, "
                 f"{'held' if self._taken_over else 'paused'}. Press Carry on with the queue.")
-        sends = sum(1 for job_id in held if self.runs[job_id].submit) if self.auto_submit and not self.hold_submits else 0
+        sends = (sum(1 for job_id in held if self.runs[job_id].submit)
+                 if self.auto_submit and not self.hold_submits else 0)
         if sends and n == 1:
-            said += " It goes in by Submit for me once it's filled; turn Submit for me off first if you'd rather check it."
+            said += (" It goes in by Submit for me once it's filled; turn Submit for me off "
+                     "first if you'd rather check it.")
         elif sends:
             goes, filled = ("goes", "it's") if sends == 1 else ("go", "they're")
-            said += (f" {sends} of them {goes} in by Submit for me once {filled} filled; turn Submit for me off first if "
-                     "you'd rather check each.")
+            said += (f" {sends} of them {goes} in by Submit for me once {filled} filled; "
+                     "turn Submit for me off first if you'd rather check each.")
         return said
 
     def _held_back(self, task: tuple[str, int]) -> bool:
@@ -2140,9 +2172,9 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
 
     @staticmethod
     def _history_hidden(run: Run) -> set[str]:
-        """What a line of the history keeps out, should a reason quote a page that shows it: the desk's secrets (each job
-        system's password, the inbox's), the codes the inbox gave for this job, the digest of the password it signed in
-        with, every answer it has (the person's for this application alone, an account form's security answers, what
+        """What a line of the history keeps out, should a reason quote a page that shows it: the desk's secrets (each
+        job system's password, the inbox's), the codes the inbox gave for this job, the digest of the password it signed
+        in with, every answer it has (the person's for this application alone, an account form's security answers, what
         went into the form) and the profile's own words (but its settings, its files' paths, and a saved answer's
         question and where it was given). Not the desk's own
         words for a box ("ticked", "Yes"): history.short_reason takes them out as whole words, 4 characters or more."""
@@ -2170,7 +2202,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
                   | {str(e.get("value") or "") for e in list(run.went_in.answers.values()) if e.get("kind") == "answer"}
                   if len(v.strip()) >= 4}
         hidden |= {v for v in _texts(run.account_answers)
-                   | {mail[1] for mail, job_id in list(_MAIL_TAKEN.items()) if job_id == run.job_id} if len(v.strip()) >= 3}
+                   | {mail[1] for mail, job_id in list(_MAIL_TAKEN.items()) if job_id == run.job_id}
+                   if len(v.strip()) >= 3}
         return {v for v in hidden if " ".join(v.split()).casefold() not in _DESK_WORDS}
 
     # --------------------- the worker: rounds, tabs, sites and inbox holds
@@ -2278,10 +2311,12 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
             # with a job left waiting on the person, look at its tab again soon
             left = [r for r in self.runs.values() if r.left and r.status == "needs_you"]
             # (and, while another desk keeps the queue, back in time to look again: _retry_queue_lock)
-            await self._sleep(min(self._poll_for(left) if left else 30, QUEUE_LOCK_RETRY if self.queue_elsewhere else 30))
+            await self._sleep(min(self._poll_for(left) if left else 30,
+                                  QUEUE_LOCK_RETRY if self.queue_elsewhere else 30))
             return
         # paused: only what the person pressed for a job goes (its Submit, its Resume, its answers on its card)
-        pressed = next((t for t in self.tasks if t[1] in self.pressed), None) if self.paused and submit is None else None
+        pressed = (next((t for t in self.tasks if t[1] in self.pressed), None)
+                   if self.paused and submit is None else None)
         if self.paused and submit is None and pressed is None:
             self._wake.clear()
             await self._sleep(POLL_SECONDS)
@@ -2297,7 +2332,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         task = next((t for t in order if (self._submit_free(t[1]) if t[0] == "submit" else self._site_free(t[1]))),
                     None)
         if self._full() and not (task is not None and self._goes_beside(task)):
-            # (each under way waiting on the person: none begun beside them, but the person's own Submit or solved check)
+            # (each under way waiting on the person: none begun beside them, but the person's own
+            # Submit or solved check)
             await self._until_one_is_done()
             return
         if task is None:  # each waits for a job under way on its site
@@ -2401,7 +2437,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
                                           "to start this application again.")
                             run.cut_short = True
                         self._log(run, run.reason)
-                    # (said in the log either way: a skipped or marked applied job's status stands, the error's still one)
+                    # (said in the log either way: a skipped or marked applied job's status stands,
+                    # the error's still one)
                     logging.getLogger(__name__).warning("job %s stopped on an error", run.job_id, exc_info=True)
                 finally:
                     self._give_back_tools(held)
@@ -2463,10 +2500,10 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
 
     @staticmethod
     def _at_work_in(run: Run) -> bool:
-        """Is the person at work in a job's tab the queue went on without: a sign-in or code that's theirs, changed since
-        it paused by something the desk didn't do (Run.active_at, _note_activity) in the last RELEASE_IDLE seconds?
-        Never a wait that's the desk's own (a reset or verification email it reads from the inbox itself: the re-check of
-        jobs at once, its tab was taken for the person's for a minute after every new Workday account)."""
+        """Is the person at work in a job's tab the queue went on without: a sign-in or code that's theirs, changed
+        since it paused by something the desk didn't do (Run.active_at, _note_activity) in the last RELEASE_IDLE
+        seconds? Never a wait that's the desk's own (a reset or verification email it reads from the inbox itself: the
+        re-check of jobs at once, its tab was taken for the person's for a minute after every new Workday account)."""
         if not (run.left and run.status == "needs_you" and run.need in HANDS_ON):
             return False
         desks_own = run.need == "email_code" and (run.resetting and run.reset_waited or run.verifying)
@@ -2647,10 +2684,12 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
                         + ") and the profile doesn't say where yours is: ask Claude to set documents.resume (or "
                         "documents.cover_letter) in profile.yaml, then press Carry on."
                         + (f" {gaps}" if gaps else "")
-                        + (f" It also has {_count(len(pending), 'question')} your profile doesn't answer." if pending else "")
+                        + (f" It also has {_count(len(pending), 'question')} your profile doesn't answer."
+                           if pending else "")
                         + couldnt, pending, code="profile_gap")
         elif gaps:
-            self._pause(run, "stuck", gaps + (f" It also has {_count(len(pending), 'other question')}, here." if pending else "")
+            self._pause(run, "stuck",
+                        gaps + (f" It also has {_count(len(pending), 'other question')}, here." if pending else "")
                         + couldnt, pending, code=gap_code)
         elif pending:
             self._pause(run, "questions", f"{_count(len(pending), 'question')} your profile doesn't answer. Answer "
@@ -2718,7 +2757,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         link opened, while its page settles: the re-check of jobs at once, the person taken to be at that tab). Its code
         box holding another code than the desk's is the person's, settled or not (one the site turned down, the right
         one put in by them: the final check of jobs at once)."""
-        mark = hash((_bare(data.get("url") or ""), tuple((f.get("id"), str(f.get("value"))) for f in data.get("fields") or [])))
+        mark = hash((_bare(data.get("url") or ""),
+                     tuple((f.get("id"), str(f.get("value"))) for f in data.get("fields") or [])))
         settling = time.time() - run.desk_at <= DESK_SETTLE
         if settling and run.desk_code:
             typed = "".join(str(f.get("value") or "") for f in data.get("fields") or [] if _code_box(f))
@@ -2851,7 +2891,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         # a sign-in's or Create Account's own picture check (Edwards', live) counts too: the page it paused on shows it
         run.captcha = need in ("bot_check", "captcha") or bool(seen and (seen.get("captcha") or seen.get("challenge")))
         run.paused_at = run.active_at = time.time()
-        run.tab_mark, run.left, run.moved_since, run.desk_at = 0, need == "bot_check", 0.0, 0.0  # (a bot check: watched)
+        # (a bot check: watched)
+        run.tab_mark, run.left, run.moved_since, run.desk_at = 0, need == "bot_check", 0.0, 0.0
         run.mail_checked, run.mail_done, run.verifying = 0.0, False, False
         run.mail_looked, run.mail_held, run.mail_held_at = 0.0, 0.0, 0.0
         run.paused_host = host_of(run.url)
@@ -2933,7 +2974,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
                 with contextlib.suppress(Exception):
                     await run.page.close()  # its "Aw, Snap!" page: the new tab takes its place
         # a form begun afresh: what went into one before is gone with it (an account made there is still there)
-        run.went_in = WentIn(accounts=run.went_in.accounts, changed=run.went_in.changed)  # (and a draft's answers changed)
+        # (and a draft's answers changed)
+        run.went_in = WentIn(accounts=run.went_in.accounts, changed=run.went_in.changed)
         run.page = await srv.browser.new_tab()
         srv.forget_presets(run.job_id)  # (a fresh form: the country lists it presets are the site's again)
         opened = await srv.open_application(job_id=run.job_id)
@@ -3005,8 +3047,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
             other = others[0]
             verb, where, when = said(other)
             return (f"This may be the job you already {verb} on {where}{f' on {when}' if when else ''} (job "
-                    f"{other['id']}: {other.get('title') or 'a job'} at {other.get('company') or 'the same employer'}). "
-                    "Apply anyway, or Skip?"), ids
+                    f"{other['id']}: {other.get('title') or 'a job'} at {other.get('company') or 'the same employer'})."
+                    " Apply anyway, or Skip?"), ids
         named = "; ".join(
             f"job {o['id']}, {o.get('title') or 'a job'} at {o.get('company') or 'the same employer'} "
             f"({o['status'] if o['status'] in FINISHED else 'started'} on {where}{f', {when}' if when else ''})"
@@ -3033,7 +3075,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         # (Submit for me included: it never goes past this)
         if self._held_for_maybe_same(run):
             return
-        if not run.draft_changed:  # (a draft the desk changed before it was restarted: still held, its card's lines back)
+        # (a draft the desk changed before it was restarted: still held, its card's lines back)
+        if not run.draft_changed:
             _restore_draft_changes(srv, run)
         run.status, run.need, run.reason = "running", "", "Working on it"
         if self.tailor and not run.usual_resume:
@@ -3078,7 +3121,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
                 run.status, run.need, run.blocking, run.left = "submitted", "", False, False
                 run.marked = not run.pressed_before  # (sent by the person, unless the desk's own press may have)
                 self._forget_draft_changes(run)  # (gone in: its draft's changes are no longer kept)
-                run.reason = f"Applied to already: {_site(run, data)} says \u201c{applied}\u201d It isn't filled in again."
+                run.reason = (f"Applied to already: {_site(run, data)} says "
+                              f"\u201c{applied}\u201d It isn't filled in again.")
                 self._log(run, run.reason)
                 return
             cookies = await self._decline_cookies(run, data, text)
@@ -3806,7 +3850,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
             # slow pages (Intel's Workday, Eightfold forms) draw their buttons late (and a page reached again, the
             # desk having done something since, is a new visit: its address can be the same)
             ps.waited.add((_page_key(lap.data), run.logged))
-            # (a page a press led to with nothing drawn on it, its shell's words and all: the blank page's wait, note 40)
+            # (a page a press led to with nothing drawn on it, its shell's words and all: the
+            # blank page's wait, note 40)
             empty_now = bool(ps.pressed) and _nothing_drawn(lap.data, lap.text)
             wait = SIGN_IN_STEP_WAIT if sign_in_step else BLANK_PAGE_WAIT if blank or empty_now else LATE_BUTTONS_WAIT
             if await self._wait_for_progress(wait, lap.data):
@@ -4156,7 +4201,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
                     whose = f"{run.company}'s" if run.company else "the site's"
                     self._log(run, f"agreed to {whose} \u201c{_short(said)}\u201d for you (settings.accept_notices)")
                     run.went_in.agree(f"agreed to {whose} \u201c{_short(said)}\u201d")
-                    run.keep_agreed("terms gate", next((str(h) for h in data.get("headings") or [] if str(h).strip()), ""),
+                    run.keep_agreed("terms gate",
+                                    next((str(h) for h in data.get("headings") or [] if str(h).strip()), ""),
                                     said, words)
                     return _Then.AGAIN
             self._pause(run, "stuck", f"The way on is \u201c{said}\u201d, which agrees to something in your name, so "
@@ -4329,7 +4375,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         or one the page says something is wrong on, what it says is put right where the desk can (the step reloaded,
         boxes typed, answered or filled again, a step still saving waited on, the boxes the errors name gone back to)
         for the step to be pressed again, or the stop is said. AGAIN: the page looked at again (the lap's `continue`);
-        STOP: the pass ends (its `return`); ON: a first stall with nothing said wrong, and the lap goes on (to its end)."""
+        STOP: the pass ends (its `return`); ON: a first stall with nothing said wrong, and the lap goes
+        on (to its end)."""
         srv = self.srv
         if await srv.browser.challenge_showing():  # the click brought up a CAPTCHA
             await self._bring_forward(run)
@@ -4424,7 +4471,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
                 if f.get("role") == "spinbutton":
                     blocks.setdefault(norm(clean_label(f.get("label") or "")), set()).add(str(f.get("section") or ""))
             # (never a text area: the profile never answers one again over what it shows, the review of 0.3.166)
-            wrong = [f for f in lost if f.get("kind") != "textarea" and f.get("invalid") or f.get("role") == "spinbutton"
+            wrong = [f for f in lost
+                     if f.get("kind") != "textarea" and f.get("invalid") or f.get("role") == "spinbutton"
                      and len(blocks.get(norm(clean_label(f.get("label") or "")), ())) <= 1]
             if wrong and looked not in ps.redone_pages:
                 # of those, the ones the page marks invalid themselves (not a box whose label an error about
@@ -4638,7 +4686,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
                                  "job's folder), then press Carry on.")
             run.kept_replaced.add(box["kind"])
             if run.hands_on or run.pressed_before or run.in_their_hands:
-                # (a restart's job goes on only by the person's Resume: hands_on. Never said of the tailored file's name)
+                # (a restart's job goes on only by the person's Resume: hands_on. Never said of the
+                # tailored file's name)
                 if not any(s.lower() == tailored.lower() for s in box["shown"]):
                     self._log(run, f"left the {what} in its {upload} as it is" + (f" ({old})" if old else "") + ", not "
                               "the one tailored for this job: you've had this application in your hands, so what's in "
@@ -4826,10 +4875,10 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         a long page the banner comes after the part of the text that's read."""
         mentioned = "cookie" in text.lower()
         actions = [a for a in data.get("actions") or [] if not a.get("disabled")]
-        # (in a cookie banner, or on a page that speaks of cookies; but with a dialog open that isn't a cookie banner (an
-        # application's data-privacy statement: the review of Oct 15), only a button whose own words name cookies or the
-        # necessary ones: its bare "Decline" is that dialog's. A banner the reader doesn't know by its names, a dialog
-        # about cookies or a bar along the edge, is declined as before: the review of 0.3.188)
+        # (in a cookie banner, or on a page that speaks of cookies; but with a dialog open that isn't a cookie banner
+        # (an application's data-privacy statement: the review of Oct 15), only a button whose own words name cookies or
+        # the necessary ones: its bare "Decline" is that dialog's. A banner the reader doesn't know by its names, a
+        # dialog about cookies or a bar along the edge, is declined as before: the review of 0.3.188)
         other_dialog = any(not d.get("cookie") for d in data.get("dialogs") or [])
         button = next((a for a in actions if declines_cookies(a.get("text", ""), bool(a.get("cookie")))
                        and (a.get("cookie") or mentioned and (not other_dialog
@@ -4841,7 +4890,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
                 self._log(run, f"declined cookies (\u201c{button['text']}\u201d)")
                 return True
             return None
-        accept = next((a for a in actions if a.get("cookie") and _accepts_cookies(a["text"], a["text"].strip(), True)), None)
+        accept = next((a for a in actions
+                       if a.get("cookie") and _accepts_cookies(a["text"], a["text"].strip(), True)), None)
         if accept is None:
             return None
         banner = await self.srv.browser.element_info(accept["id"])
@@ -4985,8 +5035,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
                 run.went_in.agree(f"{what} “{_short(q.get('label') or '')}”")
                 value = attest[q["id"]]  # (a choice's words are what it agrees to, apart from its list's label)
                 picked = [] if value is True else [str(v) for v in value] if isinstance(value, list) else [str(value)]
-                run.keep_agreed("attestation", q.get("label") or "", "; ".join(picked) or "ticked", q.get("label") or "",
-                                picked)
+                run.keep_agreed("attestation", q.get("label") or "", "; ".join(picked) or "ticked",
+                                q.get("label") or "", picked)
         return [q for q in pending if q["id"] not in done]
 
     async def _said_above(self, pending: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -5082,11 +5132,12 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
             run.reason += (f" Note: {_site(run, data)} shows only {names} (the Add button was covered): add the rest "
                            "in the desk's browser window before you press Submit.")
         if run.draft_changed:
-            run.reason += (" Note: this is an application the site kept from an earlier visit, and I changed some of its "
-                           "answers to your profile's (see What went in)" + (", so Submit for me left it for you" if sends
-                                                                              else "")
+            run.reason += (" Note: this is an application the site kept from an earlier visit, and I changed some of "
+                           "its answers to your profile's (see What went in)"
+                           + (", so Submit for me left it for you" if sends else "")
                            + ": check them before you press Submit.")
-        if run.submit_unsent:  # (the person's Submit from before a restart is never carried over: theirs to press again)
+        # (the person's Submit from before a restart is never carried over: theirs to press again)
+        if run.submit_unsent:
             run.reason += f" {SUBMIT_UNSENT}"
         self._log(run, "reached the review page")
 
@@ -5098,12 +5149,12 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
             return
         if self.hold_submits:  # (a Submit pressed before troubleshooting was turned on, still waiting its turn)
             run.status, run.need, run.blocking = "ready", "", False
-            run.reason = ("Troubleshooting is on, so it wasn't submitted. It waits on its review page: turn troubleshooting "
-                          "off and press Submit to send it.")
+            run.reason = ("Troubleshooting is on, so it wasn't submitted. It waits on its review page: turn "
+                          "troubleshooting off and press Submit to send it.")
             self._log(run, run.reason)
             return
-        # Submit for me: once more, as the job that may be this one could have been begun since it was filled (a Submit the
-        # person pressed is theirs to send)
+        # Submit for me: once more, as the job that may be this one could have been begun since it was filled (a Submit
+        # the person pressed is theirs to send)
         if not by_person and self._held_for_maybe_same(run):
             return
         if run.page is not None and not run.page.is_closed() and not self._own_place(run, run.page.url):
@@ -5122,7 +5173,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
             data = await srv.inspect_form(include_dropdown_options=False)
             empty = [f.get("label") or "a field" for f in _empty_required(data)]
             if empty:
-                return self._pause(run, "stuck", "Not submitted: required fields are still empty (" + ", ".join(empty[:5])
+                return self._pause(run, "stuck",
+                                   "Not submitted: required fields are still empty (" + ", ".join(empty[:5])
                                    + "). Fill them in the desk's browser window, then press Carry on.",
                                    code="review_errors")
         if run.status in ("skipped", "submitted"):  # skipped, or "I submitted it" pressed, while the page was checked
@@ -5174,7 +5226,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
             # applying" in a posting's words, or "this application submitted by me is true" in an attestation's
             data, text = await self._look()
             job = srv.tracker().get(run.job_id, with_description=False) or {}
-            moved = _bare(data.get("url") or "") not in {_bare(u) for u in (review, job.get("url"), job.get("apply_url")) if u}
+            moved = (_bare(data.get("url") or "")
+                     not in {_bare(u) for u in (review, job.get("url"), job.get("apply_url")) if u})
             if gone := _sent_already(data, text, moved):
                 srv.tracker().update(run.job_id, status="applied", note="submitted on the site")
                 run.status, run.need, run.blocking, run.left = "submitted", "", False, False
@@ -5193,7 +5246,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
 
 # ---------------------------------------------------- helpers: password resets
 _APPLICATION_FIELD = re.compile(r"first name|last name|full name|legal name|resume|\bcv\b|phone|address|"
-                                r"authori[sz]ed|sponsor|start (?:the |your |an? )?appl", re.I)  # "email to start application"
+                                # "email to start application"
+                                r"authori[sz]ed|sponsor|start (?:the |your |an? )?appl", re.I)
 
 
 _ACCOUNT_FIELD = re.compile(r"e-?mail|password|user ?name|log ?in|terms|privacy|captcha|language|locale|"
@@ -5267,7 +5321,8 @@ def _required_by_errors(result: dict[str, Any], data: dict[str, Any]) -> None:
     pressed twice more."""
     # (and Workday's error links, "Error-Please indicate if you are Hispanic or Latino?", where its errors read as
     # none: Baker Tilly's, the probe of Oct 12)
-    links = [a.get("text") or "" for a in data.get("actions") or [] if re.match(r"\s*error\s*[-\u2013:]", a.get("text") or "", re.I)]
+    links = [a.get("text") or "" for a in data.get("actions") or []
+             if re.match(r"\s*error\s*[-\u2013:]", a.get("text") or "", re.I)]
     said = norm(" ".join([*(data.get("errors") or []), *links]))
     wrong = bool(links) or any(_errorish(e) for e in data.get("errors") or [])  # (not a "Saved": the second review's)
     invalid = {f.get("id") for f in data.get("fields") or [] if f.get("invalid")}
@@ -5277,7 +5332,8 @@ def _required_by_errors(result: dict[str, Any], data: dict[str, Any]) -> None:
     names = [norm(clean_label(f.get("label") or "")) for f in data.get("fields") or []]
     for f in result.get("needs_input") or []:
         # the page marks it wrong as it is, empty (a lone box to tick only where the page also says something's wrong:
-        # one left marked from the start, an optional job alerts box, isn't a question to stop on: the review of 0.3.170)
+        # one left marked from the start, an optional job alerts box, isn't a question to stop on: the
+        # review of 0.3.170)
         if not f.get("required") and f.get("id") in invalid and (f.get("kind") != "checkbox" or wrong):
             f["required"] = True
             continue
@@ -5300,14 +5356,16 @@ def _named_by_errors(data: dict[str, Any]) -> bool:
     """After a press the page didn't go on from: does it name in its errors, or mark wrong, a box of the application's
     left empty as optional (_required_by_errors)? Then that box is what holds it up, and its question is asked."""
     # (as autofill takes them: a read-only text box is never filled or asked)
-    empty = [dict(f) for f in _app_fields(data) if not f.get("required") and not f.get("aside") and not f.get("disabled")
+    empty = [dict(f) for f in _app_fields(data)
+             if not f.get("required") and not f.get("aside") and not f.get("disabled")
              and not (f.get("readonly") and f.get("kind") not in _CHOICE_KINDS)
              and f.get("kind") not in ("file", "password") and (is_empty_value(f.get("value")) or unset_choice(f))]
     _required_by_errors({"needs_input": empty}, data)
     return any(f.get("required") for f in empty)
 
 
-def _pending(result: dict[str, Any], once_failed: dict[str, dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _pending(result: dict[str, Any],
+             once_failed: dict[str, dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """After autofill: the required questions to put to the person (with any answer of theirs
     the page turned down), and the required file inputs nothing could go in."""
     def turned_down(f: dict[str, Any]) -> dict[str, Any]:  # an answer of theirs for the box, or its label
@@ -5362,8 +5420,9 @@ def _notice(data: dict[str, Any]) -> dict[str, Any] | None:
     "Sign in with email", a note's Dismiss)."""
     for d in data.get("dialogs") or []:
         texts = [final_text(b.get("text") or "") for b in d.get("buttons") or [] if not b.get("disabled")]
-        if not d.get("cookie") and not any(_ENTRY.match(t) or _DISMISS_NOTE.match(t) or re.match(r"^sign in with ", t, re.I)
-                                           for t in texts):
+        if (not d.get("cookie")
+                and not any(_ENTRY.match(t) or _DISMISS_NOTE.match(t) or re.match(r"^sign in with ", t, re.I)
+                            for t in texts)):
             return d
     return None
 
@@ -5391,7 +5450,8 @@ def _agreeable_notice(heading: str, text: str, test_identity: bool) -> tuple[boo
     nor one headed as anything never agreed to (_never_for_them, _AGREEMENT_KINDS): the review of Oct 15 found the AI
     notice's path without the terms notice's guards. Only its heading is read for the rest: an AI notice's own words
     name the other positions it may suggest (Micron's, live), which it signs no one up for. The test identity's
-    heading isn't read for the terms of employment, as before ("Employment At-Will Statement": the owner's call, Oct 13)."""
+    heading isn't read for the terms of employment, as before ("Employment At-Will Statement": the
+    owner's call, Oct 13)."""
     said = f"{heading} {text}"
     terms, takes_ok = _terms_notice(heading, text)
     ai = bool(_AI_NOTICE.search(said) and _ABOUT_APPLYING.search(said)) or terms \
@@ -5473,7 +5533,8 @@ def _agreement_button(data: dict[str, Any]) -> dict[str, Any] | None:
     """A page's button that agrees to something ("I Acknowledge the Privacy Notice", "I Accept"). Never a cookie
     banner's (their own rule): what else it agrees to is _terms_gate's to read, the page's first such button."""
     return next((a for a in data.get("actions") or [] if _AGREEMENT.search(a["text"].strip())
-                 and not a.get("cookie") and not _never_for_them(a["text"], only={"cookies"}) and not a.get("disabled")),
+                 and not a.get("cookie") and not _never_for_them(a["text"], only={"cookies"})
+                 and not a.get("disabled")),
                 None)
 
 
@@ -5539,8 +5600,8 @@ def tailored_ready(job: dict[str, Any]) -> bool:
 
 
 # ---------------------------------- helpers: sign-in pages, security questions
-_CONTACT_FIELD = re.compile(r"^((first|last|full|given|family|legal) )?name$|^e ?mail( address)?$|^(mobile |cell )?phone"
-                            r"( number)?$|^(zip|postal)( code)?$")
+_CONTACT_FIELD = re.compile(r"^((first|last|full|given|family|legal) )?name$|^e ?mail( address)?$|^(mobile |"
+                            r"cell )?phone( number)?$|^(zip|postal)( code)?$")
 
 
 def _sign_up_box(data: dict[str, Any], submits: list[dict[str, Any]]) -> bool:
@@ -5560,14 +5621,16 @@ def _wants_verification(run: Run, data: dict[str, Any], text: str, sign_ins: dic
     link was opened), or an account from before whose refusal is in the page's own alerts ("Verify your account
     before you sign in", Vanguard's). Judged at the lap's look and again as a refusal stands (0.3.178 to 0.3.180)."""
     alerts = " ".join(data.get("errors") or [])
-    return bool((sign_ins.get("made") or _VERIFY_FIRST.search(alerts) or run.accounts_tried and _VERIFY_SENT.search(alerts))
+    return bool((sign_ins.get("made") or _VERIFY_FIRST.search(alerts)
+                 or run.accounts_tried and _VERIFY_SENT.search(alerts))
                 and _VERIFY_EMAIL.search(" ".join([alerts, text[:3000]]))
                 and sum(f.get("kind") == "password" and not _code_box(f) for f in data.get("fields") or []) == 1)
 
 
 def _forgot_action(actions: list[dict[str, Any]]) -> dict[str, Any] | None:
     """A sign-in page's way to a password reset ("Forgot your password?")."""
-    return next((a for a in actions if not a.get("disabled") and not a.get("cookie") and _FORGOT.search(a["text"])), None)
+    return next((a for a in actions
+                 if not a.get("disabled") and not a.get("cookie") and _FORGOT.search(a["text"])), None)
 
 
 def _account_way(actions: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -5591,8 +5654,8 @@ def _shows_address(text: str, address: str) -> bool:
 
 def _security_asked(data: dict[str, Any]) -> bool:
     """Security questions on a form, the person's: boxes for them, or a heading that says so (BrassRing's "Security
-    questions", run 67: its question a list the form reader doesn't see, the review of 0.3.154). The account's own form's
-    (_account_view): a widget's frame around it asking one of its own is never the account's to wait on."""
+    questions", run 67: its question a list the form reader doesn't see, the review of 0.3.154). The account's own
+    form's (_account_view): a widget's frame around it asking one of its own is never the account's to wait on."""
     headings = _account_headings(data)
     return bool(_security_boxes(_account_view(data)["fields"], headings)) or any(
         _SECURITY_QUESTION.search(h or "") for h in headings)
@@ -5661,7 +5724,8 @@ def _email_first_account(data: dict[str, Any]) -> bool:
     live, Oct 2026: an email box and Continue, which emails a passcode to it): an email box, and no
     other but a picture code's."""
     fields = [f for f in data.get("fields") or [] if not f.get("disabled") and not f.get("aside")]
-    emails = [f for f in fields if f.get("kind") in ("text", "email") and re.search(r"e-?mail", f.get("label") or "", re.I)]
+    emails = [f for f in fields
+              if f.get("kind") in ("text", "email") and re.search(r"e-?mail", f.get("label") or "", re.I)]
     headings = " ".join(data.get("headings") or [])
     return (bool(emails) and all(f in emails or _PICTURE_CODE.search(f.get("label") or "") for f in fields)
             and bool(re.search(r"\baccount\b", headings, re.I)) and not _NOT_TERMS.search(headings))
@@ -5804,7 +5868,8 @@ def _own_frame_first(actions: list[dict[str, Any]], near: dict[str, Any] | None,
     return own + ([] if only else [a for a in actions if _frame_of(a) != frame])
 
 
-def _box_buttons(actions: list[dict[str, Any]], box: dict[str, Any], fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _box_buttons(actions: list[dict[str, Any]], box: dict[str, Any],
+                 fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """The buttons of a box's own form (formjs' form index), in the page's order; with none there, its frame's where no
     other <form> in that frame holds a box for an email or user name (a script's button outside the form, beside a
     language list or a search box in no form); else none. A reset's Send is never another form's beside it (a job
@@ -6169,7 +6234,8 @@ def _consent_boxes(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _profile_over_18() -> bool:
-    """Whether the profile says the person is over 18 (work_authorization.over_18); a profile with a typo says nothing."""
+    """Whether the profile says the person is over 18 (work_authorization.over_18); a profile with a typo
+    says nothing."""
     try:
         return config.Profile.load().get("work_authorization.over_18") is True
     except ValueError:
@@ -6192,7 +6258,8 @@ def _new_candidate_boxes(data: dict[str, Any], company: str) -> list[dict[str, A
     at this employer (autofill.works_there_now). Someone who works there now leaves it be (an
     employee applies the way their employer says)."""
     boxes = [f for f in data.get("fields") or [] if f.get("kind") == "checkbox" and not f.get("disabled")
-             and is_empty_value(f.get("value")) and _NEW_CANDIDATE.fullmatch(clean_label(f.get("label") or "").rstrip(" ."))]
+             and is_empty_value(f.get("value"))
+             and _NEW_CANDIDATE.fullmatch(clean_label(f.get("label") or "").rstrip(" ."))]
     profile = config.Profile.load()
     if not boxes or not company or not (profile.get("work_history") or profile.get("experience.current_company")):
         return []  # (a profile that says nothing of their work says nothing of this either)
@@ -6254,7 +6321,8 @@ def _unanswered(data: dict[str, Any]) -> str:
     if left:
         names = ", ".join(f"\u201c{label}\u201d" for label in left[:3]) + (" and more" if len(left) > 3 else "")
         return names + (" isn't answered." if len(left) == 1 else " aren't answered.")
-    if any(f.get("kind") == "file" for f in fields):  # Phoenix Children's waits on a resume, its box not marked required
+    # Phoenix Children's waits on a resume, its box not marked required
+    if any(f.get("kind") == "file" for f in fields):
         return "nothing is attached yet (your resume, say)."
     return ""
 
@@ -6283,13 +6351,15 @@ def _account_wants(left: dict[str, Any], filled: dict[str, Any]) -> str:
     said = list(dict.fromkeys(" ".join(e.split()) for e in errors if not _ERROR_COUNT.match(e.strip())))
     marked = [m for m in _flagged(left) if m not in errors]
     if said or marked:
-        return "; ".join(([f"it says \u201c{'; '.join(said)[:300].rstrip(' .')}\u201d"] if said else []) + marked) + "." \
-            + _choices_left(left)
+        return ("; ".join(([f"it says \u201c{'; '.join(said)[:300].rstrip(' .')}\u201d"] if said else []) + marked)
+                + "." + _choices_left(left))
     empty = [f for f in filled.get("fields") or [] if f.get("label") and not f.get("disabled")
              and f.get("kind") not in ("password", "file") and is_empty_value(f.get("value"))
              and (f.get("required") or f.get("kind") == "checkbox" and (_TERMS_BOX.search(f["label"])
-                  and not _NOT_TERMS.search(f["label"]) or _NEW_CANDIDATE.fullmatch(clean_label(f["label"]).rstrip(" ."))))]
-    named = [f"\u201c{_short(f['label'])}\u201d " + ("isn't ticked" if f.get("kind") == "checkbox" else "is still empty")
+                  and not _NOT_TERMS.search(f["label"])
+                  or _NEW_CANDIDATE.fullmatch(clean_label(f["label"]).rstrip(" ."))))]
+    named = [f"\u201c{_short(f['label'])}\u201d "
+             + ("isn't ticked" if f.get("kind") == "checkbox" else "is still empty")
              for f in empty[:3]]
     return "; ".join(named) + "." + _choices_left(filled) if named else ""
 
@@ -6301,7 +6371,8 @@ def _choices_left(data: dict[str, Any]) -> str:
             and f.get("label") and not f.get("disabled") and is_empty_value(f.get("value"))
             and (f.get("invalid") or f.get("required"))
             and (options := [o for o in f.get("options") or [] if not is_empty_value(o)])]
-    return "".join(f" Its choices for \u201c{_short(f['label'])}\u201d: " + ", ".join(f"\u201c{_short(o)}\u201d" for o in options[:4])
+    return "".join(f" Its choices for \u201c{_short(f['label'])}\u201d: "
+                   + ", ".join(f"\u201c{_short(o)}\u201d" for o in options[:4])
                    + (f" and {len(options) - 4} more" if len(options) > 4 else "") + "; that choice is yours."
                    for f, options in left[:2])
 
@@ -6314,7 +6385,8 @@ _ASSESSMENT = re.compile(r"^(?:take|start|begin|launch|complete|go to)\s+(?:the\
 # A step's link to a questionnaire about the applicant for a hiring tax credit (Kforce's Taleo, live run 41, Oct 12:
 # ". Required Complete Tax Credit Screening Questionnaire", and "You must provide the information requested in the
 # following section: Employment Tax Credit Screening"): answers about the person only they can give
-_SCREENING = re.compile(r"^\W*(?:required\s+)?(?:complete|start|take|begin|launch|go to|open)\s+(?:the\s+|your\s+|an?\s+)?"
+_SCREENING = re.compile(r"^\W*(?:required\s+)?(?:complete|start|take|begin|launch|go to|"
+                        r"open)\s+(?:the\s+|your\s+|an?\s+)?"
                         r"(?:employment\s+)?(?:tax credit|wotc)(?:\s+screening)?(?:\s+(?:questionnaire|survey|form))?$",
                         re.I)
 
@@ -6349,7 +6421,8 @@ def _came_on(before: dict[str, Any], data: dict[str, Any]) -> bool:
         return not a.get("aside") and bool(a.get("is_submit") or _FORWARD.match(final_text(a.get("text") or "")))
     # (not a text a button already on had then: a covered Workday twin of a greyed Submit isn't one that came on)
     was = ({final_text(a.get("text") or "") for a in before.get("actions") or [] if a.get("disabled") and way_on(a)}
-           - {final_text(a.get("text") or "") for a in before.get("actions") or [] if not a.get("disabled") and way_on(a)})
+           - {final_text(a.get("text") or "") for a in before.get("actions") or []
+              if not a.get("disabled") and way_on(a)})
     return any(not a.get("disabled") and way_on(a) and final_text(a.get("text") or "") in was
                for a in data.get("actions") or [])
 
@@ -6371,15 +6444,17 @@ _ERRORS_HEADING = re.compile(r"^(?:\d+\s+)?errors?\s+(?:found|on (?:this|the) pa
 def _answers_page(data: dict[str, Any]) -> tuple:
     """The page an answer the person gave went in on (_fill_once): _page_key without an errors heading, which
     the same step shows once it's pressed with something wrong (Workday's "Errors Found")."""
-    return _bare(data.get("url") or ""), tuple(h for h in data.get("headings") or [] if not _ERRORS_HEADING.match(h.strip()))
+    return _bare(data.get("url") or ""), tuple(h for h in data.get("headings") or []
+                                               if not _ERRORS_HEADING.match(h.strip()))
 
 
 # A heading (or the button Workday draws in one) that only says the step has something wrong: "Errors Found", "There
 # are 1 errors on this page", "Please correct the following". Never a step's own ("Error Handling Experience",
 # "Please Review Your Application", "Missing Information", "Problem Solving")
-_SAYS_WRONG = re.compile(r"^\W*(?:\d+\s+)?errors?(?:\s+found)?\W*$|\b\d+\s+errors?\b|\berrors?\s+(?:found|on (?:this|the) page)\b"
-                         r"|^\W*there (?:is|are|was|were) (?:an? |\d+ )?(?:errors?|problems?)\b"
-                         r"|^\W*(?:oops\W*)?please (?:fix|correct)\b|\b(?:fix|correct) the (?:following|errors?|highlighted)\b",
+_SAYS_WRONG = re.compile(r"^\W*(?:\d+\s+)?errors?(?:\s+found)?\W*$|\b\d+\s+errors?\b|\berrors?\s+(?:found|on (?:this|"
+                         r"the) page)\b|^\W*there (?:is|are|was|were) (?:an? |\d+ )?(?:errors?|problems?)\b"
+                         r"|^\W*(?:oops\W*)?please (?:fix|correct)\b|"
+                         r"\b(?:fix|correct) the (?:following|errors?|highlighted)\b",
                          re.I)
 # Workday's list of what's wrong: a button for each ("Error - Available Start Date", "Error: Email")
 _ERROR_LINK = re.compile(r"\s*error\s*[-\u2013:]", re.I)
@@ -6451,8 +6526,8 @@ def _own_draft(action: dict[str, Any], data: dict[str, Any], job_url: str) -> bo
     ids = set(_job_ids(job_url).values())
     if m := _REQ_IN_PATH.search(urlparse(job_url).path):
         ids.add(m.group(1))
-    # (an id of 4 characters or more, as a whole part of the link: one of its path's parts, or what follows a part's last
-    # "_" (Workday's "<title>_<req id>"), or a query value; a "2" from an address ending "_2" is no job's id, and a
+    # (an id of 4 characters or more, as a whole part of the link: one of its path's parts, or what follows a part's
+    # last "_" (Workday's "<title>_<req id>"), or a query value; a "2" from an address ending "_2" is no job's id, and a
     # link's "?step=2" isn't it: the review)
     ids = {i.lower() for i in ids if len(i) >= 4}
     parts = urlparse(href)
@@ -6528,7 +6603,8 @@ def _own_delete(deletes: list[dict[str, Any]], block: str) -> dict[str, Any] | N
 def _blocks_by_delete(data: dict[str, Any], section: str) -> int:
     """How many of a section's blocks the page shows, by their own numbered Delete ("Delete Education 2"), or Edit of a
     saved one (UKG Pro's "Edit Education Item 1": Nikon, UCT and Desert Financial, run 49)."""
-    kind = re.compile(rf"^(?:delete|remove|edit)\s+(?:{_BLOCK_KINDS.get(section, section)})\s+(?:item\s+)?(\d+)\s*$", re.I)
+    kind = re.compile(rf"^(?:delete|remove|edit)\s+(?:{_BLOCK_KINDS.get(section, section)})\s+(?:item\s+)?(\d+)\s*$",
+                      re.I)
     return len({m.group(1) for a in data.get("actions") or [] if (m := kind.match(final_text(a.get("text") or "")))})
 
 
@@ -6566,7 +6642,8 @@ def _closed_notice(data: dict[str, Any], text: str) -> str:
             before = said[start:m.start()]
             if _CLOSED_IF.search(said[start:m.end()]) or _CLOSED_HOW.match(said[m.end():line_end]) \
                     or before.count("(") > before.count(")"):
-                continue  # (a condition, how a posting is filled, what a board is closed for, or an aside about another)
+                # (a condition, how a posting is filled, what a board is closed for, or an aside about another)
+                continue
             return " ".join(said[start:end + 1 if end >= 0 else line_end].split())[:200]
     return ""
 
@@ -6683,11 +6760,11 @@ def _another_employers_mail(company: str, own: frozenset[str]) -> Callable[[str,
 # A box whose answer never goes on the "What went in" panel, by its words (each of its label, section, sub-label and
 # name): a password's, an emailed code's (a bare "Code" too, never a ZIP or area code), a security question's or its
 # answer's (_SECURITY_QUESTION's too), as none is ever logged, saved or reported either
-_KEPT_OUT = re.compile(r"\bpass ?(?:word|code|phrase)|\bpin\b|security (?:question|answer)|secret (?:question|answer|word)|"
-                       r"\bcreate (?:a |your )?secret\b|^\W*secret\W*$|mother'?s maiden name|verification code|"
+_KEPT_OUT = re.compile(r"\bpass ?(?:word|code|phrase)|\bpin\b|security (?:question|answer)|secret (?:question|answer|"
+                       r"word)|\bcreate (?:a |your )?secret\b|^\W*secret\W*$|mother'?s maiden name|verification code|"
                        r"one[- ]time (?:pass|code)|\botp\b|captcha|memorable (?:word|answer)|"
-                       r"^\W*(?:enter (?:the |your )?)?(?:(?:access|auth(?:entication)?|confirmation|e-?mail|security|sms|"
-                       r"text|verification) )?code\W*$", re.I)
+                       r"^\W*(?:enter (?:the |your )?)?(?:(?:access|auth(?:entication)?|confirmation|e-?mail|security|"
+                       r"sms|text|verification) )?code\W*$", re.I)
 _SECRETS_READ: dict[str, Any] = {}  # secrets.yaml's values, as last read, and when it was written then
 
 
@@ -6737,7 +6814,8 @@ def _guarded(pages: tuple[dict[str, Any], ...]) -> set[str]:
     clearance's questions (_no_clearance)."""
     out: set[str] = set()
     for data in pages:
-        fields = [{**f, "label": _no_clearance(f.get("label"))} for f in data.get("fields") or [] if isinstance(f, dict)]
+        fields = [{**f, "label": _no_clearance(f.get("label"))} for f in data.get("fields") or []
+                  if isinstance(f, dict)]
         headings = [_no_clearance(h) for h in data.get("headings") or []]
         out |= {str(f.get("id")) for f in _security_boxes(fields, headings)}
     return out
@@ -6817,7 +6895,8 @@ def _box_said(box: dict[str, Any]) -> dict[str, str]:
     return {"section": _short(str(box.get("section") or "")), "label": label}
 
 
-_DOCUMENTS = {"documents.resume": "Resume", "documents.cover_letter": "Cover letter"}  # the profile's, by autofill's rule
+# the profile's, by autofill's rule
+_DOCUMENTS = {"documents.resume": "Resume", "documents.cover_letter": "Cover letter"}
 _DOCUMENT_KINDS = {"documents.resume": "resume", "documents.cover_letter": "cover_letter"}  # (Run.kept_replaced's)
 _DOCUMENT_SAID = {"resume": "resume", "cover_letter": "cover letter"}
 
@@ -6836,7 +6915,8 @@ def _read_back(box: dict[str, Any] | None, secrets: set[str]) -> Any:
 
 
 @_quietly
-def _went_in(run: Run, filled: list[dict[str, Any]], *pages: dict[str, Any], shown: dict[str, Any] | None = None) -> None:
+def _went_in(run: Run, filled: list[dict[str, Any]], *pages: dict[str, Any],
+             shown: dict[str, Any] | None = None) -> None:
     """What a fill put into the page (autofill's `filled`, or the person's answers that went in), kept for the job's
     "What went in" panel: each box's answer by its place (the page is the first of `pages`, read before the fill; any
     later read adds the boxes drawn since, such as blocks added), its last one standing, as the page shows it after the
@@ -6877,8 +6957,8 @@ WENT_CHANGED_CHARS = 60  # of each side of a draft's answer changed, on the pane
 def _went_changed(run: Run, changes: list[tuple[dict[str, Any], Any, Any]], page: dict[str, Any]) -> None:
     """A saved draft's answers the desk changed to the profile's (Applier._autofill), each as "<label>: <old> → <new>",
     for the job's "What went in" panel alone (never the log, a note or a report: the draft's old answer is no detail of
-    the profile's that a scrubber would know). Never a password, a code or a security answer (_kept_out, _guarded), nor a
-    value that holds one of the desk's secrets, on either side."""
+    the profile's that a scrubber would know). Never a password, a code or a security answer (_kept_out, _guarded), nor
+    a value that holds one of the desk's secrets, on either side."""
     secrets, guarded = _secret_values(), _guarded((page,))
 
     def said(box: dict[str, Any], value: Any) -> str:
@@ -6894,11 +6974,13 @@ def _went_changed(run: Run, changes: list[tuple[dict[str, Any], Any, Any]], page
         run.went_in.change(f"{label}: {said(box, old)} → {said(box, new)}")
 
 
-# A saved draft's answers the desk changed, kept in the job's own folder (beside submission.json) so a restart of the desk
-# still holds the job from Submit for me and shows them on its card: never in the log, a note, a report or a saved page
+# A saved draft's answers the desk changed, kept in the job's own folder (beside submission.json) so a restart of the
+# desk still holds the job from Submit for me and shows them on its card: never in the log, a note,
+# a report or a saved page
 DRAFT_FILE = "draft-changes.json"
 # said on the card of a job whose kept changes won't read back (cut short, or changed by hand): it's held all the same
-DRAFT_UNREAD = "Earlier changes the desk made to this saved draft couldn't be read back: check its answers on the review page"
+DRAFT_UNREAD = ("Earlier changes the desk made to this saved draft couldn't be read back: check "
+                "its answers on the review page")
 
 
 def _draft_file(srv: Any, job_id: int) -> Path | None:

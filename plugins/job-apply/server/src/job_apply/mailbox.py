@@ -63,7 +63,8 @@ _CODE_WORDS = re.compile(r"verification|one[- ]time|passcode|security code|\bcod
 _DIGITS = re.compile(r"(?<![\d\-/.:+$])\b(\d{4,8})\b(?![\-/.:]?\d)")
 _MIXED = re.compile(r"\b(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{6,10}\b")
 # The word before "code" that makes it another kind: "promo code SAVE20", "ZIP code 85201", "area code 480"
-_OTHER_CODE = re.compile(r"\b(?:promo\w*|discount|coupon|zip|postal|area|country|dial(?:ing)?|referral|offer|gift|voucher|"
+_OTHER_CODE = re.compile(r"\b(?:promo\w*|discount|coupon|zip|postal|area|country|"
+                         r"dial(?:ing)?|referral|offer|gift|voucher|"
                          r"tracking|dress|tax|bar|qr|source|course|reference|booking|confirmation number)\s*$", re.I)
 # Between the words and a year-like code ("Your code is 2047"): nothing but joining words
 _JOINING = re.compile(r"^[\s:\-\u2013\u2026.]*(?:is|was|below)?[\s:\-\u2013\u2026.]*$", re.I)
@@ -74,7 +75,8 @@ _RESET_WORDS = re.compile(r"reset|password|recover|passwd|pwd", re.I)
 _UNDOES = re.compile(r"deactivat|unsubscrib|opt-?out", re.I)  # in a link's query: career_ns=account_deactivation
 _NOT_THIS_LINK = re.compile(r"deactivat|invalidat|unsubscrib|opt-?out|not-?you|report|declin|reject|cancel", re.I)
 # A number named as something else just before it: "(Job 2617841)", "Requisition #2505303"
-_NAMED_NUMBER = re.compile(r"(?:\bjob|\breq(?:uisition)?|\bref(?:erence)?)(?:\s+(?:id|code|number|no\.?))?\s*[:#.]?\s*$|#\s*$",
+_NAMED_NUMBER = re.compile(r"(?:\bjob|\breq(?:uisition)?|\bref(?:erence)?)(?:\s+(?:id|code|"
+                           r"number|no\.?))?\s*[:#.]?\s*$|#\s*$",
                            re.I)
 # Markup that styles a code's characters apart without parting them: <b>48</b><b>2913</b> is one
 # code. Only between two characters a code is made of; anywhere else a tag parts the words.
@@ -181,7 +183,8 @@ def _find_code(text: str) -> tuple[str | None, bool]:
     return nearest, False
 
 
-def find_link(text: str, links: list[str], allowed_link: Callable[[str], bool], words: re.Pattern[str] = _LINK_WORDS) -> str | None:
+def find_link(text: str, links: list[str], allowed_link: Callable[[str], bool],
+              words: re.Pattern[str] = _LINK_WORDS) -> str | None:
     """A confirmation link in a sign-up email that points back to the job site: one whose
     address itself says verify or confirm before one that only says so in its query (a logo
     link tagged "utm_campaign=email_verification"), and never "Not you? Deactivate". With

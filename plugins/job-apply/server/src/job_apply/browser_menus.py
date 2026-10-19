@@ -112,7 +112,8 @@ class MenusMixin:
             try:
                 if not await frame.evaluate(OPEN_MENU_JS):
                     continue
-                await frame.evaluate("() => { const a = document.activeElement; if (a && a !== document.body) a.blur(); }")
+                await frame.evaluate("() => { const a = document.activeElement; "
+                                     "if (a && a !== document.body) a.blur(); }")
                 await page.wait_for_timeout(150)
                 if not await frame.evaluate(OPEN_MENU_JS):
                     continue
@@ -173,7 +174,8 @@ class MenusMixin:
         frame = self._frame_for(page, field_id)
         target = frame.locator(f'[data-ja-opt="{browser._css_string(text)}"]').first
         if not await target.count():  # the menu re-rendered after it was read
-            opt = frame.locator('[role="option"]:visible, [role="grid"] [role="gridcell"]:visible').filter(has_text=text)
+            opt = frame.locator('[role="option"]:visible, [role="grid"] '
+                                '[role="gridcell"]:visible').filter(has_text=text)
             exact = opt.filter(has_text=re.compile(rf"^\s*{re.escape(text)}\s*$"))
             target = exact.first if await exact.count() else opt.first
         try:
@@ -278,7 +280,8 @@ class MenusMixin:
             # (its row's tick alone isn't enough before a click: only where the widget's own list has it too)
             ticked = await loc.evaluate(browser.TWIN_TICKED_JS) or []
             if browser._among(pick, ticked) or (await self._row_ticked(page, field["id"], pick)
-                                        and any(norm(t) in norm(pick) or norm(pick) in norm(t) for t in ticked if norm(t))):
+                                        and any(norm(t) in norm(pick) or norm(pick) in norm(t) for t in ticked
+                                                if norm(t))):
                 return f"selected {pick} (ticked already)"
             await self._click_option(page, field["id"], pick)
             for _ in range(8):

@@ -118,7 +118,7 @@ CREATE TABLE IF NOT EXISTS not_interested (
     at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS not_interested_job ON not_interested(job_id);
-"""
+"""  # noqa: E501
 # The reasons the desk's Not interested offers (each optional)
 NOT_INTERESTED_REASONS = ("title", "company", "location", "pay", "other")
 
@@ -161,8 +161,8 @@ _PIPELINE = ["saved", "in_progress", "ready_to_submit", "applied", "interviewing
 _DONE = {"applied", "interviewing", "offer", "rejected", "withdrawn"}
 # a job the person sent in (or is about to): listed under the desk's My applications with where it stands
 APPLICATION_STATUSES = ("ready_to_submit", "applied", "interviewing", "offer", "rejected", "withdrawn")
-# My applications' groups, in the page's order (standing): sent with nothing heard yet, an email came and it's no further
-# on, interviewing or an offer, rejected or withdrawn
+# My applications' groups, in the page's order (standing): sent with nothing heard yet, an email came and it's no
+# further on, interviewing or an offer, rejected or withdrawn
 GROUPS = ("waiting", "heard", "interviews", "closed")
 
 
@@ -592,7 +592,8 @@ class Tracker:
         lacks. (PRAGMA table_info says nothing of REFERENCES, UNIQUE or CHECK: a column added to a table that's there
         has none of them.)"""
         alters = []
-        for (table,) in want.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"):
+        for (table,) in want.execute("SELECT name FROM sqlite_master WHERE type = 'table' "
+                                     "AND name NOT LIKE 'sqlite_%'"):
             have = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
             for _, name, kind, notnull, default, _ in want.execute(f"PRAGMA table_info({table})"):
                 if name in have:
@@ -639,8 +640,8 @@ class Tracker:
         self.conn.commit()
 
     def _fold(self, keep: int, drop: int) -> None:
-        """A job about to go, one posting with `keep`: its history, emails, other addresses and maybe-the-same links moved
-        onto that one, and noted as merged into it (Tracker.merged_into), with any merged into it before."""
+        """A job about to go, one posting with `keep`: its history, emails, other addresses and maybe-the-same links
+        moved onto that one, and noted as merged into it (Tracker.merged_into), with any merged into it before."""
         for table in ("events", "emails", "aliases", "not_interested"):
             self.conn.execute(f"UPDATE {table} SET job_id = ? WHERE job_id = ?", (keep, drop))
         self.conn.execute("UPDATE OR IGNORE maybe_same SET job_id = ? WHERE job_id = ?", (keep, drop))
@@ -702,8 +703,8 @@ class Tracker:
         return one, theirs, ""
 
     def _link(self, job_id: int, others: builtins.list[int], why: str, now: str) -> None:
-        """Note jobs that may be one posting but aren't made one (_match, _kept_apart), each way round: the desk asks the
-        person before applying to one while another is begun or done (Tracker.maybe_same). Said in the job's history
+        """Note jobs that may be one posting but aren't made one (_match, _kept_apart), each way round: the desk asks
+        the person before applying to one while another is begun or done (Tracker.maybe_same). Said in the job's history
         the first time. Nothing written for links already there (the tracker opening with nothing new takes no write
         lock: another session may be writing)."""
         there = {(r[0], r[1]) for r in self.conn.execute(
@@ -712,7 +713,8 @@ class Tracker:
         for a, b in [(job_id, o) for o in added] + [(o, job_id) for o in others if (o, job_id) not in there]:
             self.conn.execute("INSERT OR IGNORE INTO maybe_same (job_id, other_id) VALUES (?, ?)", (a, b))
         if added:
-            said = f"maybe the same as job{'s' if len(added) > 1 else ''} {', '.join(map(str, added))}: kept apart, {why}"
+            said = (f"maybe the same as job{'s' if len(added) > 1 else ''} "
+                    f"{', '.join(map(str, added))}: kept apart, {why}")
             self.conn.execute("INSERT INTO events (job_id, at, status, note) VALUES (?, ?, '', ?)", (job_id, now, said))
             logging.getLogger(__name__).info("job %s %s", job_id, said)
 
@@ -748,7 +750,8 @@ class Tracker:
 
     def _merge_pair(self, board_id: int, own_id: int, board: str) -> None:
         """A job board's copy (board_id) and the employer's own posting (own_id) made one job (_merge_copies)."""
-        theirs, own = (self.conn.execute("SELECT * FROM jobs WHERE id = ?", (i,)).fetchone() for i in (board_id, own_id))
+        theirs, own = (self.conn.execute("SELECT * FROM jobs WHERE id = ?", (i,)).fetchone()
+                       for i in (board_id, own_id))
         keep, drop = sorted((theirs, own), key=_rank, reverse=True)
         sets: dict[str, Any] = {k: own[k] for k in _PLACE_FIELDS}
         sets.update({k: drop[k] for k in (*_JOB_FIELDS, "applied_at", "notes")
@@ -799,8 +802,8 @@ class Tracker:
             try:
                 _move_folder(folder, self.job_dir(into["id"], into["company"], into["title"]), gone_id)
             except OSError as e:
-                logging.getLogger(__name__).warning("job %s's folder %s wasn't moved into job %s's (%s): tried again at "
-                                                    "the next start", gone_id, folder.name, into["id"], e)
+                logging.getLogger(__name__).warning("job %s's folder %s wasn't moved into job %s's (%s): tried again "
+                                                    "at the next start", gone_id, folder.name, into["id"], e)
 
     def _at(self, url: str) -> sqlite3.Row | None:
         """The job at this address (normalized), or with it among its other addresses (aliases)."""
@@ -930,7 +933,8 @@ class Tracker:
             note = (f"merged: the same posting on the employer's site ({ATS_NAMES.get(sets['ats'], sets['ats'])}); "
                     f"{JOB_BOARDS.get(theirs or '', 'the job board')}'s link kept as an alias")
         sets["updated_at"] = now
-        self.conn.execute(f"UPDATE jobs SET {', '.join(f'{k} = ?' for k in sets)} WHERE id = ?", (*sets.values(), job_id))
+        self.conn.execute(f"UPDATE jobs SET {', '.join(f'{k} = ?' for k in sets)} WHERE id = ?",
+                          (*sets.values(), job_id))
         self.conn.execute("INSERT OR REPLACE INTO aliases (url, job_id) VALUES (?, ?)", (alias, job_id))
         self.conn.execute("INSERT INTO events (job_id, at, status, note) VALUES (?, ?, '', ?)", (job_id, now, note))
         self.conn.commit()
@@ -1107,11 +1111,11 @@ class Tracker:
                            job_id: int | None = None, location: str = "", external_id: str = "",
                            description: str = "") -> None:
         """The person said Not interested in the opening at this address (the desk's Not interested), for `reason` (one
-        of NOT_INTERESTED_REASONS, or none), kept until undone. The mark is the job's when the opening is one (the job at
-        the address, or `job_id`: the one the desk's row shows, saved from another site): on its number and each of its
-        addresses, and said in its history. With the opening's place and the requisition numbers it gives (its external
-        id, its title's, a job board's text: _req_ids, as a posting is matched), for a job saved since that is surely
-        the same posting (not_interested_marks)."""
+        of NOT_INTERESTED_REASONS, or none), kept until undone. The mark is the job's when the opening is one (the job
+        at the address, or `job_id`: the one the desk's row shows, saved from another site): on its number and each of
+        its addresses, and said in its history. With the opening's place and the requisition numbers it gives (its
+        external id, its title's, a job board's text: _req_ids, as a posting is matched), for a job saved since that is
+        surely the same posting (not_interested_marks)."""
         if reason and reason not in NOT_INTERESTED_REASONS:
             raise ValueError(f"reason should be one of {', '.join(NOT_INTERESTED_REASONS)}, or none")
         now, url = _now(), normalize_url(url)
@@ -1156,8 +1160,8 @@ class Tracker:
         """The addresses marked Not interested (normalized), each with its job's number (None for an opening not saved
         as one), company, title, reason ("" for none) and when (`at`). One job marked has a line for each of its
         addresses: not_interested_marks checks openings and jobs against them."""
-        rows = self.conn.execute("SELECT url, job_id, company, title, location, req_ids, reason, at FROM not_interested "
-                                 "ORDER BY at")
+        rows = self.conn.execute("SELECT url, job_id, company, title, location, req_ids, reason, at FROM "
+                                 "not_interested ORDER BY at")
         return {r["url"]: {"job_id": r["job_id"],
                            **{k: r[k] or "" for k in ("company", "title", "location", "req_ids", "reason", "at")}}
                 for r in rows}
@@ -1205,7 +1209,8 @@ class Tracker:
         if len(theirs) != 1 or self._ids(theirs[0], known):  # (b): its only one, naming no number either
             return None
         job = theirs[0]
-        others = [j for j in group if j.id != job.id and _alike(job.key, j.key) and (j.board is None) == (board is None)]
+        others = [j for j in group
+                  if j.id != job.id and _alike(job.key, j.key) and (j.board is None) == (board is None)]
         if others or any(u != mark["url"] and _alike(k, job.key) for u, k in openings.items()):
             return None
         return job.id
@@ -1235,7 +1240,8 @@ class Tracker:
         job = self.get(job_id, with_description=False)
         if job is None:
             raise KeyError(f"No job with id {job_id}")
-        seen = self.conn.execute("SELECT category, received_at FROM emails WHERE thread_id = ?", (thread_id,)).fetchone()
+        seen = self.conn.execute("SELECT category, received_at FROM emails WHERE thread_id = ?",
+                                 (thread_id,)).fetchone()
         if seen and seen["category"] == category and (not received_at or seen["received_at"] == received_at):
             return {"already_logged": True, "status": job["status"], "changed": False}
         self.conn.execute(  # one row per thread: its latest message
@@ -1258,7 +1264,8 @@ class Tracker:
         return {"already_logged": False, "status": new, "changed": new != current}
 
     @_locked
-    def logged_threads(self, since_days: int | None = None) -> builtins.list[dict[str, Any]]:  # (in here `list` is Tracker.list)
+    # (in here `list` is Tracker.list)
+    def logged_threads(self, since_days: int | None = None) -> builtins.list[dict[str, Any]]:
         q = "SELECT thread_id, job_id, category, received_at FROM emails"
         args: list[Any] = []
         if since_days is not None:
@@ -1268,11 +1275,11 @@ class Tracker:
 
     @_locked
     def last_heard(self) -> dict[int, dict[str, Any]]:
-        """Each job's newest logged email, by job: its `category`, `received_at` (when it came; when it was logged, where
-        that wasn't given), the `day` it came as YYYY-MM-DD (in the time's own offset; the day it was logged, where
-        received_at doesn't read as a time), its one-line `summary`, and how many `emails` are logged for the job. One
-        query for every job. Newest is by when it came, not when it was logged: a confirmation logged late isn't news
-        after the interview. (Picked here, not in SQL: received_at is as Claude wrote it, a date, an ISO time or an
+        """Each job's newest logged email, by job: its `category`, `received_at` (when it came; when it was logged,
+        where that wasn't given), the `day` it came as YYYY-MM-DD (in the time's own offset; the day it was logged,
+        where received_at doesn't read as a time), its one-line `summary`, and how many `emails` are logged for the job.
+        One query for every job. Newest is by when it came, not when it was logged: a confirmation logged late isn't
+        news after the interview. (Picked here, not in SQL: received_at is as Claude wrote it, a date, an ISO time or an
         email's Date header, which don't sort as words.)"""
         rows = self.conn.execute("SELECT rowid AS n, job_id, category, summary, received_at, logged_at FROM emails")
         oldest = datetime.min.replace(tzinfo=timezone.utc)

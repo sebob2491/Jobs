@@ -37,7 +37,8 @@ def _spellings(value: str) -> set[str]:
     JSON-escaped (in a data-* attribute) and URL-encoded (in a link or a file name)."""
     plain = "".join(c for c in unicodedata.normalize("NFKD", value) if not unicodedata.combining(c))
     out = {value, plain, unicodedata.normalize("NFD", value), json.dumps(value)[1:-1],
-           json.dumps(value)[1:-1].replace("@", "\\u0040"), quote(value, safe=""), quote(value, safe="").replace("%20", "+")}
+           json.dumps(value)[1:-1].replace("@", "\\u0040"), quote(value, safe=""),
+           quote(value, safe="").replace("%20", "+")}
     return {v for v in out if v}
 
 
@@ -210,8 +211,8 @@ def scrub_others(text: str) -> str:
 # Attributes that tie a page's parts together by their values: kept as they are, long hex, ids and all (only an email
 # or a token taken out: the review of 0.3.189 found "userId_1234" and "userId_5678" made one id, and a class list's
 # long hex taken out of the page but not its style sheet)
-_TIES = {"id", "for", "name", "class", "form", "list", "headers", "aria-labelledby", "aria-describedby", "aria-controls",
-         "aria-owns", "aria-activedescendant", "rel", "accept-charset"}
+_TIES = {"id", "for", "name", "class", "form", "list", "headers", "aria-labelledby", "aria-describedby",
+         "aria-controls", "aria-owns", "aria-activedescendant", "rel", "accept-charset"}
 # An address whose query may carry a session or a person (a link's own are handled where it's made offline): taken
 # without it. A whole address, or one with a query of name=value, in any attribute; a path from the site's root only in
 # one that holds an address (never "Relocate?" in an aria-label: the review of 0.3.189)
@@ -251,8 +252,10 @@ def _redact_page(soup: BeautifulSoup, secrets: list[str]) -> None:
                 v = value.strip()
                 if attr == "style":
                     value = _CSS_URL_QUERY.sub(r"\1\2", value)
-                elif "?" in v and " " not in v and (_URL_VALUE.match(v) or (attr in _URL_ATTRS or attr.startswith("data-"))
-                                                    and _PATH_VALUE.match(v) or attr in _URL_ATTRS and v.startswith("?")):
+                elif ("?" in v and " " not in v
+                        and (_URL_VALUE.match(v) or (attr in _URL_ATTRS or attr.startswith("data-"))
+                             and _PATH_VALUE.match(v)
+                             or attr in _URL_ATTRS and v.startswith("?"))):
                     value = _without_query(v)
                 tag[attr] = _scrub_value(attr, value, secrets)
 
@@ -521,7 +524,8 @@ def convert(snapshot: Path, name: str, out_dir: Path = DEFAULT_DIR, prof: Profil
         src = snapshot / fr["file"]
         if not src.exists():
             continue
-        target = out_dir / (f"{name}.html" if fr["file"] == "page.html" else frame_map.get(fr.get("url", ""), f"{name}.{fr['file']}"))
+        target = out_dir / (f"{name}.html" if fr["file"] == "page.html"
+                            else frame_map.get(fr.get("url", ""), f"{name}.{fr['file']}"))
         html = clean_html(src.read_text(encoding="utf-8"), secrets, frame_map, fr.get("url") or meta.get("url", ""))
         target.write_text(html, encoding="utf-8")
         written.append(target)

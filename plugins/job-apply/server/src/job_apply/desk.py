@@ -232,8 +232,8 @@ class Desk:
 
     def _save_settings(self) -> None:
         """desk.json, all or nothing (it's written at each look at the page too): a write cut short (a full disk, the
-        program ending) leaves it as it was, never torn, which would turn every switch back to its default, Troubleshooting's
-        hold on sending among them."""
+        program ending) leaves it as it was, never torn, which would turn every switch back to its default,
+        Troubleshooting's hold on sending among them."""
         config.ensure_home()
         config.write_text_atomic(_settings_path(), json.dumps({"auto_submit": self.applier.auto_submit,
                                                 "tailor_resumes": self.applier.tailor,
@@ -370,7 +370,8 @@ class Desk:
 
     @staticmethod
     def _bad(e: Exception) -> Response:
-        return JSONResponse({"error": str(e.args[0]) if isinstance(e, KeyError) and e.args else str(e)}, status_code=400)
+        return JSONResponse({"error": str(e.args[0]) if isinstance(e, KeyError) and e.args else str(e)},
+                            status_code=400)
 
     async def page_view(self, request: Request) -> Response:
         if not self._allowed(request, api=False):
@@ -383,8 +384,8 @@ class Desk:
         return JSONResponse(self.state(), headers={"Cache-Control": "no-store"})
 
     async def history_view(self, request: Request) -> Response:
-        """The page's This week: what the last `days` days of the desk's history (history.HISTORY_FILE) come to, with its
-        newest `recent` lines."""
+        """The page's This week: what the last `days` days of the desk's history (history.HISTORY_FILE) come to, with
+        its newest `recent` lines."""
         if not self._allowed(request, api=True):
             return self._forbidden()
         try:
@@ -473,13 +474,15 @@ class Desk:
             # letter it was jobs 1 and 3), nor is true a job's number
             if not isinstance(urls, list) or not all(isinstance(u, str) for u in urls):
                 raise ValueError("urls should be a list of web addresses")
-            if not isinstance(job_ids, list) or not all(isinstance(j, int) and not isinstance(j, bool) for j in job_ids):
+            if (not isinstance(job_ids, list)
+                    or not all(isinstance(j, int) and not isinstance(j, bool) for j in job_ids)):
                 raise ValueError("job_ids should be a list of job numbers")
         except ValueError as e:
             return self._bad(e)
         # (never Submit for me while troubleshooting: a job queued now could go once it's off)
         notes: dict[str, Any] = {}
-        queued, refused = self.apply(urls=urls, job_ids=job_ids, submit=body.get("submit") is True and not self.troubleshoot,
+        queued, refused = self.apply(urls=urls, job_ids=job_ids,
+                                     submit=body.get("submit") is True and not self.troubleshoot,
                                      notes=notes)
         return JSONResponse({"queued": queued, "already_applied": refused,
                              **({"not_interested": notes["not_interested"]} if notes.get("not_interested") else {}),
@@ -801,8 +804,9 @@ class Desk:
         lines = []
         for name, n in sorted(by_system.items(), key=lambda kv: (-kv[1], kv[0])):
             if not saved[name]:
-                lines.append(f"{DESK_PASSWORDS[name]}: no password saved, so {n} of these jobs {'stop' if n != 1 else 'stops'}"
-                             " at the sign-in for you. Save one under Site passwords and the desk signs in itself.")
+                lines.append(f"{DESK_PASSWORDS[name]}: no password saved, so {n} of these jobs "
+                             f"{'stop' if n != 1 else 'stops'} at the sign-in for you. Save one under Site passwords "
+                             "and the desk signs in itself.")
         if mailing and not saved["email_password"]:
             lines.append("No email app password saved: a site that emails a sign-up code or link waits for you to "
                          "enter it. Save one under Site passwords and the desk reads it from your inbox.")
@@ -811,8 +815,8 @@ class Desk:
         except ValueError:  # a profile that doesn't read: the queue says so itself
             left = 0
         if left:
-            lines.append(f"{left} common question{'s' if left != 1 else ''} not answered yet (the Common questions card): "
-                         "each stops the first job that asks it.")
+            lines.append(f"{left} common question{'s' if left != 1 else ''} not answered yet (the Common questions "
+                         "card): each stops the first job that asks it.")
         return lines
 
     def _listing(self, url: str) -> dict[str, Any] | None:
@@ -899,8 +903,9 @@ class Desk:
             item = self._listing(url) or {"url": url}
             posting = item.get("posting") or {}
             job, _ = t.upsert({
-                "url": url, "apply_url": posting.get("apply_url") or "", "title": item.get("title") or posting.get("title"),
-                "company": item.get("company"), "location": item.get("location") or posting.get("location"),
+                "url": url, "apply_url": posting.get("apply_url") or "",
+                "title": item.get("title") or posting.get("title"), "company": item.get("company"),
+                "location": item.get("location") or posting.get("location"),
                 "ats": item.get("ats") or posting.get("ats"), "source": "job desk",
                 "external_id": item.get("external_id") or posting.get("external_id"),
                 "salary": posting.get("salary"),
@@ -973,8 +978,8 @@ class Desk:
                         continue
             posting.company = self.srv.listed_employer(url) or posting.company
             job, _ = self.srv.tracker().upsert(posting.to_dict())
-            out.append({"url": job["url"], "job_id": job["id"], "title": job.get("title"), "company": job.get("company"),
-                        "status": job.get("status"), "warnings": posting.warnings})
+            out.append({"url": job["url"], "job_id": job["id"], "title": job.get("title"),
+                        "company": job.get("company"), "status": job.get("status"), "warnings": posting.warnings})
         return out
 
     def answer(self, job_id: int, answers: list[dict[str, Any]]) -> str | None:
@@ -1021,7 +1026,8 @@ class Desk:
                     problem = f"Couldn't remember your answers ({e}); they're used for this application only."
             run.once[question_key(label)] = value
         if run.started:
-            run.in_their_hands = True  # (its tab may hold what they did while its card was up: a file kept there is theirs)
+            # (its tab may hold what they did while its card was up: a file kept there is theirs)
+            run.in_their_hands = True
         self.applier.go_on_for(self.applier.enqueue(job_id, submit=run.submit, front=True))
         self.applier.pressed.add(job_id)  # (answered on its card: it goes even while the queue is paused)
         return problem
@@ -1065,7 +1071,8 @@ class Desk:
         def news(url: str, job: dict[str, Any] | None, run: Any) -> tuple[float | None, bool]:
             """When an opening was first saved (found by a search, or saved to the tracker), and whether it's New: first
             saved since the visit before this one, and not taken up (begun, sent or skipped) since."""
-            at = [s for s in (self.found.get(url), _iso_seconds(job.get("created_at")) if job else None) if s is not None]
+            at = [s for s in (self.found.get(url), _iso_seconds(job.get("created_at")) if job else None)
+                  if s is not None]
             first = min(at) if at else None
             return first, (since is not None and first is not None and first > since and run is None
                            and (job is None or job.get("status") not in DONE))
@@ -1099,7 +1106,8 @@ class Desk:
         # what the person applied to, and where each stands (the page's My applications): the newest email logged for
         # it, how many there are, whether it's time to follow up, and its group
         heard = t.last_heard()
-        applications = [{**{k: j.get(k) for k in ("id", "title", "company", "url", "status", "applied_at", "updated_at")},
+        applications = [{**{k: j.get(k)
+                            for k in ("id", "title", "company", "url", "status", "applied_at", "updated_at")},
                          **standing(j, heard.get(j["id"]), settings.follow_up_days)}
                         for j in tracked if j["status"] in APPLICATION_STATUSES]
         # jobs added another way (Claude from Indeed or LinkedIn, or by hand) and not finished yet
@@ -1177,8 +1185,8 @@ class Desk:
             "current": self.applier.current,
             "queued": [jid for kind, jid in self.applier.tasks if kind == "apply"],
             "paused": self.applier.paused,  # (Pause queue: nothing new starts until Resume queue)
-            # the jobs back in the queue after a restart, waiting for Resume queue; and why the queue isn't kept here, if
-            # it isn't (another desk keeps it, or the folder allows no lock)
+            # the jobs back in the queue after a restart, waiting for Resume queue; and why the queue isn't kept here,
+            # if it isn't (another desk keeps it, or the folder allows no lock)
             "restored": self.applier.restored_notice(),
             "queue_note": self.applier.queue_note(),
             # (a queue this folder can't keep is a problem, said in red; one another desk keeps is only so)
@@ -1247,9 +1255,9 @@ class Desk:
             line("practice", "Practice mode", "off",
                  "Applications can be sent: when you press Submit on the desk, by Submit for me when it's on, or when "
                  "you tell Claude to submit one in the chat."
-                 + (f" submit_mode is auto: when Claude fills an application with you in the chat, it submits one that's "
-                    f"complete without asking on these job systems: {auto}. Never LinkedIn or Indeed, and the desk itself "
-                    "still waits for your Submit or Submit for me." if s.submit_mode == "auto" else ""),
+                 + (" submit_mode is auto: when Claude fills an application with you in the chat, it submits one "
+                    f"that's complete without asking on these job systems: {auto}. Never LinkedIn or Indeed, and the "
+                    "desk itself still waits for your Submit or Submit for me." if s.submit_mode == "auto" else ""),
                  f"{profile} submit_mode (dry_run is practice mode: nothing is sent)")
         submit_box = "The Submit for me box under Openings (kept in desk.json)"
         if dry:
@@ -1270,8 +1278,8 @@ class Desk:
             line("auto_submit", "Submit for me", "off",
                  "The desk stops at each review page; you press Submit.", submit_box)
         line("boards", "LinkedIn and Indeed", "always yours",
-             "The desk fills LinkedIn and Indeed applications but never presses their Submit, whatever the settings: you "
-             "do, in the desk's browser window.", "Not a setting: always so")
+             "The desk fills LinkedIn and Indeed applications but never presses their Submit, whatever the settings: "
+             "you do, in the desk's browser window.", "Not a setting: always so")
         where = f"{profile} accept_notices (on unless set to false)"
         if notices is None:
             line("accept_notices", "Agree to notices", unknown, busy, where)
@@ -1333,7 +1341,8 @@ class Desk:
                  where)
         saved = _saved(["email_password"])["email_password"]
         before = a.mail_problem
-        try:  # (the desk's own way into its inbox; what it would say of one it can't use isn't put on the page from here)
+        # (the desk's own way into its inbox; what it would say of one it can't use isn't put on the page from here)
+        try:
             usable, why = a.mail_login() is not None, a.mail_problem
         except Exception:  # (a file it reads, locked just now)
             usable, why = False, "The desk couldn't look just now (a file it reads may be open in another program)."
@@ -1348,7 +1357,8 @@ class Desk:
         elif saved:
             line("email_password", "Email app password (the desk)", "saved, but the desk can't use it now",
                  (why or "Your profile has no email address it can read mail for, or your mail service turned the "
-                  "password down.") + " Until then, a site that emails a sign-up code or link waits for you to enter it.",
+                  "password down.")
+                 + " Until then, a site that emails a sign-up code or link waits for you to enter it.",
                  where)
         else:
             line("email_password", "Email app password (the desk)", "not saved",
@@ -1365,11 +1375,12 @@ class Desk:
               f"The desk fills up to {n} applications at the same time, each in its own tab.")
              + " Never two at one employer's site, and only one at a time signs in, makes an account or waits on an "
                "emailed code.",
-             "The Jobs at once buttons under Openings" + (" (your choice there is in force)" if a.jobs_at_once is not None
-                                                          else f", or {profile} jobs_at_once"))
+             "The Jobs at once buttons under Openings"
+             + (" (your choice there is in force)" if a.jobs_at_once is not None
+                else f", or {profile} jobs_at_once"))
         if a.hold_submits:
-            said = ("Nothing is submitted, by your Submit or for you. Find jobs searches every list's employers and shows "
-                    "only the openings where the desk doesn't go all the way yet; "
+            said = ("Nothing is submitted, by your Submit or for you. Find jobs searches every list's employers and "
+                    "shows only the openings where the desk doesn't go all the way yet; "
                     + ("nothing is filled until profile.yaml is fixed." if unread else "the desk still fills each step"
                        + (" and makes accounts" if accounts else "") + ", which the sites keep."))
         else:
@@ -1460,8 +1471,8 @@ _NO_SYSTEM = frozenset({"", "unknown", "custom", "company_site"})
 
 
 def usual_systems() -> set[str]:
-    """The job systems the desk usually goes all the way on: more than half of their employers on the plugin's lists (two
-    or more of them) are ones where the live check took a test applicant to the review page (desk_handled.yaml)."""
+    """The job systems the desk usually goes all the way on: more than half of their employers on the plugin's lists
+    (two or more of them) are ones where the live check took a test applicant to the review page (desk_handled.yaml)."""
     handled = config.handled_employers()
     try:
         employers = every_employer()

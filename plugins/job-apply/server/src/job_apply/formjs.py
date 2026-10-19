@@ -1346,9 +1346,9 @@ UNKEPT_FORGET_JS = r"""
 }
 """
 
-# What a resume (or cover letter) box shows, as Workday lists it: the box's own part of the page (as the form reader reads
-# what it shows, uploadedNear: the wrappers around it up to one holding another form control or another file box, and
-# the first holding Workday's file items), and in it the items Workday lists each file in (data-automation-id
+# What a resume (or cover letter) box shows, as Workday lists it: the box's own part of the page (as the form reader
+# reads what it shows, uploadedNear: the wrappers around it up to one holding another form control or another file box,
+# and the first holding Workday's file items), and in it the items Workday lists each file in (data-automation-id
 # "file-upload-item", its name in "file-upload-item-name", "Successfully Uploaded!"). Only Workday's: that's where an
 # account's last resume is kept (NXP's, the weekly probe of Oct 2026). Another site's list of stored files may be the
 # person's own file library, where a Delete takes the file off their account: never touched (Applier._replace_kept).
@@ -1422,9 +1422,9 @@ KEPT_DELETE_JS = "(el, name) => {" + _KEPT_ITEMS + r"""
 }
 """
 
-# After that Delete, in the box's frame: how many of Workday's file items show that file (its name, or with none, no name
-# and "uploaded"). The file is gone once there are fewer than before the press: never by its Delete alone going (a page
-# that draws its list again), nor by its name gone from the page (a note may name it)
+# After that Delete, in the box's frame: how many of Workday's file items show that file (its name, or with none, no
+# name and "uploaded"). The file is gone once there are fewer than before the press: never by its Delete alone going (a
+# page that draws its list again), nor by its name gone from the page (a note may name it)
 KEPT_ROWS_JS = r"""(name) => {
   const shown = (x) => x.getClientRects().length > 0 && getComputedStyle(x).visibility !== 'hidden';
   const txt = (x) => (x.innerText || x.textContent || '').replace(/\s+/g, ' ').trim();
@@ -1741,8 +1741,8 @@ OPEN_PICKERS_JS = r"""
 
 # A date picker's calendar, for the day `iso` ("2026-11-02"): the dialog or grid its box names (aria-controls), else
 # the last calendar shown in a dialog that wasn't before the box was pressed (`mark`: the dialogs shown now marked as
-# before, data-ja-cal-before, and nothing else done). Its days are read from their title or data attribute (rc-picker's, as
-# Eightfold's has them: "2026-11-02") or from their words ("Monday 2 November 2026", "November 2, 2026"). The day
+# before, data-ja-cal-before, and nothing else done). Its days are read from their title or data attribute (rc-picker's,
+# as Eightfold's has them: "2026-11-02") or from their words ("Monday 2 November 2026", "November 2, 2026"). The day
 # shown is marked data-ja-day (its button, where it has one) and "day" returned; else, past the days shown, the
 # calendar's next month's button (one its words say moves a month, never a form's "Next") is marked data-ja-day-nav and
 # "next" returned ("back" for the month before); "none" without a calendar, "unread" with no day it can read,

@@ -108,7 +108,8 @@ _ANYWHERE = {"remote", "hybrid", "on site", "onsite", "virtual", "multiple locat
              "united states", "united states of america", "usa", "us", "anywhere", "nationwide", "work from home"}
 _STATES = {s.lower() for pair in US_STATES.items() for s in pair}
 # What follows a place said as "the job's location" that was its state or country ("Springfield, IL")
-_PLACE_TAIL = re.compile(r"(the job's location)((?:(?:,\s*|\s+)(?:" + "|".join(US_STATES) + r")\b(?:\s+\d{5}(?:-\d{4})?)?"
+_PLACE_TAIL = re.compile(r"(the job's location)((?:(?:,\s*|\s+)(?:" + "|".join(US_STATES)
+                         + r")\b(?:\s+\d{5}(?:-\d{4})?)?"
                          r"|\s+\d{5}(?:-\d{4})?\b|,\s*(?:" + "|".join(sorted(US_STATES.values(), key=len, reverse=True))
                          + r"|United States(?: of America)?|USA|US)\b)+)")
 # "the the employer", from "the Example Group" ("Privacy Policy of the the employer": issue #112, note 42)
@@ -130,7 +131,8 @@ _URL_HOST = re.compile(r"https?://[^/?#]*", re.I)
 
 def _repository() -> str:
     try:
-        repo = json.loads((config.PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))["repository"]
+        repo = json.loads((config.PLUGIN_ROOT / ".claude-plugin" / "plugin.json")
+                          .read_text(encoding="utf-8"))["repository"]
     except (OSError, ValueError, KeyError, TypeError):
         repo = ""
     return str(repo).rstrip("/") or "https://github.com/sebob2491/Jobs"
@@ -151,7 +153,8 @@ def report_strings(prof: config.Profile) -> list[str]:
 
 def _city(place: Any) -> str:
     """A place's city: its first part that's neither a state nor a country nor no place at all ("Springfield" in
-    "Springfield, IL", "AZ, Springfield", "US-IL-Springfield" as Workday writes one, "Springfield IL 62701"), else ""."""
+    "Springfield, IL", "AZ, Springfield", "US-IL-Springfield" as Workday writes one, "Springfield IL
+    62701"), else ""."""
     if not isinstance(place, str):
         return ""
     place = re.sub(r"\([^)]*\)", " ", place)
@@ -234,13 +237,13 @@ def _fields(meta: dict[str, Any]) -> list[str]:
 def _hiding(scrub: Callable[[Any], str], hide: Iterable[Any]) -> Callable[[Any], str]:
     """`scrub`, after taking out what's this run's alone (`hide`: pipeline's Applier._report_hidden: the answers the
     person gave for this application and what was typed into the form, an account form's answers, the codes the inbox
-    gave, the desk's secrets), each as a whole word, of 3 characters or more, however a page may write it: a page's error
-    the desk quotes ("review page shows errors: …") can echo what was typed. A number of 7 digits or more goes with any
-    separators where it's mostly digits ("602-555-0177" as "(602) 555-0177" or "6025550177"; never "Worked 2019-2023 at
-    a fab" as "20192023"), and a long answer by its start too, as far as the text goes on with it (a page's error that
-    cut it short: "I maintained 300mm etch tools across… exceeds 100 characters"). In an address, only as a whole word
-    of its path or query (a code in a verify link, an email in a profile's path), never its host; or the whole address,
-    when it's one of them (a reset link the inbox gave)."""
+    gave, the desk's secrets), each as a whole word, of 3 characters or more, however a page may write it: a page's
+    error the desk quotes ("review page shows errors: …") can echo what was typed. A number of 7 digits or more goes
+    with any separators where it's mostly digits ("602-555-0177" as "(602) 555-0177" or "6025550177"; never "Worked
+    2019-2023 at a fab" as "20192023"), and a long answer by its start too, as far as the text goes on with it (a page's
+    error that cut it short: "I maintained 300mm etch tools across… exceeds 100 characters"). In an address, only as a
+    whole word of its path or query (a code in a verify link, an email in a profile's path), never its host; or the
+    whole address, when it's one of them (a reset link the inbox gave)."""
     values = {v for v in (" ".join(str(h or "").split()) for h in hide) if len(v) >= 3}
     hidden = {s for v in values for s in _spellings(v) if len(s) >= 3}
     hidden |= {digits for v in values if len(digits := re.sub(r"\D", "", v)) >= 7
@@ -319,7 +322,8 @@ def _a(name: str) -> str:
 def _address_said(url: str) -> str:
     """An address in a report that doesn't say which job it was: its job system alone."""
     ats = detect_ats(url)
-    return f"({_a(ATS_NAMES.get(ats, ats))} address)" if ats and ats != "company_site" else "(an employer's own address)"
+    return (f"({_a(ATS_NAMES.get(ats, ats))} address)" if ats and ats != "company_site"
+            else "(an employer's own address)")
 
 
 def _employer_forms(company: str, urls: list[Any]) -> list[str]:
@@ -339,7 +343,8 @@ def _employer_forms(company: str, urls: list[Any]) -> list[str]:
     for url in urls:
         tenant = host_of(str(url)).split(".")[0] if url and shared_system(str(url)) else ""
         if tenant and tenant not in _SYSTEM_LABELS and tenant not in _COMMON_WORDS:
-            forms |= {tenant, tenant.upper(), tenant.capitalize()}  # (a one-word form is matched as written: _as_written)
+            # (a one-word form is matched as written: _as_written)
+            forms |= {tenant, tenant.upper(), tenant.capitalize()}
     # (a short form of 4 letters or more, or an all-capitals one of 3: "NXP", "ASM", "TEL")
     kept = {f for f in forms if (len(f) >= 4 or len(f) >= 3 and f.isupper()) and f.lower() not in _SYSTEM_LABELS}
     return sorted({*kept, *([company.strip()] if len(company.strip()) >= 2 else [])}, key=len, reverse=True)
@@ -389,8 +394,10 @@ def _anonymous(job: dict[str, Any], run: Any, urls: list[Any], secrets: list[str
         # addresses only, never a frame's (a CAPTCHA's, a video's)
         host = host_of(str(url or ""))
         label = site_domain(host).split(".")[0] if host and not shared_system(f"https://{host}/") else ""
-        if len(label) >= 4 and re.search(r"[a-z]", label) and label not in _SYSTEM_LABELS | _COMMON_WORDS | _COMPANY_WORDS:
-            for form in {label, label.upper(), label.capitalize(), *([label.replace("-", " ")] if "-" in label else [])}:
+        if (len(label) >= 4 and re.search(r"[a-z]", label)
+                and label not in _SYSTEM_LABELS | _COMMON_WORDS | _COMPANY_WORDS):
+            for form in {label, label.upper(), label.capitalize(),
+                         *([label.replace("-", " ")] if "-" in label else [])}:
                 said.setdefault(form, "the employer")
                 exact |= {form} if " " not in form else set()
 
@@ -400,7 +407,8 @@ def _anonymous(job: dict[str, Any], run: Any, urls: list[Any], secrets: list[str
             if said[name] == "the employer":
                 text = re.sub(_NOT_IN_EMAIL.format(_pattern(name)), said[name], text,
                               flags=0 if name in exact or len(name) < 3 else re.I)
-            elif said[name] == "the job's location":  # (as written, and never a longer word's start: "IL" of "Illinois")
+            # (as written, and never a longer word's start: "IL" of "Illinois")
+            elif said[name] == "the job's location":
                 text = re.sub(_pattern(name) + r"(?![^\W\d_])", said[name], text)
             else:
                 text = re.sub(_pattern(name), said[name], text, flags=re.I if len(name) >= 3 else 0)
@@ -612,7 +620,8 @@ def stop_facts(run: Any) -> dict[str, Any]:
     """What a stop's record says of the run (its code, need, reason and last action), copied as the stop is saved."""
     last = getattr(run, "last_action", None)
     return {"code": getattr(run, "code", "") or "", "need": getattr(run, "need", "") or "",
-            "reason": str(getattr(run, "reason", "") or ""), "last_action": dict(last) if isinstance(last, dict) else None}
+            "reason": str(getattr(run, "reason", "") or ""),
+            "last_action": dict(last) if isinstance(last, dict) else None}
 
 
 def write_stop(folder: Path, facts: dict[str, Any], hide: Iterable[Any] = (),
@@ -695,7 +704,8 @@ def _note_scrubber(job: dict[str, Any], run: Any, prof: config.Profile,
     its path names the job and a password reset's holds its token), and the employer applied to,
     by its name or a short form of it, called "the employer"."""
     scrub = _hiding(_scrubber(report_strings(prof)), hide)
-    urls = [job.get("url"), job.get("apply_url"), getattr(run, "url", ""), (getattr(run, "page_info", None) or {}).get("url")]
+    urls = [job.get("url"), job.get("apply_url"), getattr(run, "url", ""),
+            (getattr(run, "page_info", None) or {}).get("url")]
     forms = {(f, _as_written(f, str(n or ""))) for n in (job.get("company"), getattr(run, "company", ""))
              for f in _employer_forms(str(n or ""), urls)}
     exact = {f for f, as_written in forms if as_written}

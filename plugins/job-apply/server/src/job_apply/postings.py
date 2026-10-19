@@ -99,8 +99,8 @@ def html_to_text(raw: str, limit: int | None = MAX_DESCRIPTION) -> str:
     for li in soup.find_all("li"):
         li.insert_before("\n- ")
     # a line of its own, before and after: "<strong>Preferred</strong><p>..." keeps its heading
-    for block in soup.find_all(["p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "tr", "td", "th", "dt", "dd",
-                                "section", "article", "header", "footer", "table", "blockquote"]):
+    for block in soup.find_all(["p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "tr", "td",
+                                "th", "dt", "dd", "section", "article", "header", "footer", "table", "blockquote"]):
         block.insert_before("\n")
         block.insert_after("\n")
     text = soup.get_text()
@@ -292,8 +292,8 @@ def posting_from_jsonld(ld: dict[str, Any], url: str) -> Posting:
         full_text=text,
         external_id=str(ident.get("value", "")) if isinstance(ident, dict) else str(ident or ""),
         salary=_salary_from_ld(ld.get("baseSalary")),
-        employment_type=", ".join(ld["employmentType"]) if isinstance(ld.get("employmentType"), list) else str(ld.get("employmentType") or ""),
-        posted_at=str(ld.get("datePosted") or ""),
+        employment_type=(", ".join(ld["employmentType"]) if isinstance(ld.get("employmentType"), list)
+                         else str(ld.get("employmentType") or "")), posted_at=str(ld.get("datePosted") or ""),
         parse_method="json-ld",
         # (its figures, not only the words _salary_from_ld prints; dollars when it names no currency only in the US)
         **pay_fields(pay_from_ld(ld.get("baseSalary"), in_us=_in_us(ld.get("jobLocation")))),
@@ -446,7 +446,8 @@ def posted_date(value: Any) -> str:
     if us := re.match(r"(\d{1,2})/(\d{1,2})/(\d{4}|\d{2})(?!\d)", text):
         year = int(us[3])
         return _day(year + 2000 if year < 100 else year, int(us[1]), int(us[2]))
-    text = re.sub(r"(\d{2}:\d{2}:\d{2}) [A-Za-z]{2,5} (\d{4})$", r"\1 \2", text)  # its zone (UTC, EDT): the day is enough
+    # its zone (UTC, EDT): the day is enough
+    text = re.sub(r"(\d{2}:\d{2}:\d{2}) [A-Za-z]{2,5} (\d{4})$", r"\1 \2", text)
     for fmt in _DATE_FORMATS:
         try:
             return datetime.strptime(text, fmt).date().isoformat()
@@ -661,12 +662,14 @@ async def _fetch_oracle(client: httpx.AsyncClient, url: str) -> Posting | None:
         if not m:
             return None
         host = m.group(0)
-    items = (await _get(client, f"https://{host}{path}", headers={"Accept": "application/json"})).json().get("items") or []
+    items = ((await _get(client, f"https://{host}{path}",
+                         headers={"Accept": "application/json"})).json().get("items") or [])
     if not items:
         return None
     d = items[0]
     body = "\n\n".join(html_to_text(d.get(k) or "", limit=None) for k in
-                       ("ExternalDescriptionStr", "ExternalResponsibilitiesStr", "ExternalQualificationsStr") if d.get(k))
+                       ("ExternalDescriptionStr", "ExternalResponsibilitiesStr", "ExternalQualificationsStr")
+                       if d.get(k))
     return Posting(
         url=url,
         title=d.get("Title") or "",
@@ -783,7 +786,8 @@ async def _fetch_with(client: httpx.AsyncClient, url: str) -> Posting:
 # Edward Jones' home-office postings (live, Oct 2026) link Apply to its staff Brassring site
 # (siteid 5377), behind a staff sign-in that ends on a host the public can't reach; the same
 # job is on its public site (5374), with an "Apply to job" button.
-_PUBLIC_APPLY = [(re.compile(r"(sjobs\.brassring\.com/.*[?&]partnerid=26235&(?:amp;)?siteid=)5377\b", re.I), r"\g<1>5374")]
+_PUBLIC_APPLY = [(re.compile(r"(sjobs\.brassring\.com/.*[?&]partnerid=26235&(?:amp;)?siteid=)5377\b", re.I),
+                  r"\g<1>5374")]
 
 
 def public_apply_url(url: str) -> str:
@@ -810,7 +814,8 @@ def finalize(posting: Posting) -> Posting:
         posting.title = title.strip()
         posting.company = posting.company or rest.strip()
     if not posting.is_useful:
-        posting.warnings.append("Posting text looks incomplete; confirm details with the user or read it in the browser.")
+        posting.warnings.append("Posting text looks incomplete; confirm details with the "
+                                "user or read it in the browser.")
     pay = pay_from_posting(posting)
     if pay is not None and pay.listed:
         for k, v in pay_fields(pay).items():

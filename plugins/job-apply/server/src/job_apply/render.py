@@ -59,7 +59,8 @@ def _as_written(markdown_text: str) -> str:
         if i % 2:
             out.append(part)
             continue
-        part = re.sub(r"<(?!(?:https?://|mailto:)[^\s<>]+>|[\w.+-]+@[\w-]+(?:\.[\w-]+)+>|br\s*/?>)", "&lt;", part, flags=re.I)
+        part = re.sub(r"<(?!(?:https?://|mailto:)[^\s<>]+>|[\w.+-]+@[\w-]+(?:\.[\w-]+)+>|br\s*/?>)", "&lt;",
+                      part, flags=re.I)
         part = re.sub(r"(?m)^(\s{0,3})#(?=[^#\s])", r"\1\\#", part)
         out.append(re.sub(r"(?<=\w)\*(?=\w)", r"\\*", part))
     return "".join(out)

@@ -62,12 +62,14 @@ class AccountsMixin:
         async def _bring_forward(self, run: Run) -> None: ...
 
     @staticmethod
-    def _account_button(actions: list[dict[str, Any]], pattern: re.Pattern[str], full: bool = True) -> dict[str, Any] | None:
+    def _account_button(actions: list[dict[str, Any]], pattern: re.Pattern[str],
+                        full: bool = True) -> dict[str, Any] | None:
         """A page's own button for an account step: not a cookie banner's, a footer box's, or a
         sign-in with another site's account, nor one that signs them up ("Email me jobs like this": _signs_them_up)."""
         return next((a for a in actions if not a.get("disabled") and not a.get("cookie") and not a.get("aside")
                      and not pipeline._signs_them_up(a)
-                     and not pipeline._SOCIAL.search(a["text"]) and (pattern.match if full else pattern.search)(final_text(a["text"]).strip())
+                     and not pipeline._SOCIAL.search(a["text"])
+                     and (pattern.match if full else pattern.search)(final_text(a["text"]).strip())
                      and not (not full and pipeline._NOT_A_STEP.search(a["text"]))), None)
 
     async def _make_account(self, run: Run, data: dict[str, Any]) -> bool:
@@ -114,8 +116,9 @@ class AccountsMixin:
         site = pipeline._site(run, data)
         ticked = ", ".join(f"\u201c{pipeline._short(self._choice_said(f))}\u201d" for f in boxes)
         # (a user name it asks for is the email: _sign_in put it there, and signs in with it later)
-        with_ = "your email as its user name and your saved password" if any(
-            pipeline._user_name_box(f) for f in data.get("fields") or [] if f.get("kind") in ("text", "email")) else "your saved password"
+        with_ = ("your email as its user name and your saved password" if any(
+            pipeline._user_name_box(f) for f in data.get("fields") or [] if f.get("kind") in ("text", "email"))
+                 else "your saved password")
         self._log(run, f"pressed \u201c{button['text'].strip()}\u201d to create your account on {site} with {with_}"
                   + (f", after ticking {ticked}" if boxes else ""))
         self._keep_ticked(run, terms + pipeline._other_positions_boxes(data), button["text"].strip())
@@ -260,7 +263,8 @@ class AccountsMixin:
                     await asyncio.sleep(0.5)
                 if pressable is None:
                     why = f"“{said}” stayed greyed out"
-                elif pipeline._captcha_on(now) or pipeline._security_asked(now) and not pipeline._security_answered(now):  # (drawn since it was read)
+                elif (pipeline._captcha_on(now) or pipeline._security_asked(now)
+                        and not pipeline._security_answered(now)):  # (drawn since it was read)
                     pressable = None
                     why = ("it shows a CAPTCHA, which is yours to solve" if pipeline._captcha_on(now) else
                            "it asks security questions too, whose answers are yours to choose")
@@ -277,7 +281,8 @@ class AccountsMixin:
                     self._log(run, f"pressed “{said}” to finish creating your account on {site}"
                               + (f", after ticking {ticked}" if boxes else ""))
                     self._keep_ticked(run, boxes, said)
-                    run.account_made = pipeline._account_made_says(site, terms=bool(terms) or "agreed to its terms" in run.account_made,
+                    run.account_made = pipeline._account_made_says(site, terms=bool(terms)
+                                                                   or "agreed to its terms" in run.account_made,
                                                                    password=bool(run.account_made))
                     await self._wait_to_leave(now, said)
                     return True
@@ -348,7 +353,8 @@ class AccountsMixin:
         True: on its way (the next look carries on); False: paused for the person."""
         site = pipeline._site(run, data)
         if data.get("captcha") or data.get("challenge"):
-            return await self._account_theirs(run, data, f"{site} has no account for your email yet, and its sign-in shows "
+            return await self._account_theirs(run, data,
+                                        f"{site} has no account for your email yet, and its sign-in shows "
                                         "a picture check (CAPTCHA), which is yours", code="account_theirs")
         run.accounts_tried += 1
         run.did("pressed", create)
@@ -395,13 +401,15 @@ class AccountsMixin:
                 return True  # it went on by itself: the main loop's next look
             data, button = now, self._account_button(now.get("actions") or [], pattern)
         if button is None:
-            return await self._account_theirs(run, data, f"I couldn't find the button that goes on with making your account "
+            return await self._account_theirs(run, data,
+                                        f"I couldn't find the button that goes on with making your account "
                                         f"on {site}", code="no_step_button")
         if view == "consent":
             ticked = pipeline._consent_boxes(data)
             run.did("picked", ticked)
             if ticked and not (await srv.fill_form([{"id": f["id"], "value": True} for f in ticked])).get("ok"):
-                return await self._account_theirs(run, data, f"{site} asks you to agree to its terms before making your "
+                return await self._account_theirs(run, data,
+                                            f"{site} asks you to agree to its terms before making your "
                                             "account, and its box didn't take my tick", code="account_step_failed")
             for f in ticked:
                 self._log(run, f"ticked “{pipeline._short(f.get('label') or '')}” to make your account on {site}")
@@ -414,7 +422,8 @@ class AccountsMixin:
             address = config.Profile.load().get("personal.email")
             box = next(f for f in data.get("fields") or [] if not f.get("disabled") and not f.get("aside"))
             if not address:
-                return await self._account_theirs(run, data, f"{site} asks for your email to make your account, and your "
+                return await self._account_theirs(run, data,
+                                            f"{site} asks for your email to make your account, and your "
                                             "profile has none", code="profile_gap")
             if str(box.get("value") or "").strip().lower() != address.strip().lower():
                 run.did("typed", box)
@@ -503,7 +512,8 @@ class AccountsMixin:
         Consent: I understand that I may be considered for other open positions…")."""
         label = clean_label(field.get("label") or "")
         options = [o for o in field.get("options") or [] if isinstance(o, str)]
-        said = f"{label}: {options[0]}" if len(options) == 1 and label else label or (options[0] if options else "a box")
+        said = (f"{label}: {options[0]}" if len(options) == 1 and label
+                else label or (options[0] if options else "a box"))
         return said if len(said) <= 160 else said[:158].rsplit(" ", 1)[0].rstrip(" ,.;:") + "…"
 
     async def _account_theirs(self, run: Run, data: dict[str, Any], why: str, tail: bool = True, *,
@@ -574,7 +584,8 @@ class AccountsMixin:
         async def press(action: dict[str, Any], allow_submit: bool = False) -> bool:
             run.did("pressed", action)
             try:
-                out = await (srv.browser.click(action["id"], allow_submit=True) if allow_submit else srv.click(action["id"]))
+                out = await (srv.browser.click(action["id"], allow_submit=True) if allow_submit
+                             else srv.click(action["id"]))
             except Exception:  # gone (a page drawn again after the failed sign-in) or won't take a click
                 return False
             return out.get("clicked") is not False
@@ -598,7 +609,8 @@ class AccountsMixin:
             if forgot is None:
                 return await stop("couldn't find its way to a password reset", data)
         run.reset_from = data.get("url") or ""
-        before, _ = await self._look(text=False)  # (the page as it is now, the refused sign-in drawn: what the press changes)
+        # (the page as it is now, the refused sign-in drawn: what the press changes)
+        before, _ = await self._look(text=False)
         forgot = pipeline._forgot_action(pipeline._sign_in_ways(before)) or forgot  # (its own, drawn again since)
         if not await press(forgot):
             return await instead("couldn't open its password reset", data)
@@ -659,9 +671,10 @@ class AccountsMixin:
             run.resetting = True
             run.reset_at = time.time()  # (the person's press, past its picture code, comes after this)
             await self._bring_forward(run)
-            self._pause(run, "bot_check", f"I opened {site}'s password reset for your saved password, which didn't sign "
-                        "in, and filled in your email. Solve its picture code and press its button; the desk watches your "
-                        "inbox for the reset email and sets your saved password as the new one.", seen=data,
+            self._pause(run, "bot_check",
+                        f"I opened {site}'s password reset for your saved password, which didn't sign "
+                        "in, and filled in your email. Solve its picture code and press its button; the desk watches "
+                        "your inbox for the reset email and sets your saved password as the new one.", seen=data,
                         code="captcha")
             return "paused"
         # (the email box's own form's button: "Email me jobs like this" around it matches as well, and a sign-up's
@@ -762,7 +775,8 @@ class AccountsMixin:
                     "the new one, then press Carry on: the desk signs in with it (an email app password saved on the "
                     "desk lets it do all this itself).")
         run.reset_waited = True
-        self._pause(run, "email_code", f"{pipeline._site(run, data)} is emailing you a password reset: your saved password didn't "
+        self._pause(run, "email_code",
+                    f"{pipeline._site(run, data)} is emailing you a password reset: your saved password didn't "
                     "sign in there." + watching, seen=data, code="reset_pending")
         if watched:  # nothing for the person to do: the queue goes on, and the job is picked up again after
             run.blocking, run.left = False, True
@@ -797,7 +811,8 @@ class AccountsMixin:
         said = (f"{site} won't sign in until your account there is verified from the link it emailed." if stale
                 else f"{site} emailed you a link to verify your new account, and won't sign in until it's opened.")
         if self.mail_login() is not None:
-            watching = "The desk is watching your inbox for it: it opens the link, then signs in with your saved password."
+            watching = ("The desk is watching your inbox for it: it opens the link, then "
+                        "signs in with your saved password.")
             if stale and resend is not None and not run.verify_resent:
                 try:
                     run.did("pressed", resend)
@@ -807,7 +822,8 @@ class AccountsMixin:
                     pressed = False
                 if pressed:
                     run.verify_resent = True  # (once a job)
-                    data, text = await self._look()  # (the page as it is now, paused on: the site's answer to the press)
+                    # (the page as it is now, paused on: the site's answer to the press)
+                    data, text = await self._look()
                     if pipeline._SEND_FAILED.search(" ".join([*(data.get("errors") or []), text[:3000]])):
                         self._log(run, f"pressed \u201c{label}\u201d, and {site} says it couldn't send the email")
                         watching = (f"The desk pressed \u201c{label}\u201d, and {site} says it couldn't send the "
@@ -816,8 +832,8 @@ class AccountsMixin:
                                     "signs in with your saved password.")
                     else:
                         self._log(run, f"pressed \u201c{label}\u201d, so {site} emails the link again")
-                        watching = (f"The desk pressed \u201c{label}\u201d and is watching your inbox for the new email: "
-                                    "it opens the link, then signs in with your saved password.")
+                        watching = (f"The desk pressed \u201c{label}\u201d and is watching your inbox for the new "
+                                    "email: it opens the link, then signs in with your saved password.")
                 else:
                     watching = (f"The desk couldn't press its \u201c{label}\u201d: press it in the desk's browser "
                                 "window, and the desk opens the new email's link from your inbox, then "
@@ -875,15 +891,18 @@ class AccountsMixin:
         site = pipeline._site(run, data)
         if data.get("captcha") or data.get("challenge"):
             await self._bring_forward(run)
-            self._pause(run, "bot_check", f"I put your saved password in {site}'s new-password boxes. Solve its picture "
+            self._pause(run, "bot_check",
+                        f"I put your saved password in {site}'s new-password boxes. Solve its picture "
                         "code and press its button; the desk carries on after that.", seen=data, code="captcha")
             return "paused"
         # (the reset's own button: never an employer's "Save Job" around iCIMS' frame)
         mine = pipeline._password_view(data)
-        button = self._account_button(pipeline._box_buttons(mine["actions"], passwords[0], mine["fields"]), pipeline._RESET_SET, full=False)
+        button = self._account_button(pipeline._box_buttons(mine["actions"], passwords[0], mine["fields"]),
+                                      pipeline._RESET_SET, full=False)
         run.did("pressed", button)
         try:
-            pressed = button is not None and (await srv.browser.click(button["id"], allow_submit=True)).get("clicked") is not False
+            pressed = (button is not None
+                       and (await srv.browser.click(button["id"], allow_submit=True)).get("clicked") is not False)
         except Exception:
             pressed = False
         after, after_text = await self._look()
@@ -899,19 +918,21 @@ class AccountsMixin:
         if not pressed or self._reset_form_showing(after, after_text, said_on):
             await self._bring_forward(run)
             said = f" It says \u201c{after['errors'][0][:160]}\u201d." if after.get("errors") else ""
-            self._pause(run, "sign_in", f"I put your saved password in {site}'s new-password boxes, and it didn't take it "
-                        f"as the new one.{said} Set it there (or another, and save that one on the desk), then sign in; "
-                        "the desk carries on after that.", seen=after, code="reset_failed")
+            self._pause(run, "sign_in",
+                        f"I put your saved password in {site}'s new-password boxes, and it didn't take it "
+                        f"as the new one.{said} Set it there (or another, and save that one on the desk), then sign "
+                        "in; the desk carries on after that.", seen=after, code="reset_failed")
             return "paused"
         if refused := pipeline._reset_refused(after, after_text):
             # its form gone, and the site's words that it set nothing (its link spent, or a password it had before):
             # never said to be set (KLA's Workday, the reset probe's second pass, run 136, a spent link's)
             await self._bring_forward(run)
-            self._pause(run, "sign_in", f"I put your saved password in {site}'s new-password boxes and pressed its button, "
-                        f"and it says \u201c{refused.rstrip(' .')}\u201d: it didn't set it as the new one. Reset it there "
-                        "(through its \u201cForgot password\u201d again if the link is spent) to the one you saved on the "
-                        "desk, or to another and save that one on the desk, then press Carry on: the desk signs in "
-                        "with it.", seen=after, code="reset_failed")
+            self._pause(run, "sign_in",
+                        f"I put your saved password in {site}'s new-password boxes and pressed its button, "
+                        f"and it says \u201c{refused.rstrip(' .')}\u201d: it didn't set it as the new one. Reset it "
+                        "there (through its \u201cForgot password\u201d again if the link is spent) to the one you "
+                        "saved on the desk, or to another and save that one on the desk, then press Carry on: the desk "
+                        "signs in with it.", seen=after, code="reset_failed")
             return "paused"
         run.resetting = False
         run.reset_set = run.account_known = True
@@ -984,8 +1005,9 @@ class AccountsMixin:
         if not fields:
             # Workday's "Sign in with email"; or, after its own password reset, its "Password has been reset"
             # and a "Sign In" that opens the form (issue #112, note 14, live test 2, Oct 2026)
-            email_button = next((a for a in actions if re.match(r"^sign in with email$", a["text"], re.I)), None) or next(
-                (a for a in actions if re.match(r"^(sign|log) ?in$", a["text"].strip(), re.I) and not a.get("cookie")), None)
+            email_button = (next((a for a in actions if re.match(r"^sign in with email$", a["text"], re.I)), None)
+                            or next((a for a in actions if re.match(r"^(sign|log) ?in$", a["text"].strip(), re.I)
+                                     and not a.get("cookie")), None))
             if email_button is None or tried.get("email_step", 0) >= 2:
                 return None
             run.did("pressed", email_button)
@@ -1024,8 +1046,8 @@ class AccountsMixin:
             if not tried.get("create_account"):
                 self._log(run, "your saved password didn't sign in, so I opened Create Account")
             return "create_account"
-        # (the sign-in's own: in its password boxes' frame, never a side box's, a job alerts sign-up's "Email" on the page
-        # around iCIMS' frame)
+        # (the sign-in's own: in its password boxes' frame, never a side box's, a job alerts sign-up's "Email" on the
+        # page around iCIMS' frame)
         boxes = [f for f in fields if f["kind"] in ("text", "email") and not f.get("aside")
                  and (not passwords or pipeline._frame_of(f) == pipeline._frame_of(passwords[0]))
                  and re.search(r"e-?mail|user ?name|login", f.get("label") or "", re.I)]
@@ -1041,14 +1063,15 @@ class AccountsMixin:
             return None
         new_account = len(passwords) == 2 or signing_up
         if new_account and run.account_in and not tried.get("to_sign_in"):
-            # the account made for this job already, and signed in to (never one only pressed for: a form the site turned
-            # down is said for what it wants, the review of 0.3.148), its Create Account on show again (Applied Materials'
-            # Workday, run 60: signed out by its "something went wrong" refresh, it showed Create Account, and the desk
-            # filled it and stopped): its own Sign In is the way back in, never a second account. The form's own link
-            # first ("Already have an account? Sign In"), then the page's; never another site's sign-in
+            # the account made for this job already, and signed in to (never one only pressed for: a form the site
+            # turned down is said for what it wants, the review of 0.3.148), its Create Account on show again (Applied
+            # Materials' Workday, run 60: signed out by its "something went wrong" refresh, it showed Create Account,
+            # and the desk filled it and stopped): its own Sign In is the way back in, never a second account. The
+            # form's own link first ("Already have an account? Sign In"), then the page's; never another site's sign-in
             ways = [a for a in actions if not a.get("cookie") and not pipeline._SOCIAL.search(a["text"])
                     and re.match(r"^(sign|log) ?in$", a["text"].strip(), re.I)]
-            way = next((a for a in ways if a.get("in_account_form") or a.get("after_password")), None) or next(iter(ways), None)
+            way = (next((a for a in ways if a.get("in_account_form") or a.get("after_password")), None)
+                   or next(iter(ways), None))
             if way is not None:
                 tried["to_sign_in"] = 1
                 run.did("pressed", way)
@@ -1166,9 +1189,11 @@ class AccountsMixin:
         saved = await self._sign_in(run, data, {}, details=False) == "prefilled"  # filled in above
         if saved:  # the record of the page shows its password boxes filled, too
             run.page_info = pipeline._page_info((await self._look(text=False))[0])
-        srv._mark_ready(srv.tracker().get(run.job_id), "filled by the Job Desk; the site creates the account as it applies")
+        srv._mark_ready(srv.tracker().get(run.job_id),
+                        "filled by the Job Desk; the site creates the account as it applies")
         await self._bring_forward(run)
-        password = "Your saved password is in its password boxes" if saved else "Choose a password in its password boxes"
+        password = ("Your saved password is in its password boxes" if saved
+                    else "Choose a password in its password boxes")
         return self._pause(run, "your_submit", f"Filled in on {pipeline._site(run, data)}, which creates your account "
                            f"as you apply. {password}, check the page, then press its Apply button yourself: that "
                            "sends the application. Then press \u201cI submitted it myself\u201d here.",
