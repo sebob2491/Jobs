@@ -33,13 +33,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from collections.abc import Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 from . import config, history, mailbox, report
 from .search import every_employer
-from .ats import ATS_NAMES, JOB_BOARDS, detect_ats, shared_system
+from .ats import ATS_NAMES, JOB_BOARDS, detect_ats, host_of, shared_system
 from .autofill import (classes_only, clean_label, degree_kinds_listed, degree_not_listed, entry_list_unloaded, entry_of,
                        _CHOICE_KINDS, is_empty_value, kept_documents, no_choice_for_no_degree, norm,
                        plan_autofill, profile_entries, site_default, unset_choice,
@@ -2091,7 +2091,7 @@ class Applier:
                 job = self.srv.tracker().get(run.job_id, with_description=False) or {}
                 company, title, url = (company or job.get("company") or "", title or job.get("title") or "",
                                        url or job.get("url") or "")
-            entry: dict[str, Any] = {"job_id": run.job_id, "company": company, "title": title, "host": _host(url)}
+            entry: dict[str, Any] = {"job_id": run.job_id, "company": company, "title": title, "host": host_of(url)}
             if began is not None:
                 entry.update(started=history.stamp(began), ended=history.stamp(ended),
                              minutes=round(max(ended - began, 0.0) / 60, 1))
@@ -2507,9 +2507,9 @@ class Applier:
         if run is None or job_id in self._slots:
             return run is None
         page = run.page if run.page is not None and not run.page.is_closed() else None
-        host = (urlparse(page.url if page is not None else run.url).hostname or "").lower()
-        return not any(o.inbox and host and (urlparse(o.page.url if o.page is not None and not o.page.is_closed()
-                                                      else o.url).hostname or "").lower() == host
+        host = host_of(page.url if page is not None else run.url)
+        return not any(o.inbox and host and host_of(o.page.url if o.page is not None and not o.page.is_closed()
+                                                     else o.url) == host
                        for o in self._under_way() if o is not run)
 
     def _site_holder(self, run: Run) -> Run | None:
@@ -2705,7 +2705,7 @@ class Applier:
         paused on, not that kind of page any more, and still this job's (see _own_place)."""
         if data.get("loading") or (run.pause_sig is not None and _page_sig(data) == run.pause_sig):
             return False
-        if run.hold_host and (urlparse(data.get("url") or "").hostname or "").lower() == run.hold_host.lower():
+        if run.hold_host and host_of(data.get("url")) == run.hold_host.lower():
             return False  # still on the account site the person is making their account on
         if (run.account_page and not run.accounts_tried and _bare(data.get("url") or "") == run.account_page
                 and _email_account_view(data)):
@@ -2721,7 +2721,7 @@ class Applier:
         other.wd5.myworkdayjobs.com), nor another posting elsewhere: driving another
         application as this job could submit it under this job's name. `own`: the job's hosts,
         looked up beforehand (off the event loop's thread the tracker can't be read)."""
-        host = (urlparse(url).hostname or "").lower()
+        host = host_of(url)
         own = self._own_hosts(run) if own is None else own
         if host == run.paused_host or host and host in own:  # (a page saved on this computer has no host)
             return True
@@ -2779,7 +2779,7 @@ class Applier:
 
         def ours(prefix: str) -> bool:
             url = str(urls.get(prefix) or "")
-            host = (urlparse(url).hostname or "").lower()
+            host = host_of(url)
             return bool(url) and (self._own_place(run, url, own) or bool(host) and shared_system(url) is None
                                   and mailbox.site_domain(host) in own_sites)
 
@@ -2835,7 +2835,7 @@ class Applier:
         allowed = {mailbox.site_domain(urlparse(u).hostname or "") for u in urls}
         for u in urls:
             allowed |= mailbox.ATS_MAIL_DOMAINS.get(detect_ats(u), set())
-            if tenant := re.fullmatch(r"([a-z0-9-]+)\.wd\d+\.myworkdayjobs\.com", (urlparse(u).hostname or "").lower()):
+            if tenant := re.fullmatch(r"([a-z0-9-]+)\.wd\d+\.myworkdayjobs\.com", host_of(u)):
                 allowed.add(f"workday.{tenant.group(1)}.com")
         if run.employer_mail is None:
             try:
@@ -2843,7 +2843,7 @@ class Applier:
             except Exception:  # (a profile.yaml that doesn't read: no inbox to read either)
                 own = ""
             run.employer_mail = frozenset(_employer_mail_domains(str(run.company or job.get("company") or ""),
-                                                                 {(urlparse(u).hostname or "").lower() for u in urls}, own))
+                                                                 {host_of(u) for u in urls}, own))
         return {d for d in allowed | run.employer_mail if d}
 
     async def _check_mail_safely(self, run: Run) -> None:
@@ -3129,7 +3129,7 @@ class Applier:
         run.tab_mark, run.left, run.moved_since, run.desk_at = 0, need == "bot_check", 0.0, 0.0  # (a bot check: watched)
         run.mail_checked, run.mail_done, run.verifying = 0.0, False, False
         run.mail_looked, run.mail_held, run.mail_held_at = 0.0, 0.0, 0.0
-        run.paused_host = urlparse(run.url).hostname or ""
+        run.paused_host = host_of(run.url)
         run.hold_host = ""
         self._log(run, reason)
         if need not in _DRAFT_GOES_ON:  # (a stop the person may change the application's boxes at: theirs from here on)
@@ -4993,13 +4993,23 @@ class Applier:
             await asyncio.sleep(0.25)
         return False
 
+    @staticmethod
+    async def _until(seconds: float, step: float, check: Callable[[], Awaitable[bool]]) -> bool:
+        """Look every `step` seconds, for `seconds`: True once `check` says so (first looked at after a wait, never
+        before it), False when the time runs out first."""
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            await asyncio.sleep(step)
+            if await check():
+                return True
+        return False
+
     async def _wait_for_application(self) -> None:
         """Give a Create Account form a moment to draw an application below it."""
-        deadline = time.monotonic() + ACCOUNT_DRAW_WAIT
-        while time.monotonic() < deadline:
-            await asyncio.sleep(1)
-            if _account_and_application((await self._look(text=False))[0]):
-                return
+        async def drawn() -> bool:
+            return _account_and_application((await self._look(text=False))[0])
+
+        await self._until(ACCOUNT_DRAW_WAIT, 1, drawn)
 
     async def _said_terms(self, boxes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """A Create Account form's terms boxes, less a bare one ("I agree", "I consent") or one agreeing to "the
@@ -5046,40 +5056,34 @@ class Applier:
 
     async def _wait_for_step_change(self, key: tuple[Any, ...], seconds: float) -> bool:
         """Wait for the page to go on from a step (its address or headings no longer `key`'s)."""
-        deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            await asyncio.sleep(1)
+        async def gone_on() -> bool:
             data, _ = await self._look(text=False)
             if (_steady_url(data.get("url")), tuple(data.get("headings") or [])) != key[:2]:
                 return True
             # (or a question drawn in place of the one pressed on: a questionnaire asking one at a time, the review of
             # 0.3.189)
-            if len(key) > 4 and questions_shown(data.get("fields") or []) != key[4]:
-                return True
-        return False
+            return len(key) > 4 and questions_shown(data.get("fields") or []) != key[4]
+
+        return await self._until(seconds, 1, gone_on)
 
     async def _wait_for_change(self, before: dict[str, Any], seconds: float) -> bool:
         """Wait for the page to be other than `before` (its address, headings or boxes). True once it is."""
-        deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            await asyncio.sleep(0.5)
+        async def changed() -> bool:
             now, _ = await self._look(text=False)
-            if _page_sig(now) != _page_sig(before):
-                return True
-        return False
+            return _page_sig(now) != _page_sig(before)
+
+        return await self._until(seconds, 0.5, changed)
 
     async def _wait_for_progress(self, seconds: float, before: dict[str, Any] | None = None) -> bool:
         """Wait for a form, a sign-in, a bot check or a button that moves things on to appear
         (KLA's Workday draws its "Sign in with email" button a few seconds late), or one greyed out on
         `before` to come on (Wells Fargo's review page drew its Submit greyed, run 49)."""
-        deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            await asyncio.sleep(1)
+        async def progress() -> bool:
             data, text = await self._look()
-            if (classify(data, text) != "page" or pick_next(data.get("actions") or [], in_form=False)
-                    or before is not None and _came_on(before, data)):
-                return True
-        return False
+            return bool(classify(data, text) != "page" or pick_next(data.get("actions") or [], in_form=False)
+                        or before is not None and _came_on(before, data))
+
+        return await self._until(seconds, 1, progress)
 
     async def _fill_once(self, run: Run, data: dict[str, Any]) -> dict[str, dict[str, Any]]:
         """Answers the person gave for this application only (not remembered). Returns the
@@ -5761,32 +5765,30 @@ class Applier:
     async def _wait_to_leave(self, form: dict[str, Any], button: str) -> None:
         """After a press that sends a page (the rest of Create Account): until the site has done with
         it (gone on, its button gone, or something said about it), as _wait_for_account."""
-        deadline = time.monotonic() + ACCOUNT_WAIT
-        while time.monotonic() < deadline:
-            await asyncio.sleep(1)
+        async def done() -> bool:
             try:
                 now = await self.srv.inspect_form(include_dropdown_options=False)
             except Exception:  # mid-way to the next page
-                continue
-            if (now.get("url") != form.get("url") or (now.get("errors") or []) != (form.get("errors") or [])
-                    or not any(a.get("text", "").strip() == button for a in now.get("actions") or [])):
-                return
+                return False
+            return (now.get("url") != form.get("url") or (now.get("errors") or []) != (form.get("errors") or [])
+                    or not any(a.get("text", "").strip() == button for a in now.get("actions") or []))
+
+        await self._until(ACCOUNT_WAIT, 1, done)
 
     async def _wait_for_account(self, form: dict[str, Any]) -> None:
         """After Create Account: until the site has done with the form (gone on, or said something
         about it). Looked at again sooner, the same form would be filled in a second time and taken
         for one that wants something more."""
-        deadline = time.monotonic() + ACCOUNT_WAIT
-        while time.monotonic() < deadline:
-            await asyncio.sleep(1)
+        async def done() -> bool:
             try:
                 now = await self.srv.inspect_form(include_dropdown_options=False)
             except Exception:  # mid-way to the next page
-                continue
+                return False
             passwords = sum(f.get("kind") == "password" for f in now.get("fields") or [])
-            if (now.get("url") != form.get("url") or passwords < 2
-                    or (now.get("errors") or []) != (form.get("errors") or [])):
-                return
+            return (now.get("url") != form.get("url") or passwords < 2
+                    or (now.get("errors") or []) != (form.get("errors") or []))
+
+        await self._until(ACCOUNT_WAIT, 1, done)
 
     async def _make_email_account(self, run: Run, data: dict[str, Any], create: dict[str, Any]) -> bool:
         """settings.manage_accounts, on an email-first sign-in that has no account for the email (an
@@ -6417,7 +6419,7 @@ class Applier:
                                "the banner had no way to decline")
                 return True
             return None
-        host = urlparse(data.get("url") or "").hostname or ""
+        host = host_of(data.get("url"))
         if not banner.get("cookieBlocking") or host in run.cookies_asked:
             return None  # out of the way, or asked once and the person pressed Resume with it there
         run.cookies_asked.add(host)
@@ -7302,14 +7304,6 @@ def _read_queue() -> dict[str, Any] | None:
     if not isinstance(since, (int, float)) or isinstance(since, bool) or since > time.time():
         since = mtime  # (a queue kept without it: as old as its file)
     return {"paused": kept.get("paused") is True, "jobs": jobs, "since": float(since)}
-
-
-def _host(url: Any) -> str:
-    """An address's host, or "" for one that has none (or won't read)."""
-    try:
-        return urlparse(str(url or "")).hostname or ""
-    except ValueError:
-        return ""
 
 
 def _texts(value: Any, skip: tuple[str, ...] = ()) -> set[str]:
@@ -8410,11 +8404,8 @@ def _employer_mail_domains(company: str, hosts: set[str], own: str = "") -> set[
             return [s for v in value.values() for s in named(v)]
         return [s for v in value for s in named(v)] if isinstance(value, list) else []
 
-    def host(s: str) -> str:
-        try:
-            return (urlparse(s if "//" in s else f"https://{s}").hostname or "").lower()
-        except ValueError:  # (a search's words, "Test [x", read as an address)
-            return ""
+    def host(s: str) -> str:  # (a search's words, "Test [x", read as an address: "")
+        return host_of(s if "//" in s else f"https://{s}")
 
     try:  # (an entry of the person's written oddly: the job site's and its system's domains still)
         entries = [(c, {host(s) for s in named([c.get("careers_url"), c.get("search")])} - {""})
