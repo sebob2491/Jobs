@@ -286,6 +286,12 @@ CLICK_TIMEOUT = 8000
 FORM_DRAW_TRIES, FORM_DRAW_WAIT = 5, 500  # a page read with no form is read again, each this many ms apart
 UPLOAD_CHOOSER_WAIT = 3000  # ms for a button that opens a site's own upload to open a file chooser
 UPLOAD_SHOWN_WAIT = 15  # seconds for a file given through a site's own upload to show on the page
+# An upload that sends its form and loads it again (iCIMS's resume box submits its frame's form: Valley Health's, run
+# 144, whose every box after it was then waited on for 15 s, and what went in was lost with the page): seconds for that
+# page load to begin after the file is given (it's under way in milliseconds; this much is spent on every upload that
+# loads nothing), and for the page to have come back, at most (the site reads the resume first)
+UPLOAD_RELOAD_START = 0.5
+UPLOAD_RELOAD_WAIT = 30
 CONFIRM_WAIT = 12  # seconds a submit's confirmation is watched for after its page goes quiet
 # How long a box under an overlay (or being drawn again) may take to take the focus, in ms: not
 # Playwright's 30 s for each of Workday's 16 date parts on My Experience
@@ -1338,19 +1344,36 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
         raise KeyError(f"{field.get('label')!r} was drawn again and can't be told apart; call inspect_form")
 
     async def fill(self, values: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Fill fields by id. Each item: {"id": ..., "value": ...}."""
+        """Fill fields by id. Each item: {"id": ..., "value": ...}. Files go first (an upload may load its form again,
+        or fill it from the file: the rest goes into the form as it is after it); the results come in the order given.
+        """
         async with self._lock:
             page = await self.page()
             await self._close_menus(page)
-            results = []
+            out: dict[int, dict[str, Any]] = {}
             known = dict(self._fields)  # the boxes as read before filling, by the ids given out then
             given = {str(item.get("id", "")): item.get("value") for item in values}  # (a date's other parts)
             self._date_typed = set()  # a date's parts typed in this fill (with its part given first)
+            order = sorted(range(len(values)),
+                           key=lambda n: (known.get(str(values[n].get("id", ""))) or {}).get("kind") != "file")
+            gone: set[str] = set()  # boxes the page no longer has, once an upload loaded it again
+            loads: list[tuple[Any, Frame]] = []  # page loads begun meanwhile, and in which frame
+
+            def loading(request: Any) -> None:
+                with contextlib.suppress(Exception):
+                    if request.is_navigation_request():
+                        loads.append((request, request.frame))
+            page.on("request", loading)
             try:
-                for item in values:
+                for at, i in enumerate(order):
+                    item = values[i]
                     fid = str(item.get("id", ""))
                     if item.get("again") and fid in self._date_typed:  # (typed again with its date's first part)
-                        results.append({"id": fid, "label": "", "ok": True, "result": "typed"})
+                        out[i] = {"id": fid, "label": "", "ok": True, "result": "typed"}
+                        continue
+                    if fid in gone:
+                        out[i] = {"id": fid, "ok": False, "error": "KeyError: the page loaded its form again after "
+                                  "the upload, and this box isn't on it now; call inspect_form"}
                         continue
                     try:
                         field = await self._current(page, known.get(fid) or await self._field(page, fid))
@@ -1367,32 +1390,93 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
                         if not item.get("again") and await self._holds(page, field, item.get("value")):
                             if item.get("secret"):
                                 await self._keep_secret(page, field["id"], confirmed=True)
-                            results.append({"id": fid, "label": field.get("label", ""), "ok": True,
-                                            "result": "already set"})
+                            out[i] = {"id": fid, "label": field.get("label", ""), "ok": True, "result": "already set"}
                             continue
                         await self._clear_of_dialogs(page, field)
+                        upload = field.get("kind") == "file"
+                        if upload:  # (this page told from one an upload may load in its place)
+                            frame = self._frame_for(page, field["id"])
+                            with contextlib.suppress(PlaywrightError):
+                                await frame.evaluate("() => { window.__jaBeforeUpload = true; }")
+                            began = len(loads)
                         outcome = await self._fill_one(page, field, item.get("value"), given)
                         if item.get("secret"):
                             await self._keep_secret(page, field["id"], confirmed=True)
-                        results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": outcome})
+                        out[i] = {"id": fid, "label": field.get("label", ""), "ok": True, "result": outcome}
                         if outcome in ("filled", "typed") and not item.get("secret"):
                             typed = self._typed.setdefault(page.url, set())
                             if len(typed) < 200:
                                 typed.add(norm(str(item.get("value"))))
+                        if upload and outcome.startswith("uploaded"):
+                            rest = [str(values[n].get("id", "")) for n in order[at + 1:]]
+                            gone |= await self._after_reload(page, frame, loads, began, known, rest)
                     except Exception as e:  # report and keep going; one odd widget shouldn't stop the rest
-                        results.append({"id": fid, "ok": False,
-                                        "error": f"{type(e).__name__}: {str(e).splitlines()[0][:300]}",
-                                        **({"options": e.entries} if isinstance(e, (PickedAGroup, NoMatch)) else {})})
+                        out[i] = {"id": fid, "ok": False,
+                                  "error": f"{type(e).__name__}: {str(e).splitlines()[0][:300]}",
+                                  **({"options": e.entries} if isinstance(e, (PickedAGroup, NoMatch)) else {})}
                     finally:
                         # a picker this box opened (a date's calendar) closed before the next box: on Eightfold one
                         # left open kept the focus, and Country of Residence took nothing typed (issue #112, note 41)
                         with contextlib.suppress(Exception):
                             await self._close_pickers(page, self._own_frames(page, fid), fid)
+                results = [out[i] for i in range(len(values))]
                 if self._typed.get(page.url) and any(r["ok"] and r["result"] != "already set" for r in results):
                     await self._fill_lost(page)
             finally:
+                page.remove_listener("request", loading)
                 await self._close_menus(page)  # none left open over the buttons, or over its own field
             return results
+
+    async def _after_reload(self, page: Page, frame: Frame, loads: list[tuple[Any, Frame]], began: int,
+                            known: dict[str, dict], rest: list[str]) -> set[str]:
+        """After an upload that sent its form, and so loads its page (or the frame it's in) again (iCIMS's resume box
+        submits its frame's form to read the file: Valley Health's, run 144): that page waited for (at most
+        UPLOAD_RELOAD_WAIT), read afresh, and each box still to fill (`rest`) found on it again as the same question in
+        the same place (its label, kind and section, and which of those it is), put in `known` as it is now. Gives back
+        the boxes the page no longer has, to be said at once: on the ids read before, each was waited on for 15 s, and
+        what went into the page before it came back was lost with it. Nothing where no page load began."""
+        def own() -> list[Any]:
+            return [r for r, f in loads[began:] if f in (frame, page.main_frame)]
+        waited = 0.0
+        while not own() and waited < UPLOAD_RELOAD_START:
+            await page.wait_for_timeout(100)
+            waited += 0.1
+        if not (sent := own()):
+            return set()
+        reloaded = next(f for r, f in loads[began:] if r is sent[0])
+        deadline = time.monotonic() + UPLOAD_RELOAD_WAIT
+        while time.monotonic() < deadline and not reloaded.is_detached() and not any(r.failure for r in sent):
+            try:
+                if await reloaded.evaluate("() => !window.__jaBeforeUpload && document.readyState === 'complete'"):
+                    break
+            except PlaywrightError:  # (between the two pages)
+                pass
+            await page.wait_for_timeout(200)
+        prefix = "" if reloaded is page.main_frame else self._frame_ids.get(reloaded, "?")
+        before = list(known.values())
+        fresh = (await self._extract(page))["fields"]
+
+        def places(fields: list[dict]) -> dict[tuple, dict]:  # the reloaded frame's boxes by question, and which one
+            seen: dict[tuple, int] = {}
+            out = {}
+            for f in fields:
+                m = re.match(r"f\d+-", str(f.get("id")))
+                if (m.group(0) if m else "") != prefix:
+                    continue
+                key = (f.get("label"), f.get("kind"), f.get("section"))
+                seen[key] = seen.get(key, 0) + 1
+                out[key + (seen[key],)] = f
+            return out
+        then = {str(f.get("id")): where for where, f in places(before).items()}
+        now = places(fresh)
+        lost = set()
+        for fid in rest:
+            if fid in then:
+                if (box := now.get(then[fid])) is not None:
+                    known[fid] = box
+                else:
+                    lost.add(fid)
+        return lost
 
     async def _keep_secret(self, page: Page, element_id: str, confirmed: bool = False) -> None:
         """A box for an account's security answer, the person's (the desk's card), marked before it's filled
@@ -1585,15 +1669,22 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
             # after they were filled. Remembered on the box, so a reloaded page (its form reset) gets it again
             # (on the box itself: another box, or a step a single-page app draws afresh, gets its own). UKG draws its
             # box afresh too, losing that, but names the file it has ("<file> has been used to pre-fill part of your
-            # application", live run 15): a file the page names is there already
+            # application", live run 15): a file the page names is there already. So is one iCIMS keeps in its hidden
+            # "<name>_FileName" box once its page is back from reading it (Valley Health's, run 144)
             if await loc.evaluate("(el, k) => el.__jaUploaded === k || (el.ownerDocument.body.innerText || "
-                                  "'').includes(k)",
+                                  "'').includes(k) || !!(el.id && el.id.endsWith('_File') && (el.ownerDocument"
+                                  ".getElementById(el.id.slice(0, -5) + '_FileName') || {}).value === k)",
                                   path.name):
                 return "already uploaded on this page"
             if not await loc.evaluate("el => el.tagName === 'INPUT' && el.type === 'file'"):
                 return await self._upload_through(page, loc, path)
             await loc.set_input_files(str(path))
-            said = await self._send_dialog_upload(page, loc, path)
+            try:
+                said = await self._send_dialog_upload(page, loc, path)
+            except PlaywrightError as e:  # the file sent its form at once, and its page is loading again (iCIMS's)
+                if "navigation" not in str(e):
+                    raise
+                return f"uploaded {path.name}"
             with contextlib.suppress(PlaywrightError, PlaywrightTimeout):  # (a box drawn afresh at once is gone)
                 # (only once it's sent: a dialog's Upload that didn't go is pressed again on the next fill)
                 await loc.evaluate("(el, k) => { el.__jaUploaded = k; }", path.name, timeout=1500)

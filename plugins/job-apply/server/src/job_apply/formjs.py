@@ -354,6 +354,10 @@ EXTRACT_JS = r"""
   const FILE_BUTTON = /^(?:delete|remove|preview|download|view|open) file:?\s+(.+)$/i;
   const UPLOADED = /\bfile upload completed\b|\bupload(?:ed)? (?:completed? )?successfully\b|\bsuccessfully uploaded\b/i;
   const uploadedNear = (el) => {
+    // iCIMS keeps a file sent with its form in a hidden box named after its own ("<name>_FileName"), shown nowhere once
+    // its page is back (Valley Health's, run 144: read as empty, the resume went up again, and the page with it)
+    const kept = el.id && el.id.endsWith('_File') ? document.getElementById(el.id.slice(0, -'_File'.length) + '_FileName') : null;
+    if (kept && kept.type === 'hidden' && clean(kept.value)) return clean(kept.value);
     for (let n = el.parentElement, d = 0; n && d < 6; n = n.parentElement, d++) {
       if (Array.from(n.querySelectorAll('input, select, textarea')).some((x) => x !== el && x.type !== 'hidden'
           && x.type !== 'file' && x.getClientRects().length > 0)) break;

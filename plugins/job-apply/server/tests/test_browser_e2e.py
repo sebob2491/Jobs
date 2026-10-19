@@ -1824,6 +1824,93 @@ def test_groups_with_the_same_label_are_each_filled(srv):
     assert out["ok"], out
 
 
+_ICIMS_PROFILE = """<html><head><title>Candidate Profile</title></head><body>
+<form method="post" action="/jobs/1/candidate?in_iframe=1" enctype="multipart/form-data">
+<h2>Resume</h2>
+<input type="hidden" id="PortalProfileFields.Resume_FileName" name="PortalProfileFields.Resume_FileName"
+  value="%(kept)s">
+<div id="PortalProfileFields.Resume_CurrentFile" class="iCIMS_NoDisplay" style="display:none"><span>%(kept)s</span>
+  </div>
+<label tabindex="-1" id="label_PortalProfileFields.Resume_File" for="PortalProfileFields.Resume_File">Please upload
+  your resume (Max size: 5 MB)</label>
+<div class="iCIMS_FileFieldButton"><label for="PortalProfileFields.Resume_File"
+  id="label_for_PortalProfileFields.Resume_File" aria-hidden="true" class="iCIMS_508_Label">My Computer (Opens new
+  window)</label><input type="file" id="PortalProfileFields.Resume_File" name="PortalProfileFields.Resume_File"
+  aria-labelledby="label_for_PortalProfileFields.Resume_File label_PortalProfileFields.Resume_File"
+  onchange="this.form.action=this.form.action+'&amp;uploadResume=1';this.form.submit();"></div>
+<h2>Enter your information</h2>
+<label for="fn">First Name</label><input id="fn" name="fn">
+<label for="ln">Last Name</label><input id="ln" name="ln">
+<label for="em">Email</label><input id="em" name="em">
+<h3>Addresses (1)</h3>
+<label for="a1">Address</label><input id="a1" name="a1">
+<label for="ci">City</label><input id="ci" name="ci">
+<label for="zp">Zip/Postal Code</label><input id="zp" name="zp">
+<button type="button">Submit Profile</button>
+</form></body></html>"""
+
+
+@pytest.mark.parametrize("delay", [0.05, 0.8])
+def test_an_upload_that_loads_its_frame_again_goes_first_and_the_rest_go_into_the_new_page(srv, delay):
+    """Valley Health's iCIMS (the nightly's run 144): the resume box sends its frame's form as the file is given, and
+    the frame comes back with the resume read (its name kept in a hidden box, shown nowhere). The boxes filled
+    meanwhile were lost with the page, one being typed into as it went was waited on for 15 s, and the resume read as
+    never given went up again, the page with it, until the run gave up after 300 s. The upload goes first, the page is
+    waited for, the rest goes into it as it is, and a resume it keeps isn't sent again. `delay`: how long the site
+    takes to read it (the page back as the next box is typed into; or after all the boxes were)."""
+    import threading
+    import time
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    posts = []
+
+    class Icims(BaseHTTPRequestHandler):
+        def send(self, body: bytes) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            if "in_iframe=1" in self.path:
+                self.send((_ICIMS_PROFILE % {"kept": ""}).encode())
+            else:
+                self.send(b"<html><body><span id='icims_iframe_span'><iframe id='icims_content_iframe' "
+                          b"src='/jobs/1/candidate?in_iframe=1' style='width:100%;height:900px'></iframe></span>"
+                          b"</body></html>")
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            posts.append(self.path)
+            time.sleep(delay)  # (the resume read)
+            self.send((_ICIMS_PROFILE % {"kept": "resume.pdf"}).encode())
+
+        def log_message(self, *args):
+            pass
+
+    site = ThreadingHTTPServer(("127.0.0.1", 0), Icims)
+    threading.Thread(target=site.serve_forever, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{site.server_address[1]}/jobs/1/candidate"
+        job = srv.add_job(url=url, title="Medical Assistant", company="Example Health")["job"]
+        run(srv.open_application(job_id=job["id"]))
+        start = time.monotonic()
+        result = run(srv.autofill())
+        assert time.monotonic() - start < 10, result  # (never a box waited on for 15 s)
+        assert not result["failed"], result["failed"]
+        assert len(posts) == 1 and "uploadResume=1" in posts[0], posts
+        run(framed(run(srv.browser.page()), "uploadResume=1"))  # (the page back from reading the resume)
+        after = {f["label"]: f.get("value") for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
+        assert after == {"Please upload your resume (Max size: 5 MB)": "resume.pdf", "First Name": "Sam",
+                         "Last Name": "Rivera", "Email": "sam.rivera@example.com", "Address": "100 W Main St",
+                         "City": "Chandler", "Zip/Postal Code": "85225"}, after
+        again = run(srv.autofill())  # (the resume it keeps isn't sent again)
+        assert len(posts) == 1, (posts, again)
+    finally:
+        site.shutdown()
+
+
 def test_a_boards_frame_is_read_once_its_page_is_in(srv):
     """iCIMS portals draw their openings in a frame, then go on loading trackers for seconds
     (Allegis Group's: a survey and an ad pixel). Each page of results waited for the network to
