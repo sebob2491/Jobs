@@ -862,6 +862,12 @@ EXTRACT_JS = r"""
     if (actions.length >= 60 && !isSubmit && !formSubmit && !STEP.test(t)) continue;
     const a = { id: idOf(el), text: t };
     if (applyItem) a.menu = true;
+    // a link in the site's own header or navigation, and where it goes: the site's "Apply Now" there (Station
+    // Casinos' Oracle, live run 144: a link to its list of jobs) isn't a posting's own way in
+    if (el.tagName === 'A' && el.closest('header, nav, [role="banner"], [role="navigation"]')) {
+      a.site_nav = true;
+      if (/^https?:/i.test(el.href || '')) a.goes_to = el.href;
+    }
     // a saved draft's "Continue Application" link: where it goes, which says whose application it is (issue #112, note 38)
     if (el.tagName === 'A' && el.href && /^\s*continue\b.*\bapplication\s*$/i.test(t)) a.href = el.href;
     // A cookie banner's own buttons (OneTrust's sits at the very end of a long page, past

@@ -281,6 +281,62 @@ def test_oracle_walk_leaves_its_terms_to_the_person_where_notices_are_theirs(srv
     assert fake_ats.said("cookies") == [{"what": "cookies", "choice": "declined"}], fake_ats.events  # (as before)
 
 
+ORACLE_LIST = [(re.escape("/hcmUI/CandidateExperience/en/sites/CX_1/") + r"(requisitions|jobs)",
+                "oracle-job-list.html"),
+               (re.escape(ORACLE_JOB) + "/apply/email", "oracle-walk-email.html")]
+
+
+def test_the_postings_own_apply_before_the_sites_header_link_to_its_jobs(srv, fake_ats, job_apply_home):
+    """Station Casinos' Oracle (live run 144): the site's header has an "Apply Now" of its own, a link to its list of
+    jobs, before the posting's "Apply Now". The desk pressed the header's, landed on the list, and pressed it there
+    three times. The posting's own is the way in; the header's link to the list is never pressed."""
+    settings(job_apply_home, accept_notices=False)  # (it stops at the email step's terms, the person's)
+    job = srv.add_job(url=ORACLE + ORACLE_JOB, title="Resort Guest Room Attendant", company="Example Resort")["job"]
+    applier = Desk(srv).applier
+
+    async def go():
+        await fake_ats.serve(srv, ORACLE, [(re.escape(ORACLE_JOB), "oracle-header-apply-posting.html"), *ORACLE_LIST])
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until_stopped(r)
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.page.url.endswith(ORACLE_JOB + "/apply/email"), (r.page.url, r.reason, r.log)
+    assert fake_ats.said("list") == [], (fake_ats.events, r.log)
+    assert r.log.count("clicked “Apply Now”") == 1, r.log
+    no_submit(fake_ats, srv, r)
+
+
+def test_an_apply_that_lands_on_the_list_of_jobs_is_gone_back_from(srv, fake_ats, job_apply_home):
+    """A posting's "Apply Now" that goes to the site's list of jobs (what Station Casinos' header link did, run 144):
+    the desk went on pressing the list's own "Apply Now". It goes back to the posting, tries once more, and then
+    stops there for the person, saying so: an Apply pressed on a list of jobs could be any job's."""
+    job = srv.add_job(url=ORACLE + ORACLE_JOB, title="Resort Guest Room Attendant", company="Example Resort")["job"]
+    applier = Desk(srv).applier
+
+    async def go():
+        await fake_ats.serve(srv, ORACLE, [(re.escape(ORACLE_JOB), "oracle-link-to-list-posting.html"), *ORACLE_LIST])
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until_stopped(r)
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert (r.status, r.need, r.code) == ("needs_you", "stuck", "no_way_in"), (r.status, r.need, r.reason, r.log)
+    assert r.page.url.endswith(ORACLE_JOB), r.page.url  # (back on the posting)
+    assert "list of jobs" in r.reason and "Carry on" in r.reason, r.reason
+    assert any("went back to the posting" in line for line in r.log), r.log
+    assert r.log.count("clicked “Apply Now”") == 2, r.log
+    no_submit(fake_ats, srv, r)
+
+
 # ---------------------------------------------------------------------------------------- iCIMS
 ICIMS = "https://careers-examplefab.icims.com"
 ICIMS_JOB = "/jobs/2002/field-service-technician"

@@ -1273,6 +1273,9 @@ class _Pass:
     fixed_at: int = 0  # and those that count as a step pressed again and again (after the desk set right what it said)
     steps: int = 0
     more: int = 0  # (more: the steps that refresh made it take again)
+    # a way in just pressed on a page (its address, and the button): where it lands is looked at (_off_to_the_list)
+    entry_from: tuple[str, str] | None = None
+    list_returns: int = 0  # the times a way in landed on the site's list of jobs, and the desk went back
 
 
 @dataclass
@@ -1329,16 +1332,20 @@ def pick_next(actions: list[dict[str, Any]], in_form: bool) -> dict[str, Any] | 
     the way into it ("Apply Manually" before "Apply")."""
     usable = [a for a in actions if not a.get("disabled") and not a.get("is_submit") and not a.get("same_page")]
     steps = [a for a in usable if _STEP.match(final_text(a["text"]))]
+    # (never the site's own header or navigation link to its list of jobs: Station Casinos' Oracle, live run 144, has
+    # an "Apply Now" there, to <site>/requisitions, before the posting's own)
     entries = [a for a in usable if _ENTRY.match(final_text(a["text"])) and not _SOCIAL.search(a["text"])
-               and not (_AVOID.search(a["text"]) and "manually" not in a["text"].lower())]
+               and not (_AVOID.search(a["text"]) and "manually" not in a["text"].lower())
+               and not (a.get("site_nav") and _job_list(a.get("goes_to")))]
     # a saved draft's "Continue Application", on a page (never a form's step), where it's the page's one way in: beside
     # an Apply, or with others like it (a list of applications kept, each another job's, as a candidate home lists
     # them), it's not (issue #112, note 38's review). Whose draft it is, _drive asks (_own_draft)
     drafts = [a for a in usable if _DRAFT_ENTRY.match(final_text(a["text"]))]
     if not in_form and not entries and len(drafts) == 1:
         entries = drafts
-    # an open menu's own entry ("Apply Now" under Qorvo's "Apply now ▾") before the toggle again
-    entries.sort(key=lambda a: (not a.get("menu"), "manually" not in a["text"].lower()))
+    # an open menu's own entry ("Apply Now" under Qorvo's "Apply now ▾") before the toggle again; and the page's own
+    # before one in the site's header or navigation
+    entries.sort(key=lambda a: (not a.get("menu"), "manually" not in a["text"].lower(), bool(a.get("site_nav"))))
     order = (steps + entries) if in_form else (entries + steps)
     return order[0] if order else None
 
@@ -3192,6 +3199,11 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
                 run.account_made = ""
                 run.account_in = True
             lap = _Lap(data=data, text=text, kind=kind, view=view, finish=finish, entry_here=entry_here)
+            then = await self._off_to_the_list(run, ps, lap)
+            if then is _Then.STOP:
+                return
+            if then is _Then.AGAIN:
+                continue
             then = await self._site_lap(run, ps, lap)
             if then is _Then.STOP:
                 return
@@ -3232,6 +3244,35 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         self._pause(run, "stuck", "This application has more pages than I expected, and I haven't reached its review "
                     "page. Check where it is in the desk's browser window, press its Next if "
                     "there's more, then press Carry on.", code="too_long")
+
+    async def _off_to_the_list(self, run: Run, ps: _Pass, lap: _Lap) -> _Then:
+        """A way in pressed on a page (ps.entry_from) that landed on the site's list of jobs, on the same site (Station
+        Casinos' Oracle, live run 144: its header's "Apply Now", a link to <site>/requisitions): an Apply pressed
+        there could be any job's. Gone back from to the page it was pressed on, and tried once more; landed there again,
+        said, back on that page. ON for any other page (and while the press's page is still showing)."""
+        if ps.entry_from is None:
+            return _Then.ON
+        (came_from, button), url = ps.entry_from, str(lap.data.get("url") or "")
+        if _bare(url) == _bare(came_from):
+            return _Then.ON  # (not gone on yet)
+        ps.entry_from = None
+        if not _job_list(url) or _job_list(came_from) or \
+                (urlparse(url).hostname or "").lower() != (urlparse(came_from).hostname or "").lower():
+            return _Then.ON
+        ps.list_returns += 1
+        with contextlib.suppress(Exception):
+            await run.page.go_back(wait_until="load")
+        ps.waited.clear()  # (the page gone back to is a new visit: its late buttons waited on again)
+        if ps.list_returns > 1:
+            await self._bring_forward(run)
+            self._pause(run, "stuck", f"“{button}” on this job's page goes to {_site(run, lap.data)}'s list "
+                        "of jobs, not to this job's application, so I went back to the posting. Open the job's "
+                        "application in the desk's browser window, then press Carry on; or skip the job.",
+                        code="no_way_in")
+            return _Then.STOP
+        self._log(run, f"“{button}” went to {_site(run, lap.data)}'s list of jobs, not this job's "
+                  "application, so I went back to the posting")
+        return _Then.AGAIN
 
     async def _site_lap(self, run: Run, ps: _Pass, lap: _Lap) -> _Then:
         """The lap's page as the site left it, before any account's steps: one that couldn't be reached, one
@@ -4069,6 +4110,9 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
             await self._finish(run, lap.data, lap.text)
             return _Then.STOP
         self._log(run, f"clicked “{lap.action['text']}”")
+        # (a way in pressed on a page: where it lands is looked at, _off_to_the_list)
+        ps.entry_from = ((str(lap.data.get("url") or ""), lap.action["text"].strip())
+                         if lap.kind == "page" and _ENTRY.match(final_text(lap.action["text"])) else None)
         if _DRAFT_ENTRY.match(final_text(lap.action["text"])) and lap.kind == "page" and not run.draft:
             # an application the site kept from an earlier visit (a draft), with the answers it was given then:
             # the profile's may have changed since (issue #112, note 38: the work descriptions), so its boxes are
@@ -6146,6 +6190,18 @@ def _job_ids(url: str) -> dict[str, str]:
     """The job ids an address carries in its query, by key (lower case): values with a digit, as a
     job's id has, not a word under one of those keys (?job=apply)."""
     return {k.lower(): v for k, v in parse_qsl(urlparse(url).query) if _JOB_ID_KEY.fullmatch(k) and re.search(r"\d", v)}
+
+
+# A site's list of jobs, by its address's last part (Oracle's <site>/requisitions and <site>/jobs: Station Casinos',
+# live run 144), with no job's id in its query
+_JOB_LIST_PATH = re.compile(r"/(?:jobs|requisitions|job-?search|search-?jobs|search(?:-?results)?|careers|"
+                            r"opportunities|openings|vacancies|job-?list|all-?jobs)/?$", re.I)
+
+
+def _job_list(url: Any) -> bool:
+    """Is this address a site's list of jobs (_JOB_LIST_PATH), not a job's own page?"""
+    parts = urlparse(str(url or ""))
+    return parts.scheme in ("http", "https") and bool(_JOB_LIST_PATH.search(parts.path)) and not _job_ids(str(url))
 
 
 def _above(url: str, below: str) -> bool:
