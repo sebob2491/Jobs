@@ -65,7 +65,8 @@ _SENDS_TOO = re.compile(r"\b(?:apply|submit|send|finish|complete)\b", re.I)
 # Form buttons that only move between steps; in a dry run every other form submit is refused.
 NAVIGATION_RE = re.compile(
     r"^(next|continue|save( and| &)? continue|save( for later| draft)?|review|back|previous|add( another)?|search|"
-    r"sign ?in|log ?in|create account|verify|send (me a )?code|ok|accept( all)?( cookies)?|i agree|apply manually|start)\b",
+    r"sign ?in|log ?in|create account|verify|send (me a )?code|ok|accept( all)?( cookies)?|"
+    r"i agree|apply manually|start)\b",
     re.I,
 )
 # What accepts a cookie or privacy banner (never pressed for the person, unless they set
@@ -85,7 +86,8 @@ _DECLINES = re.compile(r"reject|decline|necessary|essential|required only|only r
 # password box's type and value
 _INPUT_TAG = re.compile(r'<input\b(?:[^>"]|"[^"]*")*>', re.I)
 _PASSWORD_TYPE = re.compile(r'\stype="password"', re.I)
-_ONE_TIME_CODE = re.compile(r"passcode|one[- ]time (?:pass(?:word|code)|code)|verification code|security code|\botp\b", re.I)
+_ONE_TIME_CODE = re.compile(r"passcode|one[- ]time (?:pass(?:word|code)|code)|verification code|security code|\botp\b",
+                            re.I)
 _VALUE_ATTR = re.compile(r'\svalue="[^"]*"', re.I)
 # a box holding an account's security answer, marked when the desk put it in (Browser._keep_secret)
 _SECRET_BOX = re.compile(r'\sdata-ja-secret\b', re.I)
@@ -219,7 +221,8 @@ _MEDIA_FRAME = re.compile(r"^https?://([\w-]+\.)*(youtube(-nocookie)?\.com|youtu
 # cookies are spoken of, "Reject all" or "Necessary only"; in a cookie box, also "Deny", "Refuse",
 # "Opt out", "No thanks" and "Continue without accepting"
 _DECLINE_COOKIES = re.compile(
-    r"^(reject(?: all)?(?: cookies)?|decline(?: all)?(?: cookies)?|only (?:strictly )?necessary|necessary (?:cookies )?only"
+    r"^(reject(?: all)?(?: cookies)?|decline(?: all)?(?: cookies)?|only (?:strictly )?necessary|"
+    r"necessary (?:cookies )?only"
     r"|use necessary cookies only|accept (?:only )?necessary(?: cookies)?|reject optional(?: cookies)?"
     r"|(?:reject|decline) non-?essential(?: cookies)?)$", re.I)
 _DECLINE_IN_BANNER = re.compile(
@@ -322,7 +325,7 @@ _ANOTHER_PART_CURRENT_JS = """
   if (!section || !group || section.getAttribute('tabindex') === '0') return false;
   return [...group.querySelectorAll('[tabindex="0"]')].some((s) => s !== section && s.querySelector('[role="spinbutton"]'));
 }
-"""
+"""  # noqa: E501
 
 
 # A date's parts (Workday's MM / DD / YYYY spinbuttons), in order: those in the nearest box around this one
@@ -424,7 +427,8 @@ def quiet_password_manager(profile: Path) -> None:
         return
     found = data.get("profile")
     profile_prefs: dict[str, Any] = found if isinstance(found, dict) else {}
-    if all(data.get(k) == v for k, v in _QUIET.items()) and all(profile_prefs.get(k) == v for k, v in _QUIET_PROFILE.items()):
+    if (all(data.get(k) == v for k, v in _QUIET.items())
+            and all(profile_prefs.get(k) == v for k, v in _QUIET_PROFILE.items())):
         return
     data.update(_QUIET, profile={**profile_prefs, **_QUIET_PROFILE})
     temp = prefs.with_name(prefs.name + ".tmp")
@@ -570,15 +574,16 @@ def _search_words(text: str) -> str:
 
 
 # How a date box may show its day once picked: the desk's own form first (the US month/day/year), then the others
-_DAY_FORMATS = ("%m/%d/%Y", "%Y-%m-%d", "%m-%d-%Y", "%Y/%m/%d", "%d/%m/%Y", "%d.%m.%Y", "%m/%d/%y", "%b %d, %Y", "%B %d, %Y",
-                "%b %d %Y", "%B %d %Y", "%d %b %Y", "%d %B %Y", "%a, %b %d, %Y", "%A, %B %d, %Y")
+_DAY_FORMATS = ("%m/%d/%Y", "%Y-%m-%d", "%m-%d-%Y", "%Y/%m/%d", "%d/%m/%Y", "%d.%m.%Y", "%m/%d/%y", "%b %d, %Y",
+                "%B %d, %Y", "%b %d %Y", "%B %d %Y", "%d %b %Y", "%d %B %Y", "%a, %b %d, %Y", "%A, %B %d, %Y")
 # Months longer than three letters as some pickers shorten them ("Sept 2, 2026")
 _SEPT = re.compile(r"\bSept\b", re.I)
 
 
 def _as_date(value: Any, field: dict) -> date | None:
     """A date answer for a date box, in the form autofill gives the box one (date_form: "11/02/2026", "02/11/2026" for
-    one hinted "DD/MM/YYYY") or the ISO form: None for anything else (the profile's own words, "2 weeks after offer")."""
+    one hinted "DD/MM/YYYY") or the ISO form: None for anything else (the profile's own words, "2 weeks
+    after offer")."""
     text = str(value or "").strip()
     for form in (date_form(field), "%Y-%m-%d"):
         with contextlib.suppress(ValueError):
@@ -831,7 +836,8 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
         ctx.on("close", lambda _: self._forget(ctx))
         for tab in ctx.pages:
             self._watch(tab)
-        # (the view that started it: a job's own leaves the tools' to follow the job's tab, desk_view, as one shared did)
+        # (the view that started it: a job's own leaves the tools' to follow the job's tab,
+        # desk_view, as one shared did)
         self._page = ctx.pages[0] if ctx.pages else await ctx.new_page()
 
     async def close(self) -> None:
@@ -918,7 +924,8 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
                 continue
             prefix = self._frame_prefix(frame, page)
             try:
-                # (a frame whose page has hung gives no answer: bounded, so it never holds the lock, the review of Oct 15)
+                # (a frame whose page has hung gives no answer: bounded, so it never holds the
+                # lock, the review of Oct 15)
                 data = await _bounded(frame.evaluate(EXTRACT_JS, prefix))
             except _Hung:
                 if frame is page.main_frame:
@@ -931,8 +938,8 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
             for key in ("fields", "actions", "errors", "headings", "dialogs"):
                 result[key].extend(data.get(key, []))
             if data.get("busy") and (frame is page.main_frame or data.get("fields")):
-                # a loading indicator on show (Workday's dots while a step loads); not an embed's with nothing to fill (a
-                # chat widget's spinner: the review of 0.3.147)
+                # a loading indicator on show (Workday's dots while a step loads); not an embed's with nothing to fill
+                # (a chat widget's spinner: the review of 0.3.147)
                 result["busy"] = True
             if data.get("empty_frame") and frame is page.main_frame:
                 result["empty_frame"] = True  # (Workday's application frame with nothing in it yet: formjs's unmounted)
@@ -1095,7 +1102,8 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
                     continue
                 form = not _CAPTCHA_FRAME.match(frame.url)  # (a CAPTCHA's own frame: no form, nor a frame number)
                 try:
-                    seen = await _bounded(frame.evaluate(PEEK_JS, [form, self._frame_prefix(frame, tab) if form else ""]))
+                    seen = await _bounded(frame.evaluate(PEEK_JS,
+                                                         [form, self._frame_prefix(frame, tab) if form else ""]))
                 except (PlaywrightError, _Hung):
                     continue
                 found, text = seen.get("found") or {}, seen.get("text") or ""
@@ -1356,7 +1364,8 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
                         if not item.get("again") and await self._holds(page, field, item.get("value")):
                             if item.get("secret"):
                                 await self._keep_secret(page, field["id"], confirmed=True)
-                            results.append({"id": fid, "label": field.get("label", ""), "ok": True, "result": "already set"})
+                            results.append({"id": fid, "label": field.get("label", ""), "ok": True,
+                                            "result": "already set"})
                             continue
                         await self._clear_of_dialogs(page, field)
                         outcome = await self._fill_one(page, field, item.get("value"), given)
@@ -1397,7 +1406,7 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
               if (state === 'in' && list && list.tagName === 'SELECT')
                 el.setAttribute('data-ja-secret-index', String(list.selectedIndex));
               if (['INPUT', 'TEXTAREA'].includes(el.tagName)) el.style.setProperty('-webkit-text-security', 'disc');
-            }""", "in" if confirmed else "pending", timeout=3000)
+            }""", "in" if confirmed else "pending", timeout=3000)  # noqa: E501
 
     async def _clear_of_dialogs(self, page: Page, field: dict) -> None:
         """Nothing is filled behind a dialog open over the page: the boxes under it time out or
@@ -1571,10 +1580,11 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
             # Once a page: UKG Pro (Nikon's, live run 13) empties its upload box once it has the file, so it read as
             # never uploaded, and each upload set its resume reading going again, which emptied Address 1 and Zip
             # after they were filled. Remembered on the box, so a reloaded page (its form reset) gets it again
-            # (on the box itself: another box, or a step a single-page app draws afresh, gets its own). UKG draws its box
-            # afresh too, losing that, but names the file it has ("<file> has been used to pre-fill part of your
+            # (on the box itself: another box, or a step a single-page app draws afresh, gets its own). UKG draws its
+            # box afresh too, losing that, but names the file it has ("<file> has been used to pre-fill part of your
             # application", live run 15): a file the page names is there already
-            if await loc.evaluate("(el, k) => el.__jaUploaded === k || (el.ownerDocument.body.innerText || '').includes(k)",
+            if await loc.evaluate("(el, k) => el.__jaUploaded === k || (el.ownerDocument.body.innerText || "
+                                  "'').includes(k)",
                                   path.name):
                 return "already uploaded on this page"
             if not await loc.evaluate("el => el.tagName === 'INPUT' && el.type === 'file'"):
@@ -1657,13 +1667,14 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
         practice mode (_check_clickable). Only the desk's own presses say so, never the click tool."""
         async with self._lock:
             page = await self.page()
-            by_id = target in self._actions or target in self._fields or re.fullmatch(r"(f\d+-)?[a-z]*\d+(\.\d+)?", target)
+            by_id = (target in self._actions or target in self._fields
+                     or re.fullmatch(r"(f\d+-)?[a-z]*\d+(\.\d+)?", target))
             loc = self._locator(page, target) if by_id else None
             text = self._actions[target]["text"] if target in self._actions else "" if by_id else target
             loc, info = await self._clickable(page, loc, text, allow_submit, target, agreement)
             before, note = page.url, None
-            # (a new tab from now on is this press's: set under the lock, so a click waiting for it never claims another's
-            # tab, the review of Oct 15)
+            # (a new tab from now on is this press's: set under the lock, so a click waiting for it never claims
+            # another's tab, the review of Oct 15)
             self._follow_until = time.monotonic() + POPUP_FOLLOW
             try:
                 await loc.click(timeout=CLICK_TIMEOUT)
@@ -1743,8 +1754,8 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
         if _SENDS.match(final_text(text)):
             # (and submit_application finds only a page's submit button, not a plain one with these words: the person
             # presses it, the review of 0.3.176)
-            raise SubmitBlocked(f"{label!r} may send the application, so the click tool never presses it. Ask the user to "
-                                "press it in the browser window, then record the application with update_job.")
+            raise SubmitBlocked(f"{label!r} may send the application, so the click tool never presses it. Ask the user "
+                                "to press it in the browser window, then record the application with update_job.")
         if info.get("formSubmit") and not NAVIGATION_RE.match(text) and not opens:
             settings = config.Profile.load().settings
             # The live check's test identity agrees to notices in practice mode (Settings.may_accept_notices):
@@ -1753,7 +1764,8 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
             agrees = (agreement and not _SENDS_TOO.search(f"{label} {text}") and settings.test_identity
                       and settings.may_accept_notices)
             if settings.dry_run and not agrees:
-                raise SubmitBlocked(f"Dry run: {label!r} may send the application, and it isn't a recognised step button.")
+                raise SubmitBlocked(f"Dry run: {label!r} may send the application, and it "
+                                    "isn't a recognised step button.")
 
     async def _find_by_text(self, page: Page, text: str) -> Locator | None:
         """First visible button/link named `text` exactly, then one whose name holds it, then any visible text match,
@@ -1849,7 +1861,7 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
                     if (t.length > 15) wide = t;
                   }
                   return wide;
-                }""", timeout=3000)
+                }""", timeout=3000)  # noqa: E501
             except (PlaywrightError, PlaywrightTimeout):
                 return None
 

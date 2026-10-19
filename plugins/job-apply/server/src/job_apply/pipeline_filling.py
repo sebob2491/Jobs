@@ -83,7 +83,8 @@ class FillingMixin:
                 await asyncio.sleep(pipeline.ONCE_SETTLE)  # long enough for an answer that won't stick to be gone
                 data, _ = await self._look(text=False)
         filled -= set(failed)
-        pipeline._went_in(run, [{"id": fid, "value": run.once.get(key)} for fid, key in sent.items() if key in filled], first, data)
+        pipeline._went_in(run, [{"id": fid, "value": run.once.get(key)} for fid, key in sent.items() if key in filled],
+                          first, data)
         if filled:
             self._log(run, f"filled {len(filled)} answer(s) you gave for this application")
         if failed:
@@ -92,14 +93,14 @@ class FillingMixin:
 
     async def _autofill(self, run: Run, data: dict[str, Any], own: set[str] | None = None,
                         replacing: set[str] | None = None) -> dict[str, Any]:
-        """The profile's answers into the page's empty boxes (srv.autofill). On a saved draft's pages (Run.draft: gone in
-        through the site's "Continue Application", issue #112, note 38), once a page and only until the job first pauses
-        after going in (from then on the person may be at work in its tab: a Resume, a tab the queue carried on with by
-        itself, a card answered, and what they changed there is theirs), also into boxes that show another answer than
-        the profile's: the draft's, given on an earlier visit, may be out of date. Never a box the profile doesn't
-        answer, a self-identification or how-heard answer, this application's own answers (run.once), nor any other
-        plan_autofill's refresh leaves alone. Said in the log either way. A box that won't take the profile's answer is
-        read again: what it holds is said, and one left empty is asked as any box a fill didn't go into."""
+        """The profile's answers into the page's empty boxes (srv.autofill). On a saved draft's pages (Run.draft: gone
+        in through the site's "Continue Application", issue #112, note 38), once a page and only until the job first
+        pauses after going in (from then on the person may be at work in its tab: a Resume, a tab the queue carried on
+        with by itself, a card answered, and what they changed there is theirs), also into boxes that show another
+        answer than the profile's: the draft's, given on an earlier visit, may be out of date. Never a box the profile
+        doesn't answer, a self-identification or how-heard answer, this application's own answers (run.once), nor any
+        other plan_autofill's refresh leaves alone. Said in the log either way. A box that won't take the profile's
+        answer is read again: what it holds is said, and one left empty is asked as any box a fill didn't go into."""
         page = pipeline._answers_page(data)
         checking = run.draft and not run.draft_off and not run.hands_on
         before = {str(f.get("id")): f for f in data.get("fields") or [] if isinstance(f, dict)}
@@ -131,8 +132,8 @@ class FillingMixin:
         run.did("", result.get("filled"), data)
         changed = [f for f in result.get("filled") or [] if f.get("refreshed")]
         refused = [f for f in result.get("failed") or [] if f.get("refreshed")]
-        # what each box the refresh went into held, and holds now (for the job's "What went in" panel alone: the log, notes
-        # and reports never say a draft's answer, which the profile no longer holds and no scrubber knows)
+        # what each box the refresh went into held, and holds now (for the job's "What went in" panel alone: the log,
+        # notes and reports never say a draft's answer, which the profile no longer holds and no scrubber knows)
         changes: list[tuple[dict[str, Any], Any, Any]] = [
             (before.get(str(f.get("id"))) or {"id": f.get("id"), "label": f.get("label")},
              (before.get(str(f.get("id"))) or {}).get("value"), f.get("value")) for f in changed]
@@ -142,13 +143,15 @@ class FillingMixin:
         if refused:
             now = {str(f.get("id")): f for f in (await self._look(text=False))[0].get("fields") or []}
             emptied = {str(f.get("id")) for f in refused if is_empty_value(now.get(str(f.get("id")), {}).get("value"))}
-            # (one left empty is a fill that didn't go in, as any other: asked; one holding something, said by its label)
+            # (one left empty is a fill that didn't go in, as any other: asked; one holding
+            # something, said by its label)
             result["failed"] = [f for f in result.get("failed") or [] if not f.get("refreshed")
                                 or str(f.get("id")) in emptied]
             kept = [f for f in refused if str(f.get("id")) not in emptied and str(f.get("id")) in now]
             for f in refused:  # (half typed, or emptied: changed all the same)
                 box, held = before.get(str(f.get("id"))) or {}, now.get(str(f.get("id")), {}).get("value")
-                if str(held if held is not None else "") != str(box.get("value") if box.get("value") is not None else ""):
+                if (str(held if held is not None else "")
+                        != str(box.get("value") if box.get("value") is not None else "")):
                     changes.append((box or {"id": f.get("id"), "label": f.get("label")}, box.get("value"), held))
         if changes:
             self._draft_changes(run, changes, data)
@@ -172,9 +175,9 @@ class FillingMixin:
         return result
 
     def _draft_changes(self, run: Run, changes: list[tuple[dict[str, Any], Any, Any]], page: dict[str, Any]) -> None:
-        """A saved draft's answers the desk changed: never sent by Submit for me (the person checks them first: _finish),
-        each on the job's "What went in" panel, and both kept in the job's own folder for after a restart of the desk
-        (_save_draft_changes)."""
+        """A saved draft's answers the desk changed: never sent by Submit for me (the person checks them first:
+        _finish), each on the job's "What went in" panel, and both kept in the job's own folder for after a restart of
+        the desk (_save_draft_changes)."""
         run.draft_changed = True
         pipeline._went_changed(run, changes, page)
         pipeline._save_draft_changes(self.srv, run)
@@ -227,7 +230,8 @@ class FillingMixin:
                    and re.match(r"^(?:delete|remove)\b", final_text(a.get("text") or ""), re.I)]
         # the blocks by their boxes, and by their Deletes (a block's boxes can be drawn a moment after it)
         blocks = sorted({str(x.get("section") or "") for x in [*(data.get("fields") or []), *deletes]
-                         if school_block.match(str(x.get("section") or ""))}, key=lambda s: int(re.findall(r"\d+", s)[-1]))
+                         if school_block.match(str(x.get("section") or ""))},
+                        key=lambda s: int(re.findall(r"\d+", s)[-1]))
         last = blocks[-1] if blocks else ""
         if len(blocks) < 2 or last not in unfit:
             return False
@@ -282,7 +286,8 @@ class FillingMixin:
             numbered = re.compile(rf"^(?:{pipeline._BLOCK_KINDS[kind]})\s+(\d+)\s*$", re.I)
             # the blocks of its kind by their boxes, and by their Deletes (a block's boxes can be drawn after it)
             blocks = sorted({str(x.get("section") or "") for x in [*(data.get("fields") or []), *deletes]
-                             if numbered.match(str(x.get("section") or ""))}, key=lambda s: int(re.findall(r"\d+", s)[-1]))
+                             if numbered.match(str(x.get("section") or ""))},
+                            key=lambda s: int(re.findall(r"\d+", s)[-1]))
             if len(blocks) < 2 or blocks[-1] != block:
                 continue
             boxes = [f for f in data.get("fields") or [] if f.get("section") == block]
@@ -364,7 +369,8 @@ class FillingMixin:
         refused: dict[str, list[str]] = {}  # the profile has it; the page didn't take it
         no_choice: list[str] = []  # Degree lists with nothing for classes without a degree
         unlisted: dict[str, str] = {}  # Degree lists with nothing for the profile's degree (a GED's)
-        kinds: dict[str, tuple[str, list[str]]] = {}  # Degree lists with several kinds of it (BA, BS) and the profile naming none
+        # Degree lists with several kinds of it (BA, BS) and the profile naming none
+        kinds: dict[str, tuple[str, list[str]]] = {}
         unloaded: dict[str, list[str]] = {}  # a school's lists with their placeholder alone: not loaded
         empty_lists = pipeline._unloaded_lists(pending, data, prof)
         rest = []
@@ -448,7 +454,8 @@ class FillingMixin:
         if unloaded:
             one = sum(len(w) for w in unloaded.values()) == 1
             said.append(f"{site}'s {'list' if one else 'lists'} for {listed(unloaded)} showed no choices at all, only "
-                        f"{'its' if one else 'their'} placeholder: the page didn't finish loading {'it' if one else 'them'}"
+                        f"{'its' if one else 'their'} placeholder: the page didn't finish "
+                        f"loading {'it' if one else 'them'}"
                         + (", even after I reloaded it" if run.list_reloaded else "")
                         + ". Reload the page in the desk's browser window (or try again later), then press Carry on.")
         if unlisted:

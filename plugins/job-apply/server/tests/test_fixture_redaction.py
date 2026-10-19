@@ -52,7 +52,8 @@ def test_fixture_css_is_trimmed_and_offline():
 def test_convert_writes_expectations(tmp_path):
     snap = tmp_path / "snap"
     snap.mkdir()
-    (snap / "page.html").write_text("<html><body><label for=a>Email</label><input id=a></body></html>", encoding="utf-8")
+    (snap / "page.html").write_text("<html><body><label for=a>Email</label><input id=a></body></html>",
+                                    encoding="utf-8")
     (snap / "snapshot.json").write_text(json.dumps({
         "url": "https://acme.wd1.myworkdayjobs.com/External/apply?email=sam.rivera@example.com",
         "frames": [{"file": "page.html", "url": "https://acme.wd1.myworkdayjobs.com/External/apply"}],
@@ -169,7 +170,8 @@ def test_expectations_keep_accented_names_findable_and_drop_query_strings(tmp_pa
     (snap / "snapshot.json").write_text(json.dumps({
         "url": "https://careers-x.icims.com/jobs/1/submit?jtsid=SESSIONID-abc&e=sunflower77%40example.org",
         "frames": [{"file": "page.html", "url": "https://careers-x.icims.com/jobs/1/submit"}],
-        "fields": [{"id": "1", "kind": "checkbox", "label": "I, José Núñez, certify that this is true", "required": True}],
+        "fields": [{"id": "1", "kind": "checkbox", "label": "I, José Núñez, certify that this is true",
+                    "required": True}],
     }), encoding="utf-8")
     convert(snap, "probe", tmp_path / "out", prof)
     text = (tmp_path / "out" / "probe.expect.json").read_text(encoding="utf-8")
@@ -211,8 +213,8 @@ def test_anyone_elses_details_and_a_sessions_are_taken_out_of_a_captured_page():
         "ssn": "123-45-6789", "candidate": "C0098812", "session": "9f86d081884c7d659a2feaa0c55ad015",
         "jwt": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.c2lnbmF0dXJl", "frame_token": "tok=abc123secret",
         "formaction_token": "sid=77aa88bb", "href_token": "auth=zz99", "css_token": "sig=qq11",
-        "srcdoc": "srcdoc-secret-words", "comment": "debug user=jane.recruiter", "button": "buttonsecret@acme-staffing.example",
-        "svg": "svg-person@acme-staffing.example",
+        "srcdoc": "srcdoc-secret-words", "comment": "debug user=jane.recruiter",
+        "button": "buttonsecret@acme-staffing.example", "svg": "svg-person@acme-staffing.example",
     }
     raw = f"""<html><body>
       <!-- {planted["comment"]} -->

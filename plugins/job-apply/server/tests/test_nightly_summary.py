@@ -52,10 +52,12 @@ def test_where_it_stands_tables_say_where_each_employer_stops_and_what_the_perso
     assert "| Example / Fab | Review page | — | Check it, press Submit |" in md  # (a "|" in a name never splits a row)
     assert "| Aerotek | Bot check | — | Solve it; the desk carries on |" in md
     # steps that are the person's by the desk's rules are said as such, not "Stopped (see the run)" (run 51)
-    for said, where in (("Workday wants you to take its assessment before the application goes on", "An assessment to take"),
+    for said, where in (("Workday wants you to take its assessment before the application goes on",
+                         "An assessment to take"),
                         ("Oracle Taleo wants its tax credit screening filled in before the application goes on",
                          "A tax credit screening"),
-                        ("State of Arizona's site asks for your name and email first", "Sends your name and email first")):
+                        ("State of Arizona's site asks for your name and email first",
+                         "Sends your name and email first")):
         assert ns.why("needs_you stuck", f"HR Generalist · {said}")[0] == where
 
 
@@ -145,14 +147,15 @@ COMMENT = """6 changes since the last nightly live check ([run](https://example.
 - Edward Jones: `needs_you sign_in` → `needs_you stuck` (`Designer · Edward Jones's site turned the desk's browser away (403 Forbidden). Open the posting in you…`)
 - Micron: *new* → `needs_you bot_check` (`Technician · The site is checking that you're a person (a bot check or CAPTCHA). Solve it…`)
 - KLA: `crash` → `needs_you questions` (`Technician · 1 question(s) your profile doesn't answer. Answer them here and the desk fills them in`)
-"""
+"""  # noqa: E501
 
 
 def test_the_last_runs_changes_are_sorted_into_the_desks_the_sites_and_the_better():
     """A session reads "look" first: the changes likely the desk's. A bot check, a site's error or a site that
     turns automated browsers away is a site's doing; an employer that got further, or out of a crash, is better."""
     out = ns.triage(COMMENT)
-    assert out["look"] == ["accounts: Intel: needs_you stuck -> needs_you sign_in: Sign-in failed after the account was made"]
+    assert (out["look"]
+            == ["accounts: Intel: needs_you stuck -> needs_you sign_in: Sign-in failed after the account was made"])
     assert sorted(out["expected"]) == [
         "accounts: Edward Jones: needs_you sign_in -> needs_you stuck: Site blocks automated browsers",
         "accounts: Micron: new -> needs_you bot_check: Bot check",
@@ -299,7 +302,8 @@ def test_an_employer_new_to_a_check_that_goes_as_far_as_it_can_is_listed_as_adde
 - Odd Co: *new* \u2192 `error` (`SearchError: no results block`)
 """
     out = ns.triage(comment)
-    assert out["added"] == ["search: Matheson: new -> works: works", "search: TSMC Arizona: new -> no search: no search"]
+    assert (out["added"]
+            == ["search: Matheson: new -> works: works", "search: TSMC Arizona: new -> no search: no search"])
     assert out["look"] == ["search: Odd Co: new -> error: error"] and out["better"] == [] and out["expected"] == []
 
 
@@ -310,7 +314,8 @@ def test_a_search_that_went_empty_is_looked_at_and_one_that_came_back_is_better(
                "- Wells Fargo: `error` \u2192 `works` (`5 in AZ`)\n")
     out = ns.triage(comment)
     assert out["look"] == ["search: USAA: works -> empty: Search found nothing anywhere"]
-    assert sorted(out["better"]) == ["search: KPMG: empty -> works: works", "search: Wells Fargo: error -> works: works"]
+    assert (sorted(out["better"])
+            == ["search: KPMG: empty -> works: works", "search: Wells Fargo: error -> works: works"])
 
 
 def test_the_handled_list_is_compared_with_the_last_run(tmp_path):
@@ -359,9 +364,11 @@ def test_a_job_system_twice_as_slow_as_an_earlier_run_says_so():
         return {"company": company, "seconds": seconds, "rounds": [{"url": url}]}
     wd, gh = "https://x.wd1.myworkdayjobs.com/en-US/E/job/1", "https://job-boards.greenhouse.io/x/jobs/1"
     earlier = [rec("W1", 50, wd), rec("W2", 60, wd), rec("W3", 70, wd), rec("G", 5, gh)]
-    now = [rec("W1", 120, wd), rec("W2", 130, wd), rec("W3", 140, wd), rec("G", 20, gh), rec("O", 300, "https://o.example/x")]
+    now = [rec("W1", 120, wd), rec("W2", 130, wd), rec("W3", 140, wd), rec("G", 20, gh),
+           rec("O", 300, "https://o.example/x")]
     out = ns.timing(now, earlier=earlier)
-    assert out[1] == "workday: 3 employer(s), 130 s middle, 140 s at 90%, 1 round(s) middle (was 60 s: 2.2x slower)", out
+    assert (out[1]
+            == "workday: 3 employer(s), 130 s middle, 140 s at 90%, 1 round(s) middle (was 60 s: 2.2x slower)"), out
     assert out[2].startswith("greenhouse: 1 employer(s), 20 s middle") and "slower" not in out[2]  # (under 30 s)
     assert "slower" not in out[0]  # (a system the earlier run didn't have)
     assert all("slower" not in line for line in ns.timing(now))
@@ -374,7 +381,8 @@ def test_a_rounds_pick_list_probe_is_printed_with_it():
         {"status": "needs_you", "need": "questions", "reason": "1 question", "log": [],
          "questions": [{"label": "Protected Veteran", "kind": "combobox", "options": [],
                         "error": "ValueError: its list showed no choices"}],
-         "pick_lists": [{"label": "Protected Veteran", "before": {"box": None}, "after_10s": {"roles": {"option": 5}}}]}]}
+         "pick_lists": [{"label": "Protected Veteran", "before": {"box": None},
+                         "after_10s": {"roles": {"option": 5}}}]}]}
     said = ns.steps(rec).splitlines()
     at = next(i for i, line in enumerate(said) if line.startswith("      Q: Protected Veteran"))
     assert said[at + 1].startswith('      pick list: {"label": "Protected Veteran", "before"'), said

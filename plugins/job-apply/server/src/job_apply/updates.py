@@ -24,7 +24,8 @@ UPDATE_COMMANDS = ["claude plugin marketplace update sebob-jobs", "claude plugin
 def manifest_url() -> str | None:
     """The published manifest: plugin.json on the default branch of the repository it names."""
     try:
-        repo = json.loads((config.PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))["repository"]
+        repo = json.loads((config.PLUGIN_ROOT / ".claude-plugin" / "plugin.json")
+                          .read_text(encoding="utf-8"))["repository"]
     except (OSError, ValueError, KeyError, TypeError):
         return None
     m = re.fullmatch(r"https://github\.com/([\w.-]+)/([\w.-]+?)(?:\.git)?/?", str(repo).strip())

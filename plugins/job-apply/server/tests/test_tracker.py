@@ -8,18 +8,19 @@ from job_apply.tracker import Tracker, normalize_url
 
 
 def test_normalize_url():
-    assert normalize_url("https://www.linkedin.com/jobs/view/field-service-engineer-at-example-3900000001/?trk=x&refId=y") == \
-        "https://www.linkedin.com/jobs/view/3900000001/"
+    assert normalize_url("https://www.linkedin.com/jobs/view/field-service-engineer-at-example-3900000001/"
+                         "?trk=x&refId=y") == "https://www.linkedin.com/jobs/view/3900000001/"
     assert normalize_url("https://www.linkedin.com/jobs/search/?currentJobId=3900000002&geoId=1") == \
         "https://www.linkedin.com/jobs/view/3900000002/"
-    assert normalize_url("https://www.indeed.com/viewjob?jk=a1b2c3&from=serp&vjs=3") == "https://www.indeed.com/viewjob?jk=a1b2c3"
+    assert (normalize_url("https://www.indeed.com/viewjob?jk=a1b2c3&from=serp&vjs=3")
+            == "https://www.indeed.com/viewjob?jk=a1b2c3")
     assert normalize_url("https://jobs.example.com/job/1?utm_source=x&id=2") == "https://jobs.example.com/job/1?id=2"
 
 
 def test_upsert_update_export(job_apply_home):
     t = Tracker()
-    job, created = t.upsert({"url": "https://www.linkedin.com/jobs/view/3900000001/?trk=a", "title": "Field Service Engineer 2",
-                             "company": "Lam Research", "ats": "linkedin"})
+    job, created = t.upsert({"url": "https://www.linkedin.com/jobs/view/3900000001/?trk=a",
+                             "title": "Field Service Engineer 2", "company": "Lam Research", "ats": "linkedin"})
     assert created and job["status"] == "saved"
     assert Path(job["folder"]).is_dir()
     again, created = t.upsert({"url": "https://www.linkedin.com/jobs/view/3900000001/", "location": "Chandler, AZ"})
@@ -64,8 +65,10 @@ def test_one_posting_one_row():
     """The desk's own Workday search gives an address without the language; a link pasted
     from the browser has /en-US/. Two rows meant one could be applied to again."""
     wd = "https://kla.wd1.myworkdayjobs.com/Search/job/Chandler-AZ/Customer-Support-Engineer_2637278"
-    assert normalize_url("https://kla.wd1.myworkdayjobs.com/en-US/Search/job/Chandler-AZ/Customer-Support-Engineer_2637278") == wd
-    assert normalize_url("https://KLA.wd1.MyWorkdayJobs.com/Search/job/Chandler-AZ/Customer-Support-Engineer_2637278") == wd
+    assert normalize_url("https://kla.wd1.myworkdayjobs.com/en-US/Search/job/Chandler-AZ/"
+                         "Customer-Support-Engineer_2637278") == wd
+    assert normalize_url("https://KLA.wd1.MyWorkdayJobs.com/Search/job/Chandler-AZ/"
+                         "Customer-Support-Engineer_2637278") == wd
     assert normalize_url("https://boards.greenhouse.io/asm/jobs/4954508101?gh_src=x") == \
         "https://job-boards.greenhouse.io/asm/jobs/4954508101"
     # the address still opens the posting: paths keep their case and their slash
@@ -80,7 +83,8 @@ def test_addresses_saved_before_are_brought_up_to_date(job_apply_home):
     other = "https://kla.wd1.myworkdayjobs.com/en-US/Search/job/Phoenix-AZ/CSE_2"
     with t._lock:  # rows as an older version saved them
         for url, status in ((pasted, "applied"), (found, "saved"), (other, "saved")):
-            t.conn.execute("INSERT INTO jobs (url, status, created_at, updated_at) VALUES (?, ?, 'x', 'x')", (url, status))
+            t.conn.execute("INSERT INTO jobs (url, status, created_at, updated_at) VALUES (?, ?, 'x', 'x')",
+                           (url, status))
         t.conn.commit()
     t.close()
     t = Tracker()
@@ -175,7 +179,8 @@ def test_undoing_a_skip_brings_back_the_status_before_it(job_apply_home):
     t.update(job["id"], note="a note with no status")
     back = t.unskip(job["id"], note="skip undone")
     assert back is not None and back["status"] == "in_progress" and back["notes"] == "asked about the night shift"
-    assert [e["status"] for e in t.events(job["id"])] == ["saved", "in_progress", "skipped", "skipped", "", "in_progress"]
+    assert ([e["status"] for e in t.events(job["id"])]
+            == ["saved", "in_progress", "skipped", "skipped", "", "in_progress"])
     assert t.unskip(job["id"]) is None and len(t.events(job["id"])) == 6  # not skipped now: nothing changes
     # skipped again later: back to what it was then
     t.update(job["id"], status="ready_to_submit")
@@ -230,7 +235,8 @@ def test_last_heard_is_each_jobs_newest_email_read_in_one_query(job_apply_home):
     received_at is as Claude wrote it (a date, an ISO time, an email's Date header). A blank received_at is the time it
     was logged; a job with no email isn't there."""
     t = Tracker()
-    talk, rejected, quiet, unsaid = (_applied(t, n, "2026-09-28T15:00:00+00:00") for n in ("Talk", "No", "Quiet", "Unsaid"))
+    talk, rejected, quiet, unsaid = (_applied(t, n, "2026-09-28T15:00:00+00:00")
+                                     for n in ("Talk", "No", "Quiet", "Unsaid"))
     t.log_email(talk, "t-1", "confirmation", "We received your application", "2026-09-29")
     t.log_email(talk, "t-2", "interview", "Phone screen request, reply with availability", "2026-10-06T16:30:00Z")
     t.log_email(talk, "t-0", "other", "Talent community newsletter", "Wed, 30 Sep 2026 09:00:00 -0700")
@@ -248,8 +254,8 @@ def test_last_heard_is_each_jobs_newest_email_read_in_one_query(job_apply_home):
     assert len(asked) == 1 and asked[0].lstrip().upper().startswith("SELECT"), asked
     assert heard[talk] == {"category": "interview", "received_at": "2026-10-06T16:30:00Z", "day": "2026-10-06",
                            "summary": "Phone screen request, reply with availability", "emails": 3}, heard[talk]
-    assert (heard[rejected]["category"], heard[rejected]["day"], heard[rejected]["emails"]) == ("rejection", "2026-10-03",
-                                                                                                  2), heard[rejected]
+    assert ((heard[rejected]["category"], heard[rejected]["day"], heard[rejected]["emails"])
+            == ("rejection", "2026-10-03", 2)), heard[rejected]
     assert heard[unsaid] == {"category": "confirmation", "received_at": logged, "day": logged[:10],
                              "summary": "Thanks for applying", "emails": 1}, heard[unsaid]
     assert quiet not in heard and set(heard) == {talk, rejected, unsaid}
@@ -285,9 +291,10 @@ def test_a_follow_up_is_due_once_an_application_has_waited_its_days_with_no_repl
     assert stands(due) == {"last_heard": None, "emails": 0, "follow_up_due": "2026-10-15", "group": "waiting"}
     assert stands(edge)["follow_up_due"] == "2026-10-17"
     assert stands(early) == {"last_heard": None, "emails": 0, "follow_up_due": None, "group": "waiting"}
-    assert stands(acked) == {"last_heard": {"category": "confirmation", "received_at": "2026-09-01", "day": "2026-09-01",
-                                            "summary": "We received your application"},
-                             "emails": 1, "follow_up_due": None, "group": "heard"}
+    assert (stands(acked)
+            == {"last_heard": {"category": "confirmation", "received_at": "2026-09-01", "day": "2026-09-01",
+                               "summary": "We received your application"},
+                "emails": 1, "follow_up_due": None, "group": "heard"})
     assert [(stands(j)["follow_up_due"], stands(j)["group"]) for j in (talking, offered, *closed, ready)] == [
         (None, "interviews"), (None, "interviews"), (None, "closed"), (None, "closed"), (None, "waiting")]
     # the person's own number of days
@@ -307,7 +314,7 @@ def test_a_follow_up_is_due_once_an_application_has_waited_its_days_with_no_repl
     t.close()
 
 
-# ------------------------------------------------------------- one posting, one job (the code review's worth building 8)
+# ------------------------------------------------------------ one posting, one job (the code review's worth building 8)
 INDEED = "https://www.indeed.com/viewjob?jk=0a1b2c3d4e5f6a7b"
 INTEL = "https://intel.wd1.myworkdayjobs.com/External/job/US-Arizona-Chandler/Equipment-Technician_JR0286553"
 
@@ -372,9 +379,9 @@ def test_an_indeed_posting_after_the_employers_is_kept_as_its_alias(job_apply_ho
     linkedin = "https://www.linkedin.com/jobs/view/3900000123/"
     also, created = t.upsert({"url": linkedin, "title": "Equipment Technician", "company": "Intel", "ats": "linkedin"})
     assert created and t.aliases() == {job["id"]: [INDEED]} and _maybe(t, also["id"]) == [job["id"]]
-    assert t.events(also["id"])[-1]["note"] == (f"maybe the same as job {job['id']}: kept apart, as job {job['id']} has a "
-                                                "job board's copy already, and no requisition number shows it's this "
-                                                "posting")
+    assert t.events(also["id"])[-1]["note"] == (f"maybe the same as job {job['id']}: kept apart, as job {job['id']} "
+                                                "has a job board's copy already, and no requisition number shows "
+                                                "it's this posting")
     named, created = t.upsert(_indeed(url="https://www.indeed.com/viewjob?jk=1212121212121212",
                                       description="Job Requisition ID: JR0286553. Days."))
     assert not created and named["id"] == job["id"]
@@ -392,8 +399,9 @@ def test_a_board_copy_takes_a_begun_or_done_jobs_status_only_naming_its_requisit
     other, created = t.upsert(_indeed())
     assert created and t.get(other["id"])["status"] == "saved" and t.aliases() == {}
     assert _maybe(t, other["id"]) == [jr1["id"]]
-    assert t.events(other["id"])[-1]["note"] == (f"maybe the same as job {jr1['id']}: kept apart, as job {jr1['id']} is "
-                                                 "applied, and no requisition number shows it's this posting")
+    assert (t.events(other["id"])[-1]["note"]
+            == (f"maybe the same as job {jr1['id']}: kept apart, as job {jr1['id']} is "
+                "applied, and no requisition number shows it's this posting"))
     begun, _ = t.upsert(_intels(url="https://careers.lamresearch.com/careers/job/7", company="Lam Research"))
     t.update(begun["id"], status="in_progress")
     _, created = t.upsert(_indeed(url="https://www.indeed.com/viewjob?jk=3434343434343434", company="Lam Research"))
@@ -455,7 +463,8 @@ def test_postings_in_different_cities_are_different_jobs(job_apply_home):
     assert created and len(t.list()) == 2
     for n, place in enumerate(("85226", "3 Locations")):
         t.upsert(_intels(url=f"https://careers.example-fab.example/job/{n}", company=f"Fab {n}", location=place))
-        _, created = t.upsert(_indeed(url=f"https://www.indeed.com/viewjob?jk={n}{n}{n}{n}{n}{n}{n}{n}", company=f"Fab {n}"))
+        _, created = t.upsert(_indeed(url=f"https://www.indeed.com/viewjob?jk={n}{n}{n}{n}{n}{n}{n}{n}",
+                                      company=f"Fab {n}"))
         assert created, place
     assert len(t.list()) == 6 and t.aliases() == {}
     t.close()
@@ -527,8 +536,9 @@ def test_one_indeed_copy_and_the_employers_openings_alike_arent_made_one_by_the_
     assert not created and first["id"] == copy["id"]
     second, created = t.upsert(_intels(url="https://careers.lamresearch.com/careers/job/2", company="Lam Research"))
     assert created and _maybe(t, second["id"]) == [copy["id"]] and _maybe(t, copy["id"]) == [second["id"]]
-    assert t.events(second["id"])[-1]["note"] == (f"maybe the same as job {copy['id']}: kept apart, as job {copy['id']} "
-                                                  "is another of the employer's postings, with a job board's copy")
+    assert (t.events(second["id"])[-1]["note"]
+            == (f"maybe the same as job {copy['id']}: kept apart, as job {copy['id']} "
+                "is another of the employer's postings, with a job board's copy"))
     # and a LinkedIn copy now: alike both of the employer's, so it's neither's alias
     linkedin, created = t.upsert({"url": "https://www.linkedin.com/jobs/view/3900000126/", "company": "Lam Research",
                                   "title": "Equipment Technician", "location": "Chandler, AZ", "ats": "linkedin"})
@@ -560,7 +570,8 @@ def test_postings_whose_requisition_numbers_differ_are_different_jobs(job_apply_
     # review of 0.3.206: "Fanuc R2000" read as 2000 told this pair apart)
     robots, _ = t.upsert(_indeed(url="https://www.indeed.com/viewjob?jk=9898989898989898", company="ASML",
                                  description="Experience with Fanuc R2000 robots and REQ-1234 lockout forms."))
-    asml, created = t.upsert(_intels(url="https://asml.example/careers/job/R12345", company="ASML", external_id="R12345"))
+    asml, created = t.upsert(_intels(url="https://asml.example/careers/job/R12345", company="ASML",
+                                     external_id="R12345"))
     assert not created and asml["id"] == robots["id"]
     t.close()
 
@@ -648,8 +659,8 @@ def test_a_tracker_from_an_older_release_is_brought_up_to_date_and_takes_every_w
     old = sqlite3.connect(path)
     old.executescript(_OLD_JOBS)
     old.execute("INSERT INTO jobs (url, title, company, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                ("https://careers.example.com/job/1", "Equipment Technician", "Example Fab", "2026-10-01T00:00:00+00:00",
-                 "2026-10-01T00:00:00+00:00"))
+                ("https://careers.example.com/job/1", "Equipment Technician", "Example Fab",
+                 "2026-10-01T00:00:00+00:00", "2026-10-01T00:00:00+00:00"))
     old.commit()
     old.close()
 
@@ -731,8 +742,9 @@ def test_a_repost_or_a_job_board_copy_begun_or_done_is_kept_apart_and_asked_abou
     _saved_days_ago(t, old["id"], 45)
     own, created = t.upsert(_intels())
     assert created and t.get(old["id"])["url"] == INDEED and _maybe(t, own["id"]) == [old["id"]]
-    assert t.events(own["id"])[-1]["note"] == (f"maybe the same as job {old['id']}: kept apart, as they were saved more "
-                                               "than 30 days apart")
+    assert (t.events(own["id"])[-1]["note"]
+            == (f"maybe the same as job {old['id']}: kept apart, as they were saved more "
+                "than 30 days apart"))
     for n, status in enumerate(("rejected", "in_progress", "ready_to_submit")):
         url = f"https://www.indeed.com/viewjob?jk={n}a{n}a{n}a{n}a"
         board, _ = t.upsert(_indeed(url=url, company=f"Fab {n}"))
@@ -769,10 +781,10 @@ def _older(t, rows):
 
 
 def test_jobs_saved_twice_before_are_made_one_as_the_tracker_opens(job_apply_home):
-    """An Indeed job and the employer's posting of it, both untouched (saved or skipped) and saved within 30 days of each
-    other: one job as the tracker opens, at the employer's address with Indeed's as its alias, with both one's history
-    and emails; a skipped one stays skipped (the person said no to that job). Any other pair alike is left apart and
-    noted as maybe the same (the review of 0.3.206): an Indeed job applied to (it was taken in, and the employer's
+    """An Indeed job and the employer's posting of it, both untouched (saved or skipped) and saved within 30 days of
+    each other: one job as the tracker opens, at the employer's address with Indeed's as its alias, with both one's
+    history and emails; a skipped one stays skipped (the person said no to that job). Any other pair alike is left apart
+    and noted as maybe the same (the review of 0.3.206): an Indeed job applied to (it was taken in, and the employer's
     posting then refused), two begun (either may be under way at another session's desk), or two saved months apart.
     Each open after changes nothing."""
     t = Tracker()
@@ -794,7 +806,8 @@ def test_jobs_saved_twice_before_are_made_one_as_the_tracker_opens(job_apply_hom
                        ("https://asml.example/careers/job/2", "in_progress", "ASML", "Technician", "Chandler, AZ", "")])
     far = _older(t, [("https://www.indeed.com/viewjob?jk=6666666666666666", "saved", "Microchip", "Technician",
                       "Chandler, AZ", "indeed", "2026-07-01T00:00:00+00:00"),
-                     ("https://microchip.example/careers/job/3", "saved", "Microchip", "Technician", "Chandler, AZ", "")])
+                     ("https://microchip.example/careers/job/3", "saved", "Microchip", "Technician",
+                      "Chandler, AZ", "")])
     t.close()
 
     t = Tracker()

@@ -32,7 +32,8 @@ def _saved_page(folder: Path) -> None:
         "<p>Saguaro Valley College · Blue Mesa Fab · Copperline Tools</p>"
         "<iframe src='https://acme.wd1.myworkdayjobs.com/frame/questions?sid=XYZ'></iframe></body></html>",
         encoding="utf-8")  # as the browser's snapshot writes it
-    (snap / "frame-1.html").write_text("<html><body><h2>Questions</h2><p>Gilbertville</p></body></html>", encoding="utf-8")
+    (snap / "frame-1.html").write_text("<html><body><h2>Questions</h2><p>Gilbertville</p></body></html>",
+                                       encoding="utf-8")
     (snap / "screenshot.jpg").write_bytes(b"\xff\xd8 a picture of the page with Jordan Quill on it")
     (snap / "snapshot.json").write_text(json.dumps({
         "url": "https://acme.wd1.myworkdayjobs.com/External/job/x/apply?email=jquill77%40example.org",
@@ -95,7 +96,8 @@ def test_a_report_names_none_of_the_profiles_answers_the_desk_said_in_its_own_wo
 
 
 def test_a_long_report_is_cut_short_in_the_issue_but_whole_in_the_zip(job_apply_home, tmp_path):
-    job = {"id": 8, "title": "FSE", "company": "Acme Semi", "url": "https://example.com/j", "folder": str(tmp_path / "j")}
+    job = {"id": 8, "title": "FSE", "company": "Acme Semi", "url": "https://example.com/j",
+           "folder": str(tmp_path / "j")}
     r = Run(8, "FSE", "Acme Semi", status="failed", log=[f"step {i}: " + "x" * 300 for i in range(40)])
     out = report.build(job, r, PERSON)
     body = parse_qs(urlsplit(out["issue_url"]).query)["body"][0]
@@ -106,7 +108,8 @@ def test_a_long_report_is_cut_short_in_the_issue_but_whole_in_the_zip(job_apply_
 def test_a_report_full_of_quotes_and_line_breaks_still_fits_githubs_address_limit(job_apply_home, tmp_path):
     """The cap was on the text, but encoding makes a curly quote 9 characters and a line
     break 3: a 6000-character report made a 10,000-character address, which GitHub refuses."""
-    job = {"id": 9, "title": "FSE", "company": "Acme Semi", "url": "https://example.com/j", "folder": str(tmp_path / "j")}
+    job = {"id": 9, "title": "FSE", "company": "Acme Semi", "url": "https://example.com/j",
+           "folder": str(tmp_path / "j")}
     r = Run(9, "FSE", "Acme Semi", status="failed", log=[f"clicked \u201cNext\u201d on page {i}" for i in range(40)])
     out = report.build(job, r, PERSON)
     assert len(out["issue_url"]) <= report.ISSUE_URL
@@ -204,7 +207,8 @@ def test_a_report_or_note_takes_a_surname_out_of_a_user_name_or_a_file_name(job_
     while "Problem" and "Robotics" stay whole."""
     said = ("Problem on the Robotics page: signed in as jquill1987, JQuill_Resume.pdf, jquill@example.com, "
             "https://example.com/u/jquill, from noreply@mailexamplelitho.com")
-    job = {"id": 18, "title": "Technician", "company": "Example Litho", "ats": "workday", "url": "https://example.com/j"}
+    job = {"id": 18, "title": "Technician", "company": "Example Litho", "ats": "workday",
+           "url": "https://example.com/j"}
     r = Run(18, "Technician", "Example Litho", status="needs_you", need="stuck", reason=said, log=[said])
     anonymous = report.build(job, r, PERSON, anonymous=True)["preview"]
     for text in (report.build(job, r, PERSON)["preview"], anonymous, report.note(job, r, PERSON)):
@@ -217,7 +221,8 @@ def _stop_and_fill_pages(folder: Path, names: list[str]) -> None:
         snap = folder / "debug" / name
         snap.mkdir(parents=True)
         note = "stopped: questions" if name.endswith("-stop") else "autofill failures"
-        (snap / "page.html").write_text(f"<html><body><h1>{note}</h1><label for=a>City</label><input id=a></body></html>", encoding="utf-8")
+        (snap / "page.html").write_text(f"<html><body><h1>{note}</h1><label for=a>City</label><input id=a>"
+                                        "</body></html>", encoding="utf-8")
         (snap / "snapshot.json").write_text(json.dumps({
             "url": "https://example.com/apply", "title": note, "note": note,
             "frames": [{"file": "page.html", "url": "https://example.com/apply"}],
@@ -334,7 +339,8 @@ def test_an_employers_one_word_forms_are_taken_out_as_written_and_never_inside_a
     """The review of issue #112, note 35: "How early can you start?" kept at Early Warning, an email whose first
     name is the employer's first word left whole (for the scrubber to take out whole), "Careers at NXP" said."""
     say, _ = report._anonymous({"company": "Early Warning Services"}, None, [], [])
-    assert say("How early can you start? Early Warning thanks you.") == "How early can you start? the employer thanks you."
+    assert (say("How early can you start? Early Warning thanks you.")
+            == "How early can you start? the employer thanks you.")
     say, _ = report._anonymous({"company": "Grant Thornton"}, None, [], ["grant.lee@mail.example.org"])
     said = say("Reply to grant.lee@mail.example.org about Grant Thornton")
     assert "lee" not in said and "mail.example" not in said and "Grant" not in said, said  # (the email whole)
@@ -369,7 +375,8 @@ def test_an_anonymous_report_leaves_out_the_parent_group_the_jobs_place_and_neve
            "location": "Springfield, IL", "url": posting, "folder": str(folder)}
     r = Run(31, "Equipment Technician", "Example Fab", status="needs_you", need="stuck", url=posting,
             reason="I couldn't find the button that moves this application on.",
-            log=["agreed to the employer's notice “Privacy Policy of the Example Fab” for you (settings.accept_notices)"],
+            log=["agreed to the employer's notice “Privacy Policy of the Example Fab” for "
+                 "you (settings.accept_notices)"],
             page_info={"url": posting, "title": "Equipment Technician Job Details | Acme Group",
                        "headings": ["Jobs at Acme Group", "Additional Personal Information"],
                        "actions": ["Remove Springfield, IL", "Remove Springfield, Illinois", "Next"],
@@ -400,8 +407,8 @@ def test_the_names_a_page_gives_an_employer_are_found_and_its_own_words_are_not(
     found = report._names_given(
         ["the job Job Details | Acme Group", "Careers | Northwind", "Contoso Careers", "My Information | Workday",
          "Careers | SAP SuccessFactors", "Voluntary Self-Identification | Equal Opportunity Employer", "Apply"],
-        ["Your Career at Fabrikam Holdings", "Life at Tailspin.", "Additional Personal Information", "Remove the job's location",
-         "Careers at the employer", "Join our talent community"])
+        ["Your Career at Fabrikam Holdings", "Life at Tailspin.", "Additional Personal Information",
+         "Remove the job's location", "Careers at the employer", "Join our talent community"])
     assert found == {"Acme Group", "Northwind", "Contoso", "Fabrikam Holdings", "Tailspin"}, found
     # its own domain's name too, never a frame's (a CAPTCHA's)
     say, _ = report._anonymous({"company": "Example Fab", "url": "https://jobs.exfabgroup.example/x"}, None,
@@ -409,7 +416,8 @@ def test_the_names_a_page_gives_an_employer_are_found_and_its_own_words_are_not(
     assert say("Welcome to exfabgroup and EXFABGROUP, checked by Puzzlecheck") == \
         "Welcome to the employer and the employer, checked by Puzzlecheck"
     assert set(report._place_forms("Springfield, IL; Shelbyville, Illinois, United States; Remote")) == {
-        "Springfield, IL", "Springfield", "Shelbyville, Illinois, United States", "Shelbyville, Illinois", "Shelbyville"}
+        "Springfield, IL", "Springfield", "Shelbyville, Illinois, United States", "Shelbyville, Illinois",
+        "Shelbyville"}
 
 
 def test_an_anonymous_report_takes_out_only_names_never_everyday_words_and_every_way_a_place_is_written():
@@ -428,7 +436,8 @@ def test_an_anonymous_report_takes_out_only_names_never_everyday_words_and_every
                  "Do you have engineering experience?", "Remote work: will you travel?"):
         assert say(kept) == kept, kept
     assert not {"Will", "will", "Engineering", "Remote"} & set(secrets)
-    assert say("Life at Northwind Group, where Northwind people work") == "Life at the employer, where the employer people work"
+    assert (say("Life at Northwind Group, where Northwind people work")
+            == "Life at the employer, where the employer people work")
     assert say("the northwind way") == "the northwind way"  # (as written only)
     for place in ("Remove Springfield, IL 62701", "Remove US-IL-Springfield", "Remove Springfield IL",
                   "Remove Shelbyville, Illinois"):
@@ -532,9 +541,10 @@ def _quoting_run(job_id: int) -> Run:
 
 
 def test_a_report_and_a_note_hide_what_the_desk_history_hides(srv, job_apply_home, monkeypatch):
-    """A page's error the desk quotes (its reason, the page's errors) can echo what the person typed on a card, and a log
-    line the code the inbox gave: the history keeps them out of its line, and a report and a note (filed in public) did
-    not (the review of Oct 18). The desk's Report, Claude's report_problem and the note the desk takes all hide them."""
+    """A page's error the desk quotes (its reason, the page's errors) can echo what the person typed on a card, and a
+    log line the code the inbox gave: the history keeps them out of its line, and a report and a note (filed in public)
+    did not (the review of Oct 18). The desk's Report, Claude's report_problem and the note the desk
+    takes all hide them."""
     import time
 
     import httpx
@@ -594,7 +604,8 @@ def _reported(srv, job_apply_home, job, r) -> tuple[str, str]:
     finally:
         desk_module._desk = None
     [taken] = (job_apply_home / "notes").glob("*.md")
-    return out["preview"] + "\n" + parse_qs(urlsplit(out["issue_url"]).query)["body"][0], taken.read_text(encoding="utf-8")
+    return (out["preview"] + "\n" + parse_qs(urlsplit(out["issue_url"]).query)["body"][0],
+            taken.read_text(encoding="utf-8"))
 
 
 def test_a_report_keeps_the_profiles_everyday_words_the_page_says_too(srv, job_apply_home):
@@ -675,5 +686,6 @@ def test_a_report_hides_the_runs_own_in_an_addresss_path_but_never_its_host_nor_
     text = _reported(srv, job_apply_home, job, r)[0]
     for value in ("482913", "jq.applies"):
         assert value not in text, (value, text)
-    assert "https://fabnights.example/verify/REDACTED" in text and "https://fabnights.example/profile/REDACTED/edit" in text
+    assert ("https://fabnights.example/verify/REDACTED" in text
+            and "https://fabnights.example/profile/REDACTED/edit" in text)
     assert "dates 2019-2023 shown" in text, text

@@ -1,6 +1,6 @@
-"""Offline replay (the review of Oct 18, T10): `job-apply-doctor --replay` opens a saved page in the bundled Chromium with
-no network and says what the Job Desk reads and decides there. Every page in tests/fixtures/live replays offline and
-says the same as its golden in tests/fixtures/replay (an intended change is written again with
+"""Offline replay (the review of Oct 18, T10): `job-apply-doctor --replay` opens a saved page in the bundled Chromium
+with no network and says what the Job Desk reads and decides there. Every page in tests/fixtures/live replays offline
+and says the same as its golden in tests/fixtures/replay (an intended change is written again with
 JOB_APPLY_UPDATE_REPLAY=1: look the diff over)."""
 
 import json

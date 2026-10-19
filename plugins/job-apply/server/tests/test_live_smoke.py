@@ -75,7 +75,8 @@ def test_the_it_role_is_a_coherent_las_vegas_help_desk_and_sysadmin_applicant():
     assert all(j["company"].startswith("Example ") and j["location"].endswith(", NV") and j["description"]
                for j in jobs)
     assert jobs[0]["end"] == "present" and jobs[1]["end"] < jobs[0]["start"]  # (most recent first, one after another)
-    others = {j["company"] for r in ("technician", "hr", "finance") for j in got[f"{r}/plain"]["profile"]["work_history"]}
+    others = {j["company"] for r in ("technician", "hr", "finance")
+              for j in got[f"{r}/plain"]["profile"]["work_history"]}
     assert not others & {j["company"] for j in jobs}
     school = profile["education_history"][0]
     assert school["major"] == "Information Technology" and school["end"] <= int(jobs[1]["start"][:4])

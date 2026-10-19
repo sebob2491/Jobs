@@ -38,13 +38,17 @@ extend-exclude = ["tests/fixtures"]
 
 [tool.ruff.lint]
 # pyflakes (unused/undefined names), the error-level pycodestyle checks, and bugbear's
-# bug patterns (mutable defaults, late-binding closures, assert False, ...), and a `# noqa` that no longer
-# silences anything (RUF100)
-select = ["E4", "E7", "E9", "F", "B", "RUF100"]
+# bug patterns (mutable defaults, late-binding closures, assert False, ...), a `# noqa` that no longer
+# silences anything (RUF100), and lines over the 120 columns above (E501), wrapped by hand
+select = ["E4", "E7", "E9", "F", "B", "RUF100", "E501"]
 ignore = [
     "B007",  # loop variable unused in the body: the for/else/break idiom reads it after the loop
     "B905",  # zip() without strict=: a style choice, and strict=True turns a short list into a crash
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# the form reader's page scripts: JavaScript kept as the page runs it (a line wrapped in it changes the script)
+"src/job_apply/formjs.py" = ["E501"]
 
 # `uv run mypy` (checks src/job_apply)
 [tool.mypy]

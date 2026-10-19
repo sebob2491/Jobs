@@ -1,7 +1,7 @@
 """The desk's last action and the stop's record (the review of Oct 18, T10): what the desk last pressed, typed, picked
-or uploaded on a job's pages (Run.last_action, by the button's words or the box's label alone), kept in the desk's state,
-the saved stop page's details and a problem report; and stop.json beside the page a job stopped on, with its code,
-need, reason, that last action, the page's errors and the words around the first, scrubbed as a report is."""
+or uploaded on a job's pages (Run.last_action, by the button's words or the box's label alone), kept in the desk's
+state, the saved stop page's details and a problem report; and stop.json beside the page a job stopped on, with its
+code, need, reason, that last action, the page's errors and the words around the first, scrubbed as a report is."""
 
 import ast
 import asyncio
@@ -89,7 +89,8 @@ def test_a_step_not_saved_stop_writes_its_record_with_the_button_pressed_and_the
     assert (record["code"], record["need"]) == ("step_not_saved", "stuck")
     assert record["last_action"]["what"] == "pressed" and record["last_action"]["target"] == "Next"
     assert record["errors"] and "Resume/CV is required" in record["errors"][0]
-    assert "Resume/CV is required before this step is saved" in record["text"] and len(record["text"]) <= report.STOP_TEXT
+    assert ("Resume/CV is required before this step is saved" in record["text"]
+            and len(record["text"]) <= report.STOP_TEXT)
     assert record["reason"].startswith("The page didn't move on")
     said = json.dumps(record)
     for private in ("sam.rivera", "480-555-0123", "4805550123", "Sam Riverbend"):
@@ -146,7 +147,8 @@ def test_every_recording_of_the_last_action_is_a_statement_of_its_own():
 
 def test_a_report_says_the_last_action_by_its_label_with_the_runs_answers_taken_out(srv, monkeypatch):
     """A problem report's "Last action" line: what the desk last did, by the button's words or the box's label, through
-    the report's scrubber (a label that echoes one of the run's own answers loses it, as the report's other lines do)."""
+    the report's scrubber (a label that echoes one of the run's own answers loses it, as the report's
+    other lines do)."""
     job = srv.add_job(url="https://jobs.example.com/apply/1", title="Technician", company="Example Fab")["job"]
     r = Run(job["id"], "Technician", "Example Fab", status="needs_you", need="stuck", code="step_not_saved",
             reason="The page didn't move on.")
@@ -217,7 +219,8 @@ def test_a_long_target_is_scrubbed_before_its_cut(tmp_path):
     across the cut ("sam.rivera@exa") that no scrubbing could match. It's kept longer, scrubbed, then cut."""
     r = Run(1)
     r.did("typed", {"id": "f1", "label": "x" * 110 + " sam.rivera@example.com is the email we have on file"})
-    said = report.last_action_said(r.last_action, report._scrubber(report.report_strings(pipeline.config.Profile.load())))
+    said = report.last_action_said(r.last_action,
+                                   report._scrubber(report.report_strings(pipeline.config.Profile.load())))
     assert "rive" not in said and "@exa" not in said and "REDACTED" in said, said  # (no fragment of it either)
     folder = _saved_stop(tmp_path / "stop", "<html><body><p>Hello</p></body></html>", [])
     record = json.loads(report.write_stop(folder, report.stop_facts(r)).read_text(encoding="utf-8"))

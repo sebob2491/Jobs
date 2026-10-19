@@ -64,7 +64,8 @@ def tally(repo: str, since: datetime.date, api: Api = gh_api, workflow: str = "t
     runs: list[dict[str, Any]] = []
     page = 1
     while True:
-        got = api(f"repos/{repo}/actions/workflows/{workflow}/runs?created=%3E%3D{since.isoformat()}&per_page=100&page={page}")
+        got = api(f"repos/{repo}/actions/workflows/{workflow}/runs?created=%3E%3D{since.isoformat()}&per_page=100"
+                  f"&page={page}")
         batch = (got or {}).get("workflow_runs") or []
         runs += batch
         if len(batch) < 100:
@@ -79,7 +80,8 @@ def tally(repo: str, since: datetime.date, api: Api = gh_api, workflow: str = "t
     windows_only: set[Any] = set()  # the runs an attempt of which failed on Windows alone
     for run in runs:
         for attempt in range(1, int(run.get("run_attempt") or 1) + 1):
-            jobs = (api(f"repos/{repo}/actions/runs/{run['id']}/attempts/{attempt}/jobs?per_page=100") or {}).get("jobs") or []
+            jobs = ((api(f"repos/{repo}/actions/runs/{run['id']}/attempts/{attempt}/jobs?per_page=100")
+                     or {}).get("jobs") or [])
             failed_in: set[str] = set()  # the families with a failed job in this attempt
             for job in jobs:
                 name = str(job.get("name") or "")

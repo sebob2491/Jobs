@@ -18,7 +18,8 @@ Each company in data/companies.yaml may carry a `search` block naming one of:
     jobvite:         <company>              (jobs.jobvite.com/<company>)
     amazon:          {loc_query: "Phoenix, AZ, USA", latitude: .., longitude: .., radius: 50km}  (amazon.jobs)
     randstad:        https://www.randstadusa.com/jobs/internal  (Randstad's own jobs)
-    mcloud:          {company: companies/<id>}  (a Google Cloud Talent search at jobsapi-google.m-cloud.io: Edward Jones)
+    mcloud:          {company: companies/<id>}  (a Google Cloud Talent search at jobsapi-google.m-cloud.io:
+                                            Edward Jones)
     kpmg:            ["Phoenix, AZ", ...]  (KPMG's own job search: its place filter's values)
     avature:         {url: <search page>, state_field: 9336, states: {AZ: 690346}}
                                             (Avature career portals: Deloitte; its State filter's values)
@@ -288,13 +289,14 @@ def search_area() -> dict[str, Any]:
     lists = employer_lists()
     states = list(dict.fromkeys(s for p in places for s in _place_states(p)))
     return {"titles": titles, "default_titles": DEFAULT_TITLES, "searched_titles": MAX_ALTERNATIVES,
-            "avoid_titles": avoid, "places": places, "states": states, "lists": [n for n in names if n in lists], "own": len(own),
-            "choices": [{"name": name, "label": LIST_LABELS.get(name, name), "count": _list_size(path)}
-                        for name, path in lists.items()],
+            "avoid_titles": avoid, "places": places, "states": states, "lists": [n for n in names if n in lists],
+            "own": len(own), "choices": [{"name": name, "label": LIST_LABELS.get(name, name), "count": _list_size(path)}
+                                         for name, path in lists.items()],
             "place_ideas": PLACE_IDEAS, "title_ideas": TITLE_IDEAS}
 
 
-_LIST_SIZES: dict[Path, tuple[float, int]] = {}  # (the desk asks every 1.5 s: each list read again only when it changes)
+# (the desk asks every 1.5 s: each list read again only when it changes)
+_LIST_SIZES: dict[Path, tuple[float, int]] = {}
 
 
 def _list_size(path: Path) -> int:
@@ -327,7 +329,8 @@ _LEVEL_LETTER = {"i", "v", "x"}
 def _own_titles() -> list[str]:
     """The job titles the profile names (preferences.titles); none when it doesn't read."""
     try:
-        return [t for t in (str(t).strip() for t in config.listed(config.Profile.load().get("preferences.titles"))) if t]
+        return [t for t in (str(t).strip()
+                            for t in config.listed(config.Profile.load().get("preferences.titles"))) if t]
     except ValueError:
         return []
 
@@ -527,10 +530,10 @@ STATE_CITIES = {
     # and Tolleson postings were dropped as nowhere, a bare town's name saying nothing without them)
     "AZ": ["phoenix", "chandler", "tempe", "mesa", "scottsdale", "gilbert", "glendale", "peoria", "tucson",
            "goodyear", "surprise", "avondale", "casa grande", "queen creek", "maricopa", "buckeye", "tolleson",
-           "sun city", "sun city west", "litchfield park", "fountain hills", "paradise valley", "cave creek", "carefree",
-           "anthem", "laveen", "ahwatukee", "apache junction", "san tan valley", "gold canyon", "el mirage",
-           "youngtown", "wickenburg", "coolidge", "eloy", "prescott", "prescott valley", "flagstaff", "yuma",
-           "sierra vista", "lake havasu city", "kingman", "bullhead city", "sedona", "show low",
+           "sun city", "sun city west", "litchfield park", "fountain hills", "paradise valley",
+           "cave creek", "carefree", "anthem", "laveen", "ahwatukee", "apache junction", "san tan valley",
+           "gold canyon", "el mirage", "youngtown", "wickenburg", "coolidge", "eloy", "prescott", "prescott valley",
+           "flagstaff", "yuma", "sierra vista", "lake havasu city", "kingman", "bullhead city", "sedona", "show low",
            "oro valley", "marana", "sahuarita", "green valley", "chino valley", "camp verde"],
            # (not Nogales: Avnet's Workday lists "Nogales, Sonora, Mexico"; its Arizona namesake says "Nogales, AZ")
     # (the Las Vegas valley's towns and the state's other cities: a search there, Oct 2026)
@@ -676,11 +679,13 @@ def _workday_location_facets(facets: Any, terms: list[str]) -> dict[str, list[st
             if not isinstance(item, dict):
                 continue
             p = item.get("facetParameter") or param
-            if p and "id" in item and "descriptor" in item and re.search(r"location|country|state|city|region", p, re.I):
+            if (p and "id" in item and "descriptor" in item
+                    and re.search(r"location|country|state|city|region", p, re.I)):
                 # countries alone say nothing of which city a "2 Locations" job is in
                 any_location = any_location or not re.search(r"country", p, re.I)
                 if location_matches(str(item["descriptor"]), terms) is True:
-                    found.setdefault(p, []).append((str(item["id"]), int(item.get("count") or 0), str(item["descriptor"])))
+                    found.setdefault(p, []).append((str(item["id"]), int(item.get("count") or 0),
+                                                    str(item["descriptor"])))
             if item.get("values"):
                 walk(item["values"], p)
 
@@ -816,7 +821,8 @@ async def _workday(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, 
             break
         data = await page(offset, applied)
     out = out[:limit]
-    for listing in out:  # (found by the site's own filter with the area's state named: in it, however it names the place)
+    # (found by the site's own filter with the area's state named: in it, however it names the place)
+    for listing in out:
         listing.in_area = named_area
     await _workday_places(client, cxs, base, out, terms, in_area=bool(applied))
     return out
@@ -836,7 +842,8 @@ def _workday_path_place(path: str) -> str:
     parts = path.strip("/").split("/")
     if len(parts) != 3 or parts[0] != "job":
         return ""
-    place = re.sub(r"-{2,}", "\0", parts[1]).replace("-", " ").replace("\0", " - ")  # "---" parts a name from its address
+    # "---" parts a name from its address
+    place = re.sub(r"-{2,}", "\0", parts[1]).replace("-", " ").replace("\0", " - ")
     place = re.sub(r"\s+", " ", place).strip()
     return re.sub(r" ([A-Z]{2})( \d{5})?$", r", \1\2", place)
 
@@ -867,7 +874,8 @@ async def _workday_places(client: httpx.AsyncClient, cxs: str, base: str, listin
                     return
             places = [str(x).strip() for x in [info.get("location"), *(info.get("additionalLocations") or [])] if x]
             places = list(dict.fromkeys(x for x in places if x))
-            if not places:  # an empty "location", with the place in the requisition's ("TX - Burnet": Entegris, live, Oct 2026)
+            # an empty "location", with the place in the requisition's ("TX - Burnet": Entegris, live, Oct 2026)
+            if not places:
                 req = (info.get("jobRequisitionLocation") or {}).get("descriptor")
                 places = [str(req).strip()] if req and str(req).strip() else []
             if known is not None:
@@ -1049,7 +1057,8 @@ def _whole_board(listings: list[Listing], url: str, page: str, shell: str) -> li
     return listings
 
 
-async def _applicantstack(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
+async def _applicantstack(client: httpx.AsyncClient, cfg: Any, query: str, limit: int,
+                          terms: list[str]) -> list[Listing]:
     """ApplicantStack boards (SCREEN SPE USA) list every opening on one page, each with
     its location."""
     base = f"https://{cfg}.applicantstack.com"
@@ -1075,7 +1084,8 @@ def parse_applicantstack(html: str, base: str) -> list[Listing]:
     return out
 
 
-ICIMS_PAGES = 4  # result pages read per search (20 openings each): a national portal's Arizona ones are often past the first
+# result pages read per search (20 openings each): a national portal's Arizona ones are often past the first
+ICIMS_PAGES = 4
 # iCIMS portals' location filter names a state by iCIMS's own number, the same on every portal
 # (Aerotek's, TEKsystems', Allegis Group's, Schwab's, GDMS's and Daifuku's, live, Oct 2026)
 ICIMS_STATES = {
@@ -1228,7 +1238,8 @@ def _taleo_body(query: str, page: int) -> dict[str, Any]:
     filters = ["POSTING_DATE", "LOCATION", "JOB_FIELD", "JOB_TYPE", "JOB_SCHEDULE", "JOB_LEVEL"]
     advanced = ["ORGANIZATION", "LOCATION", "JOB_FIELD", "JOB_NUMBER", "URGENT_JOB", "EMPLOYEE_STATUS", "STUDY_LEVEL",
                 "WILL_TRAVEL", "JOB_SHIFT"]
-    return {"multilineEnabled": False, "sortingSelection": {"sortBySelectionParam": "3", "ascendingSortingOrder": "false"},
+    return {"multilineEnabled": False,
+            "sortingSelection": {"sortBySelectionParam": "3", "ascendingSortingOrder": "false"},
             "fieldData": {"fields": {"KEYWORD": query, "LOCATION": ""}, "valid": True},
             "filterSelectionParam": {"searchFilterSelections": [{"id": f, "selectedValues": []} for f in filters]},
             "advancedSearchFiltersSelectionParam": {
@@ -1377,7 +1388,8 @@ async def _jibe(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, ter
     want = max(limit, AREA_SCAN) if terms and not state else limit
     out: list[Listing] = []
     for page in range(1, JIBE_PAGES + 1):
-        params = {"keywords": query, "page": page, "limit": JIBE_PAGE, **({"location": US_STATES[state]} if state else {})}
+        params = {"keywords": query, "page": page, "limit": JIBE_PAGE,
+                  **({"location": US_STATES[state]} if state else {})}
         url = f"https://{host}/api/jobs?" + urlencode(params)
         r = await _send(client, "GET", url, headers={"Accept": "application/json"})
         _raise_for(r, url)
@@ -1392,8 +1404,8 @@ async def _jibe(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, ter
             where = data.get("full_location") or ", ".join(str(x) for x in (data.get("city"), data.get("state")) if x)
             out.append(Listing(company="", title=title, url=f"{m.group(1)}/jobs/{m.group(2)}/job" if m else page_url,
                                company_url=page_url if m else "", location=str(where or ""),
-                               posted=str(data.get("posted_date") or "")[:10], external_id=str(data.get("req_id") or slug),
-                               ats="icims" if m else "jibe"))
+                               posted=str(data.get("posted_date") or "")[:10],
+                               external_id=str(data.get("req_id") or slug), ats="icims" if m else "jibe"))
         if len(jobs) < JIBE_PAGE or len(out) >= want:
             break
     return out
@@ -1425,7 +1437,8 @@ async def _talentbrew(client: httpx.AsyncClient, cfg: Any, query: str, limit: in
 
     async def page(n: int, facet: dict[str, Any]) -> dict[str, Any]:
         url = f"https://{host}/search-jobs/results?" + urlencode({**base, "CurrentPage": n, **facet})
-        r = await _send(client, "GET", url, headers={"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"})
+        r = await _send(client, "GET", url,
+                        headers={"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"})
         _raise_for(r, url)
         return r.json()
 
@@ -1519,7 +1532,8 @@ async def _careerpages(client: httpx.AsyncClient, cfg: Any, query: str, limit: i
                 title = re.search(r'aria-label="Title: ([^"]+)"', row)
                 if not title:
                     continue
-                places = dict.fromkeys(html.unescape(p).strip() for p in re.findall(r'aria-label="Location: ([^"]+)"', row))
+                places = dict.fromkeys(html.unescape(p).strip()
+                                       for p in re.findall(r'aria-label="Location: ([^"]+)"', row))
                 req = re.search(r'aria-label="Requisition Identifier: ([^"]+)"', row)
                 out.append(Listing(company="", title=html.unescape(title.group(1)).strip(), url=html.unescape(link),
                                    location="; ".join(dict.fromkeys(_cp_place(p, state) for p in places)),
@@ -1621,7 +1635,8 @@ def parse_randstad(html: str) -> list[Listing]:
         out.append(Listing(company="", title=title, url=url.split("?")[0], ats="custom",
                            location=", ".join(str(x) for x in (where.get("city"), where.get("stateAbbreviation") or
                                                                where.get("state")) if x),
-                           posted=posted_date(int(hit["createdDate"]) // 1000) if str(hit.get("createdDate") or "").isdigit()
+                           posted=posted_date(int(hit["createdDate"]) // 1000)
+                           if str(hit.get("createdDate") or "").isdigit()
                            else "", external_id=str(hit.get("atsReference") or "")))
     return out
 
@@ -1804,7 +1819,8 @@ def parse_avature(page: str, base: str) -> list[Listing]:
 
 def avature_places(page: str) -> list[str]:
     """The places a posting's own page lists under "Same job available in 52 locations"."""
-    found = (p.get_text(" ", strip=True) for p in BeautifulSoup(page, "html.parser").select(".article__header--locations p"))
+    found = (p.get_text(" ", strip=True)
+             for p in BeautifulSoup(page, "html.parser").select(".article__header--locations p"))
     return list(dict.fromkeys(" ".join(p.split()) for p in found if p))
 
 
@@ -1973,7 +1989,8 @@ async def _amazon(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, t
     list's address, latitude, longitude and radius (`loc_query`, `latitude`, `longitude`,
     `radius`). A search for anywhere searches the world. Each opening names every place it's
     offered in (a Seattle job is often in Tempe too)."""
-    where = {k: cfg[k] for k in ("loc_query", "latitude", "longitude", "radius") if cfg.get(k) is not None} if terms else {}
+    where = ({k: cfg[k] for k in ("loc_query", "latitude", "longitude", "radius") if cfg.get(k) is not None}
+             if terms else {})
     params = {"base_query": query, "result_limit": AMAZON_PAGE, "offset": 0, "sort": "relevant", **where}
     url = "https://www.amazon.jobs/en/search.json?" + urlencode(params)
     r = await _send(client, "GET", url, headers={"Accept": "application/json"})
@@ -1985,7 +2002,8 @@ async def _amazon(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, t
             continue
         places = _amazon_places(job.get("locations") or [])
         out.append(Listing(company="", title=title, url=urljoin("https://www.amazon.jobs/", path), ats="amazon",
-                           location="; ".join(places) or str(job.get("normalized_location") or job.get("location") or ""),
+                           location="; ".join(places)
+                           or str(job.get("normalized_location") or job.get("location") or ""),
                            posted=posted_date(" ".join(str(job.get("posted_date") or "").split())),  # "July  9, 2026"
                            external_id=str(job.get("id_icims") or job.get("id") or "")))
     return out
@@ -2281,7 +2299,8 @@ def _sf_state(terms: list[str]) -> str:
     return next((name for name in US_STATES.values() if norm(name) in terms), "")
 
 
-async def _successfactors(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
+async def _successfactors(client: httpx.AsyncClient, cfg: Any, query: str, limit: int,
+                          terms: list[str]) -> list[Listing]:
     """SuccessFactors career sites (Qorvo, Salt River Project) draw their search results as an
     HTML table or as tiles, a page at a time. Given a state, the site's own location search narrows them; it also
     finds openings whose first place is elsewhere ("Greensboro, NC +3 more")."""
@@ -2303,7 +2322,8 @@ async def _successfactors(client: httpx.AsyncClient, cfg: Any, query: str, limit
             raise SearchError(f"No job list from {url}")
         start += drawn
         for listing in batch:
-            if state and _SF_MORE_SHOWN.search(listing.location) and location_matches(listing.location, terms) is not True:
+            if (state and _SF_MORE_SHOWN.search(listing.location)
+                    and location_matches(listing.location, terms) is not True):
                 # one of its other places is in the state, or the site wouldn't have listed it
                 listing.location = f"{listing.location}; {state}"
         out.extend(batch)
@@ -2363,7 +2383,8 @@ SFCLASSIC_PLACE_PAGES = 30  # postings read for their place, per search
 
 
 def sfclassic_page_url(cfg: Any) -> str:
-    return f"{cfg['site'].rstrip('/')}/career?company={cfg['company']}&career_ns=job_listing_summary&navBarLevel=JOB_SEARCH"
+    return (f"{cfg['site'].rstrip('/')}/career?company={cfg['company']}&career_ns=job_listing_summary"
+            "&navBarLevel=JOB_SEARCH")
 
 
 def sfclassic_posting_url(cfg: Any, req_id: str) -> str:
@@ -2382,7 +2403,8 @@ def parse_sfclassic(page: str, cfg: Any) -> list[Listing]:
             continue
         note = row.select_one(".noteSection")
         posted = re.search(r"Posted on (\d{1,2}/\d{1,2}/\d{4})", note.get_text(" ", strip=True)) if note else None
-        out.append(Listing(company="", title=link.get_text(" ", strip=True), url=sfclassic_posting_url(cfg, req.group(1)),
+        out.append(Listing(company="", title=link.get_text(" ", strip=True),
+                           url=sfclassic_posting_url(cfg, req.group(1)),
                            posted=posted_date(posted.group(1)) if posted else "", external_id=req.group(1),
                            ats="successfactors"))
     return out
@@ -2465,7 +2487,8 @@ def parse_infor(data: Any) -> list[Listing]:
             continue
         parts = urlsplit(html.unescape(link.group(1)))
         begin = value("PostingDateRange_prd_Begin")
-        out.append(Listing(company="", title=title, url=urlunsplit(("https", parts.hostname or "", parts.path, parts.query, "")),
+        out.append(Listing(company="", title=title,
+                           url=urlunsplit(("https", parts.hostname or "", parts.path, parts.query, "")),
                            location=_infor_place(value("LocationOfJob")),
                            posted=f"{begin[:4]}-{begin[4:6]}-{begin[6:8]}" if re.fullmatch(r"\d{8}", begin) else "",
                            external_id=value("JobId") or value("JobRequisition"), ats="infor"))
@@ -2534,7 +2557,8 @@ async def _eightfold_v2(client: httpx.AsyncClient, host: str, domain: str, query
 SMARTRECRUITERS_PAGE = 100  # the most its API answers at once
 
 
-async def _smartrecruiters(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
+async def _smartrecruiters(client: httpx.AsyncClient, cfg: Any, query: str, limit: int,
+                           terms: list[str]) -> list[Listing]:
     api = f"https://api.smartrecruiters.com/v1/companies/{cfg}/postings"
     found: list[dict[str, Any]] = []
     if terms:  # the area is filtered here, after the search: its openings can be far down the list
@@ -2575,10 +2599,12 @@ async def _oracle(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, t
     for offset in range(0, max(limit, 1), ORACLE_PAGE):  # a page at a time: Arizona's openings can be past the first
         at = f"offset={offset}," if offset else ""  # the first page as the career site asks for it
         finder = (f"findReqs;siteNumber={site},facetsList={facets},limit={ORACLE_PAGE},{at}"
-                  f"keyword={quote(chr(34) + keyword + chr(34), safe='')},sortBy={'RELEVANCY' if keyword else 'POSTING_DATES_DESC'}")
+                  f"keyword={quote(chr(34) + keyword + chr(34), safe='')},"
+                  f"sortBy={'RELEVANCY' if keyword else 'POSTING_DATES_DESC'}")
         api = (f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions?onlyData=true"
-               "&expand=requisitionList.workLocation,requisitionList.otherWorkLocations,requisitionList.secondaryLocations,"
-               f"flexFieldsFacet.values,requisitionList.requisitionFlexFields&finder={finder}")
+               "&expand=requisitionList.workLocation,requisitionList.otherWorkLocations,"
+               "requisitionList.secondaryLocations,flexFieldsFacet.values,"
+               f"requisitionList.requisitionFlexFields&finder={finder}")
         r = await _send(client, "GET", api, headers={"Accept": "application/json"})
         _raise_for(r, api)
         page = _oracle_listings(r.json(), host, site)
@@ -2737,7 +2763,8 @@ def _json(r: httpx.Response, url: str) -> Any:
     except ValueError:
         kind = (r.headers.get("content-type") or "").split(";")[0].strip() or "nothing"
         raise SearchError(f"{httpx.URL(url).host} answered its job search with a page, not its list (HTTP "
-                          f"{r.status_code}, {kind}): most likely down for maintenance; try again in a few hours") from None
+                          f"{r.status_code}, {kind}): most likely down for maintenance; "
+                          "try again in a few hours") from None
 
 
 # --------------------------------------------------------------------- entry point
@@ -2846,7 +2873,8 @@ async def search_companies(
                 tried += 1
                 try:
                     found.extend(await SEARCHERS[kind](client, search[kind], wording, fetch, terms))
-                except (httpx.ConnectError, httpx.ConnectTimeout) as e:  # no site there to answer: nor for its next wordings
+                # no site there to answer: nor for its next wordings
+                except (httpx.ConnectError, httpx.ConnectTimeout) as e:
                     failed.append(f"{type(e).__name__}: {str(e)[:200]}")
                     return
                 except Exception as e:  # an odd response must not sink the other searches
@@ -2865,7 +2893,8 @@ async def search_companies(
         elif failed:
             partial = len(failed) < len(wordings)
             errors[company["name"]] = failed[0] + (
-                f" ({len(failed)} of {len(wordings)} searches failed; the others' results are listed)" if partial else "")
+                f" ({len(failed)} of {len(wordings)} searches failed; the others' results are listed)"
+                if partial else "")
         results.extend(keep_listings(company["name"], found, terms, limit, query, posted_within_days))
 
     places_read = _PLACES_READ.set({})  # (the employers' tasks share it: each posting is read once a run)

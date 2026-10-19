@@ -258,7 +258,8 @@ def check_python() -> Check:
 def check_uv() -> Check:
     version = uv_version()
     if version is None:
-        return Check("uv", PROBLEM, "uv isn't installed, or isn't on the PATH. The Claude app starts the plugin with it.",
+        return Check("uv", PROBLEM,
+                     "uv isn't installed, or isn't on the PATH. The Claude app starts the plugin with it.",
                      f"{INSTALLER} Or install uv (https://docs.astral.sh/uv/getting-started/installation/), "
                      "then restart the Claude app.")
     return Check("uv", OK, f"uv {version}".strip())
@@ -292,8 +293,8 @@ def check_uv_python_dir() -> Check:
            "UV_PYTHON_INSTALL_DIR isn't set, so uv keeps the plugin's Python inside AppData")
     return Check("uv_python_dir", PROBLEM, say + ", where the Claude app can't always find it",
                  f"{INSTALLER} It sets it. Or, in PowerShell, run "
-                 "[Environment]::SetEnvironmentVariable('UV_PYTHON_INSTALL_DIR', \"$env:USERPROFILE\\.uv-python\", 'User') "
-                 "and restart the Claude app.")
+                 "[Environment]::SetEnvironmentVariable('UV_PYTHON_INSTALL_DIR', \"$env:USERPROFILE\\.uv-python\", "
+                 "'User') and restart the Claude app.")
 
 
 def in_appdata(path: str) -> bool:
@@ -440,7 +441,8 @@ def profile_checks(prof: config.Profile, path: Path) -> list[Check]:
         gaps = [GAP_WORDS.get(g.split(":")[0], g.split(":")[0]) for g in prof.profile_gaps()]
         if gaps:
             checks.append(Check("profile_gaps", ADVICE, "Your profile could also hold " + "; ".join(gaps),
-                                'With these the Job Desk stops less often: in Claude, say "ask me everything the desk needs".'))
+                                'With these the Job Desk stops less often: in Claude, say "ask '
+                                'me everything the desk needs".'))
     for warning in prof.settings.warnings:
         checks.append(Check("settings", ADVICE, warning, "Change it under settings: in your profile."))
     return checks
@@ -506,12 +508,13 @@ def main(argv: list[str] | None = None) -> int:
         prog="job-apply-doctor",
         description="Check that everything job-apply needs is in place on this computer, and say what to do "
                     "about anything that isn't. Changes nothing.")
-    parser.add_argument("--launch", action="store_true", help="also start the browser (out of sight) to be sure it opens")
+    parser.add_argument("--launch", action="store_true",
+                        help="also start the browser (out of sight) to be sure it opens")
     parser.add_argument("--json", action="store_true", help="print the report as JSON")
     parser.add_argument("--replay", type=Path, metavar="PAGE",
                         help="instead, open a saved page (a job's debug folder, or a test fixture's .html) offline in "
-                             "the bundled Chromium and say what the Job Desk reads and decides there, each box's answer "
-                             "by its rule's name (never a value)")
+                             "the bundled Chromium and say what the Job Desk reads and decides there, each box's "
+                             "answer by its rule's name (never a value)")
     parser.add_argument("--profile", type=Path, metavar="PROFILE",
                         help="with --replay: answer from this profile file (else the live check's test applicant)")
     args = parser.parse_args(argv)

@@ -72,7 +72,8 @@ _LABEL = re.compile(r"(?i)\b(?:salary|pay|wages?|compensation|rate)(?:\s+(?:rang
 # "Maryland Pay Range", "Starting pay", "Hourly Rate", "Minimum Salary:", "Base Salary Range (Arizona):", "Base:")
 _SURE_LABEL = re.compile(r"(?i)^[ \t]*(?:[\w&/'.-]+[ \t]+){0,3}?(?:(?:base|hourly|annual|annualized|starting|target|"
                          r"hiring|expected|job|minimum|maximum|min|max|weekly|monthly|gross)[ \t]+)*"
-                         r"(?:(?:pay|salary|wages?|compensation|rate|base|hiring[ \t]+range)(?:[ \t]+(?:range|rate|scale|"
+                         r"(?:(?:pay|salary|wages?|compensation|rate|base|"
+                         r"hiring[ \t]+range)(?:[ \t]+(?:range|rate|scale|"
                          r"band|min(?:imum)?|max(?:imum)?))*)(?:[ \t]*\([^)]*\))?[ \t]*[:\-–—]?[ \t]*(?:USD[ \t]*)?$")
 # a count right after a figure: "5 years", "40 hours", "2 openings", "10%", "65 cents"
 _COUNT = re.compile(r"(?i)^[ \t]*(?:%|¢|(?:cents?|hours|hrs|years|yrs|days|weeks|months|shifts?|employees|people|"
@@ -559,7 +560,8 @@ def view(fields_of: dict[str, Any], salary: str = "") -> dict[str, Any] | None:
     words += f": “{said}”" if said else ""
     if pay.period == "day":
         words += " (a day rate, counted as 260 days a year)"
-    return {"shown": shown(pay), "source": pay.source, "sure": pay.sure, "from": words + ("" if pay.sure else _UNSURE if pay.source == "text" else _GUESS),
+    return {"shown": shown(pay), "source": pay.source, "sure": pay.sure,
+            "from": words + ("" if pay.sure else _UNSURE if pay.source == "text" else _GUESS),
             "yearly_min": lo, "top": hi, "sort": hi if hi is not None else lo}
 
 

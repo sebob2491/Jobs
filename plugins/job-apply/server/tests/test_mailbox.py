@@ -51,10 +51,12 @@ def test_the_job_systems_own_mail_as_sent_live():
     assert find_code("We need you to confirm your identity so your application can be considered for the "
                      "position of Equipment Technician - Pump/Abatement - 2505303.\n\nConfirm your identity "
                      "using this code: 218335.\n\nThe code will expire in 10 minutes.") == "218335"
-    assert find_code("Verify your email We just need to verify your email address. Enter the following code "
-                     "below to complete the verification process: 109409 The code will expire after 15 minutes.") == "109409"
+    assert (find_code("Verify your email We just need to verify your email address. Enter the following code "
+                      "below to complete the verification process: 109409 The code will expire after 15 minutes.")
+            == "109409")
     link = "https://example.wd1.myworkdayjobs.com/External/activate/abc123/?redirect=%2FExternal%2Fjob%2F1"
-    assert find_link(f"Click this link to confirm your email address {link}", [], lambda u: "myworkdayjobs" in u) == link
+    assert (find_link(f"Click this link to confirm your email address {link}", [],
+                      lambda u: "myworkdayjobs" in u) == link)
 
 
 def test_a_confirmation_link_back_to_the_job_site():
@@ -143,7 +145,8 @@ class FakeImap:
             stamp = imaplib.Time2Internaldate(when).encode()
             if "HEADER.FIELDS" in parts:
                 names = tuple(f.lower().encode() + b":" for f in parts.split("(")[-1].rstrip(")]").split())
-                head = b"".join(line + b"\r\n" for line in raw.split(b"\r\n") if line.lower().startswith(names)) + b"\r\n"
+                head = (b"".join(line + b"\r\n" for line in raw.split(b"\r\n")
+                                 if line.lower().startswith(names)) + b"\r\n")
                 if FakeImap.date_last:
                     out += [(b"%s (BODY[HEADER.FIELDS (FROM)] {%d}" % (mid.encode(), len(head)), head),
                             b" INTERNALDATE %s)" % stamp]
@@ -178,7 +181,8 @@ def test_the_newest_code_from_the_job_site_since_the_wait_began(imap):
     since = time.time()
     imap.messages = [
         (since - 3600, _message("no-reply@careers.ti.com", "Your code", "Your verification code is 111111")),  # old
-        (since + 30, _message("Deals <deals@shop.example.com>", "Your code", "Your verification code is 222222")),  # not the site
+        # not the site
+        (since + 30, _message("Deals <deals@shop.example.com>", "Your code", "Your verification code is 222222")),
         (since + 40, _message("no-reply@careers.ti.com", "Verify your email",
                               "<p>Your verification code is <b>333333</b></p>", html=True)),
     ]
@@ -415,7 +419,8 @@ def test_a_placeholder_link_or_a_deactivation_in_a_links_query_isnt_opened():
     verify = "https://careers.acme.com/account/verify?token=abc"
     assert find_link("", ["https://[UNSUBSCRIBE_URL]/", verify], own) == verify
     confirm = "https://careers.acme.com/careers?career_ns=email_verification&t=1"
-    assert find_link("", ["https://careers.acme.com/careers?career_ns=account_deactivation&t=1", confirm], own) == confirm
+    assert (find_link("", ["https://careers.acme.com/careers?career_ns=account_deactivation&t=1", confirm],
+                      own) == confirm)
 
 
 def test_a_refusal_that_also_says_try_later_is_a_refusal(imap):
@@ -470,11 +475,14 @@ def test_a_code_in_the_spam_folder_is_read_when_the_inbox_has_none(imap):
     same site's mail since the wait began) when the inbox has no code; a code in the inbox comes first."""
     since = time.time()
     spam = "[Gmail]/Spam"
-    imap.messages = [(since + 5, _message("Deals <deals@shop.example.com>", "Your code", "Your verification code is 222222"))]
+    imap.messages = [(since + 5,
+                      _message("Deals <deals@shop.example.com>", "Your code", "Your verification code is 222222"))]
     imap.spam = [
-        (since - 3600, _message("noreply@brassring.com", "Your Passcode", "Your passcode is 111111")),  # before the wait
+        # before the wait
+        (since - 3600, _message("noreply@brassring.com", "Your Passcode", "Your passcode is 111111")),
         (since + 9, _message("Offers <offers@shop.com>", "Your Passcode", "Your passcode is 333333")),  # not the site
-        (since + 10, _signed(_message("Edward Jones <noreply@brassring.com>", "Your Passcode", "Your passcode is 482913"))),
+        (since + 10,
+         _signed(_message("Edward Jones <noreply@brassring.com>", "Your Passcode", "Your passcode is 482913"))),
         # the newest, claiming the site's address, but not passed by the mail service: a forgery, never read
         (since + 15, _message("noreply@brassring.com", "Your Passcode", "Your passcode is 999999")),
     ]
@@ -507,7 +515,8 @@ def test_the_spam_folder_is_found_by_its_flag_or_its_name(imap, name, flagged):
 
 def test_an_account_with_no_spam_folder_or_one_that_wont_open_is_just_the_inbox(imap):
     since = time.time()
-    imap.messages = [(since + 5, _message("Deals <deals@shop.example.com>", "Your code", "Your verification code is 222222"))]
+    imap.messages = [(since + 5,
+                      _message("Deals <deals@shop.example.com>", "Your code", "Your verification code is 222222"))]
     imap.junk_name = None
     assert mailbox.search("sam@example.com", "app-password", since, {"brassring.com"}, "code") is None
     imap.junk_name, imap.spam_broken = "[Gmail]/Spam", True

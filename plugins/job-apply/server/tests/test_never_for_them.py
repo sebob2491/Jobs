@@ -88,8 +88,8 @@ AI_TEXT = ('Example Corp uses an artificial intelligence ("AI") recruiting softw
            "with and support its recruiting efforts. Before submitting your application, please review this notice.")
 STATEMENT = "Example Corp Consent Statement"  # (the live check's test identity's: Freeport-McMoRan's, run 56)
 STATEMENT_TEXT = "Example Corp Data Privacy Statement: how Example Corp uses the details you give it."
-REMEMBERED = ("Relocation: {} hires for its sites across the country, and many of its openings ask for a move{}. Are you "
-              "willing to relocate?")
+REMEMBERED = ("Relocation: {} hires for its sites across the country, and many of its openings ask for a move{}. Are "
+              "you willing to relocate?")
 
 
 def _remembered(clause):
@@ -128,7 +128,8 @@ PATHS = {
     "the words above a bare I agree": (lambda c: pipeline._terms_above(_and(ABOVE_WORDS, c) + "."), ABOVE),
     # (its own words, other roles, are the owner's call, Oct 10)
     "a consent to other positions": (
-        lambda c: pipeline._other_positions_consent({"kind": "checkbox", "label": _and(OTHER_POSITIONS, c)}) is not None,
+        lambda c: pipeline._other_positions_consent({"kind": "checkbox",
+                                                     "label": _and(OTHER_POSITIONS, c)}) is not None,
         AGREEMENT - {"other roles"}),
     "a Create Account's privacy statement link": (
         lambda c: pipeline._privacy_statement({"actions": [{"id": "a", "text": _and(STATEMENT_LINK, c) + ".",
@@ -146,7 +147,8 @@ PATHS = {
     "a privacy notice, by its opening": (
         lambda c: pipeline._terms_notice(POLICY, (_by(c) + " " + POLICY_TEXT).strip())[0], AGREEMENT),
     # (its long text names its affiliates, marketing and cookies as its practices: APS's, live)
-    "a privacy notice, past its opening": (lambda c: pipeline._terms_notice(POLICY, POLICY_TEXT * 5 + _by(c))[0], ANYWHERE),
+    "a privacy notice, past its opening": (lambda c: pipeline._terms_notice(POLICY,
+                                                                            POLICY_TEXT * 5 + _by(c))[0], ANYWHERE),
     "a notice not named for its terms": (
         lambda c: pipeline._terms_notice("Before you apply", "Please read and accept our privacy notice." + _by(c))[0],
         AGREEMENT),
@@ -157,7 +159,8 @@ PATHS = {
     "an AI notice, by its words": (lambda c: pipeline._agreeable_notice(AI_HEADING, AI_TEXT + _by(c), False)[0],
                                    ANYWHERE),
     # the live check's test identity agrees to what a person's desk leaves to them (the owner's call, Oct 13), never a
-    # sign-up in so many words, nor cookies by its opening; a notice's words are read for a waiver (the review of Oct 15)
+    # sign-up in so many words, nor cookies by its opening; a notice's words are read for a waiver
+    # (the review of Oct 15)
     "the test identity's notice": (
         lambda c: pipeline._agreeable_notice(STATEMENT, f"{_by(c).strip()} {STATEMENT_TEXT}".strip(), True)[0],
         frozenset({"signs up", "cookies", "arbitration", "waiver"})),
@@ -249,19 +252,20 @@ STILL_AGREED = {
 # terms, or how long it keeps the application, as before; and the account's own mail named above a bare "I agree"
 TERMS_AND_COOKIES = "I have read and agree to the Terms and Conditions, Privacy Policy and Cookie Policy"
 for _what, _label in {"its cookie policy": TERMS_AND_COOKIES,
-                      "its cookies notice": "I agree to the Terms of Use and acknowledge the Privacy and Cookies Notice",
+                      "its cookies notice": "I agree to the Terms of Use and acknowledge "
+                                            "the Privacy and Cookies Notice",
                       "how it uses cookies": "I agree to the candidate privacy policy, including how Acme uses cookies",
-                      "how long it keeps the data": "I agree to the Terms of Use and Privacy Policy and understand Acme may "
-                                                    "keep my data for 12 months"}.items():
+                      "how long it keeps the data": "I agree to the Terms of Use and Privacy Policy and understand "
+                                                    "Acme may keep my data for 12 months"}.items():
     STILL_AGREED[f"a Create Account's terms box naming {_what}"] = lambda b=_label: bool(pipeline._terms_boxes(_box(b)))
     STILL_AGREED[f"an email-first site's agreement box naming {_what}"] = \
         lambda b=_label: bool(pipeline._consent_boxes(_box(b)))
-for _what, _label in {"the cookie policy read": "I certify that the answers given are true and complete, and that I have "
-                                                "read the Candidate Privacy Notice and Cookie Policy",
-                      "the application retained": f"{CERTIFY}. I understand Acme will retain my application in line with "
-                                                  "its records policy.",
-                      "the information kept on file": f"{CERTIFY}, and I understand Acme may keep my information on file "
-                                                      "for one year."}.items():
+for _what, _label in {"the cookie policy read": "I certify that the answers given are true and complete, and that I "
+                                                "have read the Candidate Privacy Notice and Cookie Policy",
+                      "the application retained": f"{CERTIFY}. I understand Acme will retain my application in line "
+                                                  "with its records policy.",
+                      "the information kept on file": f"{CERTIFY}, and I understand Acme may keep my information on "
+                                                      "file for one year."}.items():
     STILL_AGREED[f"a certification naming {_what}"] = lambda b=_label: _attests("checkbox", b)
 TERMS_PARAGRAPH = "By creating an account you accept our Terms of Use and Privacy Policy."
 for _mail in ("You will receive emails about your account.", "You will receive a one-time passcode by email.",
@@ -308,7 +312,8 @@ def test_what_each_path_agreed_to_before_it_still_agrees_to(wording):
 
 # What stays refused beside those: a sign-up's mail above a bare "I agree" (and the account's own mail takes nothing
 # else with it: the review of 0.3.208), a consent to be considered for similar roles in an attestation (a consent to
-# other roles, which CLAUDE.md keeps narrow), a subscription in a Create Account's terms box, a cookie banner's agreement
+# other roles, which CLAUDE.md keeps narrow), a subscription in a Create Account's terms box, a cookie
+# banner's agreement
 STILL_REFUSED = {
     "terms above communications received electronically": lambda: pipeline._terms_above(
         f"{TERMS_PARAGRAPH} You consent to receive communications electronically."),

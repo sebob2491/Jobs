@@ -110,8 +110,8 @@ class UploadsMixin:
         its "Resume/CV" upload), for the file tailored for this job to go in its place: only that file's own Delete in
         Workday's list (KEPT_DELETE_JS), past the same check as every press the desk makes. `name`: the file's name as
         the box shows it, "" where it shows only that a file is there. "deleted" once the list shows that file in fewer
-        items than before (KEPT_ROWS_JS: never by its Delete alone going, as a list drawn again does, nor by its name gone
-        from the page), "pressed" when it doesn't (a site that asks first, turned down), "" when there was no such
+        items than before (KEPT_ROWS_JS: never by its Delete alone going, as a list drawn again does, nor by its name
+        gone from the page), "pressed" when it doesn't (a site that asks first, turned down), "" when there was no such
         Delete to press."""
         async with self._lock:
             page = await self.page()
@@ -163,7 +163,7 @@ class UploadsMixin:
             (d.querySelector('h1, h2, h3, h4, [role="heading"]') || {}).textContent || ''].join(' ');
           return {others: boxes.filter((el) => el.type !== 'file').length, files: boxes.filter((el) => el.type === 'file').length,
                   upload: /\\b(upload|attach|resume|cv|file|document)/i.test(named)};
-        }""")
+        }""")  # noqa: E501
         if facts["others"] or facts["files"] > 1:
             return f"uploaded {path.name}"
         words = r"upload|attach|ok|save|done" if facts["upload"] else r"upload|attach"
@@ -189,11 +189,12 @@ class UploadsMixin:
         the dialogs and file boxes already on the page are marked first (a cookie banner's OK is never pressed,
         another upload's box never given this file). Said when its field doesn't then show the file."""
         dialogs = '[role="dialog"], [role="alertdialog"], dialog[open]'
-        # (the dialogs on show, and the file boxes outside any dialog: one drawn hidden until it's opened is the press's)
+        # (the dialogs on show, and the file boxes outside any dialog: one drawn hidden until it's
+        # opened is the press's)
         await page.evaluate("""(sel) => {
           for (const d of document.querySelectorAll(sel)) if (d.getClientRects().length) d.setAttribute('data-ja-before', '');
           for (const b of document.querySelectorAll('input[type="file"]')) if (!b.closest(sel)) b.setAttribute('data-ja-before', '');
-        }""", dialogs)
+        }""", dialogs)  # noqa: E501
         try:
             async def chosen(press: Locator) -> bool:  # pressed: did a file chooser open, and take the file?
                 try:
@@ -211,8 +212,8 @@ class UploadsMixin:
             if not took:
                 new_box = (dialog or page).locator('input[type="file"]:not([data-ja-before])')
                 browse = dialog.locator('button:visible, [role="button"]:visible, a:visible').filter(
-                    has_text=re.compile(r"^\s*(browse|choose (a )?file|select (a )?file|upload from (my )?(device|computer)"
-                                        r"|from (my )?(device|computer))\b", re.I)) if dialog else None
+                    has_text=re.compile(r"^\s*(browse|choose (a )?file|select (a )?file|upload from (my )?(device|"
+                                        r"computer)|from (my )?(device|computer))\b", re.I)) if dialog else None
                 if browse is not None and await browse.count() and await chosen(browse.first):
                     pass
                 elif await new_box.count():
@@ -222,7 +223,8 @@ class UploadsMixin:
                                      "the desk's browser window")
                 await page.wait_for_timeout(500)
             if dialog is not None and await dialog.count():  # the dialog it opened: its own Upload (or OK, Save, Done)
-                confirm = dialog.locator('button:visible, [role="button"]:visible, input[type="submit"]:visible').filter(
+                confirm = dialog.locator('button:visible, [role="button"]:visible, '
+                                         'input[type="submit"]:visible').filter(
                     has_text=re.compile(r"^\s*(upload|attach|ok|save|done)\s*$", re.I))
                 if await confirm.count():
                     await confirm.first.click(timeout=3000)
@@ -235,7 +237,7 @@ class UploadsMixin:
           const field = el.closest('.RCMFormField, [class*="attachmentField" i]') || el.parentElement.parentElement || el;
           return (field.innerText || '').includes(k)
             || [...field.querySelectorAll('[class*="attachSuccess" i]')].some((x) => x.getClientRects().length > 0);
-        }"""
+        }"""  # noqa: E501
         for _ in range(int(browser.UPLOAD_SHOWN_WAIT * 2)):
             with contextlib.suppress(PlaywrightError, PlaywrightTimeout):
                 if await button.evaluate(shown, path.name, timeout=2000):

@@ -32,33 +32,36 @@ FIELDS = ("workplace", "workplace_source")
 _NEGATED = re.compile(r"(?i)\b(?:no|not|non)[\s-]*(?:fully\s+)?(?:remote|tele-?work|work\s*from\s*home)\b|"
                       r"\bremote(?:\s+work)?\s+(?:is\s+)?not\s+(?:available|an\s+option|possible|eligible)|"
                       r"\bnot\s+eligible\s+for\s+remote|"
-                      r"\b(?:remote(?:\s+location)?(?:\s+eligible)?|remote\s+work|tele-?work(?:\s+eligible)?|telecommute|"
-                      r"work\s*from\s*home|wfh)\s*\??\s*:\s*(?:no|not)\b")
+                      r"\b(?:remote(?:\s+location)?(?:\s+eligible)?|remote\s+work|tele-?work(?:\s+eligible)?|"
+                      r"telecommute|work\s*from\s*home|wfh)\s*\??\s*:\s*(?:no|not)\b")
 _OPTION = re.compile(r"(?i)\b(?:eligible|eligibility|optional|options?|friendly|possible|available|considered|"
                      r"temporar(?:y|ily)|or)\b")
 # the words of one part of a location or field, normalized: hyphens and underscores as spaces, "on site" as one word
-_JOIN = [(re.compile(r"(?i)\bon[\s_-]*site\b"), "onsite"), (re.compile(r"(?i)\bin[\s_-]*(?:the\s+)?office\b"), "inoffice"),
-         (re.compile(r"(?i)\bin[\s_-]*person\b"), "inperson"), (re.compile(r"(?i)\bwork[\s_-]*from[\s_-]*home\b"), "wfh"),
+_JOIN = [(re.compile(r"(?i)\bon[\s_-]*site\b"), "onsite"),
+         (re.compile(r"(?i)\bin[\s_-]*(?:the\s+)?office\b"), "inoffice"),
+         (re.compile(r"(?i)\bin[\s_-]*person\b"), "inperson"),
+         (re.compile(r"(?i)\bwork[\s_-]*from[\s_-]*home\b"), "wfh"),
          (re.compile(r"(?i)\bhome[\s_-]*based\b"), "homebased"), (re.compile(r"(?i)\btele[\s-]*(?:work|commute)\b"),
                                                                       "telework")]
 _REMOTE_WORD = r"(?:remote|telework|telecommute|wfh|homebased|virtual)"
 _ONSITE_WORD = r"(?:onsite|inoffice|inperson|office)"
-_MODS = r"(?:only|eligible|optional|options?|friendly|first|work|position|role|job|based|required|us|usa|anywhere|local|global)"
+_MODS = (r"(?:only|eligible|optional|options?|friendly|first|work|position|role|job|based|required|"
+         r"us|usa|anywhere|local|global)")
 # a part of a location or a field that is the workplace and nothing else ("Remote", "Remote eligible", "100% Onsite",
 # "Hybrid Remote", "Partially Remote")
 _PART = {
     "hybrid": re.compile(rf"(?i)^(?:hybrid(?:\s+(?:{_REMOTE_WORD}|{_ONSITE_WORD}|{_MODS}|schedule|model))*|"
-                         rf"(?:{_ONSITE_WORD})\s+hybrid|(?:partially|partial|occasional|occasionally|part\s+time)\s+remote|"
-                         rf"{_ONSITE_WORD}\s+with\s+(?:occasional|some|partial)\s+remote(?:\s+work)?)$"),
-    "remote": re.compile(rf"(?i)^(?:(?:fully|100%|completely|entirely|100\s+percent|temporarily|global|us)\s+)?{_REMOTE_WORD}"
-                         rf"(?:\s+(?:{_MODS}|with\s+travel))*$"),
-    "onsite": re.compile(rf"(?i)^(?:(?:fully|100%|completely|entirely)\s+)?(?:onsite|inoffice|inperson)(?:\s+{_MODS})*$|"
-                         rf"^(?:office|office\s+based|onsite\s+required)$"),
+                         rf"(?:{_ONSITE_WORD})\s+hybrid|(?:partially|partial|occasional|occasionally|part\s+time)"
+                         rf"\s+remote|{_ONSITE_WORD}\s+with\s+(?:occasional|some|partial)\s+remote(?:\s+work)?)$"),
+    "remote": re.compile(r"(?i)^(?:(?:fully|100%|completely|entirely|100\s+percent|temporarily|global|"
+                         rf"us)\s+)?{_REMOTE_WORD}(?:\s+(?:{_MODS}|with\s+travel))*$"),
+    "onsite": re.compile(r"(?i)^(?:(?:fully|100%|completely|entirely)\s+)?(?:onsite|inoffice|"
+                         rf"inperson)(?:\s+{_MODS})*$|^(?:office|office\s+based|onsite\s+required)$"),
 }
 _ANY_WORD = re.compile(rf"(?i)\b(?:{_REMOTE_WORD}|{_ONSITE_WORD}|hybrid)\b")
 _REGIONS = ({code.lower() for code in US_STATES} | {name.lower() for name in US_STATES.values()}
-            | {"us", "u s", "usa", "united states", "united states of america", "nationwide", "anywhere", "north america",
-               "americas", "global", "worldwide", "only", ""})
+            | {"us", "u s", "usa", "united states", "united states of america", "nationwide", "anywhere",
+               "north america", "americas", "global", "worldwide", "only", ""})
 
 
 def _parts(text: str) -> list[str]:
@@ -140,8 +143,8 @@ def fields(value: str, sure: bool, source: str = "structured") -> Fields:
 
 
 # The posting's own sentences, for a job that says it nowhere else: unsure (never hides a job)
-_TEXT_HYBRID = re.compile(r"(?i)(?<!not a )(?<!not )\bhybrid[\s-]+(?:position|role|job|opportunity|schedule|work(?:ing)?|"
-                          r"model|arrangement|environment|setting)\b|\bthis\s+is\s+a\s+hybrid\b")
+_TEXT_HYBRID = re.compile(r"(?i)(?<!not a )(?<!not )\bhybrid[\s-]+(?:position|role|job|opportunity|schedule|"
+                          r"work(?:ing)?|model|arrangement|environment|setting)\b|\bthis\s+is\s+a\s+hybrid\b")
 _TEXT_NOT_REMOTE = re.compile(r"(?i)\b(?:is\s+not|isn't|not)\s+(?:a\s+)?(?:fully\s+)?remote\b|\bno\s+remote\s+work\b|"
                               r"\bnon-remote\b|\bremote\s+work\s+is\s+not\s+(?:available|an\s+option|possible)\b")
 _TEXT_REMOTE = re.compile(r"(?i)\b(?:fully|100%|completely|entirely|100\s+percent)\s+remote\b|"
@@ -149,7 +152,8 @@ _TEXT_REMOTE = re.compile(r"(?i)\b(?:fully|100%|completely|entirely|100\s+percen
                           r"\bwork\s+from\s+home\s+(?:position|role|job)\b")
 _TEXT_ONSITE = re.compile(r"(?i)\b(?:fully|100%|completely|entirely)\s+on-?\s?site\b|"
                           r"\bon-?\s?site\s+(?:position|role|job)\b|"
-                          r"\b(?:position|role|job)\s+is\s+(?:100%\s+|fully\s+)?on-?\s?site\b|\bmust\s+be\s+on-?\s?site\b")
+                          r"\b(?:position|role|job)\s+is\s+(?:100%\s+|fully\s+)?on-?\s?site\b|"
+                          r"\bmust\s+be\s+on-?\s?site\b")
 
 
 def in_text(text: str) -> str:

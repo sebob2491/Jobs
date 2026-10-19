@@ -71,15 +71,18 @@ def machine(tmp_path):
     state.mkdir()
     plugin = tmp_path / "Claude plugins" / "job-apply" / "0.3.92"
     (plugin / "server").mkdir(parents=True)
-    (plugin / "server" / "pyproject.toml").write_text('[project.scripts]\njob-apply-doctor = "job_apply.doctor:main"\n', encoding="utf-8")
+    (plugin / "server" / "pyproject.toml").write_text('[project.scripts]\njob-apply-doctor = "job_apply.doctor:main"\n',
+                                                      encoding="utf-8")
     (tmp_path / "stand_in.py").write_text(STAND_IN, encoding="utf-8")
-    env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("JOB_APPLY_", "CLAUDE", "UV_", "PLAYWRIGHT", "XDG_"))
+    env = {k: v for k, v in os.environ.items()
+           if not k.upper().startswith(("JOB_APPLY_", "CLAUDE", "UV_", "PLAYWRIGHT", "XDG_"))
            and k.upper() not in ("USERPROFILE", "VIRTUAL_ENV", "APPDATA", "LOCALAPPDATA")}
     env.update(HOME=str(home), STUB_LOG=str(tmp_path / "calls.log"), STUB_STATE=str(state), STUB_PLUGIN=str(plugin))
     if sys.platform == "win32":  # the person's folders, all in the same home
         env.update(USERPROFILE=str(home), APPDATA=str(home / "AppData" / "Roaming"),
                    LOCALAPPDATA=str(home / "AppData" / "Local"),
-                   PATH=os.pathsep.join([str(bin_dir), os.path.join(os.environ.get("SYSTEMROOT", r"C:\Windows"), "System32")]))
+                   PATH=os.pathsep.join([str(bin_dir),
+                                         os.path.join(os.environ.get("SYSTEMROOT", r"C:\Windows"), "System32")]))
     else:
         env["PATH"] = os.pathsep.join([str(bin_dir), "/usr/bin", "/bin"])
 
@@ -132,7 +135,8 @@ def test_installers_are_plain_ascii_and_agree_with_the_desk():
         assert text.isascii(), script
         for command in updates.UPDATE_COMMANDS:
             assert command.split()[-1] in text  # sebob-jobs, job-apply@sebob-jobs
-        assert "sebob2491/Jobs" in text and "job-apply-doctor --launch" in text and "UV_PYTHON_INSTALL_DIR" in INSTALL_PS1.read_text(encoding="utf-8")
+        assert ("sebob2491/Jobs" in text and "job-apply-doctor --launch" in text
+                and "UV_PYTHON_INSTALL_DIR" in INSTALL_PS1.read_text(encoding="utf-8"))
 
 
 @needs_bash
@@ -190,7 +194,8 @@ def test_install_then_run_again(machine, tmp_path):
     code, out = sh(machine, "--yes", "--resume", str(resume))
     assert code == 0, out
     calls = machine.calls()
-    assert "claude plugin marketplace update sebob-jobs" in calls and "claude plugin update job-apply@sebob-jobs" in calls
+    assert ("claude plugin marketplace update sebob-jobs" in calls
+            and "claude plugin update job-apply@sebob-jobs" in calls)
     assert not [c for c in calls if c.startswith(("claude plugin install", "claude plugin marketplace add"))]
     assert "already in your job-apply folder" in out
     assert sorted(p.name for p in folder.iterdir()) == ["resume.pdf"]
@@ -256,7 +261,8 @@ def test_install_ps1_remakes_an_appdata_python_environment_only_when_its_free(ma
     (venv / "pyvenv.cfg").write_text(f"home = {python_home}\n", encoding="utf-8")
     (venv / "Scripts" / "python.exe").write_bytes(b"MZ")
     # uv keeps Python outside AppData now (a folder that needn't exist: nothing is installed)
-    machine.env["UV_PYTHON_INSTALL_DIR"] = os.path.join(os.path.splitdrive(str(tmp_path))[0] + os.sep, "uv-python-elsewhere")
+    machine.env["UV_PYTHON_INSTALL_DIR"] = os.path.join(os.path.splitdrive(str(tmp_path))[0] + os.sep,
+                                                        "uv-python-elsewhere")
     command = [PWSH, "-NoProfile", "-NonInteractive", "-File", str(INSTALL_PS1)]
 
     with open(venv / "Scripts" / "python.exe", "rb"):  # in use, as by the plugin's running server

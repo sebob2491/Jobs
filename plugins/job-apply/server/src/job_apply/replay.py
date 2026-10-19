@@ -221,8 +221,9 @@ def _box_plans(data: dict[str, Any], prof: config.Profile) -> list[dict[str, Any
 def _agreements(data: dict[str, Any], words: str) -> dict[str, Any]:
     """The verdicts on what the page asks to be agreed to, as the desk's rules give them: a page's button that agrees
     (pipeline._agreement_button) and whether it's a terms gate the desk presses (_terms_gate, with
-    settings.accept_notices), and a dialog over the page that nothing else answers (_notice) and whether it may be agreed
-    to (_agreeable_notice); each with the first kind of what's never agreed to that its words hold (never.NEVER's)."""
+    settings.accept_notices), and a dialog over the page that nothing else answers (_notice) and whether it may be
+    agreed to (_agreeable_notice); each with the first kind of what's never agreed to that its words hold
+    (never.NEVER's)."""
     from . import pipeline
     from .never import ANYWHERE, _never_for_them
 
@@ -310,6 +311,7 @@ def text(result: dict[str, Any]) -> str:
                        + (f"; it holds what's never agreed to ({found['never']})" if found.get("never") else ""))
     out.append(f"Boxes ({len(result['boxes'])}):")
     for box in result["boxes"]:
-        head = f"  {box['plan']:<4}  {box['label'] or '(no label)'} ({box['kind']}{', required' if box['required'] else ''})"
+        head = (f"  {box['plan']:<4}  {box['label'] or '(no label)'} ({box['kind']}"
+                f"{', required' if box['required'] else ''})")
         out.append(head + (f" = {box['value']}" if box["plan"] == "fill" else f": {box['why']}"))
     return "\n".join(out)

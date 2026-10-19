@@ -27,9 +27,10 @@ def test_detect_ats():
         "https://micron.eightfold.ai/careers": "eightfold",
         "https://www.paycomonline.net/v4/ats/web.php/portal/95CACB007211B4A999FBE2ED52E7762E/jobs/389228": "paycom",
         "https://seus.applicantstack.com/x/detail/a2ejxq3cpz4b": "applicantstack",
-        "https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a0b52/OpportunityDetail?opportunityId=532a7dc9": "ukg",
-        "https://css-benchmark-prd.inforcloudsuite.com/hcm/Jobs/navigation/JobPosting%5BJobPostingSet%5D%281%2C12460%2C1%29"
-        ".JobPostingDisplayNav": "infor",
+        "https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a0b52/OpportunityDetail"
+        "?opportunityId=532a7dc9": "ukg",
+        "https://css-benchmark-prd.inforcloudsuite.com/hcm/Jobs/navigation/"
+        "JobPosting%5BJobPostingSet%5D%281%2C12460%2C1%29.JobPostingDisplayNav": "infor",
         "https://linde.csod.com/ux/ats/careersite/23/home/requisition/33907?c=linde": "csod",
         "https://www.example-semi.com/careers/find-your-job/field-service-engineer-j00012345": "company_site",
         None: "company_site",
@@ -39,11 +40,13 @@ def test_detect_ats():
 
 
 def test_url_parts():
-    wd = workday_parts("https://kla.wd1.myworkdayjobs.com/en-US/Search/job/phoenix-az/customer-support-engineer_2530675/apply")
+    wd = workday_parts("https://kla.wd1.myworkdayjobs.com/en-US/Search/job/phoenix-az/"
+                       "customer-support-engineer_2530675/apply")
     assert wd == {"host": "kla.wd1.myworkdayjobs.com", "tenant": "kla", "site": "Search",
                   "job_path": "/job/phoenix-az/customer-support-engineer_2530675"}
     assert workday_parts("https://example.com/job/1") is None
-    assert greenhouse_parts("https://job-boards.greenhouse.io/asm/jobs/4932681101") == {"board": "asm", "job_id": "4932681101"}
+    assert (greenhouse_parts("https://job-boards.greenhouse.io/asm/jobs/4932681101")
+            == {"board": "asm", "job_id": "4932681101"})
     assert lever_parts("https://jobs.lever.co/acme/0b1c2d3e-0000-1111-2222-333344445555/apply")["company"] == "acme"
     assert linkedin_job_id("https://www.linkedin.com/jobs/view/3900000001/?trk=abc") == "3900000001"
     assert linkedin_job_id("https://www.linkedin.com/jobs/search/?currentJobId=3900000002&f_TPR=r86400") == "3900000002"
@@ -180,14 +183,19 @@ def test_postings_written_into_the_page_differently():
     p = parse_html(raw, "https://jobs.example.com/1")
     assert [line for line in p.description.splitlines() if line] == ["Requirements", "- Associate degree"]
     # UKG Pro (Nikon) puts the posting in a script call
-    detail = {"Title": "Field Service Engineer", "RequisitionNumber": "FIELD001451", "PostedDate": "2026-07-08T21:04:44Z",
+    detail = {"Title": "Field Service Engineer", "RequisitionNumber": "FIELD001451",
+              "PostedDate": "2026-07-08T21:04:44Z",
               "Description": "<p><strong>Requirements</strong></p><ul><li>Must be a U.S. person (ITAR).</li></ul>",
-              "Locations": [{"LocalizedDescription": "Arizona", "Address": {"City": "Chandler", "State": {"Code": "AZ"}}},
-                            {"LocalizedDescription": "Phoenix, AZ", "Address": {"City": None, "State": {"Code": "AZ"}}}]}
+              "Locations": [{"LocalizedDescription": "Arizona",
+                             "Address": {"City": "Chandler", "State": {"Code": "AZ"}}},
+                            {"LocalizedDescription": "Phoenix, AZ",
+                             "Address": {"City": None, "State": {"Code": "AZ"}}}]}
     raw = ("<html><body><div id='app'></div><script>var opportunity = new US.Opportunity.CandidateOpportunityDetail("
            + json.dumps(detail) + ");</script></body></html>")
-    p = finalize(parse_html(raw, "https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a/OpportunityDetail?opportunityId=1"))
-    assert p.title == "Field Service Engineer" and p.location == "Chandler, AZ; Phoenix, AZ" and p.parse_method == "ukg-page"
+    p = finalize(parse_html(raw, "https://recruiting2.ultipro.com/NIK1001NIKON/JobBoard/f11a/"
+                                 "OpportunityDetail?opportunityId=1"))
+    assert (p.title == "Field Service Engineer" and p.location == "Chandler, AZ; Phoenix, AZ"
+            and p.parse_method == "ukg-page")
     assert "- Must be a U.S. person (ITAR)." in p.description and p.ats == "ukg"
 
 
@@ -235,10 +243,12 @@ def test_a_job_system_is_known_by_its_host_not_by_words_elsewhere_in_the_address
     """A lookalike address isn't a job system: its sign-up mail, auto-submit setting and
     shared-site rules don't apply to it. An employer's own address for one is known."""
     for lookalike in ("https://evil.example/myworkdayjobs.com/x", "https://myworkdayjobs.com.evil.example/x",
-                      "https://evilgreenhouse.io/a", "https://notsuccessfactors.com/x", "https://example.com/?ref=linkedin.com"):
+                      "https://evilgreenhouse.io/a", "https://notsuccessfactors.com/x",
+                      "https://example.com/?ref=linkedin.com"):
         assert detect_ats(lookalike) == "company_site", lookalike
     assert detect_ats("https://AMAT.WD1.MYWORKDAYJOBS.COM:443/External") == "workday"
-    assert detect_ats("https://lnkd.in/abc") == "linkedin" and detect_ats("https://uk.indeed.com/viewjob?jk=1") == "indeed"
+    assert (detect_ats("https://lnkd.in/abc") == "linkedin"
+            and detect_ats("https://uk.indeed.com/viewjob?jk=1") == "indeed")
     assert detect_ats("https://www.indeed.co.uk/viewjob?jk=1") == "indeed"
     for own, ats in (("https://careers.lamresearch.com/careers/job/1", "eightfold"),
                      ("https://jobs.infineon.com/careers/job/2", "eightfold"),
@@ -250,8 +260,9 @@ def test_a_job_system_is_known_by_its_host_not_by_words_elsewhere_in_the_address
 
 
 def test_url_helpers_take_any_case_and_a_link_from_part_way_through():
-    assert workday_parts("https://AMAT.wd1.myworkdayjobs.com/en-US/External/job/Phoenix/FSE_R1/apply/applyManually") == {
-        "host": "amat.wd1.myworkdayjobs.com", "tenant": "amat", "site": "External", "job_path": "/job/Phoenix/FSE_R1"}
+    assert (workday_parts("https://AMAT.wd1.myworkdayjobs.com/en-US/External/job/Phoenix/FSE_R1/apply/applyManually")
+            == {
+        "host": "amat.wd1.myworkdayjobs.com", "tenant": "amat", "site": "External", "job_path": "/job/Phoenix/FSE_R1"})
     assert workday_parts("https://evil.example/myworkdayjobs.com/External/job/x") is None
     assert greenhouse_form_url("https://BOARDS.GREENHOUSE.IO/asm/jobs/123") == \
         "https://job-boards.greenhouse.io/embed/job_app?for=asm&token=123"
@@ -280,7 +291,8 @@ def test_a_menus_link_to_the_job_list_isnt_the_postings_apply_link():
     page = ("<html><head><title>Talent Acquisition Coordinator</title></head><body>"
             '<nav><a href="/Positions/">Browse &amp; Apply</a><a href="/Positions/Search">Search and apply</a></nav>'
             '<main><h2>Talent Acquisition Coordinator</h2><a href="#apply">Apply!</a><p>Coordinate interviews.</p>'
-            '<form id="apply" action="/Position/Apply" method="post"><input name="FirstName"></form></main></body></html>')
+            '<form id="apply" action="/Position/Apply" method="post"><input '
+            'name="FirstName"></form></main></body></html>')
     p = parse_html(page, "https://careers.pchco.org/Positions/Posting/1064100")
     assert p.apply_url == ""  # applied on the posting's own page
     page = page.replace('<a href="#apply">Apply!</a>', '<a href="https://apply.example.com/job/1064100" '
@@ -295,8 +307,9 @@ def test_an_apply_link_to_a_staff_only_site_goes_to_the_public_one():
     public site (5374). Its branch postings already link there, and other Brassring sites are
     left alone."""
     page = ('<html><head><title>Senior Financial Analyst III</title></head><body><h1>Senior Financial Analyst III</h1>'
-            '<p>Tempe, AZ</p><a href="https://sjobs.brassring.com/TGnewUI/Search/home/HomeWithPreLoad?PageType=JobDetails'
-            '&amp;partnerid=26235&amp;siteid=5377&amp;jobid=1427502&amp;gqid=0&amp;al=1">Apply</a></body></html>')
+            '<p>Tempe, AZ</p><a href="https://sjobs.brassring.com/TGnewUI/Search/home/HomeWithPreLoad'
+            '?PageType=JobDetails&amp;partnerid=26235&amp;siteid=5377&amp;jobid=1427502&amp;gqid=0'
+            '&amp;al=1">Apply</a></body></html>')
     posting = finalize(parse_html(page, "https://careers.example.com/job/1/senior-financial-analyst-iii/"))
     assert "partnerid=26235&siteid=5374&jobid=1427502" in posting.apply_url, posting.apply_url
     other = "https://sjobs.brassring.com/TGnewUI/Search/home/HomeWithPreLoad?partnerid=99999&siteid=5377&jobid=1"
@@ -356,8 +369,8 @@ def sf_career_page(scope: str) -> str:
 
 
 SF_SCOPE = ('<span itemprop="jobLocation" itemscope="" itemtype="http://schema.org/Place"><span itemprop="address" '
-            'itemscope="" itemtype="http://schema.org/PostalAddress"><meta itemprop="addressLocality" content="Gilbert">'
-            '<meta itemprop="addressRegion" content="AZ"><meta itemprop="postalCode" content="85233">'
+            'itemscope="" itemtype="http://schema.org/PostalAddress"><meta itemprop="addressLocality" '
+            'content="Gilbert"><meta itemprop="addressRegion" content="AZ"><meta itemprop="postalCode" content="85233">'
             '<meta itemprop="addressCountry" content="US"></span></span>'
             '<meta itemprop="datePosted" content="Sat Sep 26 07:00:00 UTC 2026">'
             '<meta itemprop="hiringOrganization" content="Example Utility">'
@@ -488,7 +501,8 @@ def test_every_posting_reader_has_a_fixture():
 
 def test_a_workday_posting_is_read_from_its_json_api():
     """Workday's reader (its cxs API): the title, both places, the text as lines and the posting's external address.
-    Without the employer's name or an external address in the answer, the tenant's name and the posting's own address."""
+    Without the employer's name or an external address in the answer, the tenant's name and the posting's
+    own address."""
     fixture = posting_fixture("workday")
     posting = replay_posting(fixture)
     check_posting(posting, fixture)
@@ -560,8 +574,9 @@ def test_a_reader_that_cant_read_the_posting_leaves_it_to_the_page():
         "https://jobs.lever.co/examplefab": ({}, ""),
         "https://jobs.smartrecruiters.com/ExampleFab": ({}, ""),
         "https://examplefab.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/jobs": ({}, ""),
-        oracle: ({"https://examplefab.fa.us2.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails"
-                  "?expand=all&onlyData=true&finder=ById;Id=%227%22,siteNumber=CX_1": {"items": []}}, ""),
+        oracle: ({"https://examplefab.fa.us2.oraclecloud.com/hcmRestApi/resources/latest/"
+                  "recruitingCEJobRequisitionDetails?expand=all&onlyData=true"
+                  "&finder=ById;Id=%227%22,siteNumber=CX_1": {"items": []}}, ""),
         "https://careers.example.com/en/sites/CX_1/job/8": ({}, ""),  # its own address, its page naming no Oracle host
         "https://examplefab.csod.com/ux/ats/careersite/1/home?c=examplefab": ({}, ""),  # the site, not a requisition
         csod.format(2): ({}, ""),  # a page without its token
@@ -615,8 +630,8 @@ def test_json_ld_in_the_shapes_sites_write_it():
         return ("<html><head>" + "".join(f'<script type="application/ld+json">{s}</script>' for s in scripts)
                 + "</head><body></body></html>")
 
-    ld = ('{"@type": "JobPosting", "title": "Remote Technician", "jobLocation": ["Tempe, AZ", {"address": "Mesa, AZ"},],'
-          ' "baseSalary": {"currency": "USD", "value": 30}, "jobLocationType": "TELECOMMUTE",'
+    ld = ('{"@type": "JobPosting", "title": "Remote Technician", "jobLocation": ["Tempe, AZ", {"address": "Mesa, '
+          'AZ"},], "baseSalary": {"currency": "USD", "value": 30}, "jobLocationType": "TELECOMMUTE",'
           ' "description": "<p>One<br>Two</p><script>track()<\\/script>",}')  # (its "/" escaped, as in a page)
     p = parse_html(page("", "{not json", ld), "https://careers.example.com/job/1")
     assert (p.title, p.location, p.salary, p.parse_method) == ("Remote Technician", "Tempe, AZ; Mesa, AZ; Remote",
@@ -669,8 +684,10 @@ def test_the_live_check_saves_each_systems_first_posting_answer_scrubbed(tmp_pat
     stand_in = {first_api: first, first_api.replace("_R0001234", "_R0005678"): second, sr_api: sr}
     (tmp_path / "answers.json").write_text(json.dumps(stand_in), encoding="utf-8")
     urls = [workday["posting_url"], workday["posting_url"].replace("_R0001234", "_R0005678"), smart["posting_url"]]
-    out = subprocess.run([sys.executable, "-c", SAVE_RUN, str(tmp_path / "saved"), str(tmp_path / "answers.json"), *urls],
-                         cwd=Path(__file__).parent.parent, capture_output=True, text=True, encoding="utf-8", timeout=120)
+    out = subprocess.run([sys.executable, "-c", SAVE_RUN, str(tmp_path / "saved"),
+                          str(tmp_path / "answers.json"), *urls],
+                         cwd=Path(__file__).parent.parent, capture_output=True, text=True, encoding="utf-8",
+                         timeout=120)
     lines = [x[len("RESULT "):] for x in out.stdout.splitlines() if x.startswith("RESULT ")]
     assert lines == ["Equipment Technician II", "Etch Technician", "Facilities Technician"], \
         out.stdout[-2000:] + out.stderr[-3000:]

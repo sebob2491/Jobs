@@ -111,7 +111,8 @@ def short_reason(text: Any, hide: Iterable[str] = ()) -> str:
 def _once(what: str) -> None:
     if what not in _said:
         _said.add(what)
-        logging.getLogger(__name__).warning("couldn't %s the Job Desk's history (%s)", what, HISTORY_FILE, exc_info=True)
+        logging.getLogger(__name__).warning("couldn't %s the Job Desk's history (%s)", what, HISTORY_FILE,
+                                            exc_info=True)
 
 
 def _count(path: Path) -> int:

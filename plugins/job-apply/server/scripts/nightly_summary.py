@@ -191,7 +191,8 @@ def counted(state: dict[str, dict[str, str]]) -> str:
     lines = []
     for check, outcomes in state.items():
         tally = Counter(outcomes.values())
-        lines.append(f"{check} ({len(outcomes)}): " + ", ".join(f"{o} {n}" for o, n in sorted(tally.items(), key=lambda t: (-t[1], t[0]))))
+        lines.append(f"{check} ({len(outcomes)}): "
+                     + ", ".join(f"{o} {n}" for o, n in sorted(tally.items(), key=lambda t: (-t[1], t[0]))))
     return "\n".join(lines)
 
 
@@ -313,7 +314,8 @@ def why(outcome: str, said: str) -> tuple[str, str]:
     if "sign_in" in outcome or "email_code" in outcome:
         m = re.search(r"filled in (.+?)'s Create Account", d)
         if "CAPTCHA" in d:
-            return f"Account form ({m.group(1) if m else 'site'}) with a CAPTCHA", "Solve the CAPTCHA, create the account"
+            return (f"Account form ({m.group(1) if m else 'site'}) with a CAPTCHA",
+                    "Solve the CAPTCHA, create the account")
         if m:
             return f"Account needed ({m.group(1)})", "The desk makes the account with its saved password"
         if "didn't sign in" in d:
@@ -330,7 +332,8 @@ def why(outcome: str, said: str) -> tuple[str, str]:
         return "Cookie banner with no decline", "Choose in the banner (or turn on accept_cookies)"
     if "Something went wrong" in d:
         return "Site error (\"Something went wrong\")", "Being looked into"
-    if "site's own trouble" in d:  # (the site's error page where the posting should be, "Content missing", an empty page)
+    # (the site's error page where the posting should be, "Content missing", an empty page)
+    if "site's own trouble" in d:
         return "Site error (the site's own page)", "Reload or open the posting later, then press Carry on"
     # steps that are the person's by the desk's rules (run 51: Circle K's and Taylor Morrison's assessments, Kforce's
     # screening, the State of Arizona's name and email sent first)
@@ -434,10 +437,11 @@ def tables(state: dict[str, dict[str, str]], detail: dict[str, dict[str, str]]) 
         out.append("")
     # the accounts check's other employers (a list no practice-run check covers: live_identity.LIST_ROLES' others, the
     # Las Vegas IT list's), so every employer it checks is in a table
-    others = sorted((n for n in accounts if not any(n in (state.get(c) or {}) for c in ("pipeline", "hr"))), key=str.lower)
+    others = sorted((n for n in accounts if not any(n in (state.get(c) or {}) for c in ("pipeline", "hr"))),
+                    key=str.lower)
     if others:
-        out += ["### Other employers (with a test account only)", "", "| Employer | With a test account | What you do |",
-                "|---|---|---|"]
+        out += ["### Other employers (with a test account only)", "",
+                "| Employer | With a test account | What you do |", "|---|---|---|"]
         out += [f"| {name.replace('|', '/')} | {account(name)} | {doing(name, 'accounts')} |" for name in others]
         out.append("")
     return "\n".join(out)
@@ -650,7 +654,8 @@ def probe_records(where: Path, wanted: list[str]) -> Iterator[tuple[str, dict[st
         with zipfile.ZipFile(where) as z:
             found = [(m.group(1), json.loads(z.read(n))) for n in sorted(z.namelist()) if (m := _PROBE_RUN.search(n))]
     elif where.is_dir():
-        found = [(p.parent.name, json.loads(p.read_text(encoding="utf-8"))) for p in sorted(where.rglob("pipeline.json"))
+        found = [(p.parent.name, json.loads(p.read_text(encoding="utf-8")))
+                 for p in sorted(where.rglob("pipeline.json"))
                  if _PROBE_RUN.search(p.relative_to(where).as_posix())]
     for run, data in found:
         for rec in _listed(data):
@@ -835,7 +840,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--artifacts", type=Path, help="a run's live-* artifact (zip or unzipped folder)")
     ap.add_argument("--companies", default="",
                     help="with --artifacts or --import-fixtures: these employers only (comma-separated)")
-    ap.add_argument("--import-fixtures", type=Path, help="a run's artifact: copy its scrubbed stop pages into the tests")
+    ap.add_argument("--import-fixtures", type=Path,
+                    help="a run's artifact: copy its scrubbed stop pages into the tests")
     ap.add_argument("--replace", action="store_true", help="with --import-fixtures: replace fixtures already there")
     ap.add_argument("--timing", type=Path, help="a run's artifact: the time each job system's employers took")
     ap.add_argument("--against", type=Path, help="with --timing: an earlier run's artifact (a week before: artifacts "
@@ -906,7 +912,8 @@ def main(argv: list[str] | None = None) -> int:
             print(line)
         return 0
     if args.import_fixtures:
-        wanted = [re.sub(r"[^a-z0-9]+", "-", w.strip().lower()).strip("-") for w in args.companies.split(",") if w.strip()]
+        wanted = [re.sub(r"[^a-z0-9]+", "-", w.strip().lower()).strip("-") for w in args.companies.split(",")
+                  if w.strip()]
         for name in import_fixtures(args.import_fixtures, wanted, replace=args.replace):
             print(name)
         return 0

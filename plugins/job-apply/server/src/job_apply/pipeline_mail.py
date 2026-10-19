@@ -226,8 +226,9 @@ class MailMixin:
             run.mail_last += "; not used: it came well before the reset was asked for, an earlier reset's"
             return
         if found.kind == "reset" and found.received < asked and time.time() - asked < pipeline.RESET_FRESH_WAIT:
-            # from before the reset was asked for, by this computer's clock: an earlier reset's (its link spent: run 136),
-            # or this one's with the clocks apart. A newer one is waited for a moment, and this one used if none comes
+            # from before the reset was asked for, by this computer's clock: an earlier reset's (its link spent: run
+            # 136), or this one's with the clocks apart. A newer one is waited for a moment, and
+            # this one used if none comes
             run.mail_last += "; not used yet: it came before the reset was asked for, so a newer one is waited for"
             return
         try:
@@ -253,14 +254,16 @@ class MailMixin:
                 self._log(run, f"opened the confirmation link from your email ({pipeline._sent_from(found)})")
                 if run.page is not None and not run.page.is_closed():
                     await run.page.reload()
-                if run.verifying:  # the account's verified: the Sign In it paused on (the same page, reloaded) is past the pause
+                # the account's verified: the Sign In it paused on (the same page, reloaded) is past the pause
+                if run.verifying:
                     run.pause_sig = None
         except Exception as e:  # a slow site or a closed tab: the person finishes it, as without the inbox
             run.mail_done = True
             self._log(run, f"couldn't use the {found.kind} from your email ({type(e).__name__}); "
                       "it's in your inbox for you")
         finally:
-            run.desk_at = time.time()  # (what changes in its tab now is the desk's doing, not the person's: _note_activity)
+            # (what changes in its tab now is the desk's doing, not the person's: _note_activity)
+            run.desk_at = time.time()
             run.desk_code = pipeline._code_mark(found.value) if found.kind == "code" else 0
         if mail and run.mail_done:
             pipeline._take_code(mail, run.job_id)

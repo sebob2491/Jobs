@@ -15,7 +15,8 @@ pytestmark = pytest.mark.skipif(not browser_available(), reason="no Playwright C
 
 
 def test_generic_form_autofill_and_submit_guard(srv):
-    job = srv.add_job(url=fixture_url("generic_form.html"), title="Field Service Engineer", company="Example Litho")["job"]
+    job = srv.add_job(url=fixture_url("generic_form.html"), title="Field Service Engineer",
+                      company="Example Litho")["job"]
     summary = run(srv.open_application(job_id=job["id"]))
     assert summary["fields"] >= 15
     assert summary["submit_policy"] == "after_user_confirms"
@@ -50,8 +51,8 @@ def test_generic_form_autofill_and_submit_guard(srv):
 
     after = {f["label"]: f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
     assert after["Last Name *"]["value"] == "Rivera"
-    assert after["Will you now or in the future require sponsorship for employment visa status (e.g., H-1B)?"]["value"] == \
-        "No, I will not require sponsorship"  # visually hidden radio
+    assert (after["Will you now or in the future require sponsorship for employment visa status (e.g., H-1B)?"]["value"]
+            == "No, I will not require sponsorship")  # visually hidden radio
     assert after["Resume/CV *"]["value"] == "resume.pdf"
 
     why = by_label(fields, "why do you want")
@@ -73,7 +74,8 @@ def test_generic_form_autofill_and_submit_guard(srv):
 
 
 def test_workday_style_widgets(srv):
-    job = srv.add_job(url=fixture_url("workday_like.html"), title="Field Service Engineer", company="Example Litho")["job"]
+    job = srv.add_job(url=fixture_url("workday_like.html"), title="Field Service Engineer",
+                      company="Example Litho")["job"]
     run(srv.open_application(job_id=job["id"]))
     form = run(srv.inspect_form())
     code = by_label(form["fields"], "country phone code")
@@ -263,10 +265,12 @@ def test_a_successfactors_list_is_searched_and_a_search_that_picks_nothing_is_em
 
     # a country the list doesn't have: the field comes back with what to ask instead
     profile = job_apply_home / "profile.yaml"
-    profile.write_text(profile.read_text(encoding="utf-8").replace("country: United States", "country: Atlantis"), encoding="utf-8")
+    profile.write_text(profile.read_text(encoding="utf-8").replace("country: United States", "country: Atlantis"),
+                       encoding="utf-8")
     run(srv.browser.goto(fixture_url("site/sf-select-form.html")))
     failed = run(srv.autofill())["failed"]
-    assert [(f["label"], f["kind"], f["required"], len(f["options"])) for f in failed] == [("Country", "combobox", True, 100)]
+    assert ([(f["label"], f["kind"], f["required"], len(f["options"])) for f in failed]
+            == [("Country", "combobox", True, 100)])
     assert by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "country")["value"] == ""
 
 
@@ -275,7 +279,9 @@ def test_an_answer_that_picks_a_group_is_chosen_again_among_its_entries(srv, job
     "Website / Job Board Posting", a group whose entries hold "Company Career Site". The desk
     asked the person; the answer is chosen again among the group's entries and filled."""
     profile = job_apply_home / "profile.yaml"
-    profile.write_text(profile.read_text(encoding="utf-8").replace("how_did_you_hear: LinkedIn", "how_did_you_hear: Company Website"), encoding="utf-8")
+    profile.write_text(profile.read_text(encoding="utf-8").replace("how_did_you_hear: LinkedIn",
+                                                                   "how_did_you_hear: Company Website"),
+                       encoding="utf-8")
     run(srv.browser.goto(fixture_url("workday_prompt_2026.html") + "?groups=staffing"))
     result = run(srv.autofill())
     assert not [f for f in result["failed"] if "hear" in (f["label"] or "").lower()], result["failed"]
@@ -305,7 +311,8 @@ def test_how_did_you_hear_is_chosen_again_from_a_list_that_drew_late(srv, job_ap
     after ("doesn't match any suggestion: [..., 'Acme website']"). The failed field comes back with that
     list, the answer is chosen again among its entries ("Acme website") and filled, inside the group it opens."""
     profile = job_apply_home / "profile.yaml"
-    profile.write_text(profile.read_text(encoding="utf-8").replace("how_did_you_hear: LinkedIn", "how_did_you_hear: Company Website"),
+    profile.write_text(profile.read_text(encoding="utf-8").replace("how_did_you_hear: LinkedIn",
+                                                                   "how_did_you_hear: Company Website"),
                        encoding="utf-8")
     job = srv.add_job(url=fixture_url("workday_prompt_2026.html") + "?groups=employer&slow=1500",
                       title="Technician", company="Acme")["job"]
@@ -315,7 +322,8 @@ def test_how_did_you_hear_is_chosen_again_from_a_list_that_drew_late(srv, job_ap
     heard = by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "how did you hear")
     assert heard["value"] == "Acme website"
     # an answer the list has no match for (and isn't the employer's site) is left to the person, with the list
-    profile.write_text(profile.read_text(encoding="utf-8").replace("how_did_you_hear: Company Website", "how_did_you_hear: Radio"),
+    profile.write_text(profile.read_text(encoding="utf-8").replace("how_did_you_hear: Company Website",
+                                                                   "how_did_you_hear: Radio"),
                        encoding="utf-8")
     run(srv.browser.goto(fixture_url("workday_prompt_2026.html") + "?groups=employer&slow=1500"))
     failed = [f for f in run(srv.autofill(job_id=job["id"]))["failed"] if "hear" in (f["label"] or "").lower()]
@@ -413,7 +421,8 @@ def test_icims_privacy_gate_is_read_with_its_frames_headings_and_its_phone(srv):
     prefix of its ids), the Phone Country Code's "— Make a Selection —" is no answer, so its
     countries are read, and its Number says it's the phone's (autocomplete). Autofill answers all
     three from the profile."""
-    job = srv.add_job(url=fixture_url("site/icims-privacy-gate.html"), title="Analyst", company="Example Financial")["job"]
+    job = srv.add_job(url=fixture_url("site/icims-privacy-gate.html"), title="Analyst",
+                      company="Example Financial")["job"]
     run(srv.open_application(job_id=job["id"]))
     form = run(srv.inspect_form())
     gate = next(a for a in form["actions"] if a["text"] == "I Acknowledge the Privacy Notice")
@@ -437,7 +446,8 @@ def test_auto_mode_refuses_incomplete_form(srv, job_apply_home):
     prof["settings"].update({"submit_mode": "auto", "auto_submit_ats": ["company_site"]})
     prof_path.write_text(yaml.safe_dump(prof), encoding="utf-8")
 
-    job = srv.add_job(url=fixture_url("generic_form.html"), title="Field Service Engineer", company="Example Litho")["job"]
+    job = srv.add_job(url=fixture_url("generic_form.html"), title="Field Service Engineer",
+                      company="Example Litho")["job"]
     assert run(srv.open_application(job_id=job["id"]))["submit_policy"] == "auto"
     run(srv.autofill())
     out = run(srv.submit_application(job_id=job["id"]))
@@ -450,7 +460,8 @@ def test_saved_blocks_drawn_late_are_counted_before_any_is_added(srv):
     """Workday's My Experience opened again (Baker Tilly's and U.S. Bank's, run 52, Oct 13) draws the account's saved
     job a moment after the page: the desk counted none, added a block, and the saved one came beside it ("The page has
     more blocks than your profile has entries"). Blocks are looked for again a moment before any is added."""
-    job = srv.add_job(url=fixture_url("workday_experience.html") + "?saved=1000", title="FSE", company="Example Litho")["job"]
+    job = srv.add_job(url=fixture_url("workday_experience.html") + "?saved=1000", title="FSE",
+                      company="Example Litho")["job"]
     run(srv.open_application(job_id=job["id"]))
     work = run(srv.add_entries("work"))
     assert (work["clicks"], work["after"], work["wanted"]) == (0, 2, 2), work
@@ -460,7 +471,8 @@ def test_a_list_that_opens_on_its_placeholder_alone_is_read_once_its_choices_com
     """BCBS of Arizona's and KLA's Workday (run 53, Oct 13): the Degree list opened on "Select One" alone, its choices
     a moment later; the desk read that as the whole list and stopped: "The Degree list has no choice for your Bachelor
     of Science". A list showing only its placeholder is read again until its choices come (or the wait ends)."""
-    # (and Boeing's veteran list, run 56: still "Select One" alone after two seconds, its choices there on the next pass)
+    # (and Boeing's veteran list, run 56: still "Select One" alone after two seconds, its choices
+    # there on the next pass)
     monkeypatch.setattr(browser_module, "LIST_PLACEHOLDER_WAIT", 5000)  # (the production wait: 3.2 s is within it)
     for late in (700, 3200):
         job = srv.add_job(url=fixture_url("workday_experience.html") + f"?degrees={late}", title="FSE",
@@ -476,7 +488,8 @@ def test_ukg_blocks_named_only_by_their_region_are_counted_and_named(srv):
     """Desert Financial's UKG Pro (run 55, Oct 13): its blocks are form regions their aria-label numbers ("Work
     Experience 2"), with no heading, so none was counted and a block was added on every pass (eleven by the end), and
     their boxes had no block to go with a profile entry. They're counted, and they're the boxes' sections."""
-    job = srv.add_job(url=fixture_url("site/ukg-blocks.html"), title="HR Analyst", company="Example Credit Union")["job"]
+    job = srv.add_job(url=fixture_url("site/ukg-blocks.html"), title="HR Analyst",
+                      company="Example Credit Union")["job"]
     run(srv.open_application(job_id=job["id"]))
     work = run(srv.add_entries("work"))
     assert (work["before"], work["clicks"], work["after"]) == (2, 0, 2), work
@@ -492,7 +505,8 @@ def test_ukg_saved_items_count_as_blocks(srv):
     row with its own "Edit Experience Item 1" and no box, so none was counted; "Add Experience" opened an empty editor
     above it, whose Job Title, Company / Organization and From month and year the person was asked, and the job went
     in twice. A saved row counts as its section's block: nothing is added for a job or school already there."""
-    job = srv.add_job(url=fixture_url("site/ukg-saved-items.html"), title="HR Analyst", company="Example Credit Union")["job"]
+    job = srv.add_job(url=fixture_url("site/ukg-saved-items.html"), title="HR Analyst",
+                      company="Example Credit Union")["job"]
     run(srv.open_application(job_id=job["id"]))
     work = run(srv.add_entries("work"))
     assert (work["before"], work["clicks"], work["after"]) == (2, 0, 2), work
@@ -596,8 +610,8 @@ def test_each_jobs_currently_work_here_box_is_its_own(srv):
                                                               ("checkbox", "Work Experience 2")], boxes
     run(srv.autofill())
     page = run(srv.browser.page())
-    assert run(page.evaluate("() => [document.getElementById('cw-1').checked, document.getElementById('cw-2').checked]")) \
-        == [True, False]
+    assert run(page.evaluate("() => [document.getElementById('cw-1').checked, "
+                             "document.getElementById('cw-2').checked]")) == [True, False]
 
 
 @pytest.mark.slow
@@ -636,7 +650,8 @@ def test_workday_date_parts_read_back_as_typed_whatever_the_order(srv):
           for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
     values = [(("From", "Month"), "10"), (("To", "Month"), "3"), (("Job Title", None), "Technician"),
               (("From", "Year"), "2019"), (("To", "Year"), "2021"),
-              (("Date", "Month"), "10"), (("Date", "Day"), "9"), (("Name", None), "Sam Rivera"), (("Date", "Year"), "2026")]
+              (("Date", "Month"), "10"), (("Date", "Day"), "9"), (("Name", None), "Sam Rivera"),
+              (("Date", "Year"), "2026")]
     out = run(srv.fill_form([{"id": by[key], "value": value} for key, value in values]))
     assert all(r.get("ok") for r in out["results"]), out["results"]
     page = run(srv.browser.page())
@@ -721,7 +736,8 @@ def test_a_workday_dates_part_left_empty_isnt_checked_against_one_never_typed(sr
     run(srv.browser.goto(fixture_url("site/workday-date-sections.html") + "?sticky"))
     by = {(f.get("section") or f["label"], f.get("sublabel")): f["id"]
           for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
-    out = run(srv.fill_form([{"id": by[("Date", "Month")], "value": "10"}, {"id": by[("Date", "Year")], "value": "2026"}]))
+    out = run(srv.fill_form([{"id": by[("Date", "Month")], "value": "10"},
+                             {"id": by[("Date", "Year")], "value": "2026"}]))
     assert out["results"][0].get("ok"), out["results"]
 
 
@@ -739,11 +755,12 @@ def test_a_file_put_in_the_sites_open_upload_dialog_is_sent_with_its_upload(srv,
     assert run(page.inner_text("#resume")) == "resume.pdf is on file.", run(page.inner_text("body"))
 
 
-@pytest.mark.parametrize("page,said", [("phenom-resume-not-kept.html", "resume.pdf"), ("phenom-resume-not-kept.html?kept", None),
-                                       ("upload-cover-letter.html", None),
-                                       # EMD's page as it is (run 49): the resume's box above the form, unnamed
-                                       ("phenom-resume-not-kept.html?outside", "resume.pdf"),
-                                       ("phenom-resume-not-kept.html?outside&kept", None)])
+@pytest.mark.parametrize("page,said",
+                         [("phenom-resume-not-kept.html", "resume.pdf"), ("phenom-resume-not-kept.html?kept", None),
+                          ("upload-cover-letter.html", None),
+                          # EMD's page as it is (run 49): the resume's box above the form, unnamed
+                          ("phenom-resume-not-kept.html?outside", "resume.pdf"),
+                          ("phenom-resume-not-kept.html?outside&kept", None)])
 def test_a_resume_the_site_didnt_keep_is_told_from_any_other_upload(srv, tmp_path, page, said):
     """Issue #112, note 28 and its review: the resume's own file box, its hidden fields beside it all empty, is a
     resume the site didn't keep; a cover letter's box, beside "resume" fields of a save-for-later elsewhere, isn't."""
@@ -762,13 +779,14 @@ def test_a_resume_the_site_didnt_keep_is_told_from_any_other_upload(srv, tmp_pat
                                         ("confirm", "pressed"), ("toast", "gone"), ("chosen", "")])
 def test_only_the_resumes_own_delete_is_pressed_for_it_to_go_up_again(srv, tmp_path, query, said):
     """The review of 0.3.153: the Delete beside a resume the page never kept is pressed only where it's sure. Its own
-    row's (in the form, or beside the resume's box above it: EMD's page, ?outside, its Delete an icon), shown (a hidden copy of the row before it, ?twin, isn't), the name shown once (?twice: a cover letter's
-    of the same name, each with a Delete: neither), never a button that sends or empties the form (?submit, ?reset)
-    nor one whose own name says it sends (?sends: the check every press goes through), never a Delete in a list of
-    files (?neighbour: the resume's own an icon with no words, a cover letter's beside it), and only a file the desk
-    sent (?chosen: one the person chose, its box never given it by the desk). A Delete that asks first is turned
-    down by the browser (?confirm): pressed, and the file still there, so it isn't said to be gone; a Delete that
-    goes, leaving a note naming the file (?toast), is told apart."""
+    row's (in the form, or beside the resume's box above it: EMD's page, ?outside, its Delete an icon), shown (a hidden
+    copy of the row before it, ?twin, isn't), the name shown once (?twice: a cover letter's of the same name, each with
+    a Delete: neither), never a button that sends or empties the form (?submit, ?reset) nor one whose own name says it
+    sends (?sends: the check every press goes through), never a Delete in a list of files (?neighbour: the resume's own
+    an icon with no words, a cover letter's beside it), and only a file the desk sent (?chosen: one the person chose,
+    its box never given it by the desk). A Delete that asks first is turned down by the browser (?confirm): pressed, and
+    the file still there, so it isn't said to be gone; a Delete that goes, leaving a note naming the file
+    (?toast), is told apart."""
     doc = tmp_path / "resume.pdf"
     doc.write_bytes(b"%PDF-1.4 test")
     run(srv.browser.goto(fixture_url("site/phenom-resume-not-kept.html") + f"?{query}"))
@@ -795,9 +813,9 @@ def test_only_the_resumes_own_delete_is_pressed_for_it_to_go_up_again(srv, tmp_p
 def test_only_the_kept_files_own_delete_is_pressed_for_the_tailored_one(srv, tmp_path, query, said):
     """NXP's Workday (the weekly probe): an account's last resume kept in My Experience's "Resume/CV" upload, read as
     the file's name, makes way for the one tailored for the job. Only that file's own Delete, in its own item of
-    Workday's list, is pressed: never the cover letter's beside it (?cover); with no name shown (?unnamed), the box's one
-    item's; never one that sends the form (?submit). A Delete that asks first is turned down by the browser (?stuck),
-    and said as pressed with the file still there. The box the desk then sends a file into is its own."""
+    Workday's list, is pressed: never the cover letter's beside it (?cover); with no name shown (?unnamed), the box's
+    one item's; never one that sends the form (?submit). A Delete that asks first is turned down by the browser
+    (?stuck), and said as pressed with the file still there. The box the desk then sends a file into is its own."""
     run(srv.browser.goto(fixture_url("site/workday-kept-resume.html") + f"?{query}"))
     box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["kind"] == "file")
     name = "" if "unnamed" in query else "2024-resume.pdf"
@@ -875,9 +893,10 @@ def test_a_press_allowed_to_send_is_never_found_again_by_its_words(srv, tmp_path
     "Submit". It's refused instead; the desk stops there."""
     page_file = tmp_path / "redrawn.html"
     page_file.write_text('<!doctype html><form id="acct" onsubmit="window.sent.push(\'acct\'); return false;">'
-                         '<label for="e">Email</label><input id="e" type="email"><button type="submit">Submit</button></form>'
-                         '<form id="app" onsubmit="window.sent.push(\'app\'); return false;"><label for="n">Name</label>'
-                         '<input id="n"></form><script>window.sent = [];</script>', encoding="utf-8")
+                         '<label for="e">Email</label><input id="e" type="email"><button type="submit">Submit</button>'
+                         '</form><form id="app" onsubmit="window.sent.push(\'app\'); return false;">'
+                         '<label for="n">Name</label><input id="n"></form><script>window.sent = [];</script>',
+                         encoding="utf-8")
     run(srv.browser.goto(page_file.as_uri()))
     button = next(a for a in run(srv.inspect_form(include_dropdown_options=False))["actions"] if a["text"] == "Submit")
     page = run(srv.browser.page())
@@ -921,7 +940,8 @@ def test_an_upload_through_a_dialog_touches_only_what_it_opened(srv, tmp_path, h
     banner is never accepted for the person)."""
     resume = tmp_path / "resume.pdf"
     resume.write_bytes(b"%PDF-1.4 test")
-    run(srv.browser.goto(fixture_url("site/successfactors-upload-dialog.html") + f"?others{'&box' if how == 'box' else ''}"))
+    run(srv.browser.goto(fixture_url("site/successfactors-upload-dialog.html")
+                         + f"?others{'&box' if how == 'box' else ''}"))
     box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["label"] == "Resume")
     out = run(srv.fill_form([{"id": box["id"], "value": str(resume)}]))
     assert out["results"][0].get("ok"), out["results"]
@@ -1064,7 +1084,8 @@ def test_final_apply_button_honeypot_and_enter(srv, monkeypatch):
     # still had to list only its own choices
     menus = {f["label"]: f.get("options") for f in form["fields"] if f["kind"] == "combobox"}
     assert menus["Gender"] == ["Male", "Female", "Decline to self-identify"]
-    assert "Male" not in menus["Degree"] and "Other" in menus["Are you a U.S. person as defined by export control regulations (EAR)?"]
+    assert ("Male" not in menus["Degree"]
+            and "Other" in menus["Are you a U.S. person as defined by export control regulations (EAR)?"])
 
     blocked = run(srv.click("Apply"))  # a form's own "Apply" button is the final submit
     assert blocked["clicked"] is False
@@ -1100,7 +1121,8 @@ def test_inside_a_list_a_choice_opens_only_the_answer_or_its_namesake_is_picked(
     the profile's "Job Board")."""
     from job_apply.browser import _inner_choice
 
-    assert _inner_choice("Company Website", "Example Fab website \u203a", ["Example Fab website"]) == "Example Fab website"
+    assert (_inner_choice("Company Website", "Example Fab website \u203a", ["Example Fab website"])
+            == "Example Fab website")
     assert _inner_choice("Job Board", "Job Board / Social Network \u203a", ["Indeed"]) is None
     assert _inner_choice("LinkedIn", "Job Board / Social Network \u203a", ["Indeed", "LinkedIn"]) == "LinkedIn"
 
@@ -1243,7 +1265,8 @@ def test_a_job_board_that_is_down_says_so(srv):
 
     class Down(BaseHTTPRequestHandler):
         def do_GET(self):
-            body = b"<html><head><title>Error : careers-example.icims.com</title></head><body>Web server is down</body></html>"
+            body = (b"<html><head><title>Error : careers-example.icims.com</title></head>"
+                    b"<body>Web server is down</body></html>")
             if self.path.startswith("/challenge"):  # Cloudflare's check: a 503 that clears by itself
                 body = b"<html><head><title>Just a moment...</title></head><body>Checking your browser</body></html>"
                 self.send_response(503)
@@ -1276,7 +1299,8 @@ def test_search_text_left_in_a_picker_is_no_evidence(srv):
     run(srv.open_application(url=fixture_url("jsonld_posting.html")))
     page = run(srv.browser.page())
     run(page.evaluate("() => { const form = document.createElement('form'); "
-                      "form.innerHTML = '<div><input id=eth value=C></div><input id=other>'; document.body.prepend(form); }"))
+                      "form.innerHTML = '<div><input id=eth value=C></div>"
+                      "<input id=other>'; document.body.prepend(form); }"))
     loc = page.locator("#eth")
     run(srv.browser._confirm_choice(page, loc, "Choose not to disclose"))  # "C" is what was typed, not a choice
     run(page.evaluate("() => { document.getElementById('eth').value = 'Asian'; }"))
@@ -1314,7 +1338,7 @@ def test_capture_json_takes_the_keyword_search_and_enlarges_it(srv):
                                                       body: JSON.stringify({widget: {items: [{rfk_id: 'jobs', search}]}})});
       const keyphrase = new URLSearchParams(location.search).get('query');
       send({limit: 25, facet: {all: true}}).then(() => send({limit: 25, offset: 50, query: {keyphrase}}));
-    </script>"""
+    </script>"""  # noqa: E501
 
     class Site(BaseHTTPRequestHandler):
         def reply(self, kind, body):
@@ -1375,7 +1399,8 @@ def test_a_button_found_by_its_words_is_the_one_named_so_exactly_first(srv):
       <button type="button" onclick="window.pressed = 'save'">Save draft for later</button>"""))
     found = run(srv.browser._find_by_text(page, "Next"))
     assert run(found.inner_text()).strip() == "Next"
-    found = run(srv.browser._find_by_text(page, "Save draft"))  # (no button named so exactly: the one holding the words)
+    # (no button named so exactly: the one holding the words)
+    found = run(srv.browser._find_by_text(page, "Save draft"))
     assert run(found.inner_text()).strip() == "Save draft for later"
 
 
@@ -1404,7 +1429,7 @@ def test_a_resume_goes_into_a_page_once_though_its_box_empties(srv, job_apply_ho
       <script>window.uploads = 0; function arm() { document.getElementById('cv').addEventListener('change', (e) => {
         window.uploads += 1; document.getElementById('n').textContent = e.target.files[0].name
           + ' has been used to pre-fill part of your application.';
-        document.getElementById('w').innerHTML = '<input id="cv" type="file">'; arm(); }); } arm();</script>"""))
+        document.getElementById('w').innerHTML = '<input id="cv" type="file">'; arm(); }); } arm();</script>"""))  # noqa: E501
     for _ in range(2):
         box = next(f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"] if f["kind"] == "file")
         out = run(srv.fill_form([{"id": box["id"], "value": str(resume)}]))["results"][0]
@@ -1426,7 +1451,7 @@ def test_a_maps_own_controls_are_not_the_pages_buttons(srv):
     page = run(srv.browser.page())
     run(page.set_content("""<h1>Field Service Technician</h1><button type="button">Apply</button>
       <div class="gm-style"><button type="button">Keyboard shortcuts</button>
-        <button type="button">Map camera controls</button><button type="button">Show satellite imagery</button></div>"""))
+        <button type="button">Map camera controls</button><button type="button">Show satellite imagery</button></div>"""))  # noqa: E501
     texts = [a["text"] for a in run(srv.inspect_form(include_dropdown_options=False))["actions"]]
     assert texts == ["Apply"], texts
 
@@ -1477,7 +1502,7 @@ def test_a_menu_left_over_the_next_field_isnt_its_options(srv, overlap, monkeypa
         const later = () => setTimeout(() => menu(friends, ['Yes', 'No']), 400);
         friends.addEventListener('click', later);
         friends.addEventListener('keydown', (e) => { if (e.key === 'ArrowDown') later(); });
-      </script>""" % overlap))
+      </script>""" % overlap))  # noqa: E501
     fields = run(srv.inspect_form(include_dropdown_options=True))["fields"]
     assert by_label(fields, "available")["options"][0] == "Immediately after offer acceptance"
     assert by_label(fields, "friends")["options"] == ["Yes", "No"]
@@ -1572,11 +1597,11 @@ def test_a_short_dropdown_is_picked_without_typing(srv):
         box.addEventListener('click', () => { list.hidden = false; });
         box.addEventListener('input', () => { box.dataset.typed = box.value; });
         list.addEventListener('click', (e) => { box.value = e.target.textContent; box.dataset.picked = e.target.textContent; list.hidden = true; });
-      </script>"""))
+      </script>"""))  # noqa: E501
     field = run(srv.inspect_form(include_dropdown_options=False))["fields"][0]
     assert run(srv.fill_form([{"id": field["id"], "value": "No"}]))["ok"]
-    assert run(page.evaluate("() => [document.getElementById('q').dataset.picked, document.getElementById('q').dataset.typed]")) \
-        == ["No", None]
+    assert run(page.evaluate("() => [document.getElementById('q').dataset.picked, "
+                             "document.getElementById('q').dataset.typed]")) == ["No", None]
 
 
 def test_an_open_menus_highlighted_option_isnt_the_answer(srv):
@@ -1592,7 +1617,7 @@ def test_an_open_menus_highlighted_option_isnt_the_answer(srv):
         <div class="field"><label for="loc">Preferred location *</label>
           <div class="pills"><div class="tag-pill"><span class="pill-label">Singapore</span><button type="button">Remove Singapore</button></div></div>
           <div class="wrap"><input id="loc" role="combobox" required readonly></div></div>
-      </form>"""))
+      </form>"""))  # noqa: E501
     fields = {f["label"]: f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
     assert fields["Language of Application *"]["value"] == ""
     assert fields["Preferred location *"]["value"] == "Singapore"
@@ -1630,7 +1655,7 @@ EIGHTFOLD_COUNTRY_CODE = """
     box.addEventListener('blur', () => { if (list.hidden) box.value = chosen; });  // typed text that picked nothing is dropped
     // ignores Escape and focus leaving; closes on a click beside it
     document.addEventListener('mousedown', (e) => { if (!list.contains(e.target) && e.target !== box) close(); });
-  </script>"""
+  </script>"""  # noqa: E501
 
 
 def test_a_country_code_picker_like_eightfolds(srv):
@@ -1707,7 +1732,8 @@ def test_a_picker_is_searched_by_name_not_by_flag_and_code(srv):
     page = run(srv.browser.page())
     run(page.set_content(EIGHTFOLD_COUNTRY_CODE.replace(
         "box.addEventListener('click', () => { box.value = ''; show(''); });",
-        "box.addEventListener('click', () => { box.value = ''; show(''); [...list.children].slice(8).forEach((li) => li.remove()); });")))
+        "box.addEventListener('click', () => { box.value = ''; show(''); [...list.children].slice(8).forEach((li) => "
+        "li.remove()); });")))
     field = run(srv.inspect_form(include_dropdown_options=False))["fields"][0]
     for value in ("United States of America (+1)", "🇺🇸 (+1) United States of America"):
         out = run(srv.fill_form([{"id": field["id"], "value": value}]))
@@ -1781,7 +1807,7 @@ def test_groups_with_the_same_label_are_each_filled(srv):
         <label><input type="radio" name="g2">Yes</label><label><input type="radio" name="g2">No</label></fieldset>
       <fieldset><legend>Which shifts?</legend>
         <label><input type="checkbox" name="s">Days</label><label><input type="checkbox" name="s">Nights</label></fieldset>
-      </form>"""))
+      </form>"""))  # noqa: E501
     fields = run(srv.inspect_form(include_dropdown_options=False))["fields"]
     first, second = [f for f in fields if f["label"] == "Did you graduate?"]
     shifts = by_label(fields, "Which shifts")
@@ -1879,7 +1905,8 @@ def test_a_captcha_on_show_is_said_but_its_frame_isnt_read(srv):
             f.src = 'https://www.google.com/recaptcha/api2/anchor?k=x&size=invisible';
             f.style.cssText = 'width:256px;height:60px';
         }""")
-        await framed(page, "size=invisible")  # (half a second wasn't always enough on Windows CI: the old frame was read)
+        # (half a second wasn't always enough on Windows CI: the old frame was read)
+        await framed(page, "size=invisible")
         badge = await srv.inspect_form(include_dropdown_options=False)
         return shown, hidden, badge
 
@@ -2122,7 +2149,8 @@ def test_a_date_pickers_calendar_is_never_left_open_and_the_start_date_is_the_pr
     day = date.today() + timedelta(days=14)
     filled = {f["label"]: f["value"] for f in out["filled"]}
     assert filled["Country of Residence"] == "United States", filled
-    assert filled["Preferred Start Date"] == day.strftime("%m/%d/%Y") and filled["How did you hear about us?"] == "LinkedIn"
+    assert (filled["Preferred Start Date"] == day.strftime("%m/%d/%Y")
+            and filled["How did you hear about us?"] == "LinkedIn")
     assert run(page.input_value("#start")) == _shown(day)
     assert run(page.input_value("#country")) == "United States" and run(page.input_value("#heard")) == "LinkedIn"
     assert run(page.evaluate("() => document.getElementById('picker').hidden"))
@@ -2205,26 +2233,27 @@ def test_a_notice_or_a_calendar_no_box_opened_is_never_closed_as_a_picker(srv):
 def test_a_list_in_a_notice_or_a_cookie_center_is_no_menu_to_close(srv):
     """The re-review's: a shown list counted as an open menu wherever it was, so a notice's list of languages, or a
     cookie center's list of vendors beside its switches, got an Escape between boxes (the Escape that closes a menu);
-    and a combobox being filled (aria-haspopup="listbox") tied any dialog with a list to itself, as a picker. A list in a
-    dialog is a menu only where a box names it; a picker opens as a dialog or a grid."""
+    and a combobox being filled (aria-haspopup="listbox") tied any dialog with a list to itself, as a picker. A list in
+    a dialog is a menu only where a box names it; a picker opens as a dialog or a grid."""
     run(srv.open_application(url=fixture_url("jsonld_posting.html")))
     page = run(srv.browser.page())
     notice = ("<form><label for=a>First Name</label><input id=a><label id=cl for=c>Country</label>"
-              "<input id=c role=combobox aria-haspopup=listbox aria-expanded=false aria-controls=clist autocomplete=off>"
-              "<ul id=clist role=listbox hidden><li role=option>Canada</li><li role=option>United States</li></ul></form>"
-              "<div role=dialog aria-modal=true aria-labelledby=h style='position:fixed;top:10px;right:10px;width:300px;"
-              "height:250px;background:#fff'><h2 id=h>Notice about AI screening</h2><p>Read it in:</p>"
-              "<ul role=listbox><li role=option>English</li><li role=option>Español</li></ul><button>I Accept</button>"
-              "</div><script>const c = document.getElementById('c'), l = document.getElementById('clist');"
+              "<input id=c role=combobox aria-haspopup=listbox aria-expanded=false aria-controls=clist "
+              "autocomplete=off><ul id=clist role=listbox hidden><li role=option>Canada</li>"
+              "<li role=option>United States</li></ul></form><div role=dialog aria-modal=true aria-labelledby=h "
+              "style='position:fixed;top:10px;right:10px;width:300px;height:250px;background:#fff'>"
+              "<h2 id=h>Notice about AI screening</h2><p>Read it in:</p><ul role=listbox><li role=option>English</li>"
+              "<li role=option>Español</li></ul><button>I Accept</button></div>"
+              "<script>const c = document.getElementById('c'), l = document.getElementById('clist');"
               "c.addEventListener('click', () => { l.hidden = false; c.setAttribute('aria-expanded', 'true'); });"
               "l.addEventListener('click', (e) => { c.value = e.target.textContent; l.hidden = true; "
               "c.setAttribute('aria-expanded', 'false'); });</script>")
-    cookies = ("<form><label for=a>First Name</label><input id=a></form><button aria-haspopup=dialog aria-expanded=true "
-               "aria-controls=onetrust-pc-sdk>Cookie Settings</button><div id=onetrust-pc-sdk role=dialog aria-modal=true "
-               "aria-label='Privacy Preference Center' style='position:fixed;top:10px;right:10px;width:320px;height:320px;"
-               "background:#fff'><div role=switch aria-checked=false tabindex=0>Performance cookies</div>"
-               "<ul role=listbox aria-label=Vendors><li role=option>Vendor A</li></ul><button>Confirm my choices</button>"
-               "</div>")
+    cookies = ("<form><label for=a>First Name</label><input id=a></form><button aria-haspopup=dialog "
+               "aria-expanded=true aria-controls=onetrust-pc-sdk>Cookie Settings</button>"
+               "<div id=onetrust-pc-sdk role=dialog aria-modal=true aria-label='Privacy Preference Center' "
+               "style='position:fixed;top:10px;right:10px;width:320px;height:320px;background:#fff'>"
+               "<div role=switch aria-checked=false tabindex=0>Performance cookies</div><ul role=listbox "
+               "aria-label=Vendors><li role=option>Vendor A</li></ul><button>Confirm my choices</button></div>")
     for html, fills in ((notice, {"First Name": "Sam", "Country": "United States"}), (cookies, {"First Name": "Sam"})):
         run(page.set_content(html + _ESCAPES))
         fields = {f["label"]: f for f in run(srv.inspect_form(include_dropdown_options=False))["fields"]}
@@ -2274,4 +2303,5 @@ def test_a_date_box_hinted_day_first_takes_its_date_day_first(srv):
                          "<label for=b>Available start date</label><input id=b placeholder='yyyy-mm-dd'></form>"))
     fields = run(srv.inspect_form(include_dropdown_options=False))["fields"]
     assert [f.get("date") for f in fields] == ["dd/mm/yyyy", "yyyy-mm-dd"], fields
-    assert _as_date("02/11/2026", fields[0]) == date(2026, 11, 2) and _as_date("2026-11-02", fields[1]) == date(2026, 11, 2)
+    assert (_as_date("02/11/2026", fields[0]) == date(2026, 11, 2)
+            and _as_date("2026-11-02", fields[1]) == date(2026, 11, 2))

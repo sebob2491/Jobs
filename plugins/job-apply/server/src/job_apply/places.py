@@ -84,8 +84,8 @@ _MORE = re.compile(r"(?i)\+\s*\d+\s*more\b|\b\d+\s+locations?\b|\b(?:multiple|va
                    r"\bremote\b|\banywhere\b|\bwork\s*from\s*home\b|\btelecommute\b")
 # what of _MORE says the job has places it doesn't name, besides a count ("2 Locations", which a list says of the places
 # its posting names in full): one of a job's locations saying it makes the distance unsure (away)
-_OPEN = re.compile(r"(?i)\+\s*\d+\s*more\b|\b(?:multiple|various|several|many|all|other)\s+(?:locations?|sites?|places?)\b|"
-                   r"\b(?:state|nation|county|valley|metro|country)[\s-]*wide\b|\bremote\b|\banywhere\b|"
+_OPEN = re.compile(r"(?i)\+\s*\d+\s*more\b|\b(?:multiple|various|several|many|all|other)\s+(?:locations?|sites?|"
+                   r"places?)\b|\b(?:state|nation|county|valley|metro|country)[\s-]*wide\b|\bremote\b|\banywhere\b|"
                    r"\bwork\s*from\s*home\b|\btelecommute\b")
 # the parts of a location that names several places ("Chandler, AZ; Tempe, AZ", "Phoenix | Mesa", "Mesa or Gilbert")
 _PARTS = re.compile(r"(?i)\s*(?:[;|/\n•]|\bor\b|\band\b|&)\s*")
@@ -211,8 +211,8 @@ def home(prof: Any) -> tuple[Place | None, str]:
         return towns[0], ""
     where = f"{city}, {state}" if state else city
     return None, (f"Within N miles can't tell how far jobs are from {where}: the desk knows where the towns of "
-                  "Arizona and the Las Vegas and Reno areas are, and that isn't one of them. Check personal.address.city "
-                  "and personal.address.state in your profile.")
+                  "Arizona and the Las Vegas and Reno areas are, and that isn't one of them. Check "
+                  "personal.address.city and personal.address.state in your profile.")
 
 
 def away(home_town: Place, *locations: Any) -> dict[str, Any] | None:

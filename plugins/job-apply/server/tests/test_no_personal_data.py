@@ -10,23 +10,26 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[4]
-_EMAIL = re.compile(r"\b[\w.%+-]+@(?!(?:[\w-]+\.)*example(?:\.(?:com|org|net))?\b)[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}\b", re.I)
+_EMAIL = re.compile(r"\b[\w.%+-]+@(?!(?:[\w-]+\.)*example(?:\.(?:com|org|net))?\b)[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}\b",
+                    re.I)
 _PHONE = re.compile(r"(?<![\w-])(?:\+?1[-. ]?)?\(?(\d{3})\)?[-. ](\d{3})[-. ]\d{4}(?![\w-])"
                     r"|\btel:\s*\+?1?[-. (]*(\d{3})\)?[-. ]*(\d{3})[-. ]*\d{4}\b", re.I)  # (a click-to-call link's too)
 # Looked at, each one: a job system's or an employer's sender (no-reply), the live check's made-up inbox and its plus
 # addresses (jobdesk_test_not_real), a placeholder in a docstring (name@gmail.com), a made-up sender in a test
 KNOWN = {
     "ab+kla@gmail.com", "ab+x@gmail.com", "ab@gmail.com", "acme@otp.workday.com", "confirm@eightfold.ai",
-    "donotreply@kenexa.com", "jobdesk_test_not_real+a+b@gmail.com", "jobdesk_test_not_real+ultra-clean-holdings-uct@gmail.com",
-    "jobdesk_test_not_real+x@yahoo.com", "jobdesk_test_not_real@gmail.com", "jobdesk_test_not_realx+a@gmail.com",
-    "name+jobs@gmail.com", "name@gmail.com", "no-reply@administrativesystem.mayoclinic.org", "no-reply@another-employer.com",
-    "no-reply@careers.acme.com", "no-reply@careers.bdo.com", "no-reply@careers.ti.com", "no-reply@mail.brassring.com",
-    "no-reply@recruitment.americanexpress.com", "no-reply@us.greenhouse-mail.io", "no-reply@us.gt.com",
-    "no-reply@workflow.email.us-phoenix-1.ocs.oraclecloud.com", "noreply@brassring.com", "noreply@kenexa.com",
-    "noreply@mailexamplelitho.com", "noreply@not-kenexa.com", "noreply@oraclecloud.com", "noreply@workday.intel.com",
-    "noreply@workday.kla.com", "offers@not-ti.com", "offers@shop.com", "other@otp.workday.com",
-    "send-only.example@otp.workday.com", "someone+jobdesk_test_not_real@gmail.com", "someone@gmail.com", "someone@kla.com",
-    "someone@outlook.com", "x.fa.sender@workflow.email.us-phoenix-1.ocs.oraclecloud.com",
+    "donotreply@kenexa.com", "jobdesk_test_not_real+a+b@gmail.com",
+    "jobdesk_test_not_real+ultra-clean-holdings-uct@gmail.com", "jobdesk_test_not_real+x@yahoo.com",
+    "jobdesk_test_not_real@gmail.com", "jobdesk_test_not_realx+a@gmail.com",
+    "name+jobs@gmail.com", "name@gmail.com", "no-reply@administrativesystem.mayoclinic.org",
+    "no-reply@another-employer.com", "no-reply@careers.acme.com", "no-reply@careers.bdo.com", "no-reply@careers.ti.com",
+    "no-reply@mail.brassring.com", "no-reply@recruitment.americanexpress.com", "no-reply@us.greenhouse-mail.io",
+    "no-reply@us.gt.com", "no-reply@workflow.email.us-phoenix-1.ocs.oraclecloud.com", "noreply@brassring.com",
+    "noreply@kenexa.com", "noreply@mailexamplelitho.com", "noreply@not-kenexa.com", "noreply@oraclecloud.com",
+    "noreply@workday.intel.com", "noreply@workday.kla.com", "offers@not-ti.com", "offers@shop.com",
+    "other@otp.workday.com", "send-only.example@otp.workday.com", "someone+jobdesk_test_not_real@gmail.com",
+    "someone@gmail.com", "someone@kla.com", "someone@outlook.com",
+    "x.fa.sender@workflow.email.us-phoenix-1.ocs.oraclecloud.com",
 }
 # Phone numbers looked at: an employer's published HR line its captured pages carry (Lam Research's)
 KNOWN_PHONES = {"510-572-4477"}

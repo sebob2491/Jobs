@@ -34,7 +34,8 @@ _DOMAINS: list[tuple[str, tuple[str, ...]]] = [
 # site (careers.ti.com), known by its path
 # (a pod's region is optional: "jpmc.fa.oraclecloud.com" as well as "eeho.fa.us2.oraclecloud.com", the review of Oct 15)
 _ORACLE_HOST = re.compile(r"(^|\.)fa(\.[a-z0-9-]+)?\.oraclecloud\.com$")
-_ORACLE_PATH = re.compile(r"^(?:/hcmui/candidateexperience)?/[a-z]{2}(?:-[a-z]{2})?/sites/[\w-]+/(?:job|requisitions/preview)/\d+")
+_ORACLE_PATH = re.compile(r"^(?:/hcmui/candidateexperience)?/[a-z]{2}(?:-[a-z]{2})?/sites/[\w-]+/(?:job|"
+                          r"requisitions/preview)/\d+")
 # Employers whose career site runs a job system on their own address (companies.yaml)
 COMPANY_HOSTS = {
     "careers.lamresearch.com": "eightfold", "jobs.infineon.com": "eightfold", "careers.micron.com": "eightfold",
@@ -205,7 +206,8 @@ def smartrecruiters_parts(url: str) -> dict[str, str] | None:
 
 
 def oracle_parts(url: str) -> dict[str, str] | None:
-    m = re.search(r"https?://([^/]+)(?:/hcmUI/CandidateExperience)?/[\w-]+/sites/([\w-]+)/(?:requisitions/preview|job)/(\d+)",
+    m = re.search(r"https?://([^/]+)(?:/hcmUI/CandidateExperience)?/[\w-]+/sites/([\w-]+)/(?:requisitions/preview|"
+                  r"job)/(\d+)",
                   url, re.I)
     if m:
         return {"host": m.group(1), "site": m.group(2), "job_id": m.group(3)}

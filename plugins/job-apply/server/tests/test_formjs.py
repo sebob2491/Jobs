@@ -49,8 +49,9 @@ def test_a_gigya_choice_is_required_by_its_data_required_and_marked_while_its_ma
     marked aria-invalid. The group is required, and marked while nothing's chosen; a mark left on one radio after
     another was picked isn't the group's (the review of 0.3.149)."""
     radios = ('<div role="group" aria-labelledby="v"><span id="v">Make my profile visible to:</span>'
-              '<input type="radio" name="vis" id="a" data-required="true" aria-invalid="true"{a}><label for="a">Anyone</label>'
-              '<input type="radio" name="vis" id="b" data-required="true"{b}><label for="b">Only recruiters</label></div>')
+              '<input type="radio" name="vis" id="a" data-required="true" aria-invalid="true"{a}>'
+              '<label for="a">Anyone</label><input type="radio" name="vis" id="b" data-required="true"{b}>'
+              '<label for="b">Only recruiters</label></div>')
     got = fields_of(srv, tmp_path, radios.format(a="", b=""))
     assert [(f["kind"], f["required"], f.get("invalid")) for f in got] == [("radio_group", True, True)], got
     got = fields_of(srv, tmp_path, radios.format(a="", b=" checked"))
@@ -65,8 +66,8 @@ def test_workdays_whole_step_loading_page_is_busy_while_on_show(srv, tmp_path):
     page = tmp_path / "form.html"
     for style, busy in (("", True), (' style="display: none"', False)):
         page.write_text('<!doctype html><html><body><h2>Create Account/Sign In</h2><div data-automation-id='
-                        f'"applyFlowLoadingPage"{style}><div style="height: 40px; width: 300px; background: #eee"></div>'
-                        '</div></body></html>', encoding="utf-8")
+                        f'"applyFlowLoadingPage"{style}><div style="height: 40px; width: 300px; background: #eee">'
+                        '</div></div></body></html>', encoding="utf-8")
         run(srv.browser.goto(page.resolve().as_uri()))
         assert bool(run(srv.browser.inspect(include_dropdown_options=False)).get("busy")) is busy, style
 
@@ -78,8 +79,8 @@ def test_workdays_step_body_with_only_its_loading_dots_is_busy(srv, tmp_path):
     same outside Workday's apply flow; and never a real step drawn (Onto's and Intel's, captured live)."""
     dot = '<div style="width: 8px; height: 8px; background: #ccd"></div>'
     dots = f'<div style="display: flex; gap: 6px">{dot * 3}</div>'
-    flow = ('<div data-automation-id="applyFlowPage"><main><div><ol data-automation-id="progressBar"><li>current step 1 '
-            'of 6 Create Account/Sign In</li></ol></div><div{style}>{body}</div></main></div>')
+    flow = ('<div data-automation-id="applyFlowPage"><main><div><ol data-automation-id="progressBar">'
+            '<li>current step 1 of 6 Create Account/Sign In</li></ol></div><div{style}>{body}</div></main></div>')
     page = tmp_path / "form.html"
     for html, busy in ((flow.format(style="", body=dots), True),
                        (flow.format(style="", body=dots + '<p>Sign in to apply</p>'), False),
@@ -111,12 +112,12 @@ def test_a_hidden_file_box_is_named_by_its_own_upload_button(srv, tmp_path):
     assert [(f["kind"], f["label"]) for f in got] == [("file", "Upload Resume/CV"), ("file", "Cover Letter")]
     # only the upload button right after its own hidden box, and only one that says what it takes
     got = fields_of(srv, tmp_path, '<div><h4>Documents</h4><input type="file" aria-label="Upload" hidden>'
-                                   '<button type="button">Upload Resume</button><input type="file" aria-label="Upload" hidden>'
-                                   '<button type="button">Upload Cover Letter</button></div>'
+                                   '<button type="button">Upload Resume</button><input type="file" aria-label="Upload" '
+                                   'hidden><button type="button">Upload Cover Letter</button></div>'
                                    '<h4>Transcript</h4><div><input type="file" aria-label="Attach" hidden>'
-                                   '<button type="button">Clear selection</button><button type="button">Attach</button></div>'
-                                   '<form><h3>Portfolio</h3><label for="r">Attach</label><input type="file" id="r">'
-                                   '<button type="submit">Submit application</button></form>')
+                                   '<button type="button">Clear selection</button><button type="button">Attach</button>'
+                                   '</div><form><h3>Portfolio</h3><label for="r">Attach</label>'
+                                   '<input type="file" id="r"><button type="submit">Submit application</button></form>')
     assert [f["label"] for f in got] == ["Upload Resume", "Upload Cover Letter", "Transcript", "Portfolio"]
 
 
@@ -135,7 +136,8 @@ def test_a_loading_indicator_on_show_is_said(srv, tmp_path):
     assert busy('<div aria-busy="true" style="height: 20px">Loading</div>')
     assert busy('<div role="progressbar" aria-label="Loading" style="height: 20px"></div>')
     assert not busy(dots.replace('style="', 'style="display: none; '))
-    assert not busy('<div role="progressbar" aria-valuenow="3" aria-valuemax="6" style="height: 20px">step 3 of 6</div>')
+    assert not busy('<div role="progressbar" aria-valuenow="3" aria-valuemax="6" '
+                    'style="height: 20px">step 3 of 6</div>')
     assert not busy('<label for="a">First Name</label><input id="a"><button>Next</button>')
 
 
@@ -144,21 +146,22 @@ def test_a_sign_ups_boxes_are_marked_aside_but_not_an_applications_own(srv, tmp_
     its consent, a choice of interests) is marked aside, as its Submit is; a short form whose
     own button goes on with the application isn't, whatever its words say of job alerts."""
     got = fields_of(srv, tmp_path, '<form id="tc"><h3>Join our Talent Community</h3><label for="e">Email</label>'
-                                   '<input id="e" type="email"><label><input type="checkbox" id="ok"> I agree to join the '
-                                   'Talent Community</label><button type="submit">Submit</button></form>'
-                                   '<footer><p>Get job alerts</p><label><input type="radio" name="i" value="a"> Engineering'
-                                   '</label><label><input type="radio" name="i" value="b"> Operations</label></footer>'
-                                   '<form><p>Enter your email to start your application. We will also send you job alerts.</p>'
-                                   '<label for="s">Email to start application</label><input id="s" type="email">'
-                                   '<button type="submit">Apply</button></form>')
+                                   '<input id="e" type="email"><label><input type="checkbox" id="ok"> I agree to join '
+                                   'the Talent Community</label><button type="submit">Submit</button></form>'
+                                   '<footer><p>Get job alerts</p><label><input type="radio" name="i" value="a"> '
+                                   'Engineering</label><label><input type="radio" name="i" value="b"> '
+                                   'Operations</label></footer><form><p>Enter your email to start your application. We '
+                                   'will also send you job alerts.</p><label for="s">Email to start application</label>'
+                                   '<input id="s" type="email"><button type="submit">Apply</button></form>')
     assert [(f["label"], bool(f.get("aside"))) for f in got] == [  # (ticks and choices after the boxes)
         ("Email", True), ("Email to start application", False), ("I agree to join the Talent Community", True),
         ("Get job alerts", True)]
 
 
 def test_blocks_with_their_headings_beside_them(srv, tmp_path):
-    got = fields_of(srv, tmp_path, '<div><h3>Work Experience 1</h3><div><label for="t1">Job Title</label><input id="t1"></div>'
-                                   '<h3>Work Experience 2</h3><div><label for="t2">Job Title</label><input id="t2"></div></div>')
+    got = fields_of(srv, tmp_path, '<div><h3>Work Experience 1</h3><div><label for="t1">Job Title</label>'
+                                   '<input id="t1"></div><h3>Work Experience 2</h3><div><label for="t2">Job '
+                                   'Title</label><input id="t2"></div></div>')
     assert [f.get("section") for f in got] == ["Work Experience 1", "Work Experience 2"]
 
 
@@ -262,9 +265,9 @@ def test_a_resume_the_page_shows_as_uploaded_is_the_boxs_value(srv, tmp_path):
     assert resume(page_of(srv, "site/ai-notice-form.html"))["value"] == ""  # nothing up yet
     assert resume(page_of(srv, "site/ai-notice-form.html", "?uploaded=1"))["value"] == "resume.pdf"
     # without the file's name: its Replace, or the page saying the upload is done
-    got = fields_of(srv, tmp_path, '<fieldset><legend>Resume</legend><div role="status">File upload completed successfully'
-                                   '</div><div><input type="file"><button type="button">Replace</button></div></fieldset>'
-                                   '<label for="fn">First name</label><input id="fn">')
+    got = fields_of(srv, tmp_path, '<fieldset><legend>Resume</legend><div role="status">File upload completed '
+                                   'successfully</div><div><input type="file"><button type="button">Replace</button>'
+                                   '</div></fieldset><label for="fn">First name</label><input id="fn">')
     assert next(f for f in got if f["kind"] == "file")["value"] == "uploaded"
 
 
@@ -273,7 +276,8 @@ def test_a_dialog_open_over_the_page_is_read_with_its_buttons(srv):
     the desk sees it, its heading and all its buttons. A cookie banner is said to be one, and a
     dialog that is the form itself (a sign-in pop-up) or one that's closed isn't a dialog over it."""
     dialogs = page_of(srv, "site/ai-notice-form.html", "?notice=1")["dialogs"]
-    assert [d["heading"] for d in dialogs] == ["Notice Related to Example Corp's Use of the Eightfold AI Recruiting Software"]
+    assert ([d["heading"] for d in dialogs]
+            == ["Notice Related to Example Corp's Use of the Eightfold AI Recruiting Software"])
     assert [b["text"] for b in dialogs[0]["buttons"]] == ["Close", "Cancel", "I Agree"] and not dialogs[0].get("cookie")
     assert "artificial intelligence" in dialogs[0]["text"]
     assert page_of(srv, "site/ai-notice-form.html")["dialogs"] == []
@@ -287,10 +291,12 @@ def test_what_isnt_a_dialog_over_the_form(srv, tmp_path):
     country list), a side panel slid off the window, or a chat widget in a frame of its own."""
     over = 'role="dialog" aria-modal="true" style="position: fixed; inset: 0; background: #fff"'
     form = '<label for="fn">First name</label><input id="fn">'
-    chat = ('<iframe style="width: 300px; height: 150px" srcdoc="<div role=&quot;dialog&quot; aria-modal=&quot;true&quot; '
-            'style=&quot;position: fixed; inset: 0&quot;><p>Hi! Any questions?</p><button>Chat</button></div>"></iframe>')
+    chat = ('<iframe style="width: 300px; height: 150px" srcdoc="<div role=&quot;dialog&quot; '
+            'aria-modal=&quot;true&quot; style=&quot;position: fixed; inset: 0&quot;><p>Hi! Any questions?</p>'
+            '<button>Chat</button></div>"></iframe>')
     for body in (f"<div {over}><p>Loading your application</p></div>",
-                 f'<div {over}><button>Previous month</button><table role="grid"><tr><td role="gridcell">1</td></tr></table></div>',
+                 f'<div {over}><button>Previous month</button><table role="grid"><tr>'
+                 '<td role="gridcell">1</td></tr></table></div>',
                  f'<div {over}><ul role="listbox"><li role="option">Canada</li></ul><button>Close</button></div>',
                  '<div role="dialog" aria-modal="true" style="position: fixed; top: 0; left: 100%; width: 400px; '
                  'height: 100%"><p>Job cart</p><button>Close</button></div>',
@@ -299,10 +305,11 @@ def test_what_isnt_a_dialog_over_the_form(srv, tmp_path):
         page.write_text(f"<!doctype html><html><body>{form}{body}</body></html>", encoding="utf-8")
         run(srv.browser.goto(page.resolve().as_uri()))
         assert run(srv.browser.inspect(include_dropdown_options=False))["dialogs"] == [], body
-    page.write_text(f'<!doctype html><html><body>{form}<div {over} aria-label="Before you apply"><p>Read this first.</p>'
-                    '<button>OK</button></div></body></html>', encoding="utf-8")
+    page.write_text(f'<!doctype html><html><body>{form}<div {over} aria-label="Before you apply">'
+                    '<p>Read this first.</p><button>OK</button></div></body></html>', encoding="utf-8")
     run(srv.browser.goto(page.resolve().as_uri()))
-    assert [d["heading"] for d in run(srv.browser.inspect(include_dropdown_options=False))["dialogs"]] == ["Before you apply"]
+    assert ([d["heading"] for d in run(srv.browser.inspect(include_dropdown_options=False))["dialogs"]]
+            == ["Before you apply"])
 
 
 def test_a_jquery_ui_selectmenu_is_read_as_its_hidden_select(srv, tmp_path):
@@ -389,7 +396,8 @@ def test_a_brassring_search_box_for_several_choices_is_read_ticked_once_and_read
 @pytest.mark.parametrize("query, given, ticked", [
     ("?reversed", ["Asian"], ["Asian"]),  # never its first page's near neighbour ("South Asian")
     ("?options", ["White"], ["White"]),  # past its first page though the select lists it: searched for
-    ("?hidden", ["Asian", "Asian", "Asian"], ["Asian"]),  # a row's words besides its pill's: given again, never unticked
+    # a row's words besides its pill's: given again, never unticked
+    ("?hidden", ["Asian", "Asian", "Asian"], ["Asian"]),
     ("?reversed&hidden", ["Asian", "Asian"], ["Asian"]),  # both: the narrowed list's nearest, not the first page's
 ])
 def test_a_brassring_search_box_ticks_the_answer_itself_once(srv, query, given, ticked):
@@ -410,8 +418,8 @@ def test_a_security_answer_put_in_is_never_read_back_nor_saved(srv, tmp_path):
     """An account's security answer from the desk's card (the review of the card): its box is marked before it's filled,
     so it reads back "(set)", as a password, even where the box held it already ("already set"), shows as dots, and
     a saved page (a stop's, a problem report's) holds neither it nor a picture of it."""
-    fields = fields_of(srv, tmp_path, '<label for="a">Question 1 Answer</label><input id="a" value="Flagstaff Ridge 1987">'
-                                      '<label for="b">Nickname</label><input id="b">')
+    fields = fields_of(srv, tmp_path, '<label for="a">Question 1 Answer</label><input id="a" value="Flagstaff Ridge '
+                                      '1987"><label for="b">Nickname</label><input id="b">')
     ids = {f["label"]: f["id"] for f in fields}
     done = run(srv.browser.fill([{"id": ids["Question 1 Answer"], "value": "Flagstaff Ridge 1987", "secret": True},
                                  {"id": ids["Nickname"], "value": "Sam"}]))
@@ -431,8 +439,8 @@ def test_a_security_box_reads_as_answered_only_with_its_answer_seen_going_in(srv
     person's, it read "(set)" and the account was pressed. A list or menu on its placeholder reads empty, and anything
     in a box the desk marked but didn't see its answer go in reads "(unconfirmed)", never its value; so does a list
     put back on another choice since (the third review: a placeholder "-- Please choose --" the pattern misses)."""
-    fields = fields_of(srv, tmp_path, '<label for="q">Question 1</label><select id="q"><option value="-1">Select question'
-                                      '</option><option value="0">In what city were you born?</option></select>'
+    fields = fields_of(srv, tmp_path, '<label for="q">Question 1</label><select id="q"><option value="-1">Select '
+                                      'question</option><option value="0">In what city were you born?</option></select>'
                                       '<label for="m">Question 2</label><button type="button" id="m" '
                                       'aria-haspopup="listbox">Select question</button>'
                                       '<label for="a">Question 1 Answer</label><input id="a" value="Flagstaff">'
@@ -464,7 +472,8 @@ def test_a_button_marked_aria_live_is_never_read_as_the_pages_error(srv, tmp_pat
                     '<a href="#" aria-live="assertive">Save and finish later</a></div>'
                     '<div role="alert">Your session will expire in 5 minutes</div></body></html>', encoding="utf-8")
     run(srv.browser.goto(page.resolve().as_uri()))
-    assert run(srv.browser.inspect(include_dropdown_options=False))["errors"] == ["Your session will expire in 5 minutes"]
+    assert (run(srv.browser.inspect(include_dropdown_options=False))["errors"]
+            == ["Your session will expire in 5 minutes"])
 
 
 def test_a_job_alert_sign_up_with_three_boxes_is_beside_the_application(srv, tmp_path):
@@ -476,7 +485,8 @@ def test_a_job_alert_sign_up_with_three_boxes_is_beside_the_application(srv, tmp
     run(srv.browser.goto(fixture_url("site/careers-search-job-alert.html")))
     page = run(srv.browser.inspect(include_dropdown_options=False))
     aside = {f["label"].rstrip("*"): bool(f.get("aside")) for f in page["fields"]}
-    assert set(aside) >= {"Email Address", "Job Category", "Location", "Remote", "Job Type"} and all(aside.values()), aside
+    assert (set(aside) >= {"Email Address", "Job Category", "Location", "Remote", "Job Type"}
+            and all(aside.values())), aside
     assert [bool(a.get("aside")) for a in page["actions"] if a["text"].strip() == "Submit"] == [True], page["actions"]
 
 
@@ -501,18 +511,20 @@ _APPLICATION = ('<label for="fn">First name*</label><input id="fn" required><lab
     'required><label for="ph">Phone</label><input id="ph" type="tel" required><button type="submit">Submit</button>'
     '</main></form>',
     # (the second review's) an evergreen posting for a talent pool, its title the form's heading
-    '<form><h2>Manufacturing Technician - Talent Pool</h2>' + _APPLICATION + '<button type="submit">Submit</button></form>',
+    '<form><h2>Manufacturing Technician - Talent Pool</h2>' + _APPLICATION
+    + '<button type="submit">Submit</button></form>',
     # a way on read by its words, not its value alone ("Submit Application", value "Submit"), and Taleo's input buttons
     '<form><h2>Job Alerts and Communication Preferences</h2><p>Would you like texts?</p><label><input type="radio" '
-    'name="sms" value="y" required> Yes</label><label><input type="radio" name="sms" value="n"> No</label><label><input '
-    'type="checkbox" name="certify" required> I certify</label><label for="sig">Electronic signature</label><input '
-    'id="sig" required><button type="submit" name="act" value="Submit">Submit Application</button></form>',
+    'name="sms" value="y" required> Yes</label><label><input type="radio" name="sms" value="n"> No</label><label>'
+    '<input type="checkbox" name="certify" required> I certify</label><label for="sig">Electronic signature</label>'
+    '<input id="sig" required><button type="submit" name="act" value="Submit">Submit Application</button></form>',
     '<form><h2>Newsletter</h2>' + _APPLICATION + '<input type="button" value="Save and Continue"></form>',
     '<form><h2>Get Job Alerts</h2><label for="ph">Mobile phone</label><input id="ph" type="tel"><a class="btn" '
     'href="javascript:void(0)">Next</a></form>',
     # and a sign-up's heading far above the application's boxes in a form around the page
     '<form id="aspnetForm"><div class="top"><h3>Get Job Alerts</h3><a href="/alerts">Sign up</a></div><div><div>'
-    'Technician</div><p>' + 'We are hiring. ' * 30 + '</p>' + _APPLICATION + '<button type="submit">Submit</button></div></form>',
+    'Technician</div><p>' + 'We are hiring. ' * 30 + '</p>' + _APPLICATION
+    + '<button type="submit">Submit</button></div></form>',
 ], ids=["last step", "whole page", "similar jobs", "talent pool", "button value", "input button", "link", "far above"])
 def test_a_form_whose_heading_isnt_its_own_or_that_applies_isnt_a_job_alert_sign_up(srv, tmp_path, body):
     """The reviews of 0.3.164: the job alert rule reads a form's own heading, the nearest one shown before its boxes and
@@ -533,12 +545,12 @@ def test_a_groups_question_written_inside_it_as_a_paragraph_is_its_label(srv, tm
     """The review of Oct 15: a radio group whose question is written inside its fieldset as a plain paragraph (no
     legend) read as label "", so nothing could answer it. Its first words before the first choice are its question; a
     choice's own label never is, and a legend still comes first."""
-    got = fields_of(srv, tmp_path, '<fieldset><input type="radio" name="x0" value="a" id="x0a"><label for="x0a">A</label>'
-                                   '<input type="radio" name="x0" value="b" id="x0b"><label for="x0b">B</label></fieldset>'
-                                   '<fieldset><p>Are you at least 18 years of age?</p>'
-                                   '<div><input type="radio" name="q1" value="yes" id="q1y"><label for="q1y">Yes</label>'
-                                   '<input type="radio" name="q1" value="no" id="q1n"><label for="q1n">No</label></div>'
-                                   '</fieldset>'
+    got = fields_of(srv, tmp_path, '<fieldset><input type="radio" name="x0" value="a" id="x0a">'
+                                   '<label for="x0a">A</label><input type="radio" name="x0" value="b" id="x0b"><label '
+                                   'for="x0b">B</label></fieldset><fieldset><p>Are you at least 18 years of age?</p>'
+                                   '<div><input type="radio" name="q1" value="yes" id="q1y">'
+                                   '<label for="q1y">Yes</label><input type="radio" name="q1" value="no" id="q1n">'
+                                   '<label for="q1n">No</label></div></fieldset>'
                                    '<fieldset><label for="q2y">Yes</label><input type="radio" name="q2" id="q2y">'
                                    '<label for="q2n">No</label><input type="radio" name="q2" id="q2n"></fieldset>'
                                    '<fieldset><legend>Do you need sponsorship?</legend><p>Choose one.</p>'
@@ -559,14 +571,16 @@ def test_a_box_in_a_wrapper_folded_shut_isnt_read_as_shown(srv, tmp_path):
     assert [f["label"] for f in got] == ["Open Box", "Plain Box"]
     # (the review of 0.3.188: a fixed dialog, a modal dialog and a box placed against a wrapper outside the folded one
     # are drawn wherever the folded wrapper is: read)
-    got = fields_of(srv, tmp_path, '<div style="overflow: hidden"><div role="dialog" aria-modal="true" style="position: '
-                                   'fixed; inset: 10%; background: #fff"><label for="fn">Fixed Box</label><input id="fn">'
-                                   '</div></div>'
+    got = fields_of(srv, tmp_path, '<div style="overflow: hidden"><div role="dialog" aria-modal="true" '
+                                   'style="position: fixed; inset: 10%; background: #fff">'
+                                   '<label for="fn">Fixed Box</label><input id="fn"></div></div>'
                                    '<div style="overflow: hidden"><dialog id="d"><label for="u">Modal Box</label>'
-                                   '<input id="u"></dialog></div><script>document.getElementById("d").showModal()</script>')
+                                   '<input id="u"></dialog></div><script>document.getElementById("d").showModal()</scri'
+                                   'pt>')
     assert [f["label"] for f in got] == ["Fixed Box", "Modal Box"], got
-    got = fields_of(srv, tmp_path, '<div style="position: relative"><div style="overflow: hidden"><div style="position: '
-                                   'absolute; top: 40px"><label for="a">Placed Box</label><input id="a"></div></div></div>')
+    got = fields_of(srv, tmp_path, '<div style="position: relative"><div style="overflow: hidden">'
+                                   '<div style="position: absolute; top: 40px"><label for="a">Placed Box</label>'
+                                   '<input id="a"></div></div></div>')
     assert [f["label"] for f in got] == ["Placed Box"], got
 
 
@@ -595,8 +609,8 @@ def test_an_id_a_page_set_itself_is_never_made_into_a_selector(srv, tmp_path):
     # (a group's id too: the review of 0.3.188)
     got = fields_of(srv, tmp_path, '<fieldset data-ja-gid=\'x"], [id="b\'><legend>Pick one</legend>'
                                    '<input type="radio" name="r" id="r1" data-ja-gid-member=\'x"], [id="b\'>'
-                                   '<label for="r1">A</label><input type="radio" name="r" id="r2"><label for="r2">B</label>'
-                                   '</fieldset><input id="b">')
+                                   '<label for="r1">A</label><input type="radio" name="r" id="r2">'
+                                   '<label for="r2">B</label></fieldset><input id="b">')
     assert all('"' not in f["id"] and "]" not in f["id"] for f in got), got
     assert _by_ja_id("f2-abc17.0") == '[data-ja-id="f2-abc17.0"]'
     for bad in ('x"], [id="b', "a b", ""):
@@ -618,10 +632,10 @@ def test_each_question_in_one_fieldset_is_its_own_and_a_hint_inside_a_group_isnt
                                    '<span class="hint">Select one</span><input type="radio" name="dl" id="d1">'
                                    '<label for="d1">Yes</label><input type="radio" name="dl" id="d2"><label for="d2">No'
                                    '</label></fieldset></div>'
-                                   '<p>Are you legally authorized to work in the United States?</p><div role="radiogroup">'
-                                   '<div style="display:none">This field is required</div><input type="radio" name="w" '
-                                   'id="w1"><label for="w1">Yes</label><input type="radio" name="w" id="w2"><label '
-                                   'for="w2">No</label></div>')
+                                   '<p>Are you legally authorized to work in the United States?</p>'
+                                   '<div role="radiogroup"><div style="display:none">This field is required</div>'
+                                   '<input type="radio" name="w" id="w1"><label for="w1">Yes</label>'
+                                   '<input type="radio" name="w" id="w2"><label for="w2">No</label></div>')
     assert [f["label"] for f in got if f["kind"] == "radio_group"] == [
         "Are you at least 18 years of age?", "Will you now or in the future require visa sponsorship?",
         "Do you have a valid driver's license?", "Are you legally authorized to work in the United States?"]

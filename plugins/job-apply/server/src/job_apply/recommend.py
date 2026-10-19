@@ -54,7 +54,8 @@ _METROS = [
     {"reno", "sparks", "carson city"},
 ]
 _CITY_STATE = re.compile(r"^\s*([a-z][a-z .'-]*?)\s*[,-]\s*([a-z]{2})\b")
-_COUNTRY_STATE_CITY = re.compile(r"^\s*(?:us|usa)\s*-\s*([a-z]{2})\s*-\s*([a-z][a-z .'-]*?)\s*$")  # iCIMS's US-AZ-Bagdad
+# iCIMS's US-AZ-Bagdad
+_COUNTRY_STATE_CITY = re.compile(r"^\s*(?:us|usa)\s*-\s*([a-z]{2})\s*-\s*([a-z][a-z .'-]*?)\s*$")
 _STATE_CODES = {code.lower() for code in US_STATES}
 
 
@@ -101,7 +102,8 @@ def _near_target(title: str, targets: list[str]) -> bool:
     return any(stems(t) & mine for t in targets)
 
 
-_TITLE_LEVEL = re.compile(r"\b(?:engineer|technician|tech|specialist|fse|representative|analyst|level)\s+(i{1,3}|iv|v|[1-5])\b")
+_TITLE_LEVEL = re.compile(r"\b(?:engineer|technician|tech|specialist|fse|representative|analyst|"
+                          r"level)\s+(i{1,3}|iv|v|[1-5])\b")
 _ROMAN = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5}
 _MONTHS = {m: i for i, m in enumerate(
     ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
@@ -109,11 +111,13 @@ _MONTHS = {m: i for i, m in enumerate(
 # Posting text
 _DEGREES = [  # lowest first, so "Associate's or Bachelor's" counts as an Associate's
     ("high_school", r"high school|\bged\b"),
-    ("associate", r"associate'?s?\s+(?:degree|of)|associate's|associates? or (?:a )?bachelor|\ba\.?a\.?s\.?\b|\ba\.s\.|(?:2|two)[- ]year (?:technical )?(?:degree|program)|"
+    ("associate", r"associate'?s?\s+(?:degree|of)|associate's|associates? or (?:a )?bachelor|\ba\.?a\.?s\.?\b|"
+                  r"\ba\.s\.|(?:2|two)[- ]year (?:technical )?(?:degree|program)|"
                   r"technical degree|(?:technical|trade|vocational) school"),
-    ("bachelor", r"bachelor|\bb\.?s\.?(?:e\.?e\.?|m\.?e\.?|c\.?)?\b|\bb\.?a\.?\b|(?:4|four)[- ]year degree|undergraduate degree|"
-                 r"(?:^|\b(?:a|an|or)\s+)degree in (?:electrical|electronic|mechanical|engineering|computer|physics|chemi|"
-                 r"science|math|a related|related|a technical|technical)"),
+    ("bachelor", r"bachelor|\bb\.?s\.?(?:e\.?e\.?|m\.?e\.?|c\.?)?\b|"
+                 r"\bb\.?a\.?\b|(?:4|four)[- ]year degree|undergraduate degree|"
+                 r"(?:^|\b(?:a|an|or)\s+)degree in (?:electrical|electronic|mechanical|engineering|computer|physics|"
+                 r"chemi|science|math|a related|related|a technical|technical)"),
     ("master", r"master'?s|\bm\.?s\.?(?:c\.?)?\b(?!\s*(?:office|word|excel|project))|\bmba\b"),
     ("doctorate", r"\bph\.?\s?d\b|doctorate"),
 ]
@@ -121,16 +125,16 @@ _EQUIVALENT = re.compile(r"or equivalent|equivalent (?:combination|experience|wo
                          r"substitut\w* for (?:a |an |the )?(?:\w+ )?degree|(?:may|can) be substituted|"
                          r"or (?:relevant|related|equivalent) (?:work )?experience|"
                          # (a word "or", not "for": "licensed for 2 years" is no way around a degree)
-                         r"\bor (?:at least |a minimum of )?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\+? years|"
-                         r"(?:ged|high school)[^.\n]{0,40}(?:plus|and|with) \d|"
+                         r"\bor (?:at least |a minimum of )?(?:\d+|one|two|three|four|five|six|seven|eight|nine|"
+                         r"ten)\+? years|(?:ged|high school)[^.\n]{0,40}(?:plus|and|with) \d|"
                          # a list of ways in: "an associate degree, military technical training, field service
                          # experience, or trade certification" (an item of the list, so a comma after it); not
                          # "a bachelor's degree, with hands-on experience troubleshooting ... or ..."
                          r",\s+(?!with\b|and\b|including\b)(?:[a-z-]+\s+){0,2}(?:training|certification|experience)\s*,"
                          r"[^.]*\bor\b|"
                          # "associate degree or technical certification"; not "and Six Sigma or Lean certification"
-                         r"\bor\s+(?:an?\s+)?(?:equivalent|technical|trade|vocational|military|relevant|industry|professional)"
-                         r"\s+(?:\w+\s+)?(?:training|certification|certificate)\b")
+                         r"\bor\s+(?:an?\s+)?(?:equivalent|technical|trade|vocational|military|relevant|industry|"
+                         r"professional)\s+(?:\w+\s+)?(?:training|certification|certificate)\b")
 _PREFERRED = re.compile(r"\b(preferred|a plus|desired|desirable|nice to have|ideally|bonus)\b")
 # Headings start with these words or end with a colon ("Preferred Qualifications",
 # "Nice to have:"); "Bachelor's degree preferred" is a requirement line, not a heading.
@@ -147,7 +151,8 @@ _NO_DEGREE = re.compile(r"\b(degree|diploma)s?\b(?: is| are)? not (?:\w+ )?(?:re
                         r"\bno (?:\w+ )?(?:degree|diploma)s? (?:is |are )?(?:required|needed|necessary)\b|"
                         r"\b(?:does|do) not require (?:an? |any )?(?:[\w']+ ){0,2}(?:degree|diploma)")
 _CLAUSES = re.compile(r"\s*[;,()]\s*|\s+(?:but|while|whereas)\s+")
-_CLEARANCE = re.compile(r"(?:active|current|secret|top secret|ts/sci|security|dod)\s+clearance|clearance (?:is )?required")
+_CLEARANCE = re.compile(r"(?:active|current|secret|top secret|ts/sci|security|"
+                        r"dod)\s+clearance|clearance (?:is )?required")
 _NO_CLEARANCE = re.compile(r"\bno (?:\w+ )?clearance|clearance (?:is )?not required|"
                            # a labelled line that says none ("Security Clearance Level: None", "Clearance: N/A")
                            r"clearance[\w ]{0,40}\??:\s*(?:none|n/?a|no|not required)\b|"
@@ -178,8 +183,8 @@ _WONT = (r"(?:will\s+not|won't|do\s+not|don't|does\s+not|doesn't|cannot|can\s*no
          r"aren't|unable\s+to|not\s+able\s+to|not\s+in\s+a\s+position\s+to|never)")
 _NOW = r"(?:(?:currently|presently|be|able\s+to|at\s+this\s+time|now)\s+)*"
 _OTHER_THINGS = r"(?:[\w-]+\s+(?:or|and)\s+)?"  # ("relocation or visa sponsorship")
-_WHO_NEEDS = (r"(?:candidates|applicants|individuals|anyone|those)\s+(?:who|that)\s+(?:will\s+)?(?:now\s+or\s+in\s+the\s+"
-              rf"future\s+)?(?:require|need)\s+(?:any\s+)?{_SPONSOR_NOUN}")
+_WHO_NEEDS = (r"(?:candidates|applicants|individuals|anyone|those)\s+(?:who|"
+              rf"that)\s+(?:will\s+)?(?:now\s+or\s+in\s+the\s+future\s+)?(?:require|need)\s+(?:any\s+)?{_SPONSOR_NOUN}")
 _NO_SPONSORSHIP = re.compile(
     rf"\b{_WONT}\s+{_NOW}sponsor(?:ing)?\b(?!ship)|"
     rf"\bnot\s+(?:currently\s+)?sponsoring\b|"
@@ -277,7 +282,8 @@ def no_sponsorship_said(text: str) -> bool:
 _DRIVERS = re.compile(r"\b(?:driver'?s?|driving) licen[cs]e|\bcdl\b")
 # the license's own "not required", not another requirement's in the same sentence
 _NO_DRIVERS = re.compile(r"(?:licen[cs]e|\bcdl)(?: is| are)? not (?:\w+ )?(?:required|needed|necessary)\b|"
-                         r"\bno (?:\w+ )?(?:driver|cdl)|\b(?:do|does) not (?:need|require) (?:a |an )?(?:valid )?(?:driver|cdl)")
+                         r"\bno (?:\w+ )?(?:driver|cdl)|"
+                         r"\b(?:do|does) not (?:need|require) (?:a |an )?(?:valid )?(?:driver|cdl)")
 
 
 START = 50  # where every opening's score starts, before what's added for it and taken off
@@ -541,7 +547,8 @@ def requirements(text: str) -> dict[str, Any]:
         # degree is not required" still asks the Bachelor's, the review of 0.3.187)
         asked = " ".join(c for c in _CLAUSES.split(sentence) if not _NO_DEGREE.search(c))
         levels = [_LEVEL[key] for key, pattern in _DEGREES if re.search(pattern, asked)]
-        if levels and re.search(r"degree|diploma|\bged\b|\bbs\b|\bb\.s|\ba\.a?\.?s\.|bachelor|master|associate|ph\.?d", asked):
+        if (levels and re.search(r"degree|diploma|\bged\b|\bbs\b|\bb\.s|\ba\.a?\.?s\.|bachelor|master|associate|ph\.?d",
+                                 asked)):
             degree_levels.append(min(levels))
             following = sentences[i + 1] if i + 1 < len(sentences) else ""
             # the way around it may be the next sentence: "Equivalent combination of education and
@@ -572,7 +579,7 @@ def requirements(text: str) -> dict[str, Any]:
     return out
 
 
-# --------------------------------------------------------------------- the filter row's facts (the design of Oct 18, F5)
+# -------------------------------------------------------------------- the filter row's facts (the design of Oct 18, F5)
 # As for pay (pay.py): only a reading that is surely the job's may hide it. For a degree or a security clearance that
 # is a line the posting labels with the requirement and its strength, its value on the same line ("Education:
 # Bachelor's (Required)", "Required Education: Master's", "Clearance Type: Secret", "Security Clearance Level:
@@ -586,8 +593,9 @@ def requirements(text: str) -> dict[str, Any]:
 # assistant to the principal or the CEO; and a trainee is entry level whatever else the title says
 _RANK_SENIOR = re.compile(r"\b(?:senior(?!\s+(?:living|care|center|centre|services|citizens?|community|housing|"
                           r"residents?|life|day|companion))|sr|snr|staff(?=\s+(?:engineer|scientist|architect))|"
-                          r"principal(?!\s+s\b)|lead(?!\s+(?:generation|abatement|free|based|paint|safe|safety|poisoning))|"
-                          r"manager|mgr|director|dir|head(?!\s+start)|vp|vice president|chief|supervisor|supervising)\b")
+                          r"principal(?!\s+s\b)|lead(?!\s+(?:generation|abatement|free|based|paint|safe|safety|"
+                          r"poisoning))|manager|mgr|director|dir|head(?!\s+start)|vp|vice president|"
+                          r"chief|supervisor|supervising)\b")
 _BOSS = (r"(?:(?:senior|executive|associate|lead)\s+)?(?:principal|director|vp|vice president|ceo|cfo|coo|cto|cio|"
          r"president|chief\s+\w+|manager|dean|superintendent|pastor|rabbi|head|executive director)(?:\s+of\s+\w+)?")
 _TO_THE = re.compile(rf"\bto\s+(?:the\s+)?{_BOSS}(?:\s+(?:and|&)\s+(?:the\s+)?{_BOSS})*\b")
@@ -638,7 +646,8 @@ _CLEARANCE_LABEL = re.compile(r"(?i)^(?:required\s+(?:security\s+)?clearance|(?:
 # a hedge, a preference or a way around it: never sure
 _HEDGE = re.compile(r"(?i)\b(?:may|might|could|some|certain|depending|depends|future|eventually|tbd|to be determined|"
                     r"within\s+\d+\s+(?:years?|months?|days?)|after\s+hire|of\s+hire|not\s+required|not\s+mandatory|"
-                    r"preferred|preferably|preference|a plus|plus|desired|desirable|nice|ideal(?:ly)?|bonus|advantage\w*|"
+                    r"preferred|preferably|preference|a plus|plus|desired|desirable|nice|"
+                    r"ideal(?:ly)?|bonus|advantage\w*|"
                     r"beneficial|helpful|optional|asset|welcome|favou?rabl\w*|great|recommended|valued|considered|"
                     r"strongly)\b")
 _EQUIVALENT_WIDE = re.compile(r"(?i)\bor\b|\bequivalen\w*|\bin lieu\b|\bin place of\b|\bsubstitut\w*|\binstead\b|"
@@ -687,7 +696,8 @@ def _degree_level(value: str) -> int | None:
     out); None for none."""
     asked = " ".join(c for c in _CLAUSES.split(value) if not _NO_DEGREE.search(c))
     levels = [_LEVEL[key] for key, pattern in _DEGREES if re.search(pattern, asked)]
-    if levels and re.search(r"degree|diploma|\bged\b|\bbs\b|\bb\.s|\ba\.a?\.?s\.|bachelor|master|associate|ph\.?d", asked):
+    if (levels and re.search(r"degree|diploma|\bged\b|\bbs\b|\bb\.s|\ba\.a?\.?s\.|bachelor|master|associate|ph\.?d",
+                             asked)):
         return min(levels)
     return None
 
@@ -730,7 +740,8 @@ _SHIFT_PAY = re.compile(r"(?i)differential|premium|\bpay\b|\bpaid\b|bonus|\$")
 _ROTATING = re.compile(r"(?i)\brotat\w*\b")
 # a shift in the posting's sentences: "this is a night shift position", "day shift"
 _DAY_SHIFT = re.compile(r"(?i)\b(?:day|1st|first)[ -]shifts?\b")
-_OTHER_SHIFT = re.compile(r"(?i)\b(?:night|overnight|evening|swing|graveyard|2nd|3rd|second|third|rotating)[ -]shifts?\b")
+_OTHER_SHIFT = re.compile(r"(?i)\b(?:night|overnight|evening|swing|graveyard|2nd|3rd|"
+                          r"second|third|rotating)[ -]shifts?\b")
 
 
 def _shift_value(value: str) -> str:
@@ -786,7 +797,8 @@ _TRAVEL_SAID = re.compile(
 
 
 def _prepared(text: str) -> str:
-    """A posting's text as requirements() reads it: plain apostrophes and hyphens, without the application's questions."""
+    """A posting's text as requirements() reads it: plain apostrophes and hyphens, without the application's
+    questions."""
     text = re.sub(r"[‐-―]", "-", (text or "").replace("’", "'").replace("‘", "'"))
     return text.split(f"\n{QUESTIONS_HEADING}\n")[0]
 
@@ -864,11 +876,13 @@ def score_listing(listing: dict[str, Any], prof: Profile, description: str = "",
     elif _SENIOR.search(n):
         if years is None or years < 5:
             fit.add(-20, "senior-level role")
-            fit.concerns.append("senior-level role" + (f"; you have about {years:g} years" if years is not None else ""))
+            fit.concerns.append("senior-level role"
+                                + (f"; you have about {years:g} years" if years is not None else ""))
     elif level and level >= 3:
         if years is None or years < 4:
             fit.add(-10, f"level {level} role")
-            fit.concerns.append(f"level {level} role" + (f"; you have about {years:g} years" if years is not None else ""))
+            fit.concerns.append(f"level {level} role"
+                                + (f"; you have about {years:g} years" if years is not None else ""))
     elif _JUNIOR.search(n) or level == 1:
         if years is None or years < 3:
             fit.add(8, "entry-level role")
@@ -943,7 +957,8 @@ def _score_requirements(fit: Fit, req: dict[str, Any], prof: Profile, years: flo
             # way to a degree the applicant has ("a Bachelor's or 4 years")
             degree_instead = req["degree_or_equivalent"] and mine and req["degree"] and \
                 _LEVEL[mine] >= _LEVEL[req["degree"]]
-            fit.blocked = fit.blocked or (req["years"] >= years + 3 and req["years"] > years * 1.5 and not degree_instead)
+            fit.blocked = (fit.blocked
+                           or (req["years"] >= years + 3 and req["years"] > years * 1.5 and not degree_instead))
         else:
             fit.add(5, f"you have the {req['years']}+ years it asks for")
             fit.reasons.append(f"you have the {req['years']}+ years it asks for")
@@ -1017,7 +1032,8 @@ async def recommend(prof: Profile, search: Search, limit_per_company: int = 10, 
     """Search every employer for the profile's target titles and area, score each listing,
     then read the postings (the top `read_postings`, and every one that would be preselected)
     to check their requirements: each by its own address, else its page on the employer's own
-    site, else `fetch_hard` (the desk's browser, for postings that turn away plain requests). One that wasn't read, or turns out to be elsewhere, isn't
+    site, else `fetch_hard` (the desk's browser, for postings that turn away plain requests). One that wasn't read, or
+    turns out to be elsewhere, isn't
     preselected: its requirements (a degree, a clearance) are unchecked."""
     query, location = target_query(prof), target_location(prof)
     found = await search(query, location, limit_per_company)

@@ -108,7 +108,8 @@ def test_each_case_parses_as_claude_plugin_eval_reads_it(case):
     for name, (g, body) in found.items():
         kind = g.get("type")
         assert kind in GRADER_KEYS, f"{name}: type {kind!r}"
-        assert set(g) - {"type"} <= GRADER_KEYS[kind], f"{name}: keys the CLI refuses: {set(g) - {'type'} - GRADER_KEYS[kind]}"
+        assert set(g) - {"type"} <= GRADER_KEYS[kind], (f"{name}: keys the CLI refuses: "
+                                                        f"{set(g) - {'type'} - GRADER_KEYS[kind]}")
         assert isinstance(g.get("weight", 1), (int, float)) and g.get("weight", 1) > 0
         assert g.get("arm") in (None, "with-only", "both")
         if kind == "regex":
@@ -180,7 +181,8 @@ def test_a_critical_grader_that_fails_fails_its_case_under_the_weekly_threshold(
     total = sum(weights.values())
     for name, w in weights.items():
         if critical(case, name):
-            assert (total - w) / total < threshold, f"{name} failing alone leaves {case.name} at {(total - w) / total:.2f}"
+            assert (total - w) / total < threshold, (f"{name} failing alone leaves {case.name} at "
+                                                     f"{(total - w) / total:.2f}")
 
 
 def mock_files() -> list[Path]:
@@ -196,8 +198,9 @@ def test_the_mocks_answer_every_tool_the_server_registers_and_no_other():
         if p.parent.name == "job-apply":
             assert p.stem in tools, f"{p.relative_to(EVALS).as_posix()}: no such tool"
     listed = json.loads((EVALS / "mocks" / "job-apply" / "_tools.json").read_text(encoding="utf-8"))["tools"]
-    assert sorted(t["name"] for t in listed) == sorted(tools), \
-        "refresh it: uv run --no-project python scripts/mcp_handshake.py --save-tools ../evals/mocks/job-apply/_tools.json"
+    assert sorted(t["name"] for t in listed) == sorted(tools), (
+        "refresh it: uv run --no-project python scripts/mcp_handshake.py --save-tools "
+        "../evals/mocks/job-apply/_tools.json")
     assert all(t.get("description") and isinstance(t.get("inputSchema"), dict) for t in listed)
 
 
@@ -214,7 +217,8 @@ def test_the_mocks_parse_and_fill_their_templates_from_arguments_the_tools_take(
         meta, body = front(p)
         assert set(meta) <= MOCK_KEYS and meta.get("type", "fixed") == "fixed", where
         assert body and STUB not in body, f"{where}: no canned answer"
-        args = set(re.findall(r"\{\{\s*input\.([A-Za-z0-9_]+)", body)) | set(re.findall(r"\{input\.([A-Za-z0-9_]+)\}", body))
+        args = (set(re.findall(r"\{\{\s*input\.([A-Za-z0-9_]+)", body))
+                | set(re.findall(r"\{input\.([A-Za-z0-9_]+)\}", body)))
         assert args <= schemas[(p.parent.name, p.stem)], f"{where}: echoes arguments the tool doesn't take: {args}"
         for template in re.findall(r"\{\{file:([^{}]*(?:\{input\.[A-Za-z0-9_]+\}[^{}]*)*)\}\}", body):
             pattern = re.sub(r"\{input\.[A-Za-z0-9_]+\}", "*", template)

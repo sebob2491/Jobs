@@ -1,7 +1,8 @@
-"""The live check's weekly probes (scripts/live_probes.py, and live_smoke.py's --derived-password and --tailored-resume):
-the derived password and its rules, its masking, each reset pass's steps read from a run's record, the tailored
-resume and the review page's check, the report and nightly_summary.py --probes, and the workflow that runs them. No
-browser and no live site: records shaped like live_smoke.py's, from the desk's own log lines; a made-up identity."""
+"""The live check's weekly probes (scripts/live_probes.py, and live_smoke.py's --derived-password and
+--tailored-resume): the derived password and its rules, its masking, each reset pass's steps read from a run's record,
+the tailored resume and the review page's check, the report and nightly_summary.py --probes, and the workflow that runs
+them. No browser and no live site: records shaped like live_smoke.py's, from the desk's own log lines; a
+made-up identity."""
 
 import importlib.util
 import json
@@ -52,7 +53,8 @@ DERIVED = lp.derived_password(SITE)
 
 # --- the derived password -----------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("site", [SITE, "Abcdefgh1234567!", "x" * 30 + "A1!", "L0ng!" * 14, "S" * 56 + "aa1" + lp.DERIVED_SUFFIX])
+@pytest.mark.parametrize("site", [SITE, "Abcdefgh1234567!", "x" * 30 + "A1!", "L0ng!" * 14,
+                                  "S" * 56 + "aa1" + lp.DERIVED_SUFFIX])
 def test_the_derived_password_meets_workdays_rules_and_is_never_the_real_one(site):
     """Pass 1's saved password: the real one with a fixed suffix (a capital, a small letter, a digit and a symbol), the
     same every run, never the real one, within the longest a site takes, and meeting Workday's rules wherever the real
@@ -106,7 +108,8 @@ def test_the_derived_password_is_masked_whole_however_it_shows():
     mask = li.masker(*lp.secrets_of(ENV))
     for shown in (DERIVED, json.dumps(DERIVED)[1:-1], DERIVED.upper()):
         assert mask(f"typed {shown} in") == f"typed {li.PASSWORD_MASK} in", shown
-    said = mask(f"{EMAIL} {SITE} {INBOX} {INBOX.replace(' ', '')} https://x.example/?p={DERIVED.replace('#', '%23').replace('!', '%21')}")
+    said = mask(f"{EMAIL} {SITE} {INBOX} {INBOX.replace(' ', '')} https://x.example/"
+                f"?p={DERIVED.replace('#', '%23').replace('!', '%21')}")
     assert lp.DERIVED_SUFFIX not in said and "Rp7" not in said and EMAIL not in said and SITE not in said, said
     assert said.count(li.PASSWORD_MASK) == 4 and li.EMAIL_MASK in said
 
@@ -117,8 +120,8 @@ def test_the_report_and_the_results_are_written_masked(tmp_path, capsys):
     leaky = _rec(SIGN_IN + RESET + APPLICATION, reason=f"Filled and waiting ({DERIVED}, {EMAIL}, {SITE})")
     results = {"at": "now", "reset": [lp.reset_result(lp.RESET_TENANTS[0], leaky, leaky, True)], "tailored": []}
     lp.write_report(tmp_path, results, li.masker(*lp.secrets_of(ENV)))
-    written = [(tmp_path / "probes.json").read_text(encoding="utf-8"), (tmp_path / "report.md").read_text(encoding="utf-8"),
-               capsys.readouterr().out]
+    written = [(tmp_path / "probes.json").read_text(encoding="utf-8"),
+               (tmp_path / "report.md").read_text(encoding="utf-8"), capsys.readouterr().out]
     for text in written:
         assert not any(s in text for s in (DERIVED, SITE, EMAIL, json.dumps(DERIVED)[1:-1])), text
     assert li.PASSWORD_MASK in written[0] and li.EMAIL_MASK in written[0]
@@ -177,8 +180,8 @@ def test_a_site_that_takes_the_saved_password_refuses_nothing_and_resets_nothing
 
 
 def test_a_new_password_the_site_wont_take_is_set_no_further():
-    reason = ("I put your saved password in Workday's new-password boxes, and it didn't take it as the new one. It says "
-              "“Your password cannot be the same as a previous password.” Set it there")
+    reason = ("I put your saved password in Workday's new-password boxes, and it didn't take it as the new one. It "
+              "says “Your password cannot be the same as a previous password.” Set it there")
     steps = lp.reset_steps(_rec(SIGN_IN + RESET[:2], status="needs_you", need="sign_in", reason=reason))
     assert _steps(_rec(SIGN_IN + RESET[:2], status="needs_you", need="sign_in", reason=reason)) == {
         **dict.fromkeys(lp.STEPS, False), "refused": True, "reset_asked": True, "email_read": True}
@@ -206,17 +209,20 @@ BLOCKED = [
                 "(yours to solve), so I went back to make an account there instead",
                 "pressed “Create Account” to create your account on Workday with your saved password"],
      "Your saved password didn't sign in on Workday, before or after I pressed its Create Account.", "sign_in",
-     "(on the way: your saved password didn't sign in on Workday, and I opened its password reset, which has a CAPTCHA"),
+     "(on the way: your saved password didn't sign in on Workday, and I opened its "
+     "password reset, which has a CAPTCHA"),
     (SIGN_IN + RESET[:1], "It also asks for security questions and their answers: those are yours to choose", "sign_in",
      "needs_you sign_in · It also asks for security questions"),
-    (SIGN_IN + RESET, "The site is checking that you're a person (a bot check or CAPTCHA). Pass it in the browser window",
+    (SIGN_IN + RESET,
+     "The site is checking that you're a person (a bot check or CAPTCHA). Pass it in the browser window",
      "bot_check", "needs_you bot_check · The site is checking"),
     # a site's error page, after the refusal: Workday's "Something went wrong", a web server's 5xx
     (SIGN_IN + RESET[:1], "Workday said “Something went wrong” again and asked for the page to be refreshed, and "
                           "I had reloaded once already. That's the site's own trouble: reload the page", "stuck",
      "needs_you stuck · Workday said “Something went wrong”"),
     (SIGN_IN + RESET[:2], "Workday's page came back as its web server's error page (502 Bad Gateway), without the "
-                          "application. That's the site's own trouble", "stuck", "needs_you stuck · Workday's page came back"),
+                          "application. That's the site's own trouble", "stuck",
+                          "needs_you stuck · Workday's page came back"),
 ]
 
 
@@ -277,7 +283,8 @@ def test_pass_two_is_skipped_only_where_the_sites_password_was_never_changed():
 
 WHOLE = _rec(SIGN_IN + RESET + APPLICATION)
 BOT_CHECK = _rec(["opened https://kla.wd1.myworkdayjobs.com/x"], status="needs_you", need="bot_check",
-                 reason="The site is checking that you're a person (a bot check or CAPTCHA). Pass it in the browser window")
+                 reason="The site is checking that you're a person (a bot check or CAPTCHA). "
+                        "Pass it in the browser window")
 
 
 def test_a_tenant_passes_with_every_step_of_both_passes():
@@ -388,8 +395,9 @@ def test_the_probe_reads_the_desks_own_words():
     for words in ("with your saved password", "your saved password didn't sign in on {site}, so I asked it to email a "
                   "password reset", "opened the password reset link from your email", "set your saved password as "
                   "{site}'s new one", "reached the review page", "to create your account on {site}",
-                  "password reset for your saved password, which didn't sign ", "new-password boxes, and it didn't take it ",
-                  "Your saved password didn't sign in on", "no password reset email came from"):
+                  "password reset for your saved password, which didn't sign ",
+                  "new-password boxes, and it didn't take it ", "Your saved password didn't sign in on",
+                  "no password reset email came from"):
         assert words in source, words
 
 
@@ -449,11 +457,12 @@ def test_the_review_page_decides_a_tailored_probe_that_got_there():
     tailored = "Resume/CV Jobdesk_Test_Tailored_Probe_Resume.pdf successfully uploaded"
     ok = lp.tailored_result(NXP, _rec(APPLICATION, company=NXP["name"], tailored=MADE), tailored)
     assert ok["status"] == "pass" and ok["shown"] == [lp.TAILORED_NAME]
-    for page in ("Resume/CV jobdesk-test-resume.pdf successfully uploaded", f"{lp.TAILORED_NAME} jobdesk-test-resume.pdf",
-                 "Resume/CV Attach"):
+    for page in ("Resume/CV jobdesk-test-resume.pdf successfully uploaded",
+                 f"{lp.TAILORED_NAME} jobdesk-test-resume.pdf", "Resume/CV Attach"):
         assert lp.tailored_result(NXP, _rec(APPLICATION, company=NXP["name"], tailored=MADE), page)["status"] == "fail"
     other = lp.tailored_result(NXP, _rec(APPLICATION, company=NXP["name"], tailored={
-        **MADE, "picked": "Old_Resume.pdf", "error": "the desk would take Old_Resume.pdf from the job's folder"}), tailored)
+        **MADE, "picked": "Old_Resume.pdf",
+        "error": "the desk would take Old_Resume.pdf from the job's folder"}), tailored)
     assert other["status"] == "fail" and "the desk would take Old_Resume.pdf" in other["detail"]  # (the desk's chooser)
 
 
@@ -581,7 +590,8 @@ def test_each_probe_employer_is_one_employer_on_the_lists():
         if e in lp.RESET_TENANTS:
             assert matched[0]["system"] == "workday"
     assert len(lp.RESET_TENANTS) == 2 and {e["name"] for e in lp.RESET_TENANTS}.isdisjoint(
-        e["name"] for e in lp.TAILORED_EMPLOYERS)  # (a tailored run never meets a tenant a reset left on the derived one)
+        # (a tailored run never meets a tenant a reset left on the derived one)
+        e["name"] for e in lp.TAILORED_EMPLOYERS)
 
 
 def test_each_run_is_the_test_identity_at_one_employer_and_never_answers_a_security_question(tmp_path):
@@ -720,7 +730,8 @@ def test_the_report_is_written_from_the_runs_there(probes_out, capsys):
            "“reset asked for”" in report
     assert "| KLA | 1 | derived | yes | yes | yes | yes | yes | yes (review page) | ready | pass |" in report
     assert "| KLA | 2 | real | yes | yes | yes | yes | yes | yes (review page) | ready | pass |" in report
-    assert "| Hitachi High-Tech America | 1 | derived | yes | no | no | no | no | no | needs_you sign_in | FAIL |" in report
+    assert ("| Hitachi High-Tech America | 1 | derived | yes | no | no | no | no | no | "
+            "needs_you sign_in | FAIL |" in report)
     assert "| Hitachi High-Tech America | 2 | real | – | – | – | – | – | – | not run | – |" in report
     assert f"| ASM (ASM America) | {lp.TAILORED_NAME} | pass |" in report
     assert "| NXP Semiconductors | jobdesk-test-resume.pdf | FAIL | the review page shows the profile's" in report
@@ -730,8 +741,8 @@ def test_the_report_is_written_from_the_runs_there(probes_out, capsys):
 
 def test_what_couldnt_be_checked_is_said_under_its_own_heading_and_the_run_stays_green(tmp_path, capsys):
     """A week where the sites stopped every probe (a bot check before KLA's sign-in, both passes; Workday's "Something
-    went wrong" after Hitachi refused; no posting at ASM or NXP): each said in the live check's words, under its own heading
-    in the summary and the artifact, and the run passes (exit 0)."""
+    went wrong" after Hitachi refused; no posting at ASM or NXP): each said in the live check's words, under its own
+    heading in the summary and the artifact, and the run passes (exit 0)."""
     out = tmp_path / "live-probes"
     _run(out, "reset-kla-1", BOT_CHECK)
     _run(out, "reset-kla-2", BOT_CHECK)
@@ -794,9 +805,10 @@ def test_nightly_summary_reads_the_probes_from_a_folder_or_a_zip(probes_out, tmp
     assert lines[1].startswith("  - Hitachi High-Tech America, pass 1: the site refused the saved password")
     assert lines[2].startswith("  - NXP Semiconductors, tailored resume: the review page shows the profile's")
     assert lines[4] == "reset KLA: pass (site left on the real password)"
-    assert ("  pass 1 (derived password): pass: refused yes, reset asked for yes, email read yes, new password set yes, "
-            "signed in yes, reached the application yes (review page); ended ready") in from_folder
-    assert "tailored NXP Semiconductors: FAIL: the review page shows the profile's jobdesk-test-resume.pdf" in from_folder
+    assert ("  pass 1 (derived password): pass: refused yes, reset asked for yes, email read yes, new password set "
+            "yes, signed in yes, reached the application yes (review page); ended ready") in from_folder
+    assert ("tailored NXP Semiconductors: FAIL: the review page shows the profile's "
+            "jobdesk-test-resume.pdf" in from_folder)
     zipped = tmp_path / "live-probes.zip"
     with zipfile.ZipFile(zipped, "w") as z:  # (as GitHub zips an artifact: its folder's contents at the top)
         for path in probes_out.rglob("*"):
@@ -805,7 +817,8 @@ def test_nightly_summary_reads_the_probes_from_a_folder_or_a_zip(probes_out, tmp
     assert ns.main(["--probes", str(zipped), "--companies", "KLA"]) == 0
     from_zip = capsys.readouterr().out
     assert from_zip.startswith(from_folder)
-    assert "-- reset-kla-1\n== KLA" in from_zip and "-- reset-kla-2\n== KLA" in from_zip and "-- tailored" not in from_zip
+    assert ("-- reset-kla-1\n== KLA" in from_zip and "-- reset-kla-2\n== KLA" in from_zip
+            and "-- tailored" not in from_zip)
     assert ns.main(["--probes", str(tmp_path / "nothing-here")]) == 1
 
 
@@ -834,7 +847,8 @@ def test_the_probes_run_weekly_in_the_nightlys_workflow_after_its_checks():
     # the site didn't take, and its hand run on 0.3.209 passed at KLA and Hitachi, Oct 18)
     assert "--probes" not in run["run"] and "WHICH" not in run.get("env", {})
     assert "--security-answers" not in json.dumps(probes)
-    assert "scripts/live_audit.py --log \"probes=live-probes/run.log\" --folder live-probes" in steps["Audit what it wrote"]["run"]
+    assert ("scripts/live_audit.py --log \"probes=live-probes/run.log\" --folder "
+            "live-probes" in steps["Audit what it wrote"]["run"])
     assert "live-probes/report.md" in steps["The probes' results"]["run"]
     assert steps["Fail on a desk failure"]["if"] == "steps.run.outcome == 'failure'"
     compare = flow["jobs"]["compare"]["if"]

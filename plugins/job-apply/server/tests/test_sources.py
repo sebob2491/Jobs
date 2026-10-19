@@ -110,13 +110,13 @@ _GREETING = re.compile(r"\b(welcome(?:\s+back)?|hi|hey|hello|good\s+(?:morning|a
 # Jordan", "Hello Again, Jordan"), the scrubber's stand-in, and whom a page greets that's no one ("Hello World" in a UI
 # library's strings on Ebara's page, "Hey there", "Hi Team", "Welcome New Hires", "Welcome, Hiring Manager")
 _NOBODY = {"back", "again", "candidate", "candidates", "applicant", "applicants", "user", "users", "dear", "mr", "mrs",
-           "ms", "dr", "redacted", "world", "there", "everyone", "everybody", "all", "aboard", "home", "guest", "guests",
-           "friend", "friends", "folks", "team", "new", "hire", "hires", "veteran", "veterans", "student", "students",
-           "graduate", "graduates", "grads", "hiring", "manager", "managers", "recruiter", "recruiters", "member",
-           "members", "visitor", "visitors", "employee", "employees", "partner", "partners", "job", "jobs", "seeker",
-           "seekers", "talent", "alumni", "intern", "interns", "military", "community"}
-# Words that begin a phrase that isn't a name ("Welcome to Acme Careers", "Welcome Students and Graduates"): what follows
-# them is no one's, until a comma ("Welcome to the team, Jordan")
+           "ms", "dr", "redacted", "world", "there", "everyone", "everybody", "all", "aboard", "home",
+           "guest", "guests", "friend", "friends", "folks", "team", "new", "hire", "hires", "veteran", "veterans",
+           "student", "students", "graduate", "graduates", "grads", "hiring", "manager", "managers", "recruiter",
+           "recruiters", "member", "members", "visitor", "visitors", "employee", "employees", "partner", "partners",
+           "job", "jobs", "seeker", "seekers", "talent", "alumni", "intern", "interns", "military", "community"}
+# Words that begin a phrase that isn't a name ("Welcome to Acme Careers", "Welcome Students and Graduates"): what
+# follows them is no one's, until a comma ("Welcome to the team, Jordan")
 _PHRASE = {"to", "the", "and", "our", "your", "you", "in", "on", "at", "from", "for", "of", "with"}
 _FAKE_NAME = {"sam", "rivera"}  # the tests' fake profile (conftest.PROFILE), on a mock site's page
 
@@ -202,7 +202,8 @@ def test_captured_pages_hold_no_personal_data():
     for path in sorted(FIXTURES.rglob("*")):
         if not path.is_file() or path.suffix not in (".html", ".json", ".txt", ".md", ".yaml"):
             continue
-        problems += _personal_data(path.read_text(encoding="utf-8", errors="replace"), path.relative_to(SERVER).as_posix(),
+        problems += _personal_data(path.read_text(encoding="utf-8", errors="replace"),
+                                   path.relative_to(SERVER).as_posix(),
                                    path.relative_to(FIXTURES).parts[0] == "live", allowed)
     assert not problems, "personal data in the fixtures:\n" + "\n".join(sorted(set(problems)))
 
@@ -223,8 +224,10 @@ def test_each_rule_of_the_fixture_gate_finds_what_its_for():
         "greeted by name 'Welcome Back Jordan Quill'": "<p>Welcome Back Jordan Quill</p>",
         "greeted by name 'Welcome Candidate Jordan'": "<p>Welcome Candidate Jordan</p>",
         "greeted by name 'Hello Again, Jordan Quill'": "<p>Hello Again, Jordan Quill</p>",
-        "greeted by name 'Hey Jordan'": "<p>Hey Jordan</p>", "greeted by name 'Good morning, Jordan'": "<p>Good morning, Jordan</p>",
-        "greeted by name 'HELLO JORDAN'": "<p>HELLO JORDAN</p>", "greeted by name 'Welcome, J. Quill'": "<p>Welcome, J. Quill</p>",
+        "greeted by name 'Hey Jordan'": "<p>Hey Jordan</p>",
+        "greeted by name 'Good morning, Jordan'": "<p>Good morning, Jordan</p>",
+        "greeted by name 'HELLO JORDAN'": "<p>HELLO JORDAN</p>",
+        "greeted by name 'Welcome, J. Quill'": "<p>Welcome, J. Quill</p>",
         "greeted by name 'Signed in as Jordan'": "<p>Signed in as Jordan</p>",
         "greeted by name 'Hey there, Jordan'": "<p>Hey there, Jordan</p>",
         "greeted by name 'Hi Team Jordan'": "<p>Hi Team Jordan</p>",
@@ -241,8 +244,9 @@ def test_each_rule_of_the_fixture_gate_finds_what_its_for():
     for text in ("Welcome Back</h1>", "Hello World", "Welcome to Acme Careers", "Welcome, REDACTED", "hi there",
                  "Welcome New Hires", "Welcome Veterans", "Welcome Students and Graduates", "Welcome, Hiring Manager",
                  "Signed in as REDACTED", "Hey there, how are you?", "Welcome text region. Use up and down",
-                 "Welcome, Sam Rivera", "Phone: 6025550188", "Requisition 6024310188", '<input type="radio" value="Yes">',
-                 '<input type="submit" value="Apply">', '<input type="checkbox" value="on">', "<input value=''>"):
+                 "Welcome, Sam Rivera", "Phone: 6025550188", "Requisition 6024310188",
+                 '<input type="radio" value="Yes">', '<input type="submit" value="Apply">',
+                 '<input type="checkbox" value="on">', "<input value=''>"):
         assert _personal_data(text, "x.html", True, {"example.com"}) == [], text
     assert _personal_data("<input id=a value=Sam>", "x.html", False, {"example.com"}) == []  # (a mock site's page)
 

@@ -71,7 +71,8 @@ _ANTICIPATED = (ValueError, KeyError, OSError, RuntimeError, sqlite3.Error, Play
                 MailboxError, SiteDown, BrowserUnavailable, SubmitBlocked, FetchError)
 # The failures that are the tool's own words to the person. Any other of those above may be a fault in the code too, so
 # its traceback goes to the server's log as well (mcp logs none for a ToolError: the review of 0.3.210)
-_SAID_AS_MEANT = (ValueError, KeyError, FileNotFoundError, PermissionError, BrowserUnavailable, SubmitBlocked, FetchError)
+_SAID_AS_MEANT = (ValueError, KeyError, FileNotFoundError, PermissionError, BrowserUnavailable,
+                  SubmitBlocked, FetchError)
 _log = logging.getLogger(__name__)
 # The most of a failure's words Claude is handed: its first line (Playwright adds its call log after it)
 _SAID_MAX = 300
@@ -216,7 +217,8 @@ DEBUG_KEEP = 20
 
 
 def _keep_newest(debug: Path) -> None:
-    """The newest DEBUG_KEEP saved pages of a debug folder kept, older ones gone (the stops' pages are the desk's own)."""
+    """The newest DEBUG_KEEP saved pages of a debug folder kept, older ones gone (the stops' pages are
+    the desk's own)."""
     with contextlib.suppress(OSError):
         saved = sorted(d for d in debug.iterdir() if d.is_dir() and not d.name.endswith("-stop"))
         for old in saved[:-DEBUG_KEEP]:
@@ -280,8 +282,8 @@ def setup_status() -> dict[str, Any]:
                      "accept_cookies": s.accept_cookies, "manage_accounts": s.manage_accounts,
                      "manage_accounts_chosen": s.manage_accounts_chosen, "accept_notices": s.accept_notices},
         "chrome_detected": has_chrome,
-        "browser_note": "The desk uses Google Chrome, or Microsoft Edge without it. If neither starts, install Chrome or run "
-                        f"`uv run --project \"{config.PLUGIN_ROOT / 'server'}\" playwright install chromium` "
+        "browser_note": "The desk uses Google Chrome, or Microsoft Edge without it. If neither starts, install Chrome "
+                        f"or run `uv run --project \"{config.PLUGIN_ROOT / 'server'}\" playwright install chromium` "
                         "and set settings.browser_channel: chromium.",
         "plugin_root": str(config.PLUGIN_ROOT),
         "plugin_version": config.plugin_version(),
@@ -299,10 +301,10 @@ async def search_area(places: list[str] | None = None, lists: list[str] | None =
                       titles: list[str] | None = None, avoid_titles: list[str] | None = None) -> dict[str, Any]:
     """What and where Find jobs (and search_company_jobs) looks: the job titles the person wants (`titles`; the first
     `searched_titles` are searched, and all of them count toward an opening's fit; none, `default_titles`), the words
-    or titles they leave out (`avoid_titles`), the places they want work in (`places`, each a city and state: ["Phoenix, AZ", "Las Vegas, NV"]; their states are searched)
-    and the plugin's employer lists to search (`lists`; `choices` names them all, with what each covers and how many
-    employers). The Job Desk's What and where to search window changes the same. With no arguments it only says
-    what they are now.
+    or titles they leave out (`avoid_titles`), the places they want work in (`places`, each a city and state:
+    ["Phoenix, AZ", "Las Vegas, NV"]; their states are searched) and the plugin's employer lists to search (`lists`;
+    `choices` names them all, with what each covers and how many employers). The Job Desk's What and where to search
+    window changes the same. With no arguments it only says what they are now.
 
     titles: the job titles, replacing the ones there (kept in profile.yaml's preferences.titles), one title each.
     avoid_titles: words or titles to leave out ("Senior", "Call Center"), replacing the ones there (kept in
@@ -390,7 +392,8 @@ async def ingest_job(url: str, use_browser: bool = False) -> dict[str, Any]:
     Plain HTTP is tried first. LinkedIn and Indeed usually refuse that; pass
     use_browser=true to read the page through the user's signed-in browser instead.
     Returns the job record including its full description."""
-    if config.own_file(url):  # ~/.job-apply's own files (secrets, answers): its text would be saved where Claude reads it
+    # ~/.job-apply's own files (secrets, answers): its text would be saved where Claude reads it
+    if config.own_file(url):
         return {"saved": False, "error": "That's one of the desk's own files, not a job posting; it wasn't read."}
     posting: Posting | None = None
     note = ""
@@ -399,7 +402,8 @@ async def ingest_job(url: str, use_browser: bool = False) -> dict[str, Any]:
             posting = await fetch_posting(url)
         except FetchError as e:
             note = str(e)
-    if posting is None or (use_browser is False and not posting.is_useful and detect_ats(url) in ("linkedin", "indeed")):
+    if (posting is None
+            or (use_browser is False and not posting.is_useful and detect_ats(url) in ("linkedin", "indeed"))):
         if not use_browser:
             return {
                 "saved": False,
@@ -464,7 +468,8 @@ async def read_icims_posting(url: str) -> Posting:
     and draws the posting inside a frame (in_iframe=1), which a read of the page itself misses.
     It's applied for from the posting: its own Apply goes to a framed sign-in page."""
     parts = urlsplit(url)
-    framed = urlunsplit((parts.scheme, parts.netloc, parts.path, "&".join(q for q in (parts.query, "in_iframe=1") if q), ""))
+    framed = urlunsplit((parts.scheme, parts.netloc, parts.path,
+                         "&".join(q for q in (parts.query, "in_iframe=1") if q), ""))
     drawn = [html for html in await browser.frames_html(framed, inner=ICIMS_FRAME) if "iCIMS_JobContent" in html]
     if not drawn:
         raise FetchError(f"The posting wasn't drawn in its frame: {url}")
@@ -733,7 +738,8 @@ def list_jobs(status: str | None = None, company: str | None = None, limit: int 
                 if pay.meets(pay.from_fields(j), min_pay) is not False][:limit]
     else:
         jobs = t.list(status=status, company=company, limit=limit)
-    sent = any(j["status"] in APPLICATION_STATUSES for j in jobs)  # (none sent: neither the emails nor the profile read)
+    # (none sent: neither the emails nor the profile read)
+    sent = any(j["status"] in APPLICATION_STATUSES for j in jobs)
     heard, days = (t.last_heard(), _follow_up_days()) if sent else ({}, config.FOLLOW_UP_DAYS_DEFAULT)
     marks = t.not_interested_marks(_listed())
     also = t.aliases() if marks else {}
@@ -863,8 +869,10 @@ TAILOR_RULES = [
     "says the same thing (\"customer sites\" isn't \"accounts in a territory\"; \"kept a maintenance log\" isn't "
     "\"accurate part-replacement records\").",
     "Never widen how much, how many or how often: \"maintained 18 machines\" and \"diagnosed faults\" don't make "
-    "\"diagnosed faults on 18 machines\"; \"helped start up\" isn't \"led start-ups\". Keep past jobs in the past tense.",
-    "Keep every title, employer and date exactly as the profile has them, jobs newest first. Coursework is not a degree.",
+    "\"diagnosed faults on 18 machines\"; \"helped start up\" isn't \"led start-ups\". "
+    "Keep past jobs in the past tense.",
+    "Keep every title, employer and date exactly as the profile has them, jobs newest "
+    "first. Coursework is not a degree.",
     "At most 2 pages. Same layout as render_document's: # Name, a contact line, ## sections, "
     "### Title — Company, City *dates*, bullets.",
     "The first time, show the user one tailored resume before rendering the rest; after they approve the "
@@ -1017,9 +1025,9 @@ SCHOOL_NOT_LISTED = ("Other", "Not Listed")
 _NOT_IN_LIST = re.compile(r"doesn't match any (suggestion|option)|nothing in its list matched")
 
 
-# The country lists each job's pages showed on a country the site preset (autofill.preset_country), looked at once a job:
-# a pick since is the person's, however the page draws the list again (a mark on the element goes with it: the review of
-# 0.3.196). By job (or page, filled with none), by autofill.preset_key.
+# The country lists each job's pages showed on a country the site preset (autofill.preset_country), looked at once a
+# job: a pick since is the person's, however the page draws the list again (a mark on the element goes with it: the
+# review of 0.3.196). By job (or page, filled with none), by autofill.preset_key.
 _PRESETS_SEEN: dict[Any, set[str]] = {}
 
 
@@ -1058,7 +1066,8 @@ async def autofill(job_id: int | None = None, overwrite: bool = False, redo: lis
                                   [i for i in plan["judged"] if i in filling and i in went])
     # a preset country left as it was (the profile's already) is looked at; one corrected, once its fill went in
     presets = plan.get("presets") or {}
-    corrected = [i for i in presets if i in {f["id"] for f in plan["to_fill"]} and i in {r["id"] for r in results if r.get("ok")}]
+    corrected = [i for i in presets
+                 if i in {f["id"] for f in plan["to_fill"]} and i in {r["id"] for r in results if r.get("ok")}]
     seen.update(key for i, key in presets.items() if i in corrected or i not in {f["id"] for f in plan["to_fill"]})
     by_id = {f["id"]: f for f in plan["to_fill"]}
     fields = {f["id"]: f for f in data["fields"]}
@@ -1071,8 +1080,8 @@ async def autofill(job_id: int | None = None, overwrite: bool = False, redo: lis
         if r["ok"] or not r.get("options") or r["id"] not in fields:
             continue
         # (any other answer a list had no match for stays that: the fill looked at the same entries)
-        if str(r.get("error") or "").startswith("NoMatch") and not is_how_heard(by_id.get(r["id"], {}).get("rule") or "",
-                                                                   fields[r["id"]].get("label") or ""):
+        if (str(r.get("error") or "").startswith("NoMatch")
+                and not is_how_heard(by_id.get(r["id"], {}).get("rule") or "", fields[r["id"]].get("label") or "")):
             continue
         again = resolve_field({**fields[r["id"]], "options": r["options"], "search": False}, prof, job)
         if again is not None and again.value in r["options"]:
@@ -1080,7 +1089,8 @@ async def autofill(job_id: int | None = None, overwrite: bool = False, redo: lis
     if regrouped:
         retried = {x["id"]: x for x in await browser.fill([{"id": fid, "value": v} for fid, v in regrouped.items()])}
         results = [retried.get(r["id"], r) for r in results]
-        by_id.update({fid: {**by_id[fid], "value": v} for fid, v in regrouped.items() if retried.get(fid, {}).get("ok")})
+        by_id.update({fid: {**by_id[fid], "value": v} for fid, v in regrouped.items()
+                      if retried.get(fid, {}).get("ok")})
     # a school a site's list doesn't have (a small community college): its "Other" entry, the
     # true answer there (a box for the school's name, where one then shows, is filled after)
     for i, r in enumerate(results):
@@ -1408,8 +1418,8 @@ def whats_new(since: str | None = None) -> dict[str, Any]:
     when = stamp(start)[:16].replace("T", " ")
     if found:
         summary = "\n".join([f"{len(found)} new opening{'s' if len(found) != 1 else ''} since {when}, best first:"]
-                            + [f"- {o['score']} · {o['title']} · {o['company']}" + (f" · {o['location']}" if o['location']
-                                                                                     else "") for o in shown[:10]]
+                            + [f"- {o['score']} · {o['title']} · {o['company']}"
+                               + (f" · {o['location']}" if o['location'] else "") for o in shown[:10]]
                             + ([f"and {len(found) - 10} more"] if len(found) > 10 else []))
     else:
         summary = f"Nothing new since {when}."
@@ -1447,7 +1457,8 @@ _SUBMIT_GONE = frozenset({"applied", "interviewing", "offer", "rejected", "withd
 # A job the tracker kept apart from one it may be the same posting as (an Indeed job and the employer's): what Claude's
 # tools say while that one is begun or applied to, as the Job Desk's card asks (the review of 0.3.206)
 MAYBE_SAME_SAYS = "may be the job already started or applied to: ask the person before applying"
-_BEGUN_OR_DONE = frozenset({"in_progress", "ready_to_submit", "applied", "interviewing", "offer", "rejected", "withdrawn"})
+_BEGUN_OR_DONE = frozenset({"in_progress", "ready_to_submit", "applied", "interviewing", "offer", "rejected",
+                            "withdrawn"})
 
 
 # A job the person marked Not interested on the Job Desk: what Claude's tools say of it, and submit_application presses

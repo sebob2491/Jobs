@@ -57,9 +57,10 @@ def test_the_best_source_says_it_and_only_a_sure_one_hides_a_job():
                                 {"workplace": "onsite", "workplace_source": "location"})
     assert workplace.better({"workplace": "remote", "workplace_source": "text"}, {})
     assert not workplace.better({"workplace": "", "workplace_source": ""}, {})
-    for said, chosen, kept in ((("onsite", "structured"), ["remote"], False), (("onsite", "location"), ["remote"], False),
-                               (("onsite", "text"), ["remote"], True), (("", ""), ["remote"], True),
-                               (("remote", "location"), ["remote", "hybrid"], True), (("onsite", "structured"), [], True)):
+    for said, chosen, kept in ((("onsite", "structured"), ["remote"], False),
+                               (("onsite", "location"), ["remote"], False), (("onsite", "text"), ["remote"], True),
+                               (("", ""), ["remote"], True), (("remote", "location"), ["remote", "hybrid"], True),
+                               (("onsite", "structured"), [], True)):
         assert workplace.keeps(said, chosen) is kept, (said, chosen)
     assert workplace.view("remote", "location") == {"value": "remote", "sure": True, "shown": "Remote",
                                                     "from": "Its location says so"}
@@ -92,8 +93,8 @@ def test_a_posting_says_where_its_done_from_its_data_its_location_or_its_text():
     assert {"workplace", "workplace_source"} <= set(plain.to_dict())
     # SuccessFactors' line under the title, and iCIMS's header details
     sf = ('<html><body><div class="joblayouttoken"><span itemprop="title">Field Service Engineer</span></div>'
-          '<div class="joblayouttoken"><span>Service</span></div><div class="joblayouttoken"><span>Phoenix AZ</span></div>'
-          '<div class="joblayouttoken"><span>On-Site</span></div><main>' + "<p>Service tools.</p>" * 30
+          '<div class="joblayouttoken"><span>Service</span></div><div class="joblayouttoken"><span>Phoenix AZ</span>'
+          '</div><div class="joblayouttoken"><span>On-Site</span></div><main>' + "<p>Service tools.</p>" * 30
           + "</main></body></html>")
     page = finalize(parse_html(sf, "https://jobs.example.com/job/Phoenix-FSE/171942-en_US/"))
     assert (page.location, page.workplace, page.workplace_source) == ("Phoenix, AZ", "onsite", "structured")
@@ -113,8 +114,9 @@ def test_the_systems_apis_say_where_their_jobs_are_done_when_they_give_it():
         url = str(request.url)
         if url.startswith("https://api.lever.co/v0/postings/leverco/"):
             kind = "hybrid" if url.endswith("1111") else "unspecified"
-            return httpx.Response(200, json={"text": "Field Service Engineer", "categories": {"location": "Phoenix, AZ"},
-                                             "descriptionPlain": "Service tools.", "workplaceType": kind})
+            return httpx.Response(200,
+                                  json={"text": "Field Service Engineer", "categories": {"location": "Phoenix, AZ"},
+                                        "descriptionPlain": "Service tools.", "workplaceType": kind})
         if url.startswith("https://api.smartrecruiters.com/v1/companies/EXAMPLE1/postings/744000001"):
             return httpx.Response(200, json={"name": "Technician", "location": {"city": "Chandler", "region": "AZ",
                                                                                 "remote": True},

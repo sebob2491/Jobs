@@ -54,9 +54,9 @@ workflow's other steps look the first one up by): with --trend-issues (`gh issue
 --json number,title,state,body`) and --trend-body-out, its new body is written too. It keeps the last 60
 runs' counts per check (the employers at the review page, or whose search works, out of those checked; each
 outcome's count; the median seconds an employer took) and each employer's last 20 runs as letters (R there,
-x not, - not checked) and, for the apply checks, the seconds of its last 10 runs, and names the employers that flip (3 changes or more in their last 10 runs). A check
-that didn't finish, or didn't run, adds no counts that night and gives its employers "-". A missing or
-unreadable history starts afresh; trouble with it never fails the compare.
+x not, - not checked) and, for the apply checks, the seconds of its last 10 runs, and names the employers that flip (3
+changes or more in their last 10 runs). A check that didn't finish, or didn't run, adds no counts that night and gives
+its employers "-". A missing or unreadable history starts afresh; trouble with it never fails the compare.
 """
 
 from __future__ import annotations
@@ -285,7 +285,8 @@ def compare(previous: dict[str, dict[str, str]] | None, current: dict[str, dict[
     return state, changes
 
 
-_STATE = re.compile(re.escape(STATE_MARK) + r"\s*```json[ \t]*\r?\n(.*?)\r?\n[ \t]*```", re.S)  # \r\n once edited on GitHub
+# \r\n once edited on GitHub
+_STATE = re.compile(re.escape(STATE_MARK) + r"\s*```json[ \t]*\r?\n(.*?)\r?\n[ \t]*```", re.S)
 
 
 def _saved(body: str | None) -> dict[str, Any] | None:
@@ -439,7 +440,8 @@ BOTS_UP_MIN = 5  # employers stopped by a bot check or a CAPTCHA, at least, and 
 BOTS_UP = 2
 
 
-def bots_up(previous: dict[str, dict[str, str]] | None, current: dict[str, dict[str, Result]]) -> tuple[int, int] | None:
+def bots_up(previous: dict[str, dict[str, str]] | None,
+            current: dict[str, dict[str, Result]]) -> tuple[int, int] | None:
     """(this run's employers stopped by a bot check or a CAPTCHA, the last run's) across the apply checks this run
     has, when this run's are BOTS_UP_MIN or more and BOTS_UP times the last run's or more: a CAPTCHA come up at a
     job system's employers reads as many "expected" lines, never as the one change it is. None otherwise."""
@@ -530,7 +532,8 @@ def _body(state: dict[str, dict[str, str]], current: dict[str, dict[str, Result]
     if back:
         n = len(back)
         lines += ["", f"**Still back:** {n} employer{'' if n == 1 else 's'} reached the review page in an earlier run "
-                  "but not in the last: " + ", ".join(f"{name} ({check}; last there {date})" for check, name, date in back)
+                  "but not in the last: "
+                  + ", ".join(f"{name} ({check}; last there {date})" for check, name, date in back)
                   + "."]
     # (here, and in a comment only beside a change of result: a quiet night's look, which notifies no one)
     if reshaped:
@@ -552,7 +555,8 @@ def _body(state: dict[str, dict[str, str]], current: dict[str, dict[str, Result]
             r = now.get(name)
             detail = (_code(_short(r.detail, detail_chars)) if detail_chars else "") if r else "not checked in this run"
             lines.append(f"| {_cell(name)} | {_code(outcome)} | {detail} |")
-    saved = json.dumps({"version": STATE_VERSION, "outcomes": {check: _grouped(found) for check, found in state.items()},
+    saved = json.dumps({"version": STATE_VERSION,
+                        "outcomes": {check: _grouped(found) for check, found in state.items()},
                         "reached": {check: dict(sorted(dates.items(), key=lambda kv: kv[0].lower()))
                                     for check, dates in reached.items() if dates},
                         # (one short string an employer: the body's size is GitHub's, and two hundred rows share it)
@@ -621,9 +625,11 @@ def render_comment(changes: list[Change], run_url: str = "", *, forms: list[Form
     n = len(changes)
     lines = []
     if bots is not None:  # (first: one cause behind many changes' lines)
-        lines += [f"**Bot checks up**: {bots[0]} employers (last run {bots[1]}) stopped at a bot check or a CAPTCHA.", ""]
+        lines += [f"**Bot checks up**: {bots[0]} employers (last run {bots[1]}) stopped at a bot check or a CAPTCHA.",
+                  ""]
     lines += [(f"{n} change{'' if n == 1 else 's'} since the last nightly live check" if n else
-               "No result changed since the last nightly live check") + (f" ([run]({run_url}))" if run_url else "") + ":"]
+               "No result changed since the last nightly live check")
+              + (f" ([run]({run_url}))" if run_url else "") + ":"]
     back = went_back(changes)
     if back:  # (one line, not a list: nightly_summary.py --changes reads the list's lines once each)
         lines += ["", f"**Went backwards:** {len(back)} employer{'' if len(back) == 1 else 's'} no longer "
@@ -739,7 +745,8 @@ def add_run(trend: Trend | None, current: dict[str, dict[str, Result]], *, at: s
         was_took = _seconds(trend).get(check) or {}
         kept: dict[str, list[int]] = {}
         for name in strings:
-            last = list(was_took.get(name) or []) + ([min(SECONDS_MOST, max(0, round(now[name])))] if name in now else [])
+            last = (list(was_took.get(name) or [])
+                    + ([min(SECONDS_MOST, max(0, round(now[name])))] if name in now else []))
             if last:
                 kept[name] = last[-TREND_SECONDS:]
         if kept:
@@ -1005,7 +1012,8 @@ def main(argv: list[str] | None = None) -> int:
     state, changes = compare(previous, current, partial)
 
     now = _now()
-    reached = reached_dates(read_reached(issue.get("body")) if issue else None, state, current, now.strftime("%Y-%m-%d"))
+    reached = reached_dates(read_reached(issue.get("body")) if issue else None, state, current,
+                            now.strftime("%Y-%m-%d"))
     saved_forms = read_forms(issue.get("body")) if issue else {}
     reshaped = form_changes(previous, saved_forms, current, forms)
     slow = slower(_last_trend(args.trend_issues, args.trend_title), seconds, partial, changes, mail)
@@ -1014,7 +1022,8 @@ def main(argv: list[str] | None = None) -> int:
         body = render_body(state, current, checked_at=now.strftime("%Y-%m-%d %H:%M UTC"), run_url=args.run_url,
                            partial=partial, reached=reached, forms=forms_to_save(saved_forms, state, current, forms),
                            reshaped=reshaped, slow=slow)
-    except BodyTooLong as e:  # before the comment: the next run compares with the same saved outcomes, and reports again
+    # before the comment: the next run compares with the same saved outcomes, and reports again
+    except BodyTooLong as e:
         print(f"::error::{e}")
         return 1
     args.body_out.write_text(body, encoding="utf-8")

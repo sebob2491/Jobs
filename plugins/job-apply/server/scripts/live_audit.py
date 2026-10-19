@@ -170,7 +170,8 @@ def page_findings(where: str, text: str, profile: dict[str, Any]) -> Iterator[st
             level = degree_key(label.group(1)) if label else None
             if label and level and level not in levels:
                 yield (f"{where}: beside {school} the review page shows a {level.replace('_', ' ')} degree "
-                       f"(\u201c{' '.join(label.group(1).split()[:3])}\u201d); the profile's levels: {', '.join(sorted(levels)) or 'none'}")
+                       f"(\u201c{' '.join(label.group(1).split()[:3])}\u201d); "
+                       f"the profile's levels: {', '.join(sorted(levels)) or 'none'}")
 
 
 def review_pages(records: dict[str, dict[str, Any]], folder: Path) -> Iterator[tuple[str, dict[str, Any], Path]]:
@@ -560,7 +561,8 @@ def main(argv: list[str] | None = None) -> int:
     if facts:
         said += f"; {facts_said(facts)}"
     if findings:
-        print(f"audit: {len(findings)} finding{'' if len(findings) == 1 else 's'} ({len(read)} records, {files} files); {said}")
+        print(f"audit: {len(findings)} finding{'' if len(findings) == 1 else 's'} ({len(read)} "
+              f"records, {files} files); {said}")
         return 1
     print(f"audit: nothing found ({len(read)} records, {files} files); {said}")
     return 0

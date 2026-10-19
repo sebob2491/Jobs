@@ -94,10 +94,11 @@ def test_claudes_tools_say_a_job_may_be_one_applied_to_on_indeed_and_ask_first(s
     open_application says so (`maybe_same`), and submit_application presses nothing without user_confirmed, until the
     person said Apply anyway."""
     sent = routed(srv)
-    indeed = srv.add_job(url="https://www.indeed.com/viewjob?jk=abcabcabcabcabca", title="Tech", company="Intel Corporation",
-                         location="Chandler, AZ", source="indeed")["job"]
+    indeed = srv.add_job(url="https://www.indeed.com/viewjob?jk=abcabcabcabcabca", title="Tech",
+                         company="Intel Corporation", location="Chandler, AZ", source="indeed")["job"]
     srv.update_job(indeed["id"], status="applied")
-    own = srv.add_job(url="https://careers.example.com/a", title="Tech", company="Intel", location="Chandler, AZ")["job"]
+    own = srv.add_job(url="https://careers.example.com/a", title="Tech", company="Intel",
+                      location="Chandler, AZ")["job"]
     opened = run(srv.open_application(job_id=own["id"]))
     words = "may be the job already started or applied to: ask the person before applying"
     assert opened["maybe_same"] == {"jobs": [{"job_id": indeed["id"], "title": "Tech", "company": "Intel Corporation",
@@ -105,7 +106,8 @@ def test_claudes_tools_say_a_job_may_be_one_applied_to_on_indeed_and_ask_first(s
     out = run(srv.submit_application(job_id=own["id"]))
     assert out["submitted"] is False and words in out["reason"] and sent == [], out
     assert out["maybe_same"] == opened["maybe_same"]["jobs"]
-    assert run(srv.open_application(url="https://careers.example.com/a"))["maybe_same"]["jobs"][0]["job_id"] == indeed["id"]
+    assert (run(srv.open_application(url="https://careers.example.com/a"))["maybe_same"]["jobs"][0]["job_id"]
+            == indeed["id"])
     srv.tracker().clear_maybe_same(own["id"], [indeed["id"]])  # (the desk's Apply anyway, on a card naming it)
     assert "maybe_same" not in run(srv.open_application(job_id=own["id"]))
     assert words not in run(srv.submit_application(job_id=own["id"])).get("reason", "")
@@ -132,7 +134,8 @@ def test_claudes_tools_say_a_job_is_marked_not_interested_and_ask_first(srv):
     assert out["submitted"] is False and words in out["reason"] and sent == [], out
     assert "not_interested" not in run(srv.open_application(job_id=other["id"]))
     srv.tracker().set_not_interested("https://jobs.other.com/b", reason="")  # (an opening never saved as a job)
-    assert run(srv.open_application(url="https://jobs.other.com/b"))["not_interested"] == {"reason": "", "warning": words}
+    assert (run(srv.open_application(url="https://jobs.other.com/b"))["not_interested"]
+            == {"reason": "", "warning": words})
     srv.tracker().undo_not_interested(job["url"])
     assert "not_interested" not in run(srv.open_application(job_id=job["id"]))
     assert words not in run(srv.submit_application(job_id=job["id"])).get("reason", "")
@@ -149,13 +152,15 @@ def test_an_employers_posting_marked_before_its_indeed_copy_was_saved_marks_that
     from job_apply import desk as desk_module
     from job_apply.desk import Desk
 
-    monkeypatch.setitem(PAGES, "https://www.indeed.com/viewjob", FORM.format(title="Tech", action="https://x.example/done"))
+    monkeypatch.setitem(PAGES, "https://www.indeed.com/viewjob",
+                        FORM.format(title="Tech", action="https://x.example/done"))
     sent = routed(srv)
     own = "https://examplefab.wd5.myworkdayjobs.com/External/job/Phoenix/Field-Service-Engineer_R77"
     desk = Desk(srv)
     desk.applier.start = lambda: None
     desk.search.update(status="done", at=time.time())
-    desk.listings = [{"url": own, "title": "Field Service Engineer", "company": "Example Fab", "location": "Phoenix, AZ",
+    desk.listings = [{"url": own, "title": "Field Service Engineer", "company": "Example Fab",
+                      "location": "Phoenix, AZ",
                       "fit": {"score": 80, "reasons": [], "concerns": [], "blocked": False, "recommended": True}}]
     desk.not_interested(own, "location")  # (no job yet: an opening on the employer's site)
     copy = srv.add_job(url="https://www.indeed.com/viewjob?jk=7777777777777777", title="Field Service Engineer",
@@ -224,8 +229,10 @@ def test_a_saved_password_goes_into_a_frame_by_the_frames_own_address(srv, job_a
     icims, widget = "https://careers-examplefab.icims.com/jobs/1/login", "https://widgets.examplead.example/signin"
     for url, page in (("https://careers.examplefab.example/jobs/1", f'<iframe src="{icims}"></iframe>'),
                       ("https://careers-examplefab.icims.com/jobs/1/job", f'<iframe src="{widget}"></iframe>'),
-                      (icims, FORM.format(title="Sign in", action="x")), (widget, FORM.format(title="Sign in", action="x"))):
-        monkeypatch.setitem(PAGES, url, f"<!doctype html><html><body>{page}</body></html>" if "<iframe" in page else page)
+                      (icims, FORM.format(title="Sign in", action="x")),
+                      (widget, FORM.format(title="Sign in", action="x"))):
+        monkeypatch.setitem(PAGES, url,
+                            f"<!doctype html><html><body>{page}</body></html>" if "<iframe" in page else page)
     routed(srv)
     monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
 
@@ -369,7 +376,8 @@ def test_passwords_are_read_as_written(job_apply_home):
 def test_settings_written_by_hand(monkeypatch):
     monkeypatch.delenv("JOB_APPLY_HEADLESS")
     assert config.Settings.from_dict({"browser_channel": "chrome-beta"}).browser_channel == "chrome-beta"
-    s = config.Settings.from_dict({"browser_channel": "edge", "headless": "false", "auto_submit_ats": "workday, greenhouse"})
+    s = config.Settings.from_dict({"browser_channel": "edge", "headless": "false",
+                                   "auto_submit_ats": "workday, greenhouse"})
     assert s.browser_channel == "msedge" and s.headless is False and s.auto_submit_ats == ["workday", "greenhouse"]
     s = config.Settings.from_dict({"browser_channel": None, "headless": "yes"})
     assert s.browser_channel == "chrome" and s.headless is True and not s.warnings
@@ -423,14 +431,15 @@ BROWSER_PAGES = {
 <iframe src="https://www.linkedin.com/company/example/follow" style="width:200px;height:40px"></iframe>
 <form><label for="fn">First Name</label><input id="fn"><button type="submit">Submit application</button></form>
 </body></html>""",
-    "https://www.linkedin.com/company/example/follow": "<!doctype html><html><body><button>Follow</button></body></html>",
+    "https://www.linkedin.com/company/example/follow": "<!doctype html><html><body>"
+                                                       "<button>Follow</button></body></html>",
     "https://jobs.example.com/widgets": """<!doctype html><html><body><form>
 <label for="terms">I accept the terms</label><input type="checkbox" id="terms" disabled>
 <label for="country">Country</label><select id="country" onchange="
   document.getElementById('state').innerHTML = this.value ? '<option></option><option>Arizona</option><option>Texas</option>' : '<option>Select a country first</option>'">
   <option value=""></option><option>United States</option></select>
 <label for="state">State</label><select id="state"><option>Select a country first</option></select>
-</form></body></html>""",
+</form></body></html>""",  # noqa: E501
 }
 
 
@@ -610,9 +619,10 @@ def test_cookie_and_privacy_banners_are_never_accepted():
     for label, in_banner in (("Accept All Cookies", False), ("Accept Cookies", False), ("Accept", True),
                              ("AGREE AND PROCEED", True), ("Allow all", True), ("I agree", True), ("Got it", True)):
         assert _accepts_cookies(label, label, in_banner), label
-    for label, in_banner in (("Reject All", True), ("Accept only necessary cookies", True), ("Use necessary cookies only", True),
-                             ("Cookie settings", True), ("Continue without accepting", True), ("Accept", False),
-                             ("I agree to the terms", False), ("Next", True),
+    for label, in_banner in (("Reject All", True), ("Accept only necessary cookies", True),
+                             ("Use necessary cookies only", True), ("Cookie settings", True),
+                             ("Continue without accepting", True), ("Accept", False), ("I agree to the terms", False),
+                             ("Next", True),
                              ("I agree to the Terms of Use and Cookie Policy", False)):  # an application's consent
         assert not _accepts_cookies(label, label, in_banner), label
 
@@ -639,7 +649,9 @@ def test_the_click_tool_accepts_a_cookie_banner_only_where_the_person_allows_it(
     from conftest import fixture_url
 
     profile = job_apply_home / "profile.yaml"
-    profile.write_text(profile.read_text(encoding="utf-8").replace("settings:\n", "settings:\n  accept_cookies: true\n"), encoding="utf-8")
+    profile.write_text(profile.read_text(encoding="utf-8").replace("settings:\n",
+                                                                   "settings:\n  accept_cookies: true\n"),
+                       encoding="utf-8")
 
     async def go():
         clicks = []
@@ -828,8 +840,10 @@ def test_a_password_named_for_a_site_goes_only_onto_that_sites_own_domain(srv, m
     assert other("https://jobs.other.com/b") and not other("https://jobs.another.com/other")
     # an employer's own password on its tenant of a shared job system (its name is the host's first label there)
     assert honeywell("https://honeywell.wd5.myworkdayjobs.com/login") and honeywell("https://honeywell.csod.com/x")
-    assert not honeywell("https://honeywell.evil.example/login") and not honeywell("https://careers.honeywell.com.evil.example/x")
-    # (a tenant is the employer's own: linkedin.wd5.myworkdayjobs.com is LinkedIn's; not a host that only looks like one)
+    assert (not honeywell("https://honeywell.evil.example/login")
+            and not honeywell("https://careers.honeywell.com.evil.example/x"))
+    # (a tenant is the employer's own: linkedin.wd5.myworkdayjobs.com is LinkedIn's; not a host
+    # that only looks like one)
     assert linkedin("https://linkedin.wd5.myworkdayjobs.com/login")
     assert not linkedin("https://linkedin.wd5.myworkdayjobs.com.evil.example/login")
 
@@ -916,7 +930,8 @@ def test_a_sticky_header_with_a_cookie_link_or_a_fixed_shell_isnt_a_cookie_banne
         actions = (await srv.inspect_form(False))["actions"]
         agree = await srv.click("I agree")
         sign_in = await srv.click("Sign In")
-        return actions, agree, sign_in, await srv.browser._page.evaluate("() => [window.agreed || 0, window.signedIn || 0]")
+        return (actions, agree, sign_in,
+                await srv.browser._page.evaluate("() => [window.agreed || 0, window.signedIn || 0]"))
 
     actions, agree, sign_in, pressed = run(go())
     assert not any(a.get("cookie") for a in actions), actions
@@ -1011,7 +1026,8 @@ def test_setup_asks_the_common_questions_the_profile_doesnt_answer(srv):
     assert "heard_about" not in ids and {"shift", "background_check"} <= set(ids), ids
     assert all("match" not in q for q in asked["questions"])
     assert srv.setup_status()["common_questions_unanswered"] == asked["unanswered"] == len(ids)
-    out = srv.common_questions(answers=[{"id": "shift", "answer": "Nights"}, {"id": "background_check", "answer": "Maybe"},
+    out = srv.common_questions(answers=[{"id": "shift", "answer": "Nights"},
+                                        {"id": "background_check", "answer": "Maybe"},
                                         {"id": "nonsense", "answer": "Yes"}])
     assert out["saved"] == ["shift"] and set(out["errors"]) == {"background_check", "nonsense"}, out
     assert {q["id"]: q["answer"] for q in out["questions"]}["shift"] == "Nights"
