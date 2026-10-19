@@ -66,11 +66,13 @@ NEVER: dict[str, re.Pattern[str]] = {kind: re.compile(words, re.I | re.S) for ki
                r"\bemployment (?:agreement|contract)\b",
     # a sign-up in so many words, however deep in a notice ("By clicking Accept you also join our Talent Community")
     "signs up": r"\b(?:join\w*|subscrib\w*|sign(?:s|ed|ing)? (?:you )?up|receiv\w*|enrol\w*|added to|opt(?:s|ed)? "
-                r"(?:you )?in)\b.{0,60}?\b(?:talent (?:community|network|pool)|newsletters?|job alerts?|marketing|"
-                r"promotion\w*)",
-    "newsletter": r"newsletter|mailing list|subscri",
+                r"(?:you )?in)\b.{0,60}?\b(?:talent (?:community|network|pool)|candidate (?:community|network)|"
+                r"newsletters?|job alerts?|marketing|promotion\w*)",
+    # (and career updates or news: a newsletter by another name, the review of run 144's fixes)
+    "newsletter": r"newsletter|mailing list|subscri|\bcareers? (?:updates|news)\b",
     "job alerts": r"job alerts?|alerts? by e-?mail|e-?mail alerts?|notify me|similar (?:jobs|openings|roles)",
-    "talent community": r"talent (?:community|network|pool)|stay informed|keep me",
+    # (and a candidate community: a talent community by another name, the review of run 144's fixes)
+    "talent community": r"talent (?:community|network|pool)|candidate (?:community|network)|stay informed|keep me",
     "marketing": r"marketing|promotion|campaigns?",
     "offers": r"offers",
     EMAILS: r"\breceiv\w*\b.{0,40}\b(?:communications?|updates?|news\w*|offers)\b|"

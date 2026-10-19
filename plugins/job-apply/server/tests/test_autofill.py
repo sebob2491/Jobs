@@ -265,6 +265,13 @@ def test_resolve_files(job_apply_home, tmp_path):
     # the review's: a cover letter's section that mentions the resume keeps its cover letter
     for section in ("Cover Letter (and resume if not uploaded)", "Cover letter. Your resume was already imported"):
         assert resolve_field({**both, "section": section}, p, job, 1).value == str(folder / "cover_letter.pdf"), section
+    # Workday's questionnaire boxes, named by their questions (CSN's and NSU's, live run 144): the cover letter's gets
+    # the cover letter; the references' is the person's (the profile has no file for it), not the resume
+    workday = {"section": "Application Questions 1 of 2"}
+    cover = {**f("Please upload your Letter of Application/Cover Letter.*", "file"), **workday}
+    assert resolve_field(cover, p, job, 4).value == str(folder / "cover_letter.pdf")
+    refs = {**f("Please upload your Reference Contact Information.*", "file"), **workday}
+    assert resolve_field(refs, p, job, 4) is None and resolve_field(refs, p, job, 1) is None
 
 
 def test_plan_autofill_orders_required_first():
@@ -3139,6 +3146,28 @@ def test_a_degree_still_under_way_is_not_the_highest_education(dates):
                    education_history=[{"school": "Example State University", "degree": "BS Electrical Engineering",
                                        "major": "EE", "start": 2016, "end": 2020}])
     assert _answer("Highest level of education completed", done, kind="select", options=options) == "Bachelor's"
+
+
+def test_the_current_level_of_education_is_the_highest_had():
+    """NNSS's Oracle (live run 144): "13. What is your current level of education?" wasn't read as the highest
+    education, so the profile's Bachelor's was never given and the person was asked. It is, from the profile alone:
+    never a degree under way ("In-process with Master's..." isn't a Master's), and nothing where the profile says
+    none (coursework is not a degree)."""
+    options = ["High School or equivalent", "Some college", "Associate's degree", "Bachelor's degree",
+               "Master's Degree", "Doctorate", "In-process with Master's or Doctorate degree"]
+    question = "13. What is your current level of education?"
+    for highest, picked in (("Bachelor's Degree", "Bachelor's degree"), ("Master's Degree", "Master's Degree"),
+                            ("Some college", "Some college")):
+        p = _person(education={"highest_degree": highest})
+        assert _answer(question, p, kind="radio_group", options=options) == picked, highest
+        assert _answer("What is your level of education?", p, kind="select", options=options) == picked, highest
+    under_way = _person(education={}, education_history=[
+        {"school": "Example State University", "degree": "MS Electrical Engineering", "start": 2024, "end": 2099}])
+    assert _answer(question, under_way, kind="radio_group", options=options) is None
+    assert _answer(question, _person(education={}, education_history=[]), kind="radio_group", options=options) is None
+    # (not a question about what the job asks for)
+    assert _answer("Do you have the level of education required for this position?", _person(
+        education={"highest_degree": "Bachelor's Degree"}), kind="radio_group", options=["Yes", "No"]) is None
 
 
 def test_a_degree_had_is_still_the_highest_when_a_later_one_is_under_way():

@@ -127,6 +127,15 @@ EXTRACT_JS = r"""
     }
     return ticked;
   };
+  // Oracle's cx-multi-select (Recruiting Cloud's "select all that apply" question, MSTS' run 144): an input whose ticked
+  // choices show as pills under its box, beside its container; the input holds only words typed to search. null for
+  // any other box
+  const cxTicked = (el) => {
+    const box = el.tagName === 'INPUT' ? el.closest('.cx-multi-select-container') : null;
+    if (!box || !box.parentElement) return null;
+    return Array.from(box.parentElement.querySelectorAll(':scope > .cx-multi-select-pill__values '
+      + '.cx-multi-select-pill__value-text')).map(txt).filter(Boolean);
+  };
   const byId = (id) => (id ? document.getElementById(id) : null);
   // a wrapper folded shut (height or width 0, its overflow hidden: an accordion closed) hides what's in it, though
   // each box keeps its own size (the review of Oct 15); read once a wrapper per look
@@ -196,6 +205,10 @@ EXTRACT_JS = r"""
     const ids = (el.getAttribute('aria-labelledby') || '').split(/\s+/).filter((i) => i && i !== el.id);
     return clean(ids.map((i) => txt(byId(i))).join(' '));
   };
+  // A file box's words that say nothing of what it takes ("Attach"); and a drop zone's, "Drop files here or Select
+  // files" (Workday's, live run 144)
+  const GENERIC_FILE = new RegExp('^(attach|upload|choose (a )?file|browse|select files?|add (a )?file|'
+    + '((drag (and|&) )?drop (your )?files? here)( or (select|browse|choose|upload) (your )?files?)?|or|enter manually)$', 'i');
   const labelFor = (el) => {
     const ff = el.closest('[data-automation-id^="formField"]');
     if (ff) {
@@ -210,7 +223,25 @@ EXTRACT_JS = r"""
     if (al) return clean(al);
     if (el.placeholder) return clean(el.placeholder);
     if (el.title) return clean(el.title);
-    return preceding(el) || el.name || '';
+    // a file box inside an upload widget labelled for it: Workday's questionnaire, its "...-FileUpload" wrapper
+    // labelled by the question's own rich text ("Please upload your Letter of Application/Cover Letter."), not the drop
+    // zone's words before the box (CSN's, NSU's and UNLV's, live run 144). Only a wrapper that holds this box and no
+    // other, and only where the words before the box say nothing of their own: never a group's, a section's or a
+    // tab's label over several boxes ("Resume and Cover Letter" over a resume's box and a cover letter's: the review)
+    const before = preceding(el);
+    if (el.type === 'file' && (!before || GENERIC_FILE.test(before))) {
+      for (let up = el.parentElement, i = 0; up && i < 3; up = up.parentElement, i++) {
+        if (up.matches('form, fieldset, section, [role="group"], [role="radiogroup"], [role="region"], '
+                       + '[role="dialog"], [role="tabpanel"]')) break;
+        if ([...up.querySelectorAll(CONTROL)].some((c) => c !== el)) break;
+        if (up.hasAttribute('aria-labelledby')) {
+          const t = labelledBy(up);
+          if (t) return t;
+          break;
+        }
+      }
+    }
+    return before || el.name || '';
   };
   const groupQuestion = (container, first) => {
     if (container) {
@@ -345,6 +376,10 @@ EXTRACT_JS = r"""
   const FILE_BUTTON = /^(?:delete|remove|preview|download|view|open) file:?\s+(.+)$/i;
   const UPLOADED = /\bfile upload completed\b|\bupload(?:ed)? (?:completed? )?successfully\b|\bsuccessfully uploaded\b/i;
   const uploadedNear = (el) => {
+    // iCIMS keeps a file sent with its form in a hidden box named after its own ("<name>_FileName"), shown nowhere once
+    // its page is back (Valley Health's, run 144: read as empty, the resume went up again, and the page with it)
+    const kept = el.id && el.id.endsWith('_File') ? document.getElementById(el.id.slice(0, -'_File'.length) + '_FileName') : null;
+    if (kept && kept.type === 'hidden' && clean(kept.value)) return clean(kept.value);
     for (let n = el.parentElement, d = 0; n && d < 6; n = n.parentElement, d++) {
       if (Array.from(n.querySelectorAll('input, select, textarea')).some((x) => x !== el && x.type !== 'hidden'
           && x.type !== 'file' && x.getClientRects().length > 0)) break;
@@ -412,7 +447,6 @@ EXTRACT_JS = r"""
 
   // "search", "job-search", "jobSearchForm"; not "research" ("toyotaresearchinstitute")
   const isSearchName = (s) => !!s && (/(^|[^a-zA-Z])search/i.test(s) || /[a-z]Search/.test(s));
-  const GENERIC_FILE = /^(attach|upload|choose (a )?file|browse|select files?|add (a )?file|drop (your )?files? here|or|enter manually)$/i;
   const HONEYPOT = /for robots|robots only|if you('| a)?re (a )?human|not (be )?(filled|entered) by humans|honey ?pot|leave this field (blank|empty)/i;
   const fields = [];
   const fieldEls = new Map();  // each field's element (a group's first member), for the aside pass
@@ -472,6 +506,7 @@ EXTRACT_JS = r"""
     const native = twin && twin.tagName === 'SELECT' ? twin : null;
     // (BrassRing's search box standing for a select of several choices: the question itself, not a site's search)
     const standIn = tagName === 'input' && role === 'combobox' && standsFor(el) && standsFor(el).multiple ? standsFor(el) : null;
+    const cx = role === 'combobox' ? cxTicked(el) : null;  // (Oracle's multi-select: its pills)
     // (and no other element acting as a button: a site's own menus, a header's language picker, aren't its form)
     if (role === 'button' && !['button', 'input', 'select', 'textarea'].includes(tagName) && !native) continue;
     // (the select such a search box stands for is that box's question, never one of its own: BrassRing's hides it only
@@ -508,11 +543,11 @@ EXTRACT_JS = r"""
       // its chosen items sit beside the input's own box, in the prompt's outer container
       const workday = el.closest('[data-automation-id="multiSelectContainer"]')
         || el.closest('[data-automation-id="multiselectInputContainer"]');
-      const pills = standIn ? searchTicked(el, standIn)
+      const pills = cx ? cx : standIn ? searchTicked(el, standIn)
         : workday ? Array.from(workday.querySelectorAll('[data-automation-id="selectedItem"], [class*="selected" i] [class*="label" i]')).map(txt).filter(Boolean)
         : pillsNear(el);
       if (pills.length) value = pills.join(', ');
-      else if (workday || standIn) value = '';  // text left in its search box isn't a choice; nor is "0 items selected"
+      else if (workday || standIn || cx) value = '';  // text left in its search box isn't a choice; nor is "0 items selected"
       else if (!el.value) value = shownNear(el);  // react-select shows the choice beside an empty input
       if (standIn) {  // (its choices, where the select holds them; BrassRing's lists them only once opened)
         const named = Array.from(standIn.options).filter((o) => o.value !== '').map((o) => clean(o.text)).filter(Boolean);
@@ -598,7 +633,7 @@ EXTRACT_JS = r"""
     if (kind === 'combobox' && el.getAttribute('aria-haspopup') === 'grid') f.search = true;
     // SuccessFactors' paginated select: lists 100 entries at a time, the rest by search
     if (kind === 'combobox' && el.classList.contains('rcmpaginatedselectinput')) f.paged = true;
-    if (el.multiple || (standIn && standIn.multiple)) f.multiple = true;
+    if (el.multiple || (standIn && standIn.multiple) || (kind === 'combobox' && cx)) f.multiple = true;
     // a list whose first choice (or preset country) the desk judged the site's once: a pick of it since is the person's
     if ((kind === 'select' || kind === 'listbox' || kind === 'combobox') && el.hasAttribute('data-ja-default-judged')) f.judged = true;
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') f.disabled = true;
@@ -833,6 +868,14 @@ EXTRACT_JS = r"""
     if (actions.length >= 60 && !isSubmit && !formSubmit && !STEP.test(t)) continue;
     const a = { id: idOf(el), text: t };
     if (applyItem) a.menu = true;
+    // a link in the site's own header or navigation, and where it goes: the site's "Apply Now" there (Station
+    // Casinos' Oracle, live run 144: a link to its list of jobs) isn't a posting's own way in. Not a header in the
+    // page's main part or its article: a posting's own, with its title and its Apply (the review)
+    if (el.tagName === 'A' && el.closest('header, nav, [role="banner"], [role="navigation"]')
+        && !el.closest('main, article, [role="main"]')) {
+      a.site_nav = true;
+      if (/^https?:/i.test(el.href || '')) a.goes_to = el.href;
+    }
     // a saved draft's "Continue Application" link: where it goes, which says whose application it is (issue #112, note 38)
     if (el.tagName === 'A' && el.href && /^\s*continue\b.*\bapplication\s*$/i.test(t)) a.href = el.href;
     // A cookie banner's own buttons (OneTrust's sits at the very end of a long page, past
@@ -1540,8 +1583,9 @@ CHALLENGE_JS = r"""
 () => Array.from(document.querySelectorAll('iframe')).some((f) => {
   const src = f.getAttribute('src') || '';
   const title = f.getAttribute('title') || '';
-  if (!/hcaptcha\.com.*challenge|recaptcha\/(api2|enterprise)\/bframe|challenges\.cloudflare\.com/i.test(src)
-      && !/(hcaptcha|recaptcha|captcha).*challenge|challenge.*(hcaptcha|recaptcha|captcha)/i.test(title)) return false;
+  // (and DataDome's frame, its challenge or its block: Wynn's and Boyd's SmartRecruiters postings, live run 144)
+  if (!/hcaptcha\.com.*challenge|recaptcha\/(api2|enterprise)\/bframe|challenges\.cloudflare\.com|captcha-delivery\.com/i.test(src)
+      && !/(hcaptcha|recaptcha|captcha).*challenge|challenge.*(hcaptcha|recaptcha|captcha)|datadome/i.test(title)) return false;
   const r = f.getBoundingClientRect();
   const s = getComputedStyle(f);
   return r.width > 150 && r.height > 150 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth
@@ -1558,8 +1602,9 @@ WORKDAY_PROMPT_JS = r"""
 
 
 # A jQuery UI multiselect's button ("<id>-button" over a hidden <select multiple>: BrassRing's "Please check each
-# applicable box", Edward Jones' run 87), or BrassRing's search box standing for one (run 88): the choices it has ticked
-# (its select's, and those its widget lists beside it), or null for any other control
+# applicable box", Edward Jones' run 87), BrassRing's search box standing for one (run 88), or Oracle's cx-multi-select
+# (run 144): the choices it has ticked (its select's, and those its widget lists beside it; Oracle's pills), or null for
+# any other control
 TWIN_TICKED_JS = r"""
 (el) => {
   const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
@@ -1592,6 +1637,12 @@ TWIN_TICKED_JS = r"""
     }
     return ticked;
   };
+  // and Oracle's cx-multi-select: the pills under its box (MSTS' run 144)
+  const cx = el.tagName === 'INPUT' ? el.closest('.cx-multi-select-container') : null;
+  if (cx && cx.parentElement) {
+    return Array.from(cx.parentElement.querySelectorAll(':scope > .cx-multi-select-pill__values '
+      + '.cx-multi-select-pill__value-text')).map((p) => clean(p.textContent)).filter(Boolean);
+  }
   const stood = el.tagName === 'INPUT' && el.getAttribute('select') ? document.getElementById(el.getAttribute('select')) : null;
   if (stood && stood.tagName === 'SELECT') return stood.multiple ? searchTicked(el, stood) : null;
   const twin = el.id && el.id.endsWith('-button') ? document.getElementById(el.id.slice(0, -'-button'.length)) : null;

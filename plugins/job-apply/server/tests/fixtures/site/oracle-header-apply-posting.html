@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Resort Guest Room Attendant - Careers</title></head>
+<body>
+<!-- An Oracle Recruiting Cloud posting whose site puts an "Apply Now" in its own header, as Station Casinos' did live
+     (run 144): a link to the site's list of jobs (<site>/requisitions), before the posting's own "Apply Now" in the
+     page. The desk pressed the header's, landed on the list ("Looking for other opportunities?"), and pressed the
+     header's again there, three times, never reaching the application. The posting's own Apply Now goes on to the
+     application's email step (<job>/apply/email). Made-up employer and job. -->
+<header class="app__custom-header">
+  <ul class="custom-header">
+    <li class="apply-now-header"><a href="/hcmUI/CandidateExperience/en/sites/CX_1/requisitions"> Apply Now </a></li>
+  </ul>
+</header>
+<header><a href="#">Example Resort Careers</a> <a href="#">Sign In</a></header>
+<main>
+  <h1>Resort Guest Room Attendant</h1>
+  <p>Las Vegas, NV, United States · Posting Date 10/01/2026 · Job Identification 1001</p>
+  <h2>Job Description</h2>
+  <p>Clean and prepare guest rooms to the resort's standards.</p>
+  <button type="button" id="apply" class="button apply-button">Apply Now</button>
+</main>
+<script>
+  document.getElementById('apply').addEventListener('click', () => {
+    location.href = location.pathname.replace(/\/$/, '') + '/apply/email';
+  });
+</script>
+</body>
+</html>

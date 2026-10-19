@@ -244,7 +244,9 @@ class MenusMixin:
         taken where it then shows ticked; never clicked again, which would untick it. BrassRing's search box for
         several choices (run 88) works alike: its list opens on the Down key and shows a page of 15, its choices known
         only once it's open; an answer that page doesn't show, or shows only a near neighbour of ("South Asian" for
-        "Asian": the review's), is searched for, and the exact one taken."""
+        "Asian": the review's), is searched for, and the exact one taken. Oracle's cx-multi-select too (MSTS' question
+        7, run 144): its choices ticked show as pills under its box, and it sets its answer only as its list closes
+        (closed here after the tick, the focus taken off it)."""
         names = bool(field.get("names"))
         options = field.get("options") or []
         choice = choose_option(value, options, names=names) if options else None
@@ -283,11 +285,13 @@ class MenusMixin:
                                         and any(norm(t) in norm(pick) or norm(pick) in norm(t) for t in ticked
                                                 if norm(t))):
                 return f"selected {pick} (ticked already)"
+            # (Oracle's takes a pick only as a pill: a row it marks selected as the pointer goes over it isn't one)
+            pills_only = await loc.evaluate("el => !!el.closest('.cx-multi-select-container')")
             await self._click_option(page, field["id"], pick)
             for _ in range(8):
                 await page.wait_for_timeout(150)
                 if (browser._among(pick, await loc.evaluate(browser.TWIN_TICKED_JS) or [])
-                        or await self._row_ticked(page, field["id"], pick)):
+                        or not pills_only and await self._row_ticked(page, field["id"], pick)):
                     return f"selected {pick}"
         finally:
             await self._close_menus(page)  # (its menu stays open after a tick)

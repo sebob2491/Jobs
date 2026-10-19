@@ -121,6 +121,81 @@ def test_a_hidden_file_box_is_named_by_its_own_upload_button(srv, tmp_path):
     assert [f["label"] for f in got] == ["Upload Resume", "Upload Cover Letter", "Transcript", "Portfolio"]
 
 
+WORKDAY_UPLOAD = ('<div data-automation-id="formField-" data-fkit-id="primaryQuestionnaire--a{n}">'
+                  '<div id="rich-label{n}"><div data-automation-id="richText"><p><b>{question}</b>{star}</p></div>'
+                  '</div><div><div style="width: 100%"><div aria-labelledby="rich-label{n}" '
+                  'data-automation-id="a{n}-FileUpload"><div><div data-automation-id="file-upload-drop-zone">'
+                  '<div>Drop files here</div><div><div>or</div>'
+                  '<button type="button" data-automation-id="select-files"><span>Select files</span></button>'
+                  '</div></div><input data-automation-id="file-upload-input-ref" multiple type="file"></div>'
+                  '</div></div></div></div>')
+
+
+def test_a_workday_questionnaire_file_box_is_named_by_its_question(srv, tmp_path):
+    """CSN's, NSU's and UNLV's Workday (live run 144): a questionnaire's file boxes were read as "Drop files here or
+    Select files", the words of the drop zone before the input, so the cover letter's box wasn't known for one and the
+    pause named nothing the person could find. The box's "...-FileUpload" wrapper is labelled (aria-labelledby) by the
+    question's own rich text."""
+    star = '<abbr class="requiredAsterisk" title="required">*</abbr>'
+    got = fields_of(srv, tmp_path, '<div aria-labelledby="sec" role="group"><h3 id="sec">Application Questions</h3>'
+                    + WORKDAY_UPLOAD.format(n=155, question="Please upload your Letter of Application/Cover Letter.",
+                                            star=star)
+                    + WORKDAY_UPLOAD.format(n=156, question="Please upload your Reference Contact Information.",
+                                            star="") + '</div>')
+    assert [(f["kind"], f["label"], f["required"]) for f in got] == [
+        ("file", "Please upload your Letter of Application/Cover Letter.*", True),
+        ("file", "Please upload your Reference Contact Information.", False)]
+
+
+@pytest.mark.parametrize("around", ['section aria-labelledby="h"', 'div aria-labelledby="h"',
+                                    'div role="tabpanel" aria-labelledby="h"'])
+def test_a_section_labelled_for_its_heading_doesnt_name_each_file_box_in_it(srv, tmp_path, around):
+    """The review of the Workday fix (run 144): a section, a plain block or a tab labelled by its heading
+    ("Resume and Cover Letter") named every file box in it, so the resume's box could get the cover letter. A wrapper's
+    label names a file box only where it holds that box alone and the words before the box say nothing of their
+    own."""
+    tag = around.split()[0]
+    got = fields_of(srv, tmp_path, f'<{around}><h2 id="h">Resume and Cover Letter</h2>'
+                                   '<div><span>Resume *</span><input type="file" required></div>'
+                                   '<div><span>Cover letter</span><input type="file"></div></' + tag + '>')
+    assert [(f["label"], f["required"]) for f in got] == [("Resume *", True), ("Cover letter", False)]
+    # nor one box alone in it whose own words name it
+    got = fields_of(srv, tmp_path, f'<{around}><h2 id="h">Attachments</h2><div><span>Transcript</span>'
+                                   '<input type="file"></div></' + tag + '>')
+    assert [f["label"] for f in got] == ["Transcript"]
+
+
+def test_a_postings_own_header_isnt_the_sites(srv, tmp_path):
+    """The review of the Station Casinos fix (run 144): a posting's own <header> in its <article> (its title and its
+    Apply) read as the site's header, so its Apply went after a "similar jobs" Apply below it. Only a header or
+    navigation outside the page's main part, or its article, is the site's own; its link to the list of jobs is never
+    the way in."""
+    from job_apply.pipeline import pick_next
+
+    page = tmp_path / "posting.html"
+    page.write_text('<!doctype html><html><body><header><a href="https://jobs.example.com/requisitions">Apply Now</a>'
+                    '</header><main><article><header><h1>Banquet Server</h1>'
+                    '<a href="https://jobs.example.com/job/1001/apply">Apply Now</a></header><p>Serve guests.</p>'
+                    '</article><aside><h2>Similar jobs</h2><p>Valet Attendant</p>'
+                    '<a href="https://jobs.example.com/job/1002/apply">Apply Now</a></aside></main></body></html>',
+                    encoding="utf-8")
+    run(srv.browser.goto(page.resolve().as_uri()))
+    actions = run(srv.browser.inspect(include_dropdown_options=False))["actions"]
+    applies = [a for a in actions if a["text"] == "Apply Now"]
+    assert [bool(a.get("site_nav")) for a in applies] == [True, False, False], applies
+    assert pick_next(actions, in_form=False)["id"] == applies[1]["id"]
+
+
+def test_a_drop_zones_words_dont_name_its_file_box(srv, tmp_path):
+    """A drop zone's own words, "Drop files here or Select files" (Workday's, live run 144), say nothing about what the
+    box takes: they're as generic as "Attach", and the heading before the box names it."""
+    got = fields_of(srv, tmp_path, '<div><h4>Cover Letter</h4><div><div><div>Drop files here</div><div>or</div>'
+                                   '<button type="button">Select files</button></div><input type="file"></div></div>'
+                                   '<div><h4>Transcript</h4><div><div>Drag and drop files here or browse files</div>'
+                                   '<input type="file"></div></div>')
+    assert [f["label"] for f in got] == ["Cover Letter", "Transcript"]
+
+
 def test_a_loading_indicator_on_show_is_said(srv, tmp_path):
     """Workday's loading dots where a step's questions go (KLA's, live, Oct 2026), or a spinner marked
     busy, are said; a hidden one, or a step's progress bar with its value, isn't a page loading."""
@@ -412,6 +487,45 @@ def test_a_brassring_search_box_ticks_the_answer_itself_once(srv, query, given, 
     tab = run(srv.browser.page())
     pills = "() => Array.from(document.querySelectorAll('.selectionList li')).map((li) => li.firstChild.textContent)"
     assert run(tab.evaluate(pills)) == ticked
+
+
+def test_an_oracle_multi_select_is_read_from_its_pills_and_ticked_once(srv):
+    """Oracle's cx-multi-select (Mission Support and Test Services' question 7, the nightly's run 144): a box whose
+    choices, once ticked, show as pills under it. Its pills weren't read, so a pick that went in read as empty: the
+    desk's second try at the answer clicked the choice again, which unticked it, and the same question was asked seven
+    rounds. Its value is its pills; a choice is clicked once, only where it isn't ticked, and taken where its pill then
+    shows; the list is closed after (the widget sets the answer only then)."""
+    page = run(srv.browser.goto(fixture_url("site/oracle-multiselect.html")))
+    assert page["fields"] == 2, page
+    form = run(srv.browser.inspect(include_dropdown_options=True))
+    q7 = next(f for f in form["fields"] if f["label"].startswith("7. Have you ever worked for Example Labs"))
+    assert (q7["kind"], q7.get("value"), q7.get("required")) == ("combobox", "", True), q7
+    assert "N/A" in q7.get("options", []), q7
+    tab = run(srv.browser.page())
+    pills = ("() => Array.from(document.querySelectorAll('.cx-multi-select-pill__value-text'))"
+             ".map((p) => p.textContent.trim())")
+    for _ in range(2):  # (given again, a second try or a second pass: it stays ticked)
+        done = run(srv.browser.fill([{"id": q7["id"], "value": "N/A"}]))
+        assert all(r["ok"] for r in done), done
+        assert run(tab.evaluate(pills)) == ["N/A"]
+        assert run(tab.evaluate("() => window.committed")) == ["N/A"]  # (its list closed: the answer set)
+        after = next(f for f in run(srv.browser.inspect(include_dropdown_options=False))["fields"]
+                     if f["id"] == q7["id"])
+        assert after.get("value") == "N/A", after
+
+
+@pytest.mark.parametrize("query", ["?refuse", "?rowonly"])
+def test_an_oracle_multi_select_that_wont_take_a_pick_says_so(srv, query):
+    """A pick the box doesn't take (no pill after the click) is said, for the person to tick it, never taken for an
+    answer: read as filled, the same question would come back each round with the desk sure it had answered it.
+    ?rowonly (the review's): its row marked selected, as one the pointer is over, is no pick without its pill."""
+    page_of(srv, "site/oracle-multiselect.html", query)
+    form = run(srv.browser.inspect(include_dropdown_options=True))
+    q7 = next(f for f in form["fields"] if f["label"].startswith("7. Have you ever worked for Example Labs"))
+    done = run(srv.browser.fill([{"id": q7["id"], "value": "N/A"}]))
+    assert not done[0]["ok"] and "desk's browser window" in done[0]["error"], done
+    after = next(f for f in run(srv.browser.inspect(include_dropdown_options=False))["fields"] if f["id"] == q7["id"])
+    assert after.get("value") == "", after
 
 
 def test_a_security_answer_put_in_is_never_read_back_nor_saved(srv, tmp_path):

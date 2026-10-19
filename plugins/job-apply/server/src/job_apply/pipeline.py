@@ -40,7 +40,8 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 from . import config, history, mailbox, report
 from .search import every_employer
 from .ats import ATS_NAMES, JOB_BOARDS, detect_ats, host_of, shared_system
-from .autofill import (clean_label, entry_list_unloaded, _CHOICE_KINDS, is_empty_value, kept_documents, norm,
+from .autofill import (_OTHER_DOCUMENT, clean_label, entry_list_unloaded, _CHOICE_KINDS, is_empty_value,
+                       kept_documents, norm,
                        profile_entries, unset_choice, polarity, tailored_document, works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
                       confirmations, declines_cookies, final_text, may_accept_cookies, questions_shown)
@@ -289,6 +290,11 @@ _LINK_SPENT = re.compile(r"\b(?:link|token|reset|url)s?\b[^.!?\n]{0,40}?\b(?:exp
                          r"\bpassword reset failed\b", re.I)
 # ...unless said only of what may be, or what to do if it were
 _ONLY_IF = re.compile(r"^\W*(?:if|in case|should|when)\b|\b(?:may|might|could) be\b", re.I)
+# A file box for a document the profile has no place for (it holds a resume and a cover letter): its words name
+# another (references, a transcript, a veteran's or an additional document), and no resume or cover letter
+_PROFILE_FILE = re.compile(r"\b(?:resume|résumé|cv|curriculum|cover)", re.I)
+_OTHER_FILE = re.compile(_OTHER_DOCUMENT.pattern + r"|\b(?:additional|supporting|other|veterans?'?)\s+"
+                         r"(?:documents?|files?|attachments?)\b", re.I)
 _PASSWORD_USED = re.compile(r"\bpasswords?\b[^.!?\n]{0,40}?\b(?:(?:recently|previously) used|used (?:recently|before|"
                             r"previously)|(?:already )?been used|can(?:not|'t|\u2019t| not) be re-?used|"
                             r"same as (?:your |the |a |any of your )?(?:current|old|previous|last|recent)|"
@@ -365,6 +371,13 @@ _BOT_TEXT = re.compile(r"verify (?:that )?you are (?:a )?human|are you a robot|"
                        r"your browser)|press (?:&|and) hold|complete the security check|unusual traffic from your|"
                        r"enable javascript and cookies to continue|request unsuccessful|you have been blocked", re.I)
 _CAPTCHA = re.compile(r"i'?m not a robot|i am human|hcaptcha|recaptcha challenge", re.I)
+# A bot-protection service's block page, whatever boxes it shows (DataDome's over Wynn's and Boyd's SmartRecruiters
+# postings, live run 144: "Access is temporarily restricted", and a feedback form with a Comment box): the person's
+_BLOCK_PAGE = re.compile(r"you have been blocked", re.I)
+# ...and its words that a sign-in's lockout may say too ("Access is temporarily restricted" after too many tries): a
+# block only where there's no password box (the review of the DataDome fix)
+_BLOCK_WORDS = re.compile(r"access is temporarily restricted|we detected unusual activity from your (?:device|network)",
+                          re.I)
 _VERIFY_EMAIL = re.compile(r"verif(?:y|ication)\b.{0,40}\b(?:e-?mail|account|link)|check your (?:e-?mail|inbox)", re.I)
 # A sign-in refused because the account's email was never verified (Workday's "Verify your account before you sign in
 # or request a verification email.", beside its "Resend Account Verification": the test identity's Vanguard, run 98,
@@ -493,8 +506,9 @@ _READ_UNDERSTOOD = re.compile(r"^\W*(?:yes,? )?i have read,? and (?:understood|"
 # What the words above any such box (a bare "I agree", "the documents above", "read and understood") must name for the
 # desk to tick it: the site's terms or privacy statement, or its processing of personal data; never the terms of
 # employment, and never an attestation (the reviews of 0.3.133's: a paragraph that names none of these, "Join our
-# Careers Community", is the person's however it's worded)
-_SITES_TERMS = re.compile(r"\b(?:privacy|data protection)\b[\w ]{0,25}\b(?:policy|notice|statement)\b|"
+# Careers Community", is the person's however it's worded). In the plural too (Resorts World's Workday, live run 144:
+# "you consent to Resorts World privacy statements")
+_SITES_TERMS = re.compile(r"\b(?:privacy|data protection)\b[\w ]{0,25}\b(?:polic(?:y|ies)|notices?|statements?)\b|"
                           r"\bterms (?:of (?:use|service)|and conditions)\b|\bpersonal (?:data|information)\b|\bgdpr\b",
                           re.I)
 _ATTESTS_ABOVE = re.compile(r"of employment|certif|true and complete|background check", re.I)
@@ -1266,6 +1280,9 @@ class _Pass:
     fixed_at: int = 0  # and those that count as a step pressed again and again (after the desk set right what it said)
     steps: int = 0
     more: int = 0  # (more: the steps that refresh made it take again)
+    # a way in just pressed on a page (its address, and the button): where it lands is looked at (_off_to_the_list)
+    entry_from: tuple[str, str] | None = None
+    list_returns: int = 0  # the times a way in landed on the site's list of jobs, and the desk went back
 
 
 @dataclass
@@ -1299,6 +1316,11 @@ def classify(data: dict[str, Any], text: str) -> str:
     """bot_check, sign_in, email_code, form or page."""
     if data.get("challenge"):  # a CAPTCHA's pictures over the page (iCIMS after its email step)
         return "bot_check"
+    said = f"{data.get('title') or ''}\n{text[:3000]}"
+    if _BLOCK_PAGE.search(said) or _BLOCK_WORDS.search(said) and not any(
+            f.get("kind") == "password" or _code_box(f) for f in data.get("fields") or []):
+        return "bot_check"  # (a block page's own feedback form is no application: DataDome's, run 144; a sign-in's
+        # lockout or an emailed code asked for after "unusual activity" is still the site's own)
     # (never the page's own language picker: Linde's Cornerstone requisition page, run 75, came up empty but for its
     # unlabelled language list, and was read as a form, so it was never reloaded)
     fields = [f for f in _app_fields(data) if not f.get("disabled")]
@@ -1322,16 +1344,20 @@ def pick_next(actions: list[dict[str, Any]], in_form: bool) -> dict[str, Any] | 
     the way into it ("Apply Manually" before "Apply")."""
     usable = [a for a in actions if not a.get("disabled") and not a.get("is_submit") and not a.get("same_page")]
     steps = [a for a in usable if _STEP.match(final_text(a["text"]))]
+    # (never the site's own header or navigation link to its list of jobs: Station Casinos' Oracle, live run 144, has
+    # an "Apply Now" there, to <site>/requisitions, before the posting's own)
     entries = [a for a in usable if _ENTRY.match(final_text(a["text"])) and not _SOCIAL.search(a["text"])
-               and not (_AVOID.search(a["text"]) and "manually" not in a["text"].lower())]
+               and not (_AVOID.search(a["text"]) and "manually" not in a["text"].lower())
+               and not (a.get("site_nav") and _job_list(a.get("goes_to")))]
     # a saved draft's "Continue Application", on a page (never a form's step), where it's the page's one way in: beside
     # an Apply, or with others like it (a list of applications kept, each another job's, as a candidate home lists
     # them), it's not (issue #112, note 38's review). Whose draft it is, _drive asks (_own_draft)
     drafts = [a for a in usable if _DRAFT_ENTRY.match(final_text(a["text"]))]
     if not in_form and not entries and len(drafts) == 1:
         entries = drafts
-    # an open menu's own entry ("Apply Now" under Qorvo's "Apply now ▾") before the toggle again
-    entries.sort(key=lambda a: (not a.get("menu"), "manually" not in a["text"].lower()))
+    # an open menu's own entry ("Apply Now" under Qorvo's "Apply now ▾") before the toggle again; and the page's own
+    # before one in the site's header or navigation
+    entries.sort(key=lambda a: (not a.get("menu"), "manually" not in a["text"].lower(), bool(a.get("site_nav"))))
     order = (steps + entries) if in_form else (entries + steps)
     return order[0] if order else None
 
@@ -2679,10 +2705,22 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         unfilled, pending = _unfilled(pending)
         couldnt = f" {_couldnt_fill(unfilled)}" if unfilled else ""
         them = "it" if len(pending) == 1 else "them"
+        # a file the profile has no place for (only a resume and a cover letter: NSU's Workday "Reference Contact
+        # Information", live run 144) is the person's to attach, named; never "set documents.resume" for it
+        others = [f for f in missing_files if _OTHER_FILE.search(f.get("label") or "")
+                  and not _PROFILE_FILE.search(f.get("label") or "")]
+        documents = [f for f in missing_files if f not in others]
+        named = " and ".join(f"“{clean_label(f.get('label') or '').rstrip(' .')}”" for f in others)
+        attach = f"attach {'it' if len(others) == 1 else 'them'} in the desk's browser window"
         if missing_files:
-            self._pause(run, "stuck", "The form wants a file (" + ", ".join(f["label"] for f in missing_files)
-                        + ") and the profile doesn't say where yours is: ask Claude to set documents.resume (or "
-                        "documents.cover_letter) in profile.yaml, then press Carry on."
+            self._pause(run, "stuck", ("The form wants a file (" + ", ".join(f["label"] for f in documents)
+                                       + ") and the profile doesn't say where yours is: ask Claude to set "
+                                       "documents.resume (or documents.cover_letter) in profile.yaml, then press Carry "
+                                       "on." + (f" It also wants a file your profile has no place for: {named}: "
+                                                f"{attach}." if others else "")
+                                       if documents else
+                                       f"The form wants a file your profile has no place for: {named}. "
+                                       f"{attach[0].upper()}{attach[1:]}, then press Carry on.")
                         + (f" {gaps}" if gaps else "")
                         + (f" It also has {_count(len(pending), 'question')} your profile doesn't answer."
                            if pending else "")
@@ -3173,6 +3211,11 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
                 run.account_made = ""
                 run.account_in = True
             lap = _Lap(data=data, text=text, kind=kind, view=view, finish=finish, entry_here=entry_here)
+            then = await self._off_to_the_list(run, ps, lap)
+            if then is _Then.STOP:
+                return
+            if then is _Then.AGAIN:
+                continue
             then = await self._site_lap(run, ps, lap)
             if then is _Then.STOP:
                 return
@@ -3213,6 +3256,42 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         self._pause(run, "stuck", "This application has more pages than I expected, and I haven't reached its review "
                     "page. Check where it is in the desk's browser window, press its Next if "
                     "there's more, then press Carry on.", code="too_long")
+
+    async def _off_to_the_list(self, run: Run, ps: _Pass, lap: _Lap) -> _Then:
+        """A way in pressed on a page (ps.entry_from) that landed on the site's list of jobs, on the same site (Station
+        Casinos' Oracle, live run 144: its header's "Apply Now", a link to <site>/requisitions): an Apply pressed
+        there could be any job's. Gone back from to the page it was pressed on, and tried once more; landed there again,
+        said, back on that page. ON for any other page (and while the press's page is still showing)."""
+        if ps.entry_from is None:
+            return _Then.ON
+        (came_from, button), url = ps.entry_from, str(lap.data.get("url") or "")
+        if _bare(url) == _bare(came_from):
+            return _Then.ON  # (not gone on yet)
+        ps.entry_from = None
+        if not _job_list(url) or _job_list(came_from) or \
+                (urlparse(url).hostname or "").lower() != (urlparse(came_from).hostname or "").lower():
+            return _Then.ON
+        if _closed_notice(lap.data, lap.text):
+            return _Then.ON  # (the site says the posting closed: said, and skipped, as it is: the review)
+        ps.list_returns += 1
+        with contextlib.suppress(Exception):
+            await run.page.go_back(wait_until="load")
+        if _bare(run.page.url) != _bare(came_from):
+            # (Back that doesn't get there: a list the site went to with location.replace, or in a tab of its own)
+            with contextlib.suppress(Exception):
+                await run.page.goto(came_from, wait_until="load")
+        back = _bare(run.page.url) == _bare(came_from)
+        ps.waited.clear()  # (the page gone back to is a new visit: its late buttons waited on again)
+        if ps.list_returns > 1 or not back:
+            await self._bring_forward(run)
+            self._pause(run, "stuck", f"“{button}” on this job's page goes to {_site(run, lap.data)}'s list "
+                        "of jobs, not to this job's application"
+                        + (", so I went back to the posting" if back else "") + ". Open the job's application in the "
+                        "desk's browser window, then press Carry on; or skip the job.", code="no_way_in")
+            return _Then.STOP
+        self._log(run, f"“{button}” went to {_site(run, lap.data)}'s list of jobs, not this job's "
+                  "application, so I went back to the posting")
+        return _Then.AGAIN
 
     async def _site_lap(self, run: Run, ps: _Pass, lap: _Lap) -> _Then:
         """The lap's page as the site left it, before any account's steps: one that couldn't be reached, one
@@ -4050,6 +4129,9 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
             await self._finish(run, lap.data, lap.text)
             return _Then.STOP
         self._log(run, f"clicked “{lap.action['text']}”")
+        # (a way in pressed on a page: where it lands is looked at, _off_to_the_list)
+        ps.entry_from = ((str(lap.data.get("url") or ""), lap.action["text"].strip())
+                         if lap.kind == "page" and _ENTRY.match(final_text(lap.action["text"])) else None)
         if _DRAFT_ENTRY.match(final_text(lap.action["text"])) and lap.kind == "page" and not run.draft:
             # an application the site kept from an earlier visit (a draft), with the answers it was given then:
             # the profile's may have changed since (issue #112, note 38: the work descriptions), so its boxes are
@@ -6121,12 +6203,30 @@ def _bare(url: str) -> str:
 # The query keys that name a job in an address: Eightfold's pid, Taleo's job, SuccessFactors'
 # career_job_req_id, Greenhouse's gh_jid, and the usual jobId / reqId
 _JOB_ID_KEY = re.compile(r"pid|job|jid|gh_jid|job_?id|req_?id|job_?req_?id|requisition_?id|career_job_req_id", re.I)
+# ...and, for telling one job's page from a list of jobs only (_job_list), a few more: Jobvite's jvi, UKG Pro's
+# opportunityId, a selectedJob and a plain id (the review of the Station Casinos fix). Not for _gone_home's: there a
+# key the job's own address has and the page it was left on lacks reads as a page away from it (UKG's walk with
+# opportunityId: its application's steps, without it, read as its careers home, and the job was opened again)
+_ONE_JOB_KEY = re.compile(_JOB_ID_KEY.pattern + r"|jvi|id|selected_?job|opportunity_?id", re.I)
 
 
 def _job_ids(url: str) -> dict[str, str]:
     """The job ids an address carries in its query, by key (lower case): values with a digit, as a
     job's id has, not a word under one of those keys (?job=apply)."""
     return {k.lower(): v for k, v in parse_qsl(urlparse(url).query) if _JOB_ID_KEY.fullmatch(k) and re.search(r"\d", v)}
+
+
+# A site's list of jobs, by its address's last part (Oracle's <site>/requisitions and <site>/jobs: Station Casinos',
+# live run 144), with no job's id in its query
+_JOB_LIST_PATH = re.compile(r"/(?:jobs|requisitions|job-?search|search-?jobs|search(?:-?results)?|careers|"
+                            r"opportunities|openings|vacancies|job-?list|all-?jobs)/?$", re.I)
+
+
+def _job_list(url: Any) -> bool:
+    """Is this address a site's list of jobs (_JOB_LIST_PATH), not a job's own page?"""
+    parts = urlparse(str(url or ""))
+    one_job = any(_ONE_JOB_KEY.fullmatch(k) and re.search(r"\d", v) for k, v in parse_qsl(parts.query))
+    return parts.scheme in ("http", "https") and bool(_JOB_LIST_PATH.search(parts.path)) and not one_job
 
 
 def _above(url: str, below: str) -> bool:

@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Application Questions - Example Labs Careers</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .input-row { margin: 16px 0; }
+  .input-field-container { position: relative; display: flex; width: 420px; border: 1px solid #888; }
+  .input-field-container__left { flex: 1; }
+  .input-field-container__left input { width: 100%; border: 0; padding: 6px; }
+  .cx-multi-select__options { position: absolute; top: 100%; left: 0; width: 100%; background: #fff; z-index: 5;
+                              border: 1px solid #888; }
+  .cx-multi-select__list { list-style: none; margin: 0; padding: 0; }
+  .cx-multi-select__list-item { padding: 6px; cursor: pointer; }
+  .cx-multi-select__list-item--selected { font-weight: bold; }
+  .cx-multi-select-pill__values { list-style: none; padding: 0; display: flex; gap: 6px; }
+  .cx-multi-select-pill__value { border: 1px solid #36c; border-radius: 12px; padding: 2px 8px; }
+  .cx-multi-select-pill__value-remove { width: 14px; height: 14px; }
+</style>
+</head>
+<body>
+<!-- Oracle Recruiting Cloud's cx-multi-select (Mission Support and Test Services' question 7, the nightly's run 144),
+     made by hand after the widget's own code: an input (role=combobox) whose list opens below it on a click, drawn in
+     a pop-up inside the input's own container; a click on a choice ticks it (or unticks one ticked already) and shows it
+     as a pill under the box; the question's answer (window.committed here) is set only as the list closes (the focus
+     leaving the box, or Escape). ?refuse: a widget that takes no click on its choices; ?rowonly: one that
+     marks the row clicked as selected (as a row the pointer is over) but takes no pick. -->
+<form onsubmit="return false">
+  <h2>Application Questions</h2>
+  <div class="input-row">
+    <label class="input-row__label input-row__label--required" for="300016-16" id="labelText-300016-16"><span
+      class="input-row__linebreak">7. Have you ever worked for Example Labs or its parent companies or predecessors?</span></label>
+    <div class="input-row__control-container input-row--multiselect cx-multi-select" data-qa="300016">
+      <div class="cx-root">
+        <div aria-busy="false" class="cx-multi-select-container ">
+          <div class="input-field-container ">
+            <div class="input-field-container__left"><input autocomplete="none" name="300016" id="300016-16" type="text"
+              role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-controls="300016-16-listbox"
+              aria-expanded="false" aria-required="true" class="cx-multi-select-input"></div>
+            <div class="input-field-container__right"><button type="button" id="300016-16-toggle-button" tabindex="-1"
+              aria-label="Open the drop-down list for 7. Have you ever worked for Example Labs?" aria-expanded="false"
+              aria-controls="300016-16-listbox" class="icon-dropdown-arrow "></button></div>
+          </div>
+        </div>
+        <ul class="cx-multi-select-pill__values"></ul>
+      </div>
+    </div>
+  </div>
+  <div class="input-row">
+    <label for="salary">12. If offered a position, what is your desired Annual or Hourly expected range?</label>
+    <textarea id="salary" rows="1"></textarea>
+  </div>
+  <button type="button" id="next">NEXT</button>
+</form>
+<script>
+(() => {
+  const params = new URLSearchParams(location.search);
+  const OPTIONS = ['Example Labs', 'Example Parent Co', 'Example Predecessor Inc.', 'N/A'];
+  const id = '300016-16';
+  const input = document.getElementById(id);
+  const toggle = document.getElementById(id + '-toggle-button');
+  const portalHost = input.parentElement.parentElement;  // (where the widget draws its list: the input's container)
+  const pills = document.querySelector('.cx-multi-select-pill__values');
+  let open = false, dirty = false, selected = [];
+  window.committed = [];
+
+  const drawPills = () => {
+    pills.innerHTML = '';
+    for (const s of selected) {
+      const li = document.createElement('li');
+      li.className = 'cx-multi-select-pill__value';
+      li.innerHTML = '<span class="cx-multi-select-pill__value-text"></span><button type="button" '
+        + 'class="cx-multi-select-pill__value-remove"></button>';
+      li.firstChild.textContent = s + ' ';
+      li.lastChild.setAttribute('aria-label', 'Remove ' + s);
+      li.lastChild.onclick = () => { selected = selected.filter((x) => x !== s); window.committed = [...selected]; draw(); };
+      pills.appendChild(li);
+    }
+  };
+  const draw = () => {
+    drawPills();
+    let portal = document.getElementById(id + '-cx-multi-select__modal');
+    input.setAttribute('aria-expanded', String(open));
+    toggle.setAttribute('aria-expanded', String(open));
+    if (!open) { if (portal) portal.remove(); return; }
+    if (!portal) {  // (drawn once as it opens; its rows kept and only marked afresh, as React keeps them)
+      portal = document.createElement('div');
+      portal.id = id + '-cx-multi-select__modal';
+      portal.className = 'cx-multi-select__options';
+      portal.innerHTML = '<div class="cx-multi-select-container cx-multi-select-dropdown--open"><div '
+        + 'class="cx-multi-select__listbox"><ul class="cx-multi-select__list" role="listbox" id="' + id + '-listbox" '
+        + 'aria-multiselectable="true" tabindex="-1"></ul></div></div>';
+      const ul = portal.querySelector('ul');
+      ul.onmousedown = (e) => e.preventDefault();  // (the focus stays in the box)
+      OPTIONS.forEach((o, t) => {
+        const li = document.createElement('li');
+        li.tabIndex = -1;
+        li.setAttribute('role', 'option');
+        li.id = id + '-listitem-' + t;
+        li.setAttribute('aria-label', o);
+        li.innerHTML = '<div class="cx-multi-select__list-item-container"><span '
+          + 'class="cx-multi-select__list-item--content"></span></div>';
+        li.querySelector('span').textContent = o;
+        li.onclick = () => pick(o, li);
+        ul.appendChild(li);
+      });
+      portalHost.appendChild(portal);
+    }
+    for (const li of portal.querySelectorAll('li')) {
+      const on = selected.includes(li.getAttribute('aria-label'));
+      li.setAttribute('aria-selected', String(on));
+      li.className = 'cx-multi-select__list-item' + (on ? ' cx-multi-select__list-item--selected' : '');
+    }
+  };
+  const pick = (o, li) => {
+    if (params.has('refuse')) return;
+    if (params.has('rowonly')) { li.setAttribute('aria-selected', 'true'); return; }
+    selected = selected.includes(o) ? selected.filter((x) => x !== o) : [...selected, o];  // (a ticked one: unticked)
+    dirty = true;
+    input.focus();
+    draw();
+  };
+  const close = () => {
+    if (!open) return;
+    open = false;
+    if (dirty) { window.committed = [...selected]; dirty = false; }
+    draw();
+  };
+  input.addEventListener('click', () => { if (!open) { open = true; draw(); } });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') close();
+    else if (e.key === 'ArrowDown' && !open) { open = true; draw(); }
+  });
+  input.addEventListener('blur', () => setTimeout(() => {
+    const a = document.activeElement;
+    if (!(a && a.matches && a.matches('.cx-multi-select__list-item, #' + CSS.escape(id) + '-toggle-button'))) close();
+  }, 0));
+  toggle.addEventListener('click', () => { if (open) close(); else { open = true; draw(); } });
+})();
+</script>
+</body>
+</html>

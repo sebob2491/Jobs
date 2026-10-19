@@ -453,6 +453,51 @@ def test_a_captcha_challenge_after_a_click_waits_for_the_person(srv, monkeypatch
     assert "clicked “Next”" in log and "CAPTCHA" in reason
 
 
+# DataDome's block page, as its frame showed it over Wynn's and Boyd's SmartRecruiters postings (live run 144): its
+# words, its feedback button, and its contact form's Comment box
+DATADOME_BLOCK = ('<html lang="en"><head><title>You have been blocked</title></head>'
+                  '<body class="dd-response-page--hard-block" data-dd-response-page="hard-block">'
+                  '<div class="captcha" id="captcha-container"><p>Access is temporarily restricted</p>'
+                  '<p>We detected unusual activity from your device or network.</p>'
+                  '<p>Need help? <button type="button" id="show-human-auth">Submit feedback.</button></p>'
+                  '<form action="/contact-human" method="post"><fieldset><legend>Reason for contacting us (required):'
+                  '</legend><textarea id="human-comment" name="human-comment" placeholder="Comment" rows="4">'
+                  '</textarea></fieldset><button type="submit">Send</button></form></div>'
+                  '<script>document.getElementById("human-comment").addEventListener("input", () => '
+                  'parent.postMessage("typed", "*"))</script></body></html>')
+
+
+@pytest.mark.parametrize("where", ["frame", "page"])
+def test_a_datadome_block_is_a_bot_check_not_a_form(srv, monkeypatch, where):
+    """Wynn's and Boyd's SmartRecruiters postings (live run 144) came up as DataDome's block ("Access is temporarily
+    restricted"), in a frame from geo.captcha-delivery.com: its feedback form's Comment box was read as the application,
+    and the desk said it couldn't find the way on. It's a bot check: the person's, said as one, and nothing in it is
+    typed into or pressed. The same block as the page itself, on the site's own address, is one too."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    url = (fixture_url("site/datadome-block.html") if where == "frame"
+           else "https://jobs.example-ats.example/oneclick-ui/company/ExampleResort/publication/1001")
+    job = srv.add_job(url=url, title="IT Support Specialist", company="Example Resort")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await srv.browser.page()
+        for host in ("https://geo.captcha-delivery.com/**", "https://jobs.example-ats.example/**"):
+            await srv.browser._ctx.route(host, lambda route: route.fulfill(status=403, content_type="text/html",
+                                                                          body=DATADOME_BLOCK))
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert (r.need, r.code) == ("bot_check", "bot_check"), (r.need, r.reason, r.log)
+    assert not any(line.startswith(("clicked", "filled", "typed", "pressed")) for line in r.log), r.log
+
+
 def test_saved_password_signs_in_without_the_person(srv, monkeypatch):
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     saved_password(monkeypatch)
@@ -10385,6 +10430,26 @@ def test_an_agreement_is_left_to_the_person_and_a_captchas_buttons_arent_the_pag
     assert not {"Verify", "Refresh Challenge."} & set(r.page_info.get("actions") or []), r.page_info
 
 
+def test_a_sign_ins_lockout_isnt_a_bot_check():
+    """The review of the DataDome fix: "Access is temporarily restricted" over a sign-in's boxes is the site's lockout
+    after too many tries, not a bot-protection service's block: still a sign-in. A block page with only its feedback
+    form's box is a bot check, and "You have been blocked" is one wherever it's said."""
+    password = {"id": "p", "kind": "password", "label": "Password"}
+    comment = {"id": "c", "kind": "textarea", "label": "Comment"}
+    said = "Access is temporarily restricted. Too many sign-in attempts: try again in 15 minutes."
+    assert classify({"fields": [{"id": "e", "kind": "email", "label": "Email"}, password], "actions": []},
+                    said) == "sign_in"
+    assert classify({"fields": [comment], "actions": []}, said) == "bot_check"
+    assert classify({"fields": [comment], "actions": []},
+                    "We detected unusual activity from your device or network.") == "bot_check"
+    assert classify({"title": "You have been blocked", "fields": [password], "actions": []}, "") == "bot_check"
+    # (nor over an emailed code's box: the site asking the person to prove it's them, which the desk reads from the
+    # inbox: the second review)
+    code = {"id": "k", "kind": "text", "label": "Verification code"}
+    said = "We detected unusual activity from your device. Enter the code we sent to your email."
+    assert classify({"fields": [code], "actions": []}, said) == "email_code"
+
+
 def test_an_apply_button_with_an_arrow_isnt_read_as_an_emailed_link():
     """A posting that mentions checking your email, with "Apply now »": the way in, not a
     "we emailed you a link" page."""
@@ -12927,6 +12992,20 @@ def test_a_tab_on_another_job_named_in_the_query_isnt_carried_on_with(srv, monke
     assert run(applier._gone_home(left, SimpleNamespace(url=tab_url))) is gone
 
 
+@pytest.mark.parametrize("url", ["https://jobs.example.com/jobs?jvi=oAb12cd,Job",  # Jobvite's
+                                 "https://careers.example.com/jobs?id=1001",
+                                 "https://careers.example.com/search?selectedJob=1001",
+                                 "https://recruiting.example.com/JobBoard/abc/jobs?opportunityId=9a8b7c6d-1"])
+def test_a_job_named_in_a_list_of_jobs_address_is_that_jobs_page(url):
+    """The review of the Station Casinos fix: an address that names one job in its query (Jobvite's jvi, an id, a
+    selectedJob, UKG Pro's opportunityId) is that job's page, not the site's list of jobs, though its path is one.
+    (Only there: read as the job's own key where the careers home is told apart, UKG's application steps without its
+    opportunityId would be its home, test_site_walks' UKG walk.)"""
+    assert not pipeline._job_list(url)
+    assert pipeline._job_list(url.split("?")[0])
+    assert pipeline._job_ids("https://recruiting.example.com/JobBoard/abc/OpportunityDetail?opportunityId=5005") == {}
+
+
 def test_a_word_under_a_job_key_in_the_address_isnt_a_job_id(srv, monkeypatch):
     """"job" names a job in a Taleo site's query (?job=12345), but a site may name its application's
     steps with it (?job=apply, then ?job=questions). Taken for job ids, the next step was another job's
@@ -12984,6 +13063,28 @@ def test_what_a_filled_page_still_needs_is_said_the_same_way_on_each_path(srv):
         "documents.resume (or documents.cover_letter) in profile.yaml, then press Carry on. "), run_.reason
     nothing = Run(2)
     assert not applier._stop_for_what_is_left(nothing, "", [], []) and nothing.status != "needs_you"
+
+
+def test_a_file_the_profile_has_no_place_for_is_named_as_the_persons(srv):
+    """NSU's Workday (live run 144) requires a "Reference Contact Information" file: the profile has no place for one,
+    but the pause told the person to set documents.resume or documents.cover_letter, as for a missing resume. It names
+    the box and says it's theirs to attach; a resume or cover letter still says where the profile points to one."""
+    applier = Applier(srv)
+    refs = {"label": "Please upload your Reference Contact Information.*", "kind": "file",
+            "section": "Application Questions 1 of 3"}
+    cover = {"label": "Please upload your Letter of Application/Cover Letter.*", "kind": "file"}
+    only = Run(1)
+    assert applier._stop_for_what_is_left(only, "", [], [refs])
+    assert only.need == "stuck" and only.code == "profile_gap" and only.reason == (
+        "The form wants a file your profile has no place for: “Please upload your Reference Contact Information”. "
+        "Attach it in the desk's browser window, then press Carry on."), only.reason
+    both = Run(2)
+    assert applier._stop_for_what_is_left(both, "", [], [cover, refs])
+    assert both.reason == (
+        "The form wants a file (Please upload your Letter of Application/Cover Letter.*) and the profile doesn't say "
+        "where yours is: ask Claude to set documents.resume (or documents.cover_letter) in profile.yaml, then press "
+        "Carry on. It also wants a file your profile has no place for: “Please upload your Reference Contact "
+        "Information”: attach it in the desk's browser window."), both.reason
 
 
 def test_a_button_gone_as_it_was_clicked_is_looked_at_again(srv, monkeypatch):

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Search Jobs - Example Resort Careers</title></head>
+<body>
+<!-- An Oracle Recruiting Cloud site's list of jobs (<site>/requisitions, <site>/jobs), as Station Casinos' was live
+     (run 144): its header's "Apply Now" (a link back to this list), "Looking for other opportunities?", and a row per
+     job. It tells the fake server it was shown (/__fake/list). Made-up employer and jobs. -->
+<header class="app__custom-header">
+  <ul class="custom-header">
+    <li class="apply-now-header"><a href="/hcmUI/CandidateExperience/en/sites/CX_1/requisitions"> Apply Now </a></li>
+  </ul>
+</header>
+<main>
+  <h1>Looking for other opportunities?</h1>
+  <ul>
+    <li><a href="/hcmUI/CandidateExperience/en/sites/CX_1/job/1002">Banquet Server</a>
+      <button type="button">Add Job to My Job Selections</button></li>
+    <li><a href="/hcmUI/CandidateExperience/en/sites/CX_1/job/1003">Valet Attendant</a>
+      <button type="button">Add Job to My Job Selections</button></li>
+  </ul>
+</main>
+<script>
+  fetch('/__fake/list', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                         body: JSON.stringify({url: location.pathname})});
+</script>
+</body>
+</html>
