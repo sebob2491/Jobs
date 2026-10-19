@@ -1091,6 +1091,72 @@ VISIBLE_TEXT_JS = r"""
 () => (document.body ? document.body.innerText : '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
 """
 
+# What an attestation's gate reads of its page, failing closed (the fifth review of fix-accept-gates): `visible`, the
+# page's drawn words (innerText); `hidden`, every other word the person can see or open, one line for each text node
+# (those not drawn, in a closed <details>, a collapsed or content-visibility: hidden box; all of an open shadow root's;
+# a <textarea>'s value and a read-only or disabled text box's; a title, alt or aria-label of four words or more);
+# `refuse`, why the page can't be read whole (a closed shadow root, a <canvas>, a frame, ::before/::after words, more
+# elements than it reads), else null. Iterative, with no recursion to run out of
+GATE_READ_JS = r"""
+() => {
+  const SKIP = 'script, style, template, noscript, select, option, datalist';
+  const out = { visible: document.body ? document.body.innerText : '', hidden: [], refuse: null };
+  if (!document.body) return out;
+  const said = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const shownEl = (el) => (el.checkVisibility ? el.checkVisibility({ checkVisibilityCSS: true })
+    : el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden');
+  const range = document.createRange();
+  const roots = [document.body];
+  let elements = 0;
+  while (roots.length && !out.refuse) {
+    const root = roots.pop();
+    const inShadow = root instanceof ShadowRoot;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n && !out.refuse; n = walker.nextNode()) {
+      if (n.nodeType === Node.TEXT_NODE) {
+        const parent = n.parentElement;
+        if (!parent || parent.closest(SKIP)) continue;
+        const t = said(n.textContent);
+        if (!t) continue;
+        range.selectNodeContents(n);
+        // (drawn: boxed, its element shown, not in a content-visibility: hidden box, and in its element's drawn words)
+        const drawn = range.getClientRects().length > 0 && shownEl(parent)
+          && getComputedStyle(parent).contentVisibility !== 'hidden' && said(parent.innerText).includes(t);
+        if (inShadow || !drawn || parent.closest('svg')) out.hidden.push(t);
+        continue;
+      }
+      const el = n;
+      if (++elements > 20000) { out.refuse = 'too many elements'; break; }
+      const tag = el.tagName.toLowerCase();
+      if (tag === 'canvas') out.refuse = 'a canvas';
+      else if (tag === 'iframe' || tag === 'frame' || tag === 'object' || tag === 'embed') out.refuse = 'a frame';
+      if (out.refuse) break;
+      if (el.shadowRoot) roots.push(el.shadowRoot);
+      else if (tag.includes('-')) {
+        const r = el.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) { out.refuse = 'a closed shadow root'; break; }
+      }
+      for (const pseudo of ['::before', '::after']) {
+        const content = getComputedStyle(el, pseudo).content;
+        if (content && !/^(none|normal)$/.test(content) && /[A-Za-z]{2,}/.test(content.replace(/^(?:counter|attr|url)\(.*\)$/, ''))) {
+          out.refuse = 'words in ' + pseudo; break;
+        }
+      }
+      if (out.refuse) break;
+      if (tag === 'textarea' && said(el.value)) out.hidden.push(said(el.value));
+      if (tag === 'input' && /^(|text|search|email|url|tel)$/i.test(el.getAttribute('type') || '')
+          && (el.readOnly || el.disabled) && said(el.value)) out.hidden.push(said(el.value));
+      for (const attr of ['title', 'alt', 'aria-label']) {
+        const t = said(el.getAttribute(attr));
+        if (t.split(' ').length >= 4) out.hidden.push(t);
+      }
+    }
+  }
+  out.hidden = out.hidden.join('\n');
+  return out;
+}
+"""
+
 # Numbered entry headings ("Work Experience 2"), how many of those have no boxes drawn yet, and
 # the Add buttons that create more.
 ENTRIES_JS = r"""

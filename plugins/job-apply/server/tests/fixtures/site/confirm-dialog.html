@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Equipment Technician</title>
+<style>[hidden]{display:none!important}.modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center}.box{background:#fff;padding:20px;width:500px}</style>
+</head>
+<body>
+<!-- an application whose Continue opens a dialog asking to confirm, with Back and "Submit": the dialog's Submit sends
+     the application (the review of fix-accept-gates: the desk must never press it, in any mode). ?h= and ?t= give
+     its heading and words. ?in-form=1: the dialog is a <dialog> inside the application's form, its Submit the form's
+     own (default type). window.sent counts what was sent -->
+<h1>Equipment Technician</h1>
+<form id="app" novalidate>
+  <label for="first">First Name *</label><input id="first" required>
+  <label for="last">Last Name *</label><input id="last" required>
+  <label for="email">Email *</label><input id="email" type="email" required>
+  <button type="button" id="cont">Continue</button>
+  <dialog id="inform" aria-labelledby="ih">
+    <h2 id="ih"></h2><p id="it"></p>
+    <button type="button" id="iback">Back</button>
+    <button id="igo">Submit</button>
+  </dialog>
+</form>
+<div class="modal" id="m" role="dialog" aria-modal="true" aria-labelledby="mh" hidden>
+  <div class="box">
+    <h2 id="mh"></h2>
+    <p id="mt"></p>
+    <button type="button" id="back">Back</button>
+    <button type="button" id="go">Submit</button>
+  </div>
+</div>
+<script>
+  const p = new URLSearchParams(location.search);
+  const inForm = !!p.get('in-form');
+  window.sent = 0;
+  for (const id of ['mh', 'ih']) document.getElementById(id).textContent = p.get('h') || 'Personal Information';
+  for (const id of ['mt', 'it']) document.getElementById(id).textContent = p.get('t')
+    || 'Please confirm your personal information is correct before we finalize.';
+  const sent = () => { window.sent += 1; document.body.innerHTML = '<h1>Thank you!</h1>'; };
+  document.getElementById('cont').addEventListener('click', () => {
+    if (!document.getElementById('first').value) return;
+    if (inForm) document.getElementById('inform').showModal();
+    else document.getElementById('m').hidden = false;
+  });
+  document.getElementById('back').addEventListener('click', () => { document.getElementById('m').hidden = true; });
+  document.getElementById('iback').addEventListener('click', () => { document.getElementById('inform').close(); });
+  document.getElementById('go').addEventListener('click', sent);
+  document.getElementById('app').addEventListener('submit', (e) => { e.preventDefault(); sent(); });
+</script>
+</body>
+</html>

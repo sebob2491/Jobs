@@ -9,8 +9,8 @@ import pytest
 
 from job_apply import config, formjs, pipeline
 from job_apply.autofill import _CONSENT_KINDS, _answer_bank
-from job_apply.never import (ANYWHERE, BOX_WORDS, EMAILS, FUTURE_ROLES, MAIL, NEVER, PARAGRAPH_WORDS, PRECISE,
-                             _never_for_them)
+from job_apply.never import (ANYWHERE, BEYOND_CHECK, BOX_WORDS, EMAILS, FUTURE_ROLES, MAIL, NEVER, PARAGRAPH_WORDS,
+                             PRECISE, _never_for_them)
 
 # One sentence for each kind never agreed to for the person, worded as the tests of each path word theirs, and
 # without words that agree (each path's own words do that)
@@ -33,6 +33,7 @@ SAID = {
     "their data shared": "let Example Corp share my profile",
     "their data kept": "let Example Corp keep my resume on file",
     "cookies": "allow the use of cookies",
+    BEYOND_CHECK: "let Example Corp pull a consumer credit report",
     PARAGRAPH_WORDS: "hear from staffing firms",
     BOX_WORDS: "let a third party process my application",
 }
@@ -551,3 +552,96 @@ def test_career_updates_and_a_candidate_community_are_refused(words):
     bare "I agree" under them would be ticked. They're the person's, wherever they're read."""
     assert not pipeline._terms_above(words)
     assert _never_for_them(words, only=PRECISE) in {"newsletter", "talent community", "signs up"}
+
+
+INSIGHT_TERMS = ("I agree to the Terms and understand that information collected will be used as described here, the "
+                 "Notice at Collection, and Privacy Policy. ")
+
+
+@pytest.mark.parametrize("words", ["You will also receive job recommendations by email.",
+                                   "We'll email you job recommendations.", "Get career recommendations by e-mail.",
+                                   "Job recommendations will be emailed to you.",
+                                   "You'll get job recommendations by email.", "We will send you recommended jobs.",
+                                   "You will receive emails with jobs that match your profile.",
+                                   "We'll email you job matches.",
+                                   "You will receive personalized job suggestions by email."])
+def test_job_picks_by_email_are_a_sign_up_wherever_they_are_read(words):
+    """Insight Enterprises' "Data Privacy Agreement" (live run 145) opens "When you upload your resume, we provide job
+    recommendations to you. You will also receive job recommendations by email.": job alerts by another name, which the
+    desk never agrees to for the person; and, sent by email or received in either order, a sign-up in so many words,
+    read however deep in a notice (ANYWHERE: the review of fix-accept-gates)."""
+    assert _never_for_them(words, only=PRECISE) in {"job alerts", "signs up"}
+    assert _never_for_them(words, only=ANYWHERE) == "signs up"
+    for text in (f"{words} {INSIGHT_TERMS}", INSIGHT_TERMS * 3 + words):  # (in its opening, and past it)
+        assert pipeline._agreeable_notice("Data Privacy Agreement", text, False) == (False, False), text
+
+
+@pytest.mark.parametrize("words", ["You will receive job recommendations.", "See your job matches.",
+                                   "Browse recommended roles.", "Personalized job suggestions.",
+                                   "Jobs that match your profile.", "We will send you recommended positions."])
+def test_job_picks_in_other_words_are_job_alerts(words):
+    """The review of fix-accept-gates: job matches, recommended jobs, roles or positions, personalized job suggestions,
+    jobs that match the person's profile, and job recommendations received, are job alerts. Recommendations on the site
+    alone are how it works, and no sign-up."""
+    assert _never_for_them(words, only=PRECISE) in {"job alerts", "signs up"}
+    assert _never_for_them("When you upload your resume, we provide job recommendations to you.", only=PRECISE) is None
+
+
+@pytest.mark.parametrize("words, kind", [
+    ("I understand that my employment may be terminated at any time, with or without cause or notice.", "at-will"),
+    ("Employment is terminable at the will of either party.", "at-will"),
+    ("Either party may end the relationship at any time, with or without cause.", "at-will"),
+    ("The District may end my employment at any time for any reason.", "at-will"),
+    ("Nothing in this application creates a contract of employment for any definite period.", "at-will"),
+    ("New employees may be dismissed without cause.", "at-will"),
+    ("I release the District and all persons from any liability for furnishing such information.", "waiver"),
+    ("I hereby release and hold harmless Example School District from all claims.", "waiver"),
+    ("I agree not to participate in any class action against the District.", "waiver"),
+    ("Any claim will be brought individually and not as a class or collective action.", "waiver"),
+    ("I agree not to compete with the District for one year after employment ends.", "waiver"),
+    ("I agree that any lawsuit must be filed within six months.", "waiver"),
+    ("I authorize the District to obtain a consumer credit report about me.", BEYOND_CHECK),
+    ("I authorize the release of my medical records.", BEYOND_CHECK),
+    ("I authorize the District to contact my former employers.", BEYOND_CHECK),
+    ("I authorize any former employer to release information about me to the District.", BEYOND_CHECK),
+    ("I consent to a review of my social media accounts.", BEYOND_CHECK),
+    ("I consent to the sharing of my information with third parties for their own purposes.", "their data shared"),
+])
+def test_waivers_the_terms_of_employment_and_more_than_a_background_check_in_other_words(words, kind):
+    """The review of fix-accept-gates: a Statement of Truth's gate (and an attestation's box, which reads the same list)
+    took in a release from liability, a class action given up, an agreement not to compete, a shorter time to sue, an
+    at-will statement in other words, a credit report, medical records, a former employer's records, a social media
+    review, the person's information shared. Each is its kind, and an attestation's box with it is the person's."""
+    assert _never_for_them(words) == kind
+    # (an at-will sentence may stand beside a box's certification of the application's own information: the second
+    # review of 0.3.170)
+    assert _attests("checkbox", f"{CERTIFY}. {words}") is (kind == "at-will"), words
+    if kind in {"waiver", "arbitration"}:  # (a legal waiver, read however deep in a notice)
+        assert not pipeline._agreeable_notice(POLICY, POLICY_TEXT * 5 + words, False)[0]
+
+
+@pytest.mark.parametrize("words", ["We may update this Privacy Policy at any time with or without notice.",
+                                   "Your account may be terminated for any reason or no reason under these Terms of "
+                                   "Use.",
+                                   "Records are stored for a definite period, as the law requires."])
+def test_an_at_will_statements_words_are_one_only_about_employment(words):
+    """The second review of fix-accept-gates: "with or without notice", "for any reason or no reason", "a definite
+    period" are an at-will statement's words about employment, and only there: a privacy policy or the site's terms
+    that use them are still agreed to."""
+    assert _never_for_them(words, only=PRECISE) is None, words
+    assert pipeline._agreeable_notice("Privacy Policy", words, False) == (True, True)
+    assert pipeline._agrees_to_terms("I agree to the Terms of Use. " + words)
+    said = words.replace("this Privacy Policy", "your employment").replace("Your account", "Your employment")
+    said = said.replace("Records are stored", "No one is hired")
+    assert _never_for_them(said, only=PRECISE) == "at-will", said
+
+
+@pytest.mark.parametrize("words", ["I certify that my information is true, and I authorize Acme to verify it with my "
+                                   "previous employers.",
+                                   "I understand the company may call my references.",
+                                   "This notice covers how we store medical information you choose to give us."])
+def test_a_check_of_the_application_itself_is_still_its_own(words):
+    """What the background check that comes with applying does is no more than it (the review of 0.3.208: "the company
+    may call my references"); only a credit report, medical records released, a former employer's records, a social
+    media review are."""
+    assert _never_for_them(words, only=PRECISE) is None, words

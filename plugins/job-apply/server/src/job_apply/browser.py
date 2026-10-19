@@ -41,8 +41,9 @@ from .browser_dates import DatesMixin
 from .browser_menus import MenusMixin
 from .browser_tabs import TabsMixin
 from .browser_uploads import UploadsMixin
-from .formjs import (CHALLENGE_JS, CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS, EXTRACT_JS, LOST_BOXES_JS,
-                     NOTICE_OVER_JS, PEEK_JS, QUIET_JS, TWIN_TICKED_JS, VISIBLE_TEXT_JS, WORKDAY_PROMPT_JS)
+from .formjs import (CHALLENGE_JS, CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS, EXTRACT_JS, GATE_READ_JS,
+                     LOST_BOXES_JS, NOTICE_OVER_JS, PEEK_JS, QUIET_JS, TWIN_TICKED_JS, VISIBLE_TEXT_JS,
+                     WORKDAY_PROMPT_JS)
 
 SUBMIT_RE = re.compile(r"\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application", re.I)
 # A form's own submit button with one of these labels is the final step too ("Apply", "Send").
@@ -1025,6 +1026,24 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
                 if t:
                     parts.append(t)
             return "\n\n".join(parts)[:max_chars]
+
+    async def gate_read(self, max_chars: int = 8000) -> dict[str, str] | None:
+        """What an attestation's gate reads of the page (GATE_READ_JS): its drawn words ("visible") and every other
+        word the person can see or open ("hidden"). None, failing closed, where it can't be read whole: a page with
+        a frame, one whose read fails or hangs, or one GATE_READ_JS refuses (a closed shadow root, a canvas, words in
+        ::before or ::after); the gate leaves such a page to the person (the fifth review of fix-accept-gates)."""
+        async with self._lock:
+            try:
+                page = await self.page()
+                if len(page.frames) > 1:
+                    return None
+                read = await _bounded(page.main_frame.evaluate(GATE_READ_JS))
+            except (PlaywrightError, _Hung):
+                return None
+            if not isinstance(read, dict) or read.get("refuse") or not isinstance(read.get("visible"), str) \
+                    or not isinstance(read.get("hidden"), str):
+                return None
+            return {"visible": read["visible"][:max_chars], "hidden": read["hidden"][:max_chars]}
 
     async def html(self) -> str:
         async with self._lock:

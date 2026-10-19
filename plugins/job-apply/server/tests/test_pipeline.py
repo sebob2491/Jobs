@@ -7,7 +7,7 @@ import contextlib
 import json
 import time
 from pathlib import Path
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse
 
 import pytest
 import yaml
@@ -1592,6 +1592,56 @@ def test_a_privacy_dialog_over_the_form_is_agreed_and_another_is_the_persons(srv
         assert "“Privacy Policy of Example Corp”" in r.reason and "accept_notices: true" in r.reason, r.reason
 
 
+CONFIRMS = {
+    "personal": ("Personal Information", "Please confirm your personal information is correct before we finalize."),
+    "privacy-confirm": ("Privacy Notice", "Are you sure? Once you submit you can no longer edit. We process your "
+                                          "personal data as our privacy policy says."),
+    "terms": ("Terms and Conditions", "By clicking Submit you agree to our Terms and Conditions and Privacy Policy."),
+}
+
+
+@pytest.mark.parametrize("page", ["data-privacy", "data-privacy-signup", "data-privacy-alerts", "personal",
+                                  "privacy-confirm", "terms", "terms-in-form"])
+@pytest.mark.parametrize("mode", ["review", "practice", "test-identity"])
+def test_a_dialogs_submit_is_never_pressed_for_the_person(srv, monkeypatch, job_apply_home, page, mode):
+    """Every "Submit" is the person's, a dialog's too, in every mode. Insight Enterprises' Eightfold (live run 145) put
+    a "Data Privacy Agreement" over the form ("I agree to the Terms and understand that information collected will be
+    used as described here, the Notice at Collection, and Privacy Policy."), its agree a "Submit" beside the form's own
+    "Submit application"; a desk that pressed such a Submit for a privacy notice also pressed an application's own
+    confirmation (the review of fix-accept-gates: "Personal Information — please confirm ...", "Privacy Notice — Are
+    you sure? Once you submit ...", "Terms and Conditions — By clicking Submit you agree ...", a <dialog> inside the
+    application's form), which sent the application. So the dialog stops the desk for the person, whatever the
+    settings (review mode with accept_notices, practice mode, the live check's test identity), and nothing is sent."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    if mode == "practice":
+        notice_settings(job_apply_home, submit_mode="dry_run")
+    elif mode == "test-identity":
+        as_test_identity(monkeypatch, job_apply_home)
+    if page.startswith("data-privacy"):
+        url = fixture_url("site/ai-notice-form.html") + f"?notice={page}"
+    else:
+        heading, words = CONFIRMS[page.removesuffix("-in-form")]
+        url = fixture_url("site/confirm-dialog.html") + "?" + urlencode(
+            {"h": heading, "t": words, **({"in-form": "1"} if page.endswith("-in-form") else {})})
+    job = srv.add_job(url=url, title="Equipment Technician", company="Example Corp")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => window.sent")
+        finally:
+            await applier.stop()
+
+    r, sent = run(go())
+    assert sent == 0, (r.status, r.reason, r.log)
+    assert r.status == "needs_you" and not any(line.startswith("agreed") for line in r.log), (r.status, r.log)
+    if page.startswith("data-privacy"):
+        assert r.code == "notice_theirs" and "“Data Privacy Agreement”" in r.reason, (r.code, r.reason)
+
+
 PROFILE_START = "site/profile-start.html"
 PROFILE_DIALOG = "“Profile Bootstrapping” dialog"
 
@@ -1714,6 +1764,281 @@ def test_a_privacy_agreement_before_the_application_is_accepted_for_the_person(s
     gate = [a for a in r.agreed if a["what"] == "terms gate"]
     assert [(a["heading"], a["button"]) for a in gate] == [("Privacy Agreement", "I Accept")], r.agreed
     assert "collects the personal information you give" in gate[0]["words"] and "agreed" not in r.public()
+
+
+@pytest.mark.parametrize("settings, query, how", [
+    ({}, "", ""), ({"accept_notices": False}, "", ""), ({"submit_mode": "dry_run"}, "", ""), ({}, "?atwill=1", ""),
+    ({}, "?arbitration=1", ""), ({}, "?claim=1", ""), ({}, "?br=1", ""), ({}, "?details=1", ""),
+    ({}, "?textarea=1", ""), ({}, "?details2=1", ""), ({}, "?shadow=1", ""), ({}, "?closed-shadow=1", ""),
+    ({}, "?canvas=1", ""), ({}, "?after=1", ""), ({}, "?frame=1", ""), ({}, "", "throws"), ({}, "", "hangs"),
+    ({}, "", "not-taleo")],
+    ids=["on", "off", "practice", "at-will", "arbitration", "claim", "line-break", "details", "textarea",
+         "details-bare-words", "shadow-root", "closed-shadow-root", "canvas", "after", "frame", "read-throws",
+         "read-hangs", "not-taleo"])
+def test_a_statement_of_truth_is_accepted_for_the_person(srv, monkeypatch, job_apply_home, settings, query, how):
+    """Clark County School District's Taleo (live run 145): after Apply Online, a "Statement of Truth" whose ways on
+    are "I Accept" and "I Decline", its words an application's attestation that its information is true (and what a
+    false statement costs, and what's needed before employment begins). With settings.accept_notices the desk accepts
+    it for the person and says so, as CLAUDE.md's attestation; it stopped for them before (agreement_theirs). With
+    the setting off, in practice mode, or where its words also make employment at will, bind them to arbitration or
+    say something of them (a license held), it's theirs; so is a page with words the person can see or open that its
+    drawn text doesn't hold (a read-only box, a closed section, a shadow root), one that can't be read whole (a closed
+    shadow root, a canvas, words in ::after, a frame, a read that fails or hangs), and one off Oracle Taleo's hosts
+    (the reviews of fix-accept-gates). The fixture is a local file: on Taleo's host but for "not-taleo"."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    if how != "not-taleo":
+        monkeypatch.setattr(pipeline, "_on_taleo", lambda url: True)
+    if how == "throws":
+        monkeypatch.setattr(browser_module, "GATE_READ_JS", "() => { throw new Error('unread'); }")
+    if how == "hangs":
+        monkeypatch.setattr(browser_module, "GATE_READ_JS", "() => new Promise(() => {})")
+        monkeypatch.setattr(browser_module, "READ_TIMEOUT", 1)
+    notice_settings(job_apply_home, **settings)
+    job = srv.add_job(url=fixture_url("site/statement-of-truth.html") + query, title="Office Specialist",
+                      company="Example School District")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    if settings or query or how:
+        assert (r.status, r.need, r.code) == ("needs_you", "stuck", "agreement_theirs"), (r.reason, r.log)
+        assert "“I Accept”" in r.reason and r.url.endswith("statement-of-truth.html" + query), (r.reason, r.url)
+        assert not any(line.startswith("agreed") for line in r.log), r.log
+        return
+    assert "agreed to Example School District's “I Accept” for you (settings.accept_notices)" in r.log, r.log
+    assert r.url.endswith("generic_form.html") and any(line.startswith("filled") for line in r.log), r.log
+    gate = [a for a in r.agreed if a["what"] == "terms gate"]
+    assert [(a["heading"], a["button"]) for a in gate] == [("Statement of Truth", "I Accept")], r.agreed
+    assert "true, correct, complete" in gate[0]["words"] and "agreed" not in r.public()
+
+
+TRUTH = {"url": "https://example.taleo.net/careersection/application.jss", "headings": ["Statement of Truth"],
+         "title": "Statement of Truth",
+         "actions": [{"id": "b1", "text": "I Accept"}, {"id": "b2", "text": "I Decline"}]}
+# (Clark County School District's, live run 145, in its own shape: the information certified true, what a false
+# statement costs, what's needed before employment begins, the notice of what declining does)
+TRUTH_WORDS = ("Statement of Truth\nNOTE: It's very important that you upload all required documents (e.g. a college "
+               "degree, a teaching license).\nEach time that I save this online application, I am certifying that the "
+               "information, statements, and documentation submitted on or in conjunction with this employment "
+               "application are true, correct, complete, and accurate. I acknowledge and understand that any false "
+               "statement shall result in my immediate removal from consideration for employment or my dismissal. I "
+               "acknowledge and understand that before any employment contract becomes effective, I must personally "
+               "comply with the Immigration Reform Act of 1986 and I must possess and produce any required license "
+               "from the State Board of Education.\nNotice - If you decline to make this certification, you will be "
+               "logged out.\nI Accept I Decline")
+DUTY = ("I acknowledge and understand that before any employment contract becomes effective, I must personally comply "
+        "with the Immigration Reform Act of 1986 and I must possess and produce any required license from the State "
+        "Board of Education.")
+
+
+def test_an_attestation_gate_is_one_that_certifies_the_application_and_no_more():
+    """_attestation_gate: a page named a statement of truth (or an applicant's certification) whose way on is a bare
+    "I Accept", and whose sentences in the first person are each one it knows (the information certified true, what a
+    false statement costs, a duty before employment, a background check's consent)."""
+    gate = pipeline._attestation_gate
+    accept = {"id": "b1", "text": "I Accept"}
+    assert gate(accept, TRUTH, TRUTH_WORDS)
+    assert gate({"id": "b1", "text": "I Agree"}, {"url": TRUTH["url"], "headings": ["Applicant Certification"]},
+                "I certify that the answers given in this application are true and complete. I consent to a "
+                "background check and verification of my information.")
+    for button, about, said in (
+            ({"text": "I Accept and Apply"}, TRUTH, TRUTH_WORDS),  # (it sends too)
+            ({"text": "I Accept the Terms"}, TRUTH, TRUTH_WORDS),
+            (accept, {"headings": ["Before you continue"]}, TRUTH_WORDS),  # (not named an attestation)
+            (accept, TRUTH, "Welcome. Please read on and press I Accept."),  # (it attests nothing)
+            (accept, {"headings": ["Statement of Truth and Talent Community"]}, TRUTH_WORDS),
+            # (a page cut off where the desk stops reading it may say more past that)
+            (accept, TRUTH, TRUTH_WORDS + " " + "More of the page. " * (pipeline.GATE_WORDS // 18))):
+        assert not gate(button, about, said), (button, about)
+    # The second review of fix-accept-gates: each shape is read whole, to its end, and every sentence that speaks for
+    # the person is read: in the first person ("i" too), agreeing in another voice, after an abbreviation's full stop or
+    # a semicolon, on a short line, in a list's items; only the page's own button and link labels aside
+    cert, false = TRUTH_WORDS.split("\n")[2].split(". I acknowledge")[0], "\n".join(TRUTH_WORDS.split("\n")[2:3])
+    for more in (
+            cert + ", and agree to submit to a polygraph examination.",
+            cert + " and agree to pay a $50 non-refundable processing fee.",
+            cert + " and accept assignment to any school in the District.",
+            cert + " and authorize the District to obtain my driving record.",
+            false.replace("or my dismissal.", "or my dismissal and the forfeiture of my final paycheck."),
+            "By clicking I Accept, I certify that the information is true and agree to binding mediation of all "
+            "disputes.",
+            "I authorize a background check and the release of my school transcripts and polygraph results to the "
+            "District.",
+            "I consent to a background check and agree to random drug and alcohol testing during employment.",
+            "I authorize the District to verify my information and to share it with other school districts.",
+            "I certify that the information in my application is true and accurate under the laws of the U.S. and "
+            "agree to pay a processing fee.",
+            "I certify that the information is true; further, the applicant agrees to a polygraph.",
+            "By accepting, you agree to submit to a polygraph examination and to pay a $50 processing fee.",
+            "The applicant agrees to random drug testing and to accept any assignment.",
+            "By accepting this statement you consent to drug testing.",
+            "My acceptance also authorizes payroll deduction of a $50 fee.",
+            "I accept any assignment", "I will pay all fees",
+            "I agree to:\n- a polygraph examination\n- a processing fee of $50\n- any assignment",
+            "i agree to pay a processing fee of fifty dollars.",
+            "If you decline to pay the processing fee, you will not be allowed to edit your application.",
+            # The third review: a sentence past a line break, a list's items with no bullets, a table's cells, other
+            # voices and other words; so the whole page is read as an allowlist
+            cert + "\nand agree to pay a $50 processing fee.",
+            cert + "\nand will undertake two years of service.",
+            cert + " and undertake to work any shift.", cert + " and to be bound by all District policies.",
+            cert + " and will comply with all District policies.", cert + " and will relocate as needed.",
+            cert + " and will work overtime when asked.",
+            cert + " and will reimburse training costs if I leave within a year.",
+            cert + " and obligate myself to two years of service.", cert + " and the terms of the offer letter.",
+            "By pressing I Accept and agreeing to pay a $50 fee, I certify that the information is true.",
+            "When I accept a polygraph examination and pay the fee, I certify that the information is true.",
+            "Acceptance of this statement constitutes consent to a polygraph examination.",
+            "Accepting this statement also authorizes the District to obtain driving records.",
+            "This acceptance constitutes your consent to a polygraph examination.",
+            "I acknowledge and understand that any false statement shall result in:\nmy dismissal\nrepayment of all "
+            "wages received",
+            "I certify that the information is true and complete, and I also agree to:\na two-year service commitment",
+            "I agree to the following:\na. a two-year service commitment",
+            "I certify that the information is true.\tTwo-year service commitment required\tAgreed",
+            "Sign In I agree to serve two years",
+            "We, the undersigned, agree to a two-year service commitment.",
+            "The undersigned agrees to a two-year service commitment.",
+            "Signature of applicant constitutes agreement to a two-year service commitment.",
+            "You will be required to serve two years with the District.",
+            "If you decline to agree to a two-year service commitment, you will not be allowed to edit your "
+            "application.",
+            "If you decline, you will be logged out and your service bond is forfeited.",
+            "Either party may end the relationship at any time, with or without cause."):
+        words = TRUTH_WORDS.replace("\nNotice -", f"\n{more}\nNotice -")
+        assert words != TRUTH_WORDS and not gate(accept, TRUTH, words), more
+    label = "I agree to a two-year service commitment"  # (a sentence that is an action's label too)
+    assert not gate(accept, {**TRUTH, "actions": [*TRUTH["actions"], {"id": "b3", "text": label}]},
+                    TRUTH_WORDS.replace("\nNotice -", f"\n{label}\nNotice -"))
+    # The fourth review: no rule of a few words for the page's furniture, only its own by name; a heading is furniture
+    # only as the attestation's name, a label only as a short plain one; and nothing held out of sight
+    for more in ("Two-year commitment.", "Unpaid training period.", "Mandatory relocation.", "Overtime expected.",
+                 "Non-refundable deposit.", "Two years minimum.", "Minimum stay: two years.",
+                 "Weekend shifts mandatory.", "Unpaid probation applies.", "Repayment of training costs.",
+                 "Random searches apply.", "Liquidated damages apply.", "Relocation at own expense.",
+                 "Additional terms",
+                 "NOTE: It's very important that during the application process you upload all required documents as "
+                 "per the job description (e.g. high school diploma, a $50 deposit receipt, proof of relocation)",
+                 "NOTE: It's very important that you upload all required documents (e.g. a two-year service bond)"):
+        words = TRUTH_WORDS.replace("\nNotice -", f"\n{more}\nNotice -")
+        assert not gate(accept, TRUTH, words), more
+    for term in ("All staff are assigned to any school in the District as needed",
+                 "New hires complete an unpaid 30-day training period"):
+        words = TRUTH_WORDS.replace("\nNotice -", f"\n{term}\nNotice -")
+        assert not gate(accept, {**TRUTH, "headings": [*TRUTH["headings"], term]}, words), term
+    for term in ("Employee Handbook and Code of Conduct", "Staff may be assigned to any school in the District",
+                 "Read the full statement", "View details"):
+        words = TRUTH_WORDS.replace("\nNotice -", f"\n{term}\nNotice -")
+        assert not gate(accept, {**TRUTH, "actions": [*TRUTH["actions"], {"id": "b4", "text": term}]}, words), term
+    assert gate(accept, {**TRUTH, "headings": ["Statement of Truth - Example School District"]},
+                TRUTH_WORDS.replace("Statement of Truth\n", "Statement of Truth - Example School District\n", 1))
+    assert gate(accept, {**TRUTH, "actions": [*TRUTH["actions"], {"id": "b5", "text": "Job Search"}]},
+                TRUTH_WORDS + "\nJob Search")
+    cookies = ("The action cannot be completed. Cookies are not enabled on your browser. Please enable cookies in your "
+               "browser preferences and refresh your browser to continue.")  # (Clark County School District's, hidden)
+    assert gate(accept, TRUTH, TRUTH_WORDS, cookies)
+    # The fifth review: only on Oracle Taleo's hosts; a page that couldn't be read whole (None) is the person's; Taleo's
+    # own link titles are its furniture; a label is furniture only as the page's navigation by name
+    for url in ("https://careers.example.com/statement", "https://taleo.net.example.com/x", ""):
+        assert not gate(accept, {**TRUTH, "url": url}, TRUTH_WORDS), url
+    assert gate(accept, {**TRUTH, "url": "https://ccsd.taleo.net/careersection/application.jss"}, TRUTH_WORDS)
+    assert not gate(accept, TRUTH, TRUTH_WORDS, None)
+    assert gate(accept, TRUTH, TRUTH_WORDS, "Log in to the system\nGo to the section Job Search\nView a printable "
+                                            "version of the privacy agreement\n" + cookies)
+    for label in ("Staff Directory", "Benefits", "Overtime Policy"):
+        words = TRUTH_WORDS.replace("\nNotice -", f"\n{label}\nNotice -")
+        assert not gate(accept, {**TRUTH, "actions": [*TRUTH["actions"], {"id": "b6", "text": label}]}, words), label
+    for hidden in ("I agree to a two-year service commitment and to repay all training costs if I leave early.",
+                   "Overtime expected.", cookies + "\nAdditional terms apply."):
+        assert not gate(accept, TRUTH, TRUTH_WORDS, hidden), hidden
+
+
+@pytest.mark.parametrize("more", [
+    # the terms of employment, in any words
+    "I understand that my employment is at will and may be ended at any time.",
+    "Employment with Example School District is at-will.",
+    "I understand that my employment may be terminated at any time, with or without cause or notice.",
+    "Employment is terminable at the will of either party.",
+    "The District may end my employment at any time for any reason.",
+    "I understand that nothing in this application creates a contract of employment for any definite period.",
+    "I understand that new employees serve a probationary period and may be dismissed without cause.",
+    # a right waived or released
+    "I agree that any dispute goes to binding arbitration.",
+    "Any claim is decided without a jury.",
+    "I release the District and all persons from any liability for furnishing such information.",
+    "I hereby release and hold harmless Example School District from all claims arising from the investigation.",
+    "I waive any claim against the District.",
+    "I agree not to participate in any class action against the District.",
+    "Any claim will be brought individually and not as a class or collective action.",
+    "I agree not to compete with the District for one year after employment ends.",
+    "I agree that any lawsuit must be filed within six months.",
+    # more than the background check that comes with applying
+    "I authorize the District to obtain a consumer credit report about me.",
+    "I authorize the release of my medical records.",
+    "I authorize the District to contact my references and former employers.",
+    "I authorize any former employer to release information about me to the District.",
+    "I consent to a review of my social media accounts.",
+    "I consent to the sharing of my information with third parties for their own purposes.",
+    "I consent to drug and alcohol testing as a condition of employment.",
+    "I consent to fingerprinting and a criminal history check.",
+    # a sign-up, texts or calls, other roles
+    "I agree to receive job alerts and our newsletter.",
+    "I agree to receive text messages and calls from the District about my application.",
+    "I consent to be considered for other open positions.",
+    # anything else in the person's name
+    "I authorize payroll deduction of union dues.",
+    "I agree that my electronic signature is legally binding.",
+    "I agree to abide by all District policies and regulations.",
+    "I agree to accept any assignment to any school.",
+    "I must comply with any order to work overtime and I waive overtime pay.",
+    "I must pass a polygraph examination and I consent to it.",
+    # something said of the person
+    "I certify that I hold a current teaching license.",
+    "I certify that I am authorized to work in the US.",
+    # in another voice: what the page signs them up for, whoever says it
+    "By pressing I Accept, you consent to receive text messages and calls from the District.",
+    "By accepting, you agree to be considered for other positions and kept on file for future openings.",
+    "You agree that the District may share your information with its partners and affiliates.",
+    "You will receive emails about new openings at the District.",
+    "You agree to marketing communications from the District.",
+    "You accept the terms and conditions of employment described here.",
+])
+def test_an_attestation_gate_with_anything_more_is_the_persons(more):
+    """The review of fix-accept-gates: the gate accepted a Statement of Truth that also made employment at will,
+    released the District from liability, waived a class action, authorized a credit report or the release of medical
+    records, or said in another voice that the person is signed up. Its sentences in the first person are each one it
+    knows, or the page is the person's; what's never agreed to is read in all of its words."""
+    gate = pipeline._attestation_gate
+    accept = {"id": "b1", "text": "I Accept"}
+    words = TRUTH_WORDS.replace("\nNotice -", f" {more}\nNotice -")
+    assert not gate(accept, TRUTH, words), more
+
+
+@pytest.mark.parametrize("claim", ["and I am a US citizen and hold a valid teaching license",
+                                   "and I have never been convicted of a felony",
+                                   "and I authorize the District to obtain my credit report and medical records",
+                                   "and I agree to receive job alerts",
+                                   "and I consent to text messages from the District",
+                                   "and I agree to be considered for other open positions",
+                                   ", and my employment is terminable by either party"])
+def test_a_duty_before_employment_says_nothing_more(claim):
+    """The review of fix-accept-gates: what a duty before employment says ("I must personally comply with the
+    Immigration Reform Act of 1986 and I must possess and produce any required license ...") was blanked to the end of
+    its sentence, and whatever followed it there went unread. It's read whole: the duty's own words, and nothing
+    more."""
+    gate = pipeline._attestation_gate
+    words = TRUTH_WORDS.replace(DUTY, DUTY[:-1] + f" {claim}.")
+    assert words != TRUTH_WORDS
+    assert not gate({"id": "b1", "text": "I Accept"}, TRUTH, words), claim
 
 
 def test_a_box_that_wouldnt_fill_is_said_as_that_not_asked(srv, monkeypatch):

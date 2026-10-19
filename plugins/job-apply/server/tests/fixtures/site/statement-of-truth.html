@@ -1,0 +1,101 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Statement of Truth</title></head>
+<body>
+<!-- like a school district's Taleo career section (Clark County School District's, live run 145): after its Apply
+     Online, a "Statement of Truth" whose only ways on are "I Accept" and "I Decline" (and the site's Sign In). Its
+     words certify that the application's information is true, say what a false statement costs, and name what's
+     needed before employment begins. ?atwill=1: its words also make employment at will; ?arbitration=1: they also
+     bind the person to arbitration; ?claim=1: they also say the person holds the license; ?br=1: the certification
+     goes on past a line break to a commitment (the third review of fix-accept-gates); ?details=1: more terms sit in a
+     closed "Additional terms" section (the fourth review) -->
+<header><a href="#signin">Sign In</a> <a href="#search">Job Search</a></header>
+<h1>Statement of Truth</h1>
+<label for="lang">Select a language</label>
+<select id="lang"><option>English</option><option>Spanish</option></select>
+<div class="statement">
+  <p>NOTE: It's very important that during the application process you upload all required documents as per the job
+     description (e.g. high school diploma/college degree, CPR certification, teaching license, etc.)</p>
+  <p id="certify">Each time that I save this online application, I am certifying that the information, statements, and
+     documentation submitted on or in conjunction with this employment application are true, correct, complete, and
+     accurate as of the date and time this online application is saved.</p>
+  <p>I acknowledge and understand that any false, misleading, or incomplete statement, misrepresentation, or omission
+     of fact made in conjunction with this employment application shall result in my immediate removal from
+     consideration for employment or my dismissal.</p>
+  <p id="duty">I acknowledge and understand that before any employment contract becomes effective, I must personally
+     comply with the Immigration Reform Act of 1986 and I must possess and produce any required license from the
+     State Board of Education.</p>
+  <p>Notice - If you decline to make this certification and acknowledgement, you will not be allowed to edit any of
+     your application information.</p>
+</div>
+<button type="button" id="accept">I Accept</button>
+<button type="button" id="decline">I Decline</button>
+<script>
+  const params = new URLSearchParams(location.search);
+  const add = (words) => {
+    const p = document.createElement('p');
+    p.textContent = words;
+    document.querySelector('.statement').appendChild(p);
+  };
+  if (params.get('atwill')) add('I understand that my employment with Example School District is at will and may be '
+    + 'ended at any time.');
+  if (params.get('arbitration')) add('I agree that any dispute with Example School District goes to binding '
+    + 'arbitration.');
+  if (params.get('claim')) document.getElementById('duty').textContent = 'I certify that I hold a current teaching '
+    + 'license from the State Board of Education.';
+  if (params.get('br')) {
+    const certify = document.getElementById('certify');
+    certify.textContent = certify.textContent.trim().replace(/\.$/, '');
+    certify.append(document.createElement('br'), 'and will undertake two years of service with the District and '
+      + 'comply with all District policies.');
+  }
+  if (params.get('details')) {
+    const more = document.createElement('details');
+    more.innerHTML = '<summary>Additional terms</summary><p>I agree to a two-year service commitment and to repay all '
+      + 'training costs if I leave early.</p>';
+    document.querySelector('.statement').appendChild(more);
+  }
+  // (the fifth review: terms the person can see or open that the page's drawn words don't hold, and what can't be
+  // read whole: ?textarea=1, ?details2=1 (bare words in a closed section named for the page), ?shadow=1 (an open
+  // shadow root), ?closed-shadow=1, ?canvas=1, ?after=1 (words in ::after), ?frame=1)
+  const TERMS = 'I agree to a two-year service commitment and to repay all training costs if I leave early.';
+  const statement = document.querySelector('.statement');
+  if (params.get('textarea')) {
+    const box = document.createElement('textarea');
+    box.readOnly = true; box.rows = 3; box.cols = 80; box.value = TERMS;
+    statement.appendChild(box);
+  }
+  if (params.get('details2')) {
+    const more = document.createElement('details');
+    more.innerHTML = '<summary>Statement of Truth</summary>';
+    more.append(TERMS);
+    statement.appendChild(more);
+  }
+  for (const mode of ['shadow', 'closed-shadow']) {
+    if (!params.get(mode)) continue;
+    customElements.define('x-' + mode, class extends HTMLElement {
+      constructor() { super(); this.attachShadow({ mode: mode === 'shadow' ? 'open' : 'closed' }).innerHTML = '<p>' + TERMS + '</p>'; }
+    });
+    statement.appendChild(document.createElement('x-' + mode));
+  }
+  if (params.get('canvas')) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 600; canvas.height = 30;
+    statement.appendChild(canvas);
+    canvas.getContext('2d').fillText(TERMS, 0, 20);
+  }
+  if (params.get('after')) {
+    const style = document.createElement('style');
+    style.textContent = '.statement::after { content: "' + TERMS + '"; }';
+    document.head.appendChild(style);
+  }
+  if (params.get('frame')) {
+    const frame = document.createElement('iframe');
+    frame.srcdoc = '<p>' + TERMS + '</p>';
+    statement.appendChild(frame);
+  }
+  document.getElementById('accept').addEventListener('click', () => { location.href = '../generic_form.html'; });
+  document.getElementById('decline').addEventListener('click', () => { document.body.textContent = 'You declined.'; });
+</script>
+</body>
+</html>

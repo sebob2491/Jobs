@@ -17,7 +17,11 @@
      ?uploaded=1: the resume is up already. ?notice=1: and the notice is open over the form, as
      an upload left it. ?notice=privacy: the notice is a privacy policy's, about no AI; ?notice=other: about
      neither; ?notice=waiver: the AI notice, with a legal waiver in its words; ?notice=signup: with a talent-community
-     sign-up. &ack=1: the notice's agree reads "I Acknowledge" and is a form's own submit button. -->
+     sign-up. &ack=1: the notice's agree reads "I Acknowledge" and is a form's own submit button.
+     ?notice=data-privacy: like Insight Enterprises' Eightfold (live run 145), the employer's "Data Privacy Agreement",
+     its agree a "Submit" beside the form's own "Submit application"; ?notice=data-privacy-signup: and its words also
+     join a talent network; ?notice=data-privacy-alerts: and they say job recommendations come by email (Insight's own
+     did). window.sent counts the form's submits -->
 <h2>Equipment Technician</h2>
 <form id="app" novalidate>
   <fieldset>
@@ -105,6 +109,20 @@
     notice.querySelectorAll('p')[1].textContent = 'By pressing I Agree you also join our talent community and will '
       + 'receive job alerts and marketing emails from Example Corp.';
   }
+  if ((params.get('notice') || '').startsWith('data-privacy')) {  // the employer's privacy agreement, its agree "Submit"
+    document.getElementById('dialog-label-4').textContent = 'Data Privacy Agreement';
+    document.getElementById('notice-text').textContent = 'I agree to the Terms and understand that information '
+      + 'collected will be used as described here, the Notice at Collection, and Privacy Policy.';
+    const more = notice.querySelectorAll('p')[1];
+    if (params.get('notice') === 'data-privacy-signup') more.textContent = 'By pressing Submit you also join our '
+      + 'talent network and receive our newsletter.';
+    else if (params.get('notice') === 'data-privacy-alerts') {
+      more.textContent = 'When you upload your resume, we provide job recommendations to you. You will also receive '
+        + 'job recommendations by email.';
+      notice.querySelector('.box').insertBefore(more, document.getElementById('notice-text'));
+    } else more.remove();
+    document.querySelector('#confirmUploadResume span').textContent = 'Submit';
+  }
   if (params.get('ack')) {
     const agree = document.getElementById('confirmUploadResume');
     const form = document.createElement('form');
@@ -153,8 +171,11 @@
     });
     document.addEventListener('mousedown', (e) => { if (!list.contains(e.target) && e.target !== box) list.hidden = true; });
   }
+  window.sent = 0;
   document.getElementById('app').addEventListener('submit', (e) => {
     e.preventDefault();
+    window.sent += 1;
+    if (params.get('notice') && params.get('notice').startsWith('data-privacy')) return;  // (its boxes still read)
     document.body.innerHTML = '<h1>Thanks for applying!</h1>';
   });
 </script>
