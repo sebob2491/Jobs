@@ -1806,7 +1806,8 @@ def test_a_statement_of_truth_is_accepted_for_the_person(srv, monkeypatch, job_a
     assert "true, correct, complete" in gate[0]["words"] and "agreed" not in r.public()
 
 
-TRUTH = {"headings": ["Statement of Truth"], "title": "Statement of Truth"}
+TRUTH = {"headings": ["Statement of Truth"], "title": "Statement of Truth",
+         "actions": [{"id": "b1", "text": "I Accept"}, {"id": "b2", "text": "I Decline"}]}
 # (Clark County School District's, live run 145, in its own shape: the information certified true, what a false
 # statement costs, what's needed before employment begins, the notice of what declining does)
 TRUTH_WORDS = ("Statement of Truth\nNOTE: It's very important that you upload all required documents (e.g. a college "
@@ -1838,8 +1839,39 @@ def test_an_attestation_gate_is_one_that_certifies_the_application_and_no_more()
             ({"text": "I Accept the Terms"}, TRUTH, TRUTH_WORDS),
             (accept, {"headings": ["Before you continue"]}, TRUTH_WORDS),  # (not named an attestation)
             (accept, TRUTH, "Welcome. Please read on and press I Accept."),  # (it attests nothing)
-            (accept, {"headings": ["Statement of Truth and Talent Community"]}, TRUTH_WORDS)):
+            (accept, {"headings": ["Statement of Truth and Talent Community"]}, TRUTH_WORDS),
+            # (a page cut off where the desk stops reading it may say more past that)
+            (accept, TRUTH, TRUTH_WORDS + " " + "More of the page. " * (pipeline.GATE_WORDS // 18))):
         assert not gate(button, about, said), (button, about)
+    # The second review of fix-accept-gates: each shape is read whole, to its end, and every sentence that speaks for
+    # the person is read: in the first person ("i" too), agreeing in another voice, after an abbreviation's full stop or
+    # a semicolon, on a short line, in a list's items; only the page's own button and link labels aside
+    cert, false = TRUTH_WORDS.split("\n")[2].split(". I acknowledge")[0], "\n".join(TRUTH_WORDS.split("\n")[2:3])
+    for more in (
+            cert + ", and agree to submit to a polygraph examination.",
+            cert + " and agree to pay a $50 non-refundable processing fee.",
+            cert + " and accept assignment to any school in the District.",
+            cert + " and authorize the District to obtain my driving record.",
+            false.replace("or my dismissal.", "or my dismissal and the forfeiture of my final paycheck."),
+            "By clicking I Accept, I certify that the information is true and agree to binding mediation of all "
+            "disputes.",
+            "I authorize a background check and the release of my school transcripts and polygraph results to the "
+            "District.",
+            "I consent to a background check and agree to random drug and alcohol testing during employment.",
+            "I authorize the District to verify my information and to share it with other school districts.",
+            "I certify that the information in my application is true and accurate under the laws of the U.S. and "
+            "agree to pay a processing fee.",
+            "I certify that the information is true; further, the applicant agrees to a polygraph.",
+            "By accepting, you agree to submit to a polygraph examination and to pay a $50 processing fee.",
+            "The applicant agrees to random drug testing and to accept any assignment.",
+            "By accepting this statement you consent to drug testing.",
+            "My acceptance also authorizes payroll deduction of a $50 fee.",
+            "I accept any assignment", "I will pay all fees",
+            "I agree to:\n- a polygraph examination\n- a processing fee of $50\n- any assignment",
+            "i agree to pay a processing fee of fifty dollars.",
+            "If you decline to pay the processing fee, you will not be allowed to edit your application."):
+        words = TRUTH_WORDS.replace("\nNotice -", f"\n{more}\nNotice -")
+        assert words != TRUTH_WORDS and not gate(accept, TRUTH, words), more
 
 
 @pytest.mark.parametrize("more", [

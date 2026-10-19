@@ -619,6 +619,22 @@ def test_waivers_the_terms_of_employment_and_more_than_a_background_check_in_oth
         assert not pipeline._agreeable_notice(POLICY, POLICY_TEXT * 5 + words, False)[0]
 
 
+@pytest.mark.parametrize("words", ["We may update this Privacy Policy at any time with or without notice.",
+                                   "Your account may be terminated for any reason or no reason under these Terms of "
+                                   "Use.",
+                                   "Records are stored for a definite period, as the law requires."])
+def test_an_at_will_statements_words_are_one_only_about_employment(words):
+    """The second review of fix-accept-gates: "with or without notice", "for any reason or no reason", "a definite
+    period" are an at-will statement's words about employment, and only there: a privacy policy or the site's terms
+    that use them are still agreed to."""
+    assert _never_for_them(words, only=PRECISE) is None, words
+    assert pipeline._agreeable_notice("Privacy Policy", words, False) == (True, True)
+    assert pipeline._agrees_to_terms("I agree to the Terms of Use. " + words)
+    said = words.replace("this Privacy Policy", "your employment").replace("Your account", "Your employment")
+    said = said.replace("Records are stored", "No one is hired")
+    assert _never_for_them(said, only=PRECISE) == "at-will", said
+
+
 @pytest.mark.parametrize("words", ["I certify that my information is true, and I authorize Acme to verify it with my "
                                    "previous employers.",
                                    "I understand the company may call my references.",

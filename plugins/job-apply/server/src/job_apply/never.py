@@ -58,6 +58,12 @@ JOB_PICKS = (r"(?:job|career) (?:recommendations?|matches|suggestions?)\b|"
              r"recommended (?:jobs|roles|positions|openings)\b|"
              r"personali[sz]ed (?:job|career) (?:suggestions?|recommendations?|matches)\b|"
              r"jobs? that match(?:es)? (?:your|my) (?:profile|skills|resume|interests|experience)\b")
+# An at-will statement's words that say so only beside employment ("may be terminated at any time, with or without cause
+# or notice", "terminable at the will of either party", "for any definite period"), and the words for employment
+_AT_WILL_WORDS = (r"(?:with or without (?:cause|notice|reason)|without cause|terminable|at the will of|"
+                  r"definite (?:period|term|duration)|at any time,? for any (?:lawful )?reason|for any reason or no "
+                  r"reason)")
+_EMPLOYED = r"(?:employ\w*|jobs?|positions?|hir(?:e|ed|ing)|dismiss\w*|discharg\w*)"
 
 # By kind, in the order a match is named. Every word each path's own list held before is here (the tests keep those
 # lists, word for word, and check each path still refuses them)
@@ -81,10 +87,12 @@ NEVER: dict[str, re.Pattern[str]] = {kind: re.compile(words, re.I | re.S) for ki
     # will of either party", "may end my employment at any time for any reason", no contract for a definite period: the
     # review of fix-accept-gates)
     "at-will": r"\bat[- ]will\b|\b(?:terms|conditions)\b[^.]{0,30}\bof (?:my |your |this |the )?employment\b|"
-               r"\bemployment (?:agreement|contract)\b|\bcontract of employment\b|\bwith or without (?:cause|notice|"
-               r"reason)\b|\bwithout cause\b|\bterminable\b|\bat the will of\b|\bdefinite (?:period|term|duration)\b|"
+               r"\bemployment (?:agreement|contract)\b|\bcontract of employment\b|"
                r"\b(?:end|terminate)\w* (?:my |your |the )?employment(?: relationship)? at any time\b|"
-               r"\bat any time,? for any (?:lawful )?reason\b|\bfor any reason or no reason\b",
+               # (these in a sentence about employment alone: a privacy policy "may be updated at any time with or
+               # without notice", an account "terminated for any reason or no reason under these Terms of Use": the
+               # second review of fix-accept-gates)
+               rf"\b{_EMPLOYED}\b[^.]{{0,100}}\b{_AT_WILL_WORDS}\b|\b{_AT_WILL_WORDS}\b[^.]{{0,100}}\b{_EMPLOYED}\b",
     # a sign-up in so many words, however deep in a notice ("By clicking Accept you also join our Talent Community");
     # and job picks sent by email, in either order ("You will also receive job recommendations by email": Insight
     # Enterprises' "Data Privacy Agreement", live run 145; "We'll email you job matches": the review of

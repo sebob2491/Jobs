@@ -4270,7 +4270,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
                             "ticked or a check passed first. Look in the desk's browser window, then press Carry on.",
                             code="agreement_stayed")
                 return _Then.STOP
-            words = await srv.page_text(40000)  # (what _terms_gate reads, kept with the agreement: Run.agreed)
+            words = await srv.page_text(GATE_WORDS)  # (what _terms_gate reads, kept with the agreement: Run.agreed)
             # (an employer's privacy notice or terms; or an application's attestation that its information is true, a
             # "Statement of Truth": Clark County School District's Taleo, run 145)
             if (_terms_gate(agree, data, words) or _attestation_gate(agree, data, words)) and _may_accept_notices():
@@ -5621,28 +5621,36 @@ def _gate_about(button: dict[str, Any], data: dict[str, Any]) -> str:
 
 # A page whose way on is an application's attestation that its information is true, named so in its headings or title
 # (Clark County School District's Taleo "Statement of Truth", live run 145, its ways on "I Accept" and "I Decline"); its
-# bare accept, and its words in the first person, which are what the person attests to
+# bare accept
 _ATTESTATION_PAGE = re.compile(r"\bstatement of truth\b|\b(?:applicant|application)(?:'s)? (?:certification|"
                                r"attestation|affirmation|statement)\b|\bcertification of (?:truth|accuracy)\b", re.I)
 _BARE_ACCEPT = re.compile(r"^(?:i )?(?:accept|agree)$", re.I)
-# Its sentences in the first person, which are what the person attests to: each must be one of the shapes it knows
-# (the review of fix-accept-gates: an allowlist, as anything else in their name is theirs). A line with no full stop
-# counts from six words (a link's "My Jobpage", the gate's own "I Accept I Decline" don't)
-_FIRST_PERSON = re.compile(r"\bI\b|\b(?i:my|me)\b")
+# How much of a gate's page is read (Applier's page_text): a page cut off there may say more past it, so an attestation
+# gate's is the person's
+GATE_WORDS = 40000
+# Its sentences that speak for the person: in the first person ("I", "i", "my", "me"), or agreeing in another voice
+# ("By accepting, you agree to ...", "The applicant agrees to ..."). Each must be one of the shapes it knows, whole (the
+# reviews of fix-accept-gates: an allowlist, as anything else in their name is theirs)
+_FIRST_PERSON = re.compile(r"\b(?:i|my|me)\b", re.I)
+_OTHER_VOICE = re.compile(r"\b(?:you|applicants?|candidates?)\b[^.]{0,40}?\b(?:agree|consent|authori[sz]e|acknowledge|"
+                          r"understand|accept|certify|attest|affirm|declare|confirm|waive|release)\w*|"
+                          r"\bby (?:accepting|pressing|clicking|selecting|checking|signing|submitting|continuing)\b|"
+                          r"\bif you decline\b",
+                          re.I)
 _LEAD = r"(?:(?:each time|whenever|when|by (?:pressing|clicking|selecting)) [^,]{1,80}, )?I (?:hereby )?"
 _NOT_I = r"(?:(?!\bI\b).)*"  # (the rest of a sentence, with no other clause in the first person)
 _ATTESTATION_SHAPES = (
     # the information certified true ("Each time that I save this online application, I am certifying that the
     # information, statements, and documentation submitted ... are true, correct, complete, and accurate ...")
     re.compile(_LEAD + r"(?:certify|attest|affirm|declare|confirm)(?: and (?:certify|attest|affirm|declare|confirm|"
-               r"acknowledge|agree))? that (?:all )?(?:the |my )?(?:information|answers?|statements?|responses?)\b"
-               + _NOT_I + r"\b(?:true|correct|complete|accurate)\b" + _NOT_I, re.I | re.S),
+               r"acknowledge))? that (?P<rest>(?:all )?(?:the |my )?(?:information|answers?|statements?|responses?)\b"
+               + _NOT_I + r"\b(?:true|correct|complete|accurate)\b" + _NOT_I + ")", re.I | re.S),
     # what a false statement costs ("I acknowledge and understand that any false, misleading, or incomplete statement
     # ... shall result in my immediate removal from consideration for employment or my dismissal")
-    re.compile(r"(?:I (?:acknowledge|understand|agree)(?: and (?:acknowledge|understand|agree))? that )?"
-               + _NOT_I + r"\b(?:false|falsified|misleading|incomplete|untrue|inaccurate|fraudulent)\b" + _NOT_I
+    re.compile(r"(?:I (?:acknowledge|understand)(?: and (?:acknowledge|understand))? that )?(?P<rest>" + _NOT_I
+               + r"\b(?:false|falsified|misleading|incomplete|untrue|inaccurate|fraudulent)\b" + _NOT_I
                + r"\b(?:result in|be (?:cause|grounds?) for|lead to|disqualify|constitutes? (?:cause|grounds?))\b"
-               + _NOT_I, re.I | re.S),
+               + _NOT_I + ")", re.I | re.S),
     # a duty before employment begins, in these words alone ("I acknowledge and understand that before any employment
     # contract becomes effective, I must personally comply with the Immigration Reform Act of 1986 and I must possess
     # and produce any required license from the Nevada Department of Education")
@@ -5654,10 +5662,27 @@ _ATTESTATION_SHAPES = (
                    r"all |the )?required (?:licen[cs]es?|certificat\w+|credentials?)(?: (?:from|issued by) (?:the )?"
                    r"(?:(?!\b(?:I|and|or|but)\b)[\w ])+)?")), re.I),
     # a consent to the background check that comes with applying, or to the information's being verified
-    re.compile(_LEAD + r"(?:consent to|authori[sz]e)\b" + _NOT_I + r"\b(?:background (?:check|screening|investigation)|"
-               r"verif\w+)\b" + _NOT_I, re.I | re.S),
+    re.compile(_LEAD + r"(?:consent to|authori[sz]e)\b(?P<rest>" + _NOT_I + r"\b(?:background (?:check|screening|"
+               r"investigation)|verif\w+)\b" + _NOT_I + ")", re.I | re.S),
+    # the notice of what declining does, which agrees to nothing ("Notice - If you decline to make this certification
+    # and acknowledgement, you will not be allowed to edit any of your application information")
+    re.compile(r"(?:notice\s*[-:–]?\s*)?if you decline\b(?P<what>[^.]*?),\s*you will (?:not be (?:allowed|able) "
+               r"to (?:edit|change|continue|proceed)|be (?:logged out|signed out|returned|sent back))(?P<rest>[^.]*)",
+               re.I),
 )
-_DUTY_SHAPE = _ATTESTATION_SHAPES[2]
+_DUTY_SHAPE, _DECLINE_SHAPE = _ATTESTATION_SHAPES[2], _ATTESTATION_SHAPES[4]
+# What a shape's own words never go on to (the second review of fix-accept-gates: "... true and accurate, and agree to
+# submit to a polygraph examination", "... and the forfeiture of my final paycheck", "I authorize a background check and
+# the release of my school transcripts")
+_SAYS_MORE = re.compile(r"\b(?:agree\w*|consent\w*|authori[sz]\w*|accept\w*|waiv\w*|releas\w*|permit\w*|allow\w*|"
+                        r"submit\w* to|undergo\w*|pay\w*|shar\w*|disclos\w*|assign\w*|forfeit\w*|further|also|"
+                        r"polygraph\w*|drug|alcohol|fees?|fines?|deduct\w*|mediat\w*|transcripts?|records?|deposit\w*)\b",
+                        re.I)
+# A line that opens a list goes on in its items ("I agree to:" and "- a polygraph examination")
+_LIST_ITEM = re.compile(r"^\s*(?:[-•*·–]|\d+[.)]|\(?[a-z]\))\s")
+# A full stop that ends no sentence: an abbreviation's ("U.S.", "e.g.", "Inc.")
+_ABBREVIATION = re.compile(r"(?:^|[\s(])(?:[a-z]{1,2}\.)+$|\b(?:inc|co|corp|ltd|llc|etc|no|mr|mrs|ms|dr|st|jr|sr|vs|"
+                           r"dept)\.$", re.I)
 # and what such words say of when employment begins, which agrees to no terms of employment ("before any employment
 # contract becomes effective": blanked before the page is read for what's never agreed to); the certifying said as it
 # goes on ("I am certifying that ...") read as "I certify"; and the person's information shared with others in any
@@ -5669,32 +5694,67 @@ _SHARED = re.compile(r"\bshar\w*\b[^.]{0,40}\b(?:information|data|details)\b[^.]
                      r"part\w*|affiliat\w*|vendors?|others)\b", re.I)
 
 
+def _gate_sentences(text: str, labels: set[str]) -> list[str]:
+    """A gate page's words as sentences: the page's own button and link labels left out (a line of nothing else), a
+    list's items kept with the line that opens it, and a sentence never ended at an abbreviation's full stop."""
+    lines: list[str] = []
+    for line in text.split("\n"):
+        said = " ".join(line.split())
+        rest = said
+        for label in sorted(labels, key=len, reverse=True):
+            rest = rest.replace(label, " ")
+        if not said or not rest.strip(" |·-"):
+            continue
+        if lines and (lines[-1].endswith(":") or _LIST_ITEM.match(line)):
+            lines[-1] += " " + said
+        else:
+            lines.append(said)
+    out: list[str] = []
+    for line in lines:
+        pieces = re.split(r"(?<=[.!?])\s+", line)
+        for i, piece in enumerate(pieces):
+            if i and _ABBREVIATION.search(pieces[i - 1]):
+                out[-1] += " " + piece
+            else:
+                out.append(piece)
+    return out
+
+
 def _attestation_gate(button: dict[str, Any], data: dict[str, Any], text: str) -> bool:
     """A page whose way on is an application's attestation that its information is true (_ATTESTATION_PAGE: a
     "Statement of Truth"), which settings.accept_notices accepts for the person as CLAUDE.md's attestation: its bare
-    "I Accept" (never one that names more, or sends); each of its sentences in the first person one of the shapes it
-    knows (_ATTESTATION_SHAPES: the information certified true, what a false statement costs, a duty before employment
-    in those words alone, the background check's consent), one of them certifying, none saying something of the person
-    (_about_person) but the duty; and nowhere in the page's words (`text`, read whole, in any voice) what's never agreed
-    to for the person (_attests_more: a sign-up, mail, other roles, a credit report; a legal waiver, arbitration, the
-    terms of employment), nor their information shared with others (_SHARED). The review of fix-accept-gates."""
+    "I Accept" (never one that names more, or sends); each of its sentences that speaks for the person (in the first
+    person, or agreeing in another voice) one of the shapes it knows, whole, its own words going on to nothing more
+    (_ATTESTATION_SHAPES, _SAYS_MORE: the information certified true, what a false statement costs, a duty before
+    employment in those words alone, the background check's consent, the notice of what declining does), one of them
+    certifying, none saying something of the person (_about_person) but the duty; and nowhere in the page's words
+    (`text`, read whole, in any voice, and not cut off at GATE_WORDS) what's never agreed to for the person
+    (_attests_more: a sign-up, mail, other roles, a credit report; a legal waiver, arbitration, the terms of
+    employment), nor their information shared with others (_SHARED). The reviews of fix-accept-gates."""
     said = final_text(button.get("text") or "")
     about = _gate_about(button, data)
     if not _BARE_ACCEPT.match(said) or not _ATTESTATION_PAGE.search(about) \
-            or _never_for_them(f"{said} {about}", only=_AGREEMENT_KINDS):
+            or _never_for_them(f"{said} {about}", only=_AGREEMENT_KINDS) or len(text or "") >= GATE_WORDS:
         return False
     words = _CERTIFYING.sub(r"I \1", text or "")
     page = _EMPLOYMENT_BEGINS.sub(" ", words)
     if _attests_more(page) or _never_for_them(page, only=ANYWHERE | {"at-will"}) or _SHARED.search(page):
         return False
-    own = [s for line in re.split(r"\n+", words) for s in re.split(r"(?<=[.!?])\s+", " ".join(line.split()))
-           if _FIRST_PERSON.search(s) and (s.endswith((".", "!", "?")) or len(s.split()) >= 6)]
-    for sentence in own:
+    labels = {" ".join(str(a.get("text") or "").split()) for a in data.get("actions") or []} - {""}
+    certified = False
+    for sentence in _gate_sentences(words, labels):
+        if not (_FIRST_PERSON.search(sentence) or _OTHER_VOICE.search(sentence)):
+            continue
         said = sentence.rstrip(".!? ")
-        shape = next((i for i, rx in enumerate(_ATTESTATION_SHAPES) if rx.fullmatch(said)), None)
-        if shape is None or (_ATTESTATION_SHAPES[shape] is not _DUTY_SHAPE and _about_person(said)):
+        match = next((m for rx in _ATTESTATION_SHAPES if (m := rx.fullmatch(said))), None)
+        if match is None:
             return False
-    return any(_ATTESTATION_SHAPES[0].fullmatch(s.rstrip(".!? ")) for s in own)
+        more = " ".join(v for k, v in match.groupdict().items() if k in ("rest", "what") and v)
+        if match.re is not _DUTY_SHAPE and (_SAYS_MORE.search(more)
+                                            or match.re is not _DECLINE_SHAPE and _about_person(said)):
+            return False
+        certified = certified or match.re is _ATTESTATION_SHAPES[0]
+    return certified
 
 
 def _agreement_button(data: dict[str, Any]) -> dict[str, Any] | None:
