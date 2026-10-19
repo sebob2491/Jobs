@@ -7,7 +7,8 @@
      words certify that the application's information is true, say what a false statement costs, and name what's
      needed before employment begins. ?atwill=1: its words also make employment at will; ?arbitration=1: they also
      bind the person to arbitration; ?claim=1: they also say the person holds the license; ?br=1: the certification
-     goes on past a line break to a commitment (the third review of fix-accept-gates) -->
+     goes on past a line break to a commitment (the third review of fix-accept-gates); ?details=1: more terms sit in a
+     closed "Additional terms" section (the fourth review) -->
 <header><a href="#signin">Sign In</a> <a href="#search">Job Search</a></header>
 <h1>Statement of Truth</h1>
 <label for="lang">Select a language</label>
@@ -47,6 +48,12 @@
     certify.textContent = certify.textContent.trim().replace(/\.$/, '');
     certify.append(document.createElement('br'), 'and will undertake two years of service with the District and '
       + 'comply with all District policies.');
+  }
+  if (params.get('details')) {
+    const more = document.createElement('details');
+    more.innerHTML = '<summary>Additional terms</summary><p>I agree to a two-year service commitment and to repay all '
+      + 'training costs if I leave early.</p>';
+    document.querySelector('.statement').appendChild(more);
   }
   document.getElementById('accept').addEventListener('click', () => { location.href = '../generic_form.html'; });
   document.getElementById('decline').addEventListener('click', () => { document.body.textContent = 'You declined.'; });

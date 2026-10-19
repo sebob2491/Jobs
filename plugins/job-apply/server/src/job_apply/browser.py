@@ -41,8 +41,9 @@ from .browser_dates import DatesMixin
 from .browser_menus import MenusMixin
 from .browser_tabs import TabsMixin
 from .browser_uploads import UploadsMixin
-from .formjs import (CHALLENGE_JS, CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS, EXTRACT_JS, LOST_BOXES_JS,
-                     NOTICE_OVER_JS, PEEK_JS, QUIET_JS, TWIN_TICKED_JS, VISIBLE_TEXT_JS, WORKDAY_PROMPT_JS)
+from .formjs import (CHALLENGE_JS, CLICK_CHOICE_JS, COVERED_JS, ELEMENT_INFO_JS, EXTRACT_JS, HIDDEN_TEXT_JS,
+                     LOST_BOXES_JS, NOTICE_OVER_JS, PEEK_JS, QUIET_JS, TWIN_TICKED_JS, VISIBLE_TEXT_JS,
+                     WORKDAY_PROMPT_JS)
 
 SUBMIT_RE = re.compile(r"\bsubmit\b|send (my )?application|finish (my )?application|complete (my )?application", re.I)
 # A form's own submit button with one of these labels is the final step too ("Apply", "Send").
@@ -1012,6 +1013,14 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
             return {"url": page.url, "title": await _page_title(page), **data}
 
     async def visible_text(self, max_chars: int = 8000) -> str:
+        return await self._frames_text(VISIBLE_TEXT_JS, max_chars)
+
+    async def hidden_text(self, max_chars: int = 8000) -> str:
+        """The words the page holds out of sight (HIDDEN_TEXT_JS: a closed <details>' content, a collapsed section's,
+        anything not drawn), one line for each part hidden whole, across its frames."""
+        return await self._frames_text(HIDDEN_TEXT_JS, max_chars)
+
+    async def _frames_text(self, script: str, max_chars: int) -> str:
         async with self._lock:
             page = await self.page()
             parts = []
@@ -1019,7 +1028,7 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
                 if frame is not page.main_frame and _MEDIA_FRAME.match(frame.url):
                     continue
                 try:
-                    t = await _bounded(frame.evaluate(VISIBLE_TEXT_JS))
+                    t = await _bounded(frame.evaluate(script))
                 except (PlaywrightError, _Hung):
                     continue
                 if t:

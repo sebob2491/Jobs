@@ -1091,6 +1091,35 @@ VISIBLE_TEXT_JS = r"""
 () => (document.body ? document.body.innerText : '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
 """
 
+# The words a page holds out of sight: a closed <details>' content, a collapsed section's, anything not drawn
+# (display: none, visibility: hidden), as one line for each part hidden whole, never a script's, a style's or a
+# template's (the fourth review of fix-accept-gates: terms in a collapsed "Additional terms" were agreed to unread)
+HIDDEN_TEXT_JS = r"""
+() => {
+  if (!document.body) return '';
+  const SKIP = 'script, style, template, noscript, select, option, datalist, svg';
+  const shown = (el) => (el.checkVisibility ? el.checkVisibility({ checkVisibilityCSS: true })
+    : el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden');
+  const out = [];
+  const walk = (el) => {
+    for (const child of el.children) {
+      if (child.matches(SKIP)) continue;
+      if (shown(child)) { walk(child); continue; }
+      const words = [];
+      const texts = document.createTreeWalker(child, NodeFilter.SHOW_TEXT);
+      for (let n = texts.nextNode(); n; n = texts.nextNode()) {
+        if (n.parentElement && n.parentElement.closest(SKIP)) continue;
+        const t = n.textContent.replace(/\s+/g, ' ').trim();
+        if (t) words.push(t);
+      }
+      if (words.length) out.push(words.join(' '));
+    }
+  };
+  walk(document.body);
+  return out.join('\n');
+}
+"""
+
 # Numbered entry headings ("Work Experience 2"), how many of those have no boxes drawn yet, and
 # the Add buttons that create more.
 ENTRIES_JS = r"""

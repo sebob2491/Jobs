@@ -4273,7 +4273,10 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
             words = await srv.page_text(GATE_WORDS)  # (what _terms_gate reads, kept with the agreement: Run.agreed)
             # (an employer's privacy notice or terms; or an application's attestation that its information is true, a
             # "Statement of Truth": Clark County School District's Taleo, run 145)
-            if (_terms_gate(agree, data, words) or _attestation_gate(agree, data, words)) and _may_accept_notices():
+            # (and what it holds out of sight, which an attestation's gate reads too)
+            if (_terms_gate(agree, data, words)
+                    or _attestation_gate(agree, data, words, await srv.browser.hidden_text(GATE_WORDS))) \
+                    and _may_accept_notices():
                 run.did("pressed", agree)
                 try:
                     clicked = await self._press_agreement(agree["id"])
@@ -5687,20 +5690,37 @@ _ATTESTATION_SHAPES = (
                r"you must make this certification(?: and acknowledge?ment)? each time you (?:make changes(?: to)?|save|"
                r"update|change) (?:this|your) (?:online )?application", re.I),
 )
-# The page's own furniture, which says nothing in the person's name: its skip links and sign-in line, its note to upload
-# the documents a posting asks for, a browser's cookies warning (Taleo's, Clark County School District's page)
-_FURNITURE = re.compile(r"(?:go|skip) to (?:the )?main content(?: section)?|beginning of the main content section|"
-                        r"end of the main content section|welcome|you are not signed in|"
+# The page's own furniture, which says nothing in the person's name, by name alone (the fourth review of
+# fix-accept-gates: no rule of a few words, which let "Unpaid training period." through): its skip links and sign-in
+# line, its language picker, its navigation, its note to upload the documents a posting asks for, a browser's cookies
+# warning (Taleo's, Clark County School District's page)
+_NAVIGATION = re.compile(r"\b(?:welcome|sign in|sign out|log ?in|log ?out|job search|printable format|my jobpage|"
+                         r"select a language|english|spanish|español|french|français)\b", re.I)
+_FURNITURE = re.compile(r"(?:go|skip) to (?:the )?main content(?: section)?|(?:beginning|end) of the main content "
+                        r"section|you are not signed in|"
                         r"note\s*:\s*it'?s very important that (?:during the application process )?you upload all "
                         r"required documents(?: as per the job description)?(?: \(e\.g\.(?P<named>[^()]*)\))?|"
                         r"the action cannot be completed|cookies are not enabled on your browser|please enable cookies "
                         r"in your browser preferences and refresh your browser to continue", re.I)
+# the documents the note names ("high school diploma/college degree, CPR/AED certification, DMV report, typing
+# certificate, teaching license, etc."), each a document and no more
+_DOCUMENT = re.compile(r"(?:(?:an?|the|your) )?(?:[\w/'-]+ ){0,4}(?:diplomas?|degrees?|certifications?|certificates?|"
+                       r"licen[cs]es?|reports?|transcripts?|cards?|resumes?|records?)(?:/[\w' -]+)?|etc\.?", re.I)
 # Words that commit someone to something: never in a line the page's furniture is taken for
 _COMMITS = re.compile(r"\b(?:agree\w*|accept\w*|consent\w*|authori[sz]\w*|certif\w*|attest\w*|acknowledg\w*|waiv\w*|"
                       r"releas\w*|commit\w*|bound|bind\w*|oblig\w*|pay\w*|fees?|serv(?:e|ed|es|ing|ice)|undertak\w*|"
                       r"requir\w*|must|shall|will|polygraph\w*|drug\w*|constitut\w*|signature|"
                       r"sign(?:s|ed|ing)?\b(?! in\b| out\b))\b", re.I)
-_SPEAKS_FOR = re.compile(r"\b(?:i|my|me|we|our|us)\b", re.I)
+# and a label or a heading that names more words than the page shows ("Additional terms", "Read the full statement",
+# "Employee Handbook and Code of Conduct"): never furniture
+_NAMES_MORE = re.compile(r"\b(?:terms|conditions|agreements?|polic(?:y|ies)|statements?|handbook|code of conduct|"
+                         r"read (?:more|the full)|additional|details|view|more)\b", re.I)
+# A heading or title that is the attestation's name, and at most a site's or an employer's beside it ("Statement of
+# Truth - Example School District")
+_PAGE_NAME = re.compile(r"(?:(?P<before>[^.:|–-]{1,60}?)\s*[-:|–]\s*)?(?:statement of truth|"
+                        r"(?:applicant|application)(?:'s)? (?:certification|attestation|affirmation|statement)|"
+                        r"certification of (?:truth|accuracy))(?:\s*[-:|–]\s*(?P<after>[^.:|–-]{1,60}))?",
+                        re.I)
 _ENDED = re.compile(r"[.!?][\"')\]]*$")
 _GOES_ON = re.compile(r"^(?:and|or|to|but|nor)\b", re.I)
 # A full stop that ends no sentence: an abbreviation's ("U.S.", "e.g.", "Inc.")
@@ -5717,26 +5737,35 @@ _SHARED = re.compile(r"\bshar\w*\b[^.]{0,40}\b(?:information|data|details)\b[^.]
                      r"part\w*|affiliat\w*|vendors?|others)\b", re.I)
 
 
+def _plain_label(label: str) -> bool:
+    """A button's or link's label that's the page's furniture: the gate's own bare accept or decline, or four words or
+    fewer that commit no one and name no more words than the page shows ("Job Search", "Printable Format")."""
+    return bool(re.fullmatch(r"(?:i )?(?:accept|agree|decline|disagree)", label, re.I)) \
+        or len(label.split()) <= 4 and not _COMMITS.search(label) and not _NAMES_MORE.search(label)
+
+
 def _gate_furniture(said: str, labels: set[str], named: set[str]) -> bool:
     """Is this line or sentence of a gate's page its furniture, which says nothing in the person's name? Its heading or
-    title (_ATTESTATION_PAGE's name and no more), its own button and link labels, alone or side by side ("I Accept I
-    Decline"; any but a bare accept or decline committing no one to anything), its known furniture (_FURNITURE), or a
-    line of four words or fewer that speaks for no one and commits no one ("Job Search", "English")."""
+    title when that's the attestation's name, and at most a site's beside it (_PAGE_NAME); its own plain button and
+    link labels and its navigation by name, alone or side by side ("I Accept I Decline", "Sign In Job Search":
+    _plain_label, _NAVIGATION); or its known furniture by name (_FURNITURE), the note's documents each a document
+    (_DOCUMENT)."""
     bare = said.strip(" |·-–").rstrip(".!?:")
     if not bare:
         return True
-    if bare in named and not _COMMITS.search(_ATTESTATION_PAGE.sub(" ", bare)):
-        return True
+    if bare in named and (page := _PAGE_NAME.fullmatch(bare)):
+        beside = " ".join(v for v in (page["before"], page["after"]) if v)
+        return len(beside.split()) <= 6 and not _COMMITS.search(beside) and not _NAMES_MORE.search(beside)
     rest = bare
     for label in sorted(labels, key=len, reverse=True):
-        if label in rest and (re.fullmatch(r"(?:i )?(?:accept|agree|decline|disagree)", label, re.I)
-                              or not _COMMITS.search(label)):
+        if label in rest and _plain_label(label):
             rest = rest.replace(label, " ")
-    if not rest.strip(" |·-–"):
+    if not _NAVIGATION.sub(" ", rest).strip(" |·-–"):
         return True
-    if known := _FURNITURE.fullmatch(bare):  # (its note's documents, "CPR certification", "a typing certificate")
-        return not _COMMITS.search(re.sub(r"\bcertificat\w*", " ", known["named"] or ""))
-    return len(bare.split()) <= 4 and not _SPEAKS_FOR.search(bare) and not _COMMITS.search(bare)
+    if not (known := _FURNITURE.fullmatch(bare)):
+        return False
+    documents = [d.strip() for d in (known["named"] or "").split(",") if d.strip()]
+    return all(_DOCUMENT.fullmatch(d) and not _COMMITS.search(re.sub(r"\bcertificat\w*", " ", d)) for d in documents)
 
 
 def _gate_sentences(text: str, labels: set[str], named: set[str]) -> list[str]:
@@ -5772,7 +5801,7 @@ def _gate_sentences(text: str, labels: set[str], named: set[str]) -> list[str]:
     return [s for s in out if not _gate_furniture(s, labels, named)]
 
 
-def _attestation_gate(button: dict[str, Any], data: dict[str, Any], text: str) -> bool:
+def _attestation_gate(button: dict[str, Any], data: dict[str, Any], text: str, hidden: str = "") -> bool:
     """A page whose way on is an application's attestation that its information is true (_ATTESTATION_PAGE: a
     "Statement of Truth"), which settings.accept_notices accepts for the person as CLAUDE.md's attestation: its bare
     "I Accept" (never one that names more, or sends); every sentence on the page, in any voice, one of the shapes it
@@ -5780,18 +5809,24 @@ def _attestation_gate(button: dict[str, Any], data: dict[str, Any], text: str) -
     employment, the background check's consent, the notice of what declining does) or the page's furniture, one of
     them certifying; and, as a second guard, nowhere in its words what's never agreed to for the person (_attests_more,
     a legal waiver, arbitration, the terms of employment) nor their information shared (_SHARED). A page cut off at
-    GATE_WORDS is the person's. The reviews of fix-accept-gates."""
+    GATE_WORDS is the person's; so is one that holds words out of sight (`hidden`: Browser.hidden_text, a collapsed
+    "Additional terms") but its furniture or the same shapes, as terms there would be agreed to unread. The reviews of
+    fix-accept-gates."""
     said = final_text(button.get("text") or "")
     about = _gate_about(button, data)
     if not _BARE_ACCEPT.match(said) or not _ATTESTATION_PAGE.search(about) \
-            or _never_for_them(f"{said} {about}", only=_AGREEMENT_KINDS) or len(text or "") >= GATE_WORDS:
+            or _never_for_them(f"{said} {about}", only=_AGREEMENT_KINDS) \
+            or len(text or "") >= GATE_WORDS or len(hidden or "") >= GATE_WORDS:
+        return False
+    labels = {" ".join(str(a.get("text") or "").split()) for a in data.get("actions") or []} - {""}
+    named = {" ".join(str(h).split()) for h in [*(data.get("headings") or []), data.get("title") or ""]} - {""}
+    if any(not any(rx.fullmatch(s.rstrip(".!? ")) for rx in _ATTESTATION_SHAPES)
+           for s in _gate_sentences(_CERTIFYING.sub(r"I \1", hidden or ""), labels, named)):
         return False
     words = _CERTIFYING.sub(r"I \1", text or "")
     page = _EMPLOYMENT_BEGINS.sub(" ", words)
     if _attests_more(page) or _never_for_them(page, only=ANYWHERE | {"at-will"}) or _SHARED.search(page):
         return False
-    labels = {" ".join(str(a.get("text") or "").split()) for a in data.get("actions") or []} - {""}
-    named = {" ".join(str(h).split()) for h in [*(data.get("headings") or []), data.get("title") or ""]} - {""}
     certified = False
     for sentence in _gate_sentences(words, labels, named):
         said = sentence.rstrip(".!? ")

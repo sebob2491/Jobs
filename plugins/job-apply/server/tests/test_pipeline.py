@@ -1768,8 +1768,9 @@ def test_a_privacy_agreement_before_the_application_is_accepted_for_the_person(s
 
 @pytest.mark.parametrize("settings, query", [({}, ""), ({"accept_notices": False}, ""),
                                              ({"submit_mode": "dry_run"}, ""), ({}, "?atwill=1"),
-                                             ({}, "?arbitration=1"), ({}, "?claim=1"), ({}, "?br=1")],
-                         ids=["on", "off", "practice", "at-will", "arbitration", "claim", "line-break"])
+                                             ({}, "?arbitration=1"), ({}, "?claim=1"), ({}, "?br=1"),
+                                             ({}, "?details=1")],
+                         ids=["on", "off", "practice", "at-will", "arbitration", "claim", "line-break", "details"])
 def test_a_statement_of_truth_is_accepted_for_the_person(srv, monkeypatch, job_apply_home, settings, query):
     """Clark County School District's Taleo (live run 145): after Apply Online, a "Statement of Truth" whose ways on
     are "I Accept" and "I Decline", its words an application's attestation that its information is true (and what a
@@ -1903,6 +1904,36 @@ def test_an_attestation_gate_is_one_that_certifies_the_application_and_no_more()
     label = "I agree to a two-year service commitment"  # (a sentence that is an action's label too)
     assert not gate(accept, {**TRUTH, "actions": [*TRUTH["actions"], {"id": "b3", "text": label}]},
                     TRUTH_WORDS.replace("\nNotice -", f"\n{label}\nNotice -"))
+    # The fourth review: no rule of a few words for the page's furniture, only its own by name; a heading is furniture
+    # only as the attestation's name, a label only as a short plain one; and nothing held out of sight
+    for more in ("Two-year commitment.", "Unpaid training period.", "Mandatory relocation.", "Overtime expected.",
+                 "Non-refundable deposit.", "Two years minimum.", "Minimum stay: two years.",
+                 "Weekend shifts mandatory.", "Unpaid probation applies.", "Repayment of training costs.",
+                 "Random searches apply.", "Liquidated damages apply.", "Relocation at own expense.",
+                 "Additional terms",
+                 "NOTE: It's very important that during the application process you upload all required documents as "
+                 "per the job description (e.g. high school diploma, a $50 deposit receipt, proof of relocation)",
+                 "NOTE: It's very important that you upload all required documents (e.g. a two-year service bond)"):
+        words = TRUTH_WORDS.replace("\nNotice -", f"\n{more}\nNotice -")
+        assert not gate(accept, TRUTH, words), more
+    for term in ("All staff are assigned to any school in the District as needed",
+                 "New hires complete an unpaid 30-day training period"):
+        words = TRUTH_WORDS.replace("\nNotice -", f"\n{term}\nNotice -")
+        assert not gate(accept, {**TRUTH, "headings": [*TRUTH["headings"], term]}, words), term
+    for term in ("Employee Handbook and Code of Conduct", "Staff may be assigned to any school in the District",
+                 "Read the full statement", "View details"):
+        words = TRUTH_WORDS.replace("\nNotice -", f"\n{term}\nNotice -")
+        assert not gate(accept, {**TRUTH, "actions": [*TRUTH["actions"], {"id": "b4", "text": term}]}, words), term
+    assert gate(accept, {**TRUTH, "headings": ["Statement of Truth - Example School District"]},
+                TRUTH_WORDS.replace("Statement of Truth\n", "Statement of Truth - Example School District\n", 1))
+    assert gate(accept, {**TRUTH, "actions": [*TRUTH["actions"], {"id": "b5", "text": "Job Search"}]},
+                TRUTH_WORDS + "\nJob Search")
+    cookies = ("The action cannot be completed. Cookies are not enabled on your browser. Please enable cookies in your "
+               "browser preferences and refresh your browser to continue.")  # (Clark County School District's, hidden)
+    assert gate(accept, TRUTH, TRUTH_WORDS, cookies)
+    for hidden in ("I agree to a two-year service commitment and to repay all training costs if I leave early.",
+                   "Overtime expected.", cookies + "\nAdditional terms apply."):
+        assert not gate(accept, TRUTH, TRUTH_WORDS, hidden), hidden
 
 
 @pytest.mark.parametrize("more", [
