@@ -5915,6 +5915,22 @@ class Applier:
             if len({_frame_of(f) for f in boxes}) > 1:
                 return await instead("opened its password reset, whose email box I couldn't tell from another form's "
                                      "on the page", data)
+        # In its frame, its own form's (formjs' form index): a job alerts sign-up above it ("Get new jobs by email",
+        # its "Submit") is another form, whose box is never typed in. Boxes in two forms: the one whose form holds a
+        # reset's button the desk may press; boxes in no form, or still in two: the person's (the fifth review)
+        if len(boxes) > 1 and len({f.get("form") for f in boxes}) > 1 or len(boxes) > 1 and boxes[0].get("form") is None:
+            def ask(f: dict[str, Any]) -> dict[str, Any] | None:  # (the button of its own form a reset's would be)
+                return self._account_button([a for a in mine["actions"] if _frame_of(a) == _frame_of(f)
+                                             and a.get("form") == f.get("form")], _RESET_ASK, full=False)
+
+            asks = [f for f in boxes if f.get("form") is not None and ask(f) is not None]
+            if len({f.get("form") for f in asks}) > 1:  # (both forms' buttons a reset's: the one that says reset)
+                said = [f for f in asks if _RESET_PAGE.search(final_text((ask(f) or {}).get("text") or ""))]
+                asks = said if len({f.get("form") for f in said}) == 1 else asks
+            if len({f.get("form") for f in asks}) != 1:
+                return await instead("opened its password reset, whose email box I couldn't tell from another form's "
+                                     "on the page", data)
+            boxes = asks
         if (not _RESET_PAGE.search(" ".join([text[:2000], *(data.get("headings") or [])])) or not boxes or not address
                 or any(f.get("kind") == "password" for f in mine["fields"])):
             return await instead("opened its password reset, which isn't one I can fill in", data)
@@ -5935,8 +5951,9 @@ class Applier:
                         "inbox for the reset email and sets your saved password as the new one.", seen=data,
                         code="captcha")
             return "paused"
-        # (the email box's own form's button: "Email me jobs like this" around it matches as well)
-        button = self._account_button(_own_frame_first(mine["actions"], boxes[0]), _RESET_ASK, full=False)
+        # (the email box's own form's button: "Email me jobs like this" around it matches as well, and a sign-up's
+        # "Submit" in another form beside it)
+        button = self._account_button(_box_buttons(mine["actions"], boxes[0], mine["fields"]), _RESET_ASK, full=False)
         run.reset_at = time.time()  # (its email is sent as the button is pressed: none from before is this reset's)
         if button is None or not await press(button, allow_submit=True):  # (asks for the email: sends no application)
             return await instead("filled in your email on its password reset, but couldn't press its button", data)
@@ -6147,8 +6164,8 @@ class Applier:
                         "code and press its button; the desk carries on after that.", seen=data, code="captcha")
             return "paused"
         # (the reset's own button: never an employer's "Save Job" around iCIMS' frame)
-        button = self._account_button(_own_frame_first(_password_view(data)["actions"], passwords[0]), _RESET_SET,
-                                      full=False)
+        mine = _password_view(data)
+        button = self._account_button(_box_buttons(mine["actions"], passwords[0], mine["fields"]), _RESET_SET, full=False)
         run.did("pressed", button)
         try:
             pressed = button is not None and (await srv.browser.click(button["id"], allow_submit=True)).get("clicked") is not False
@@ -6485,6 +6502,13 @@ class Applier:
         boxes = [f for f in fields if f["kind"] in ("text", "email") and not f.get("aside")
                  and (not passwords or _frame_of(f) == _frame_of(passwords[0]))
                  and re.search(r"e-?mail|user ?name|login", f.get("label") or "", re.I)]
+        # and in its own form (formjs' form index), where the page has forms: never a job alerts sign-up's box above it
+        # in the same frame, whose change the typing alone sets off (the fifth review). With no forms, a sign-in's one
+        # box among several is the person's to tell
+        if passwords and passwords[0].get("form") is not None:
+            boxes = [f for f in boxes if f.get("form") == passwords[0].get("form")]
+        elif passwords and not (len(passwords) == 2 or signing_up) and len(boxes) > 1:
+            return None
         address = config.Profile.load().get("personal.email")
         if not address or not 1 <= len(passwords) <= 2:
             return None
@@ -6818,7 +6842,8 @@ def _new_password_boxes(data: dict[str, Any], text: str) -> list[dict[str, Any]]
     passwords = [f for f in fields if f.get("kind") == "password" and not _code_box(f)]
     # (an email asked beside them, in their own frame: never a side box's, a job alerts sign-up's on the page around it)
     named = [f for f in fields if f.get("kind") in ("text", "email") and not f.get("aside")
-             and (not passwords or _frame_of(f) == _frame_of(passwords[0]))
+             and (not passwords or _frame_of(f) == _frame_of(passwords[0])
+                  and (passwords[0].get("form") is None or f.get("form") == passwords[0].get("form")))
              and re.search(r"e-?mail|user ?name|login", f.get("label") or "", re.I)]
     new = len(passwords) >= 2 or any(_NEW_PASSWORD.search(f.get("label") or "") for f in passwords)
     if (not passwords or named or not new or any(_OLD_PASSWORD.search(f.get("label") or "") for f in passwords)
@@ -7413,6 +7438,19 @@ def _own_frame_first(actions: list[dict[str, Any]], near: dict[str, Any] | None,
     frame = _frame_of(near)
     own = [a for a in actions if _frame_of(a) == frame]
     return own + ([] if only else [a for a in actions if _frame_of(a) != frame])
+
+
+def _box_buttons(actions: list[dict[str, Any]], box: dict[str, Any], fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The buttons of a box's own form (formjs' form index), in the page's order; with none there, its frame's where no
+    other form in that frame holds a box (a script's button outside the form); else none. A reset's Send is never
+    another form's beside it (a job alerts sign-up's "Submit")."""
+    frame = _own_frame_first(actions, box)
+    if box.get("form") is None:
+        return frame
+    own = [a for a in frame if a.get("form") == box.get("form")]
+    others = {f.get("form") for f in fields if _frame_of(f) == _frame_of(box) and f.get("form") != box.get("form")
+              and f.get("kind") not in ("hidden",)}
+    return own or ([] if others else frame)
 
 
 def _sign_in_ways(data: dict[str, Any]) -> list[dict[str, Any]]:

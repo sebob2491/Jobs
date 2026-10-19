@@ -8003,6 +8003,128 @@ def test_icims_outer_page_with_job_alerts_email_box(srv, monkeypatch, job_apply_
     assert _theirs(pressed) == [], (pressed, r.log)
 
 
+def _alerts_beside(button: str, heading: str = "") -> str:
+    """A job alerts sign-up in the same page as an account's form, its own <form>: its Email box tells the test what
+    the typing in it set off (its change and blur), and its button what was sent."""
+    return (heading + """<form onsubmit="event.preventDefault(); log('alerts-signup:' + document.getElementById('al').value)">
+<label for="al">Email</label><input id="al" type="email" onchange="log('alerts-change')" onblur="log('alerts-blur')">
+<button type="submit">%s</button></form>""" % button)
+
+
+SAME_FRAME_ALERTS = {
+    "email-me": ("Email me jobs like this", ""),
+    "submit-new-jobs": ("Submit", "<h3>Get new jobs by email</h3>"),
+    "send-openings": ("Send", "<p>New openings, straight to your inbox</p>"),
+    "continue-new-roles": ("Continue", "<p>Hear about new roles first</p>"),
+}
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("case", list(SAME_FRAME_ALERTS))
+def test_a_reset_in_the_same_frame_as_a_job_alerts_sign_up_types_only_in_its_own_form(srv, monkeypatch, job_apply_home,
+                                                                                         case):
+    """The fifth review's probe: iCIMS' forgot-password page itself (no frame around it) with a job alerts sign-up above
+    the reset's form, its button "Submit", "Send" or "Continue" and its words none the desk knows for a sign-up's ("Get
+    new jobs by email", "New openings, straight to your inbox", "Hear about new roles first"). Nothing tied a box to its
+    form: the email went into the first box, and the first button a reset's might be was pressed, signing the person up
+    for job alerts. Now the reset's box is its own form's (formjs' form index), the one whose form holds a reset's
+    button, and only that form's button is pressed: the email in the reset's box, the alerts box never touched."""
+    button, heading = SAME_FRAME_ALERTS[case]
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    manage_accounts(job_apply_home)
+    watched_inbox(monkeypatch, reset_link=ICIMS_HOST + "/jobs/2004/new-password?reset=abc")
+    job = srv.add_job(url=ICIMS_HOST + "/jobs/2004/login", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+    forgot = ICIMS_FORGOT.replace("log('reset-asked');", "log('reset-asked:' + document.getElementById('em').value);")
+    forgot = forgot.replace("<h2>Reset your password</h2>", _alerts_beside(button, heading) + "<h2>Reset your password</h2>")
+    assert "alerts-signup" in forgot and "reset-asked:" in forgot
+
+    async def go():
+        pressed = await _employer_around_icims(srv, {"login": ICIMS_CREATE_EXISTS, "signin": ICIMS_SIGN_IN,
+                                                     "forgot": forgot, "new-password": ICIMS_NEW_PASSWORD,
+                                                     "questions": ICIMS_QUESTIONS}, "", ICIMS_HOST)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running") and r.need != "email_code", timeout=120,
+                        about=state(r))
+            return r, pressed
+        finally:
+            await applier.stop()
+
+    r, pressed = run(go())
+    said = [what for _, what in pressed]
+    assert not any(w.startswith("alerts-") for w in said), (said, r.log)
+    assert "reset-asked:sam.rivera@example.com" in said, (said, r.reason, r.log)
+    assert said[-3:] == ["reset-asked:sam.rivera@example.com", "reset-set", "signed-in"], (said, r.log)
+
+
+@pytest.mark.slow
+def test_a_sign_in_beside_a_job_alerts_sign_up_types_only_in_its_own_form(srv, monkeypatch):
+    """A sign-in page with a job alerts sign-up above its form, in the same frame ("Get new jobs by email" and its
+    "Submit"): the email goes into the sign-in's own box, the password's form's, never the alerts box (whose change the
+    typing alone sets off), and the sign-in's own button is pressed (the fifth review)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    job = srv.add_job(url=ICIMS_HOST + "/jobs/2005/login", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+    sign_in = _LOG_JS + _alerts_beside("Submit", "<h3>Get new jobs by email</h3>") + """<h2>Sign In</h2>
+<form onsubmit="event.preventDefault(); log('signed-in:' + em.value + ':' + (pw.value === 'not-a-real-password'));
+                location.href = location.pathname.replace(/[^/]+$/, 'questions');">
+  <label for="em">Email</label><input id="em" type="email" required>
+  <label for="pw">Password</label><input id="pw" type="password" required>
+  <button type="submit">Sign In</button>
+</form>"""
+
+    async def go():
+        pressed = await _employer_around_icims(srv, {"login": sign_in, "questions": ICIMS_QUESTIONS}, "", ICIMS_HOST)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=90, about=state(r))
+            return r, pressed
+        finally:
+            await applier.stop()
+
+    r, pressed = run(go())
+    said = [what for _, what in pressed]
+    assert said and said[0] == "signed-in:sam.rivera@example.com:true", (said, r.reason, r.log)
+    assert not any(w.startswith("alerts-") for w in said), (said, r.log)
+
+
+def test_a_reset_whose_email_box_is_in_two_frames_is_the_persons(srv, monkeypatch, job_apply_home):
+    """A reset whose email boxes are in two frames, neither the one its "Forgot your password?" was pressed in nor
+    headed as a reset's: not one the desk can tell, so it's the person's; nothing typed (the fourth review's stop; on the
+    code before it, the first frame's box got the email)."""
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 0)
+    manage_accounts(job_apply_home)
+    applier = Applier(srv)
+    url = ICIMS_HOST + "/jobs/2006/login"
+    frames = {"": url, "f1-": ICIMS_HOST + "/jobs/2006/alerts", "f2-": ICIMS_HOST + "/jobs/2006/signin",
+              "f3-": ICIMS_HOST + "/jobs/2006/other"}
+    sign_in = {"url": url, "title": "Sign In", "frame_urls": frames, "errors": [], "dialogs": [], "headings": [],
+               "fields": [{"id": "f2-e", "kind": "email", "label": "Email", "value": ""},
+                          {"id": "f2-p", "kind": "password", "label": "Password", "value": ""}],
+               "actions": [{"id": "f2-forgot", "text": "Forgot your password?"}]}
+    reset = {**sign_in, "headings": ["Reset your password"],
+             "fields": [{"id": "f1-e", "kind": "email", "label": "Email", "value": ""},
+                        {"id": "f3-e", "kind": "email", "label": "Email", "value": ""}],
+             "actions": [{"id": "f1-s", "text": "Send"}, {"id": "f3-s", "text": "Send"}]}
+    stub = _Stubbed(applier, monkeypatch, reset)
+
+    async def click(target):  # (the tools' click, which the reset's "Forgot your password?" is pressed with)
+        stub.clicked.append(target)
+        return {"clicked": True}
+
+    monkeypatch.setattr(srv, "click", click)
+    r = Run(1, "FSE", "Example Fab")
+    run(applier._ask_for_reset(r, sign_in, {}))
+    assert stub.filled == [] and stub.clicked == ["f2-forgot"], (stub.filled, stub.clicked, r.log)
+    assert "couldn't tell from another form's" in " ".join(r.log) + (r.reason or ""), (r.reason, r.log)
+
+
 def test_a_button_that_signs_them_up_is_never_an_account_step():
     """_signs_them_up: "Email me jobs like this", "Subscribe", "Join our Talent Community", "Sign up for job alerts" are
     never pressed for the person in an account's or a reset's steps; "Sign Up", "Send reset link", "Email me a reset
