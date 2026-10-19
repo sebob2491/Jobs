@@ -499,8 +499,9 @@ _READ_UNDERSTOOD = re.compile(r"^\W*(?:yes,? )?i have read,? and (?:understood|"
 # What the words above any such box (a bare "I agree", "the documents above", "read and understood") must name for the
 # desk to tick it: the site's terms or privacy statement, or its processing of personal data; never the terms of
 # employment, and never an attestation (the reviews of 0.3.133's: a paragraph that names none of these, "Join our
-# Careers Community", is the person's however it's worded)
-_SITES_TERMS = re.compile(r"\b(?:privacy|data protection)\b[\w ]{0,25}\b(?:policy|notice|statement)\b|"
+# Careers Community", is the person's however it's worded). In the plural too (Resorts World's Workday, live run 144:
+# "you consent to Resorts World privacy statements")
+_SITES_TERMS = re.compile(r"\b(?:privacy|data protection)\b[\w ]{0,25}\b(?:polic(?:y|ies)|notices?|statements?)\b|"
                           r"\bterms (?:of (?:use|service)|and conditions)\b|\bpersonal (?:data|information)\b|\bgdpr\b",
                           re.I)
 _ATTESTS_ABOVE = re.compile(r"of employment|certif|true and complete|background check", re.I)

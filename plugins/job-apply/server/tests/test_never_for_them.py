@@ -525,3 +525,17 @@ def test_mail_about_the_application_that_brings_more_with_it_is_refused(more):
     assert _never_for_them("I agree to receive emails about my application", only={EMAILS, MAIL}) is None
     assert _never_for_them(f"I agree to receive emails about my application, including {more}",
                            only={EMAILS, MAIL}) == MAIL
+
+
+@pytest.mark.parametrize("named", ["privacy statements", "privacy policies", "privacy notices",
+                                   "data protection and privacy statements"])
+def test_the_sites_privacy_statements_in_the_plural_are_its_terms(named):
+    """Resorts World's Workday Create Account (live run 144): a bare "I consent" under "By creating a candidate account,
+    you consent to Resorts World privacy statements." wasn't ticked, the plural not read as the site's privacy
+    statement, and the account was never made. Its terms in the plural are its terms; a sign-up beside them is still
+    refused."""
+    assert pipeline._terms_above(f"By creating a candidate account, you consent to Example Resort {named}.")
+    assert not pipeline._terms_above(f"By creating a candidate account, you consent to Example Resort {named} and to "
+                                     "receive our newsletter.")
+    assert not pipeline._terms_above(f"By creating a candidate account, you join our talent community under Example "
+                                     f"Resort {named}.")
