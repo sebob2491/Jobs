@@ -1716,6 +1716,161 @@ def test_a_privacy_agreement_before_the_application_is_accepted_for_the_person(s
     assert "collects the personal information you give" in gate[0]["words"] and "agreed" not in r.public()
 
 
+@pytest.mark.parametrize("settings, query", [({}, ""), ({"accept_notices": False}, ""),
+                                             ({"submit_mode": "dry_run"}, ""), ({}, "?atwill=1"),
+                                             ({}, "?arbitration=1"), ({}, "?claim=1")],
+                         ids=["on", "off", "practice", "at-will", "arbitration", "claim"])
+def test_a_statement_of_truth_is_accepted_for_the_person(srv, monkeypatch, job_apply_home, settings, query):
+    """Clark County School District's Taleo (live run 145): after Apply Online, a "Statement of Truth" whose ways on
+    are "I Accept" and "I Decline", its words an application's attestation that its information is true (and what a
+    false statement costs, and what's needed before employment begins). With settings.accept_notices the desk accepts
+    it for the person and says so, as CLAUDE.md's attestation; it stopped for them before (agreement_theirs). With
+    the setting off, in practice mode, or where its words also make employment at will, bind them to arbitration or
+    say something of them (a license held), it's theirs."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    notice_settings(job_apply_home, **settings)
+    job = srv.add_job(url=fixture_url("site/statement-of-truth.html") + query, title="Office Specialist",
+                      company="Example School District")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    if settings or query:
+        assert (r.status, r.need, r.code) == ("needs_you", "stuck", "agreement_theirs"), (r.reason, r.log)
+        assert "“I Accept”" in r.reason and r.url.endswith("statement-of-truth.html" + query), (r.reason, r.url)
+        assert not any(line.startswith("agreed") for line in r.log), r.log
+        return
+    assert "agreed to Example School District's “I Accept” for you (settings.accept_notices)" in r.log, r.log
+    assert r.url.endswith("generic_form.html") and any(line.startswith("filled") for line in r.log), r.log
+    gate = [a for a in r.agreed if a["what"] == "terms gate"]
+    assert [(a["heading"], a["button"]) for a in gate] == [("Statement of Truth", "I Accept")], r.agreed
+    assert "true, correct, complete" in gate[0]["words"] and "agreed" not in r.public()
+
+
+TRUTH = {"headings": ["Statement of Truth"], "title": "Statement of Truth"}
+# (Clark County School District's, live run 145, in its own shape: the information certified true, what a false
+# statement costs, what's needed before employment begins, the notice of what declining does)
+TRUTH_WORDS = ("Statement of Truth\nNOTE: It's very important that you upload all required documents (e.g. a college "
+               "degree, a teaching license).\nEach time that I save this online application, I am certifying that the "
+               "information, statements, and documentation submitted on or in conjunction with this employment "
+               "application are true, correct, complete, and accurate. I acknowledge and understand that any false "
+               "statement shall result in my immediate removal from consideration for employment or my dismissal. I "
+               "acknowledge and understand that before any employment contract becomes effective, I must personally "
+               "comply with the Immigration Reform Act of 1986 and I must possess and produce any required license "
+               "from the State Board of Education.\nNotice - If you decline to make this certification, you will be "
+               "logged out.\nI Accept I Decline")
+DUTY = ("I acknowledge and understand that before any employment contract becomes effective, I must personally comply "
+        "with the Immigration Reform Act of 1986 and I must possess and produce any required license from the State "
+        "Board of Education.")
+
+
+def test_an_attestation_gate_is_one_that_certifies_the_application_and_no_more():
+    """_attestation_gate: a page named a statement of truth (or an applicant's certification) whose way on is a bare
+    "I Accept", and whose sentences in the first person are each one it knows (the information certified true, what a
+    false statement costs, a duty before employment, a background check's consent)."""
+    gate = pipeline._attestation_gate
+    accept = {"id": "b1", "text": "I Accept"}
+    assert gate(accept, TRUTH, TRUTH_WORDS)
+    assert gate({"id": "b1", "text": "I Agree"}, {"headings": ["Applicant Certification"]},
+                "I certify that the answers given in this application are true and complete. I authorize Example "
+                "School District to verify them through a background check.")
+    for button, about, said in (
+            ({"text": "I Accept and Apply"}, TRUTH, TRUTH_WORDS),  # (it sends too)
+            ({"text": "I Accept the Terms"}, TRUTH, TRUTH_WORDS),
+            (accept, {"headings": ["Before you continue"]}, TRUTH_WORDS),  # (not named an attestation)
+            (accept, TRUTH, "Welcome. Please read on and press I Accept."),  # (it attests nothing)
+            (accept, {"headings": ["Statement of Truth and Talent Community"]}, TRUTH_WORDS)):
+        assert not gate(button, about, said), (button, about)
+
+
+@pytest.mark.parametrize("more", [
+    # the terms of employment, in any words
+    "I understand that my employment is at will and may be ended at any time.",
+    "Employment with Example School District is at-will.",
+    "I understand that my employment may be terminated at any time, with or without cause or notice.",
+    "Employment is terminable at the will of either party.",
+    "The District may end my employment at any time for any reason.",
+    "I understand that nothing in this application creates a contract of employment for any definite period.",
+    "I understand that new employees serve a probationary period and may be dismissed without cause.",
+    # a right waived or released
+    "I agree that any dispute goes to binding arbitration.",
+    "Any claim is decided without a jury.",
+    "I release the District and all persons from any liability for furnishing such information.",
+    "I hereby release and hold harmless Example School District from all claims arising from the investigation.",
+    "I waive any claim against the District.",
+    "I agree not to participate in any class action against the District.",
+    "Any claim will be brought individually and not as a class or collective action.",
+    "I agree not to compete with the District for one year after employment ends.",
+    "I agree that any lawsuit must be filed within six months.",
+    # more than the background check that comes with applying
+    "I authorize the District to obtain a consumer credit report about me.",
+    "I authorize the release of my medical records.",
+    "I authorize the District to contact my references and former employers.",
+    "I authorize any former employer to release information about me to the District.",
+    "I consent to a review of my social media accounts.",
+    "I consent to the sharing of my information with third parties for their own purposes.",
+    "I consent to drug and alcohol testing as a condition of employment.",
+    "I consent to fingerprinting and a criminal history check.",
+    # a sign-up, texts or calls, other roles
+    "I agree to receive job alerts and our newsletter.",
+    "I agree to receive text messages and calls from the District about my application.",
+    "I consent to be considered for other open positions.",
+    # anything else in the person's name
+    "I authorize payroll deduction of union dues.",
+    "I agree that my electronic signature is legally binding.",
+    "I agree to abide by all District policies and regulations.",
+    "I agree to accept any assignment to any school.",
+    "I must comply with any order to work overtime and I waive overtime pay.",
+    "I must pass a polygraph examination and I consent to it.",
+    # something said of the person
+    "I certify that I hold a current teaching license.",
+    "I certify that I am authorized to work in the US.",
+    # in another voice: what the page signs them up for, whoever says it
+    "By pressing I Accept, you consent to receive text messages and calls from the District.",
+    "By accepting, you agree to be considered for other positions and kept on file for future openings.",
+    "You agree that the District may share your information with its partners and affiliates.",
+    "You will receive emails about new openings at the District.",
+    "You agree to marketing communications from the District.",
+    "You accept the terms and conditions of employment described here.",
+])
+def test_an_attestation_gate_with_anything_more_is_the_persons(more):
+    """The review of fix-accept-gates: the gate accepted a Statement of Truth that also made employment at will,
+    released the District from liability, waived a class action, authorized a credit report or the release of medical
+    records, or said in another voice that the person is signed up. Its sentences in the first person are each one it
+    knows, or the page is the person's; what's never agreed to is read in all of its words."""
+    gate = pipeline._attestation_gate
+    accept = {"id": "b1", "text": "I Accept"}
+    words = TRUTH_WORDS.replace("\nNotice -", f" {more}\nNotice -")
+    assert not gate(accept, TRUTH, words), more
+
+
+@pytest.mark.parametrize("claim", ["and I am a US citizen and hold a valid teaching license",
+                                   "and I have never been convicted of a felony",
+                                   "and I authorize the District to obtain my credit report and medical records",
+                                   "and I agree to receive job alerts",
+                                   "and I consent to text messages from the District",
+                                   "and I agree to be considered for other open positions",
+                                   ", and my employment is terminable by either party"])
+def test_a_duty_before_employment_says_nothing_more(claim):
+    """The review of fix-accept-gates: what a duty before employment says ("I must personally comply with the
+    Immigration Reform Act of 1986 and I must possess and produce any required license ...") was blanked to the end of
+    its sentence, and whatever followed it there went unread. It's read whole: the duty's own words, and nothing
+    more."""
+    gate = pipeline._attestation_gate
+    words = TRUTH_WORDS.replace(DUTY, DUTY[:-1] + f" {claim}.")
+    assert words != TRUTH_WORDS
+    assert not gate({"id": "b1", "text": "I Accept"}, TRUTH, words), claim
+
+
 def test_a_box_that_wouldnt_fill_is_said_as_that_not_asked(srv, monkeypatch):
     """A fill that failed with an error is no question the profile doesn't answer: Eightfold's
     Country of Residence came back as one, "TimeoutError: Locator.evaluate: Timeout 15000ms

@@ -231,7 +231,7 @@ def _agreements(data: dict[str, Any], words: str) -> dict[str, Any]:
     button = pipeline._agreement_button(data)
     if button is not None:
         about = " ".join([*(data.get("headings") or []), str(data.get("title") or "")])
-        gate = pipeline._terms_gate(button, data, words)
+        gate = pipeline._terms_gate(button, data, words) or pipeline._attestation_gate(button, data, words)
         out["agreement"] = {
             "button": " ".join(str(button.get("text") or "").split()),
             "terms_gate": gate,

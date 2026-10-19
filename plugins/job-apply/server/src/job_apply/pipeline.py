@@ -1208,12 +1208,13 @@ class Run:
 
     def keep_agreed(self, what: str, heading: str, button: str, words: str, choices: list[str] | None = None) -> None:
         """What was just agreed to for the person, in the words its rules read (Run.agreed): kept, never shown.
-        `what`: "notice" (heading: its heading; words: its text), "terms gate" (heading: the page's first heading;
-        words: the whole page's), "attestation" (heading: its label; choices: what was picked from a list or a group,
-        none for a box ticked) or "account box" (heading: its label; choices: its options; words: the words above it
-        that it agrees to, where they were read). Each kept apart, as the desk read each. Past the first AGREED_WORDS
-        characters of the words, only the AGREED_WINDOW characters either side of each of never.ANYWHERE's words
-        (a waiver, arbitration, a sign-up in so many words) are kept ("windows"), at most AGREED_WINDOWS."""
+        `what`: "notice" (heading: its heading; words: its text), "terms gate" (a privacy agreement's or a statement
+        of truth's: heading: the page's first heading; words: the whole page's), "attestation" (heading: its label;
+        choices: what was picked from a list or a group, none for a box ticked) or "account box" (heading: its label;
+        choices: its options; words: the words above it that it agrees to, where they were read). Each kept apart, as
+        the desk read each. Past the first AGREED_WORDS characters of the words, only the AGREED_WINDOW characters
+        either side of each of never.ANYWHERE's words (a waiver, arbitration, a sign-up in so many words) are kept
+        ("windows"), at most AGREED_WINDOWS."""
         words = str(words or "")
         windows = []
         for m in _ANYWHERE_WORDS.finditer(words, AGREED_WORDS):
@@ -4270,7 +4271,9 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
                             code="agreement_stayed")
                 return _Then.STOP
             words = await srv.page_text(40000)  # (what _terms_gate reads, kept with the agreement: Run.agreed)
-            if _terms_gate(agree, data, words) and _may_accept_notices():
+            # (an employer's privacy notice or terms; or an application's attestation that its information is true, a
+            # "Statement of Truth": Clark County School District's Taleo, run 145)
+            if (_terms_gate(agree, data, words) or _attestation_gate(agree, data, words)) and _may_accept_notices():
                 run.did("pressed", agree)
                 try:
                     clicked = await self._press_agreement(agree["id"])
@@ -5601,14 +5604,97 @@ def _terms_gate(button: dict[str, Any], data: dict[str, Any], text: str = "") ->
     has a "Join our talent network" sign-up of its own beside the gate (live, Oct 10). So the page's words are read
     for a legal waiver alone, never for that sign-up beside it."""
     said = button.get("text") or ""
-    framed = data.get("frame_headings")
-    frame = re.match(r"f\d+-", str(button.get("id") or ""))
-    own = framed.get(frame.group(0) if frame else "") if isinstance(framed, dict) else None
-    about = " ".join([*(own if own is not None else data.get("headings") or []), str(data.get("title") or "")])
+    about = _gate_about(button, data)
     if _SENDS_TOO.search(said) or _never_for_them(f"{said} {about}", only=_AGREEMENT_KINDS) \
             or _never_for_them(text or "", only={"arbitration", "waiver"}):
         return False
     return bool(_TERMS.search(said) or _TERMS.search(about))
+
+
+def _gate_about(button: dict[str, Any], data: dict[str, Any]) -> str:
+    """What a gate's page says it is: the headings of the button's own frame (or the page's), and the page's title."""
+    framed = data.get("frame_headings")
+    frame = re.match(r"f\d+-", str(button.get("id") or ""))
+    own = framed.get(frame.group(0) if frame else "") if isinstance(framed, dict) else None
+    return " ".join([*(own if own is not None else data.get("headings") or []), str(data.get("title") or "")])
+
+
+# A page whose way on is an application's attestation that its information is true, named so in its headings or title
+# (Clark County School District's Taleo "Statement of Truth", live run 145, its ways on "I Accept" and "I Decline"); its
+# bare accept, and its words in the first person, which are what the person attests to
+_ATTESTATION_PAGE = re.compile(r"\bstatement of truth\b|\b(?:applicant|application)(?:'s)? (?:certification|"
+                               r"attestation|affirmation|statement)\b|\bcertification of (?:truth|accuracy)\b", re.I)
+_BARE_ACCEPT = re.compile(r"^(?:i )?(?:accept|agree)$", re.I)
+# Its sentences in the first person, which are what the person attests to: each must be one of the shapes it knows
+# (the review of fix-accept-gates: an allowlist, as anything else in their name is theirs). A line with no full stop
+# counts from six words (a link's "My Jobpage", the gate's own "I Accept I Decline" don't)
+_FIRST_PERSON = re.compile(r"\bI\b|\b(?i:my|me)\b")
+_LEAD = r"(?:(?:each time|whenever|when|by (?:pressing|clicking|selecting)) [^,]{1,80}, )?I (?:hereby )?"
+_NOT_I = r"(?:(?!\bI\b).)*"  # (the rest of a sentence, with no other clause in the first person)
+_ATTESTATION_SHAPES = (
+    # the information certified true ("Each time that I save this online application, I am certifying that the
+    # information, statements, and documentation submitted ... are true, correct, complete, and accurate ...")
+    re.compile(_LEAD + r"(?:certify|attest|affirm|declare|confirm)(?: and (?:certify|attest|affirm|declare|confirm|"
+               r"acknowledge|agree))? that (?:all )?(?:the |my )?(?:information|answers?|statements?|responses?)\b"
+               + _NOT_I + r"\b(?:true|correct|complete|accurate)\b" + _NOT_I, re.I | re.S),
+    # what a false statement costs ("I acknowledge and understand that any false, misleading, or incomplete statement
+    # ... shall result in my immediate removal from consideration for employment or my dismissal")
+    re.compile(r"(?:I (?:acknowledge|understand|agree)(?: and (?:acknowledge|understand|agree))? that )?"
+               + _NOT_I + r"\b(?:false|falsified|misleading|incomplete|untrue|inaccurate|fraudulent)\b" + _NOT_I
+               + r"\b(?:result in|be (?:cause|grounds?) for|lead to|disqualify|constitutes? (?:cause|grounds?))\b"
+               + _NOT_I, re.I | re.S),
+    # a duty before employment begins, in these words alone ("I acknowledge and understand that before any employment
+    # contract becomes effective, I must personally comply with the Immigration Reform Act of 1986 and I must possess
+    # and produce any required license from the Nevada Department of Education")
+    re.compile(r"I (?:acknowledge|understand)(?: and (?:acknowledge|understand))? that (?:before|prior to) (?:any |an |"
+               r"my |the )?employment (?:contract|agreement|offer)s? (?:becomes?|is|are) "
+               r"(?:effective|signed|made|final),? (?:I must (?:personally )?(?:{duty})(?:,? and )?)+".format(duty=(
+                   r"comply with (?:the )?(?:(?!\b(?:I|and|or|but)\b)[\w ])*?\b(?:Act|Law|laws|requirements|"
+                   r"regulations)(?: of \d{4})?|(?:possess|hold|obtain)(?: and (?:produce|present|provide))? (?:any |"
+                   r"all |the )?required (?:licen[cs]es?|certificat\w+|credentials?)(?: (?:from|issued by) (?:the )?"
+                   r"(?:(?!\b(?:I|and|or|but)\b)[\w ])+)?")), re.I),
+    # a consent to the background check that comes with applying, or to the information's being verified
+    re.compile(_LEAD + r"(?:consent to|authori[sz]e)\b" + _NOT_I + r"\b(?:background (?:check|screening|investigation)|"
+               r"verif\w+)\b" + _NOT_I, re.I | re.S),
+)
+_DUTY_SHAPE = _ATTESTATION_SHAPES[2]
+# and what such words say of when employment begins, which agrees to no terms of employment ("before any employment
+# contract becomes effective": blanked before the page is read for what's never agreed to); the certifying said as it
+# goes on ("I am certifying that ...") read as "I certify"; and the person's information shared with others in any
+# voice ("the District may share your information with its partners"), which a Statement of Truth has no need of
+_EMPLOYMENT_BEGINS = re.compile(r"\b(?:before|prior to) (?:any |an |my |the )?employment (?:contract|agreement)s? "
+                                r"(?:becomes?|is|are) (?:effective|signed|made|final)\b", re.I)
+_CERTIFYING = re.compile(r"\bI am (certify|attest|affirm|confirm)ing\b", re.I)
+_SHARED = re.compile(r"\bshar\w*\b[^.]{0,40}\b(?:information|data|details)\b[^.]{0,40}\b(?:partners?|third[- ]"
+                     r"part\w*|affiliat\w*|vendors?|others)\b", re.I)
+
+
+def _attestation_gate(button: dict[str, Any], data: dict[str, Any], text: str) -> bool:
+    """A page whose way on is an application's attestation that its information is true (_ATTESTATION_PAGE: a
+    "Statement of Truth"), which settings.accept_notices accepts for the person as CLAUDE.md's attestation: its bare
+    "I Accept" (never one that names more, or sends); each of its sentences in the first person one of the shapes it
+    knows (_ATTESTATION_SHAPES: the information certified true, what a false statement costs, a duty before employment
+    in those words alone, the background check's consent), one of them certifying, none saying something of the person
+    (_about_person) but the duty; and nowhere in the page's words (`text`, read whole, in any voice) what's never agreed
+    to for the person (_attests_more: a sign-up, mail, other roles, a credit report; a legal waiver, arbitration, the
+    terms of employment), nor their information shared with others (_SHARED). The review of fix-accept-gates."""
+    said = final_text(button.get("text") or "")
+    about = _gate_about(button, data)
+    if not _BARE_ACCEPT.match(said) or not _ATTESTATION_PAGE.search(about) \
+            or _never_for_them(f"{said} {about}", only=_AGREEMENT_KINDS):
+        return False
+    words = _CERTIFYING.sub(r"I \1", text or "")
+    page = _EMPLOYMENT_BEGINS.sub(" ", words)
+    if _attests_more(page) or _never_for_them(page, only=ANYWHERE | {"at-will"}) or _SHARED.search(page):
+        return False
+    own = [s for line in re.split(r"\n+", words) for s in re.split(r"(?<=[.!?])\s+", " ".join(line.split()))
+           if _FIRST_PERSON.search(s) and (s.endswith((".", "!", "?")) or len(s.split()) >= 6)]
+    for sentence in own:
+        said = sentence.rstrip(".!? ")
+        shape = next((i for i, rx in enumerate(_ATTESTATION_SHAPES) if rx.fullmatch(said)), None)
+        if shape is None or (_ATTESTATION_SHAPES[shape] is not _DUTY_SHAPE and _about_person(said)):
+            return False
+    return any(_ATTESTATION_SHAPES[0].fullmatch(s.rstrip(".!? ")) for s in own)
 
 
 def _agreement_button(data: dict[str, Any]) -> dict[str, Any] | None:
