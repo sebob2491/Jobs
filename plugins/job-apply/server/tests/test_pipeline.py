@@ -8093,6 +8093,191 @@ def test_a_sign_in_beside_a_job_alerts_sign_up_types_only_in_its_own_form(srv, m
     assert not any(w.startswith("alerts-") for w in said), (said, r.log)
 
 
+# A reset's page drawn by a script, its box and button in no <form> (a React page's), and one whose button sits outside
+# its <form> (a script's "Send reset link" beside it); both log what was asked for, with the email
+_RESET_DONE = ("document.body.innerHTML = '<h2>Check your inbox</h2><p>We sent you an email with a link to reset your "
+               "password.</p>';")
+_RESET_IN_NO_FORM = """<h2>Reset your password</h2><div><label for="em">Email</label><input id="em" type="email">
+<button type="button" onclick="log('reset-asked:' + em.value); %s">Send reset link</button></div>""" % _RESET_DONE
+_RESET_BUTTON_OUTSIDE = """<h2>Reset your password</h2><form onsubmit="event.preventDefault()">
+<label for="em">Email</label><input id="em" type="email" required></form>
+<button type="button" onclick="log('reset-asked:' + em.value); %s">Send reset link</button>""" % _RESET_DONE
+
+
+def _reset_asked(srv, monkeypatch, job_apply_home, forgot: str) -> tuple[list[str], Run]:
+    """iCIMS' forgot-password page `forgot` (no frame around it), after its Create Account said the email has an account
+    and its sign-in refused the saved password; the inbox watched (none come). What the pages logged, and the run, once
+    the desk waits for the reset email or stopped."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    manage_accounts(job_apply_home)
+    watched_inbox(monkeypatch)
+    job = srv.add_job(url=ICIMS_HOST + "/jobs/2004/login", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        pressed = await _employer_around_icims(srv, {"login": ICIMS_CREATE_EXISTS, "signin": ICIMS_SIGN_IN,
+                                                     "forgot": forgot}, "", ICIMS_HOST)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.need == "email_code" or r.status not in ("queued", "running"), timeout=90,
+                        about=state(r))
+            await asyncio.sleep(0.5)  # (a log from the last press still on its way)
+            return r, pressed
+        finally:
+            await applier.stop()
+
+    r, pressed = run(go())
+    return [what for _, what in pressed], r
+
+
+_ALERTS_SUBMIT = _alerts_beside("Submit", "<h3>Get new jobs by email</h3>")
+RESET_IN_NO_FORM_BESIDE_ALERTS = {
+    "alerts-above-submit": _ALERTS_SUBMIT + _RESET_IN_NO_FORM,
+    "alerts-below-submit": _RESET_IN_NO_FORM + _ALERTS_SUBMIT,
+    "alerts-below-send": _RESET_IN_NO_FORM + _alerts_beside("Send", "<p>New openings, straight to your inbox</p>"),
+    "alerts-above-continue": _alerts_beside("Continue", "<p>Hear about new roles first</p>") + _RESET_IN_NO_FORM,
+}
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("case", list(RESET_IN_NO_FORM_BESIDE_ALERTS))
+def test_a_reset_in_no_form_beside_a_job_alerts_form_never_signs_them_up(srv, monkeypatch, job_apply_home, case):
+    """The sixth review's probe: a reset page drawn by a script, its Email box and "Send reset link" in no <form>, in
+    the same frame as a job alerts sign-up's <form> above or below it ("Get new jobs by email" and its "Submit", "Send"
+    or "Continue"). The alerts form's box was taken for the reset's (the one box in a form whose button a reset's might
+    be), the email typed there and its button pressed: the person signed up for job alerts. Now, with more than one box,
+    the reset's is the one whose own group (its form, or the boxes and buttons in no form) holds a button that names the
+    reset, and that button is pressed (_reset_choice): the reset is asked for, the alerts box never touched."""
+    said, r = _reset_asked(srv, monkeypatch, job_apply_home, _LOG_JS + RESET_IN_NO_FORM_BESIDE_ALERTS[case])
+    assert not any(w.startswith("alerts-") for w in said), (said, r.reason, r.log)
+    assert said == ["account-exists", "reset-asked:sam.rivera@example.com"], (said, r.reason, r.log)
+    assert r.need == "email_code", (r.need, r.reason)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("beside", [
+    """<label for="lang">Language</label><select id="lang"><option>English</option><option>Espanol</option></select>""",
+    """<div><label for="q">Search jobs</label><input id="q" type="text"></div>"""], ids=["language-list", "search-box"])
+def test_a_reset_whose_button_is_outside_its_form_beside_loose_boxes_is_asked(srv, monkeypatch, job_apply_home, beside):
+    """The sixth review's probe: a reset whose "Send reset link" is a script's button outside its <form>, beside a
+    language list or a search box in no form. Those were taken for another form's (_box_buttons), so the reset's form had
+    no button the desk would press, and it stopped after typing the email. Another form is only a real <form> that holds
+    a box for an email or user name: the reset's button is pressed."""
+    said, r = _reset_asked(srv, monkeypatch, job_apply_home, _LOG_JS + beside + _RESET_BUTTON_OUTSIDE)
+    assert said == ["account-exists", "reset-asked:sam.rivera@example.com"], (said, r.reason, r.log)
+    assert r.need == "email_code", (r.need, r.reason)
+
+
+def test_a_box_buttons_other_form_is_one_with_an_email_box():
+    """_box_buttons: a box's form with no button of its own (a script's button outside it) takes its frame's, unless
+    another real <form> there holds a box for an email or user name (a job alerts sign-up's): never a language list, a
+    search box or a button in no form, nor a search form's box. So for a new password's Save outside its form."""
+    box = {"id": "em", "kind": "email", "label": "Email", "form": 0}
+    send = {"id": "send", "text": "Send reset link"}
+    loose = [{"id": "lang", "kind": "select", "label": "Language"}, {"id": "q", "kind": "text", "label": "Search jobs"}]
+    assert pipeline._box_buttons([send], box, [box, *loose]) == [send]
+    search = {"id": "q2", "kind": "text", "label": "Search jobs", "form": 1}
+    assert pipeline._box_buttons([send], box, [box, search]) == [send]
+    alerts = {"id": "al", "kind": "email", "label": "Email", "form": 1}
+    assert pipeline._box_buttons([send], box, [box, *loose, alerts]) == []
+    new = {"id": "np", "kind": "password", "label": "New Password", "form": 0}
+    save = {"id": "save", "text": "Save Password"}
+    assert pipeline._box_buttons([save], new, [new, {**new, "id": "np2"}, *loose]) == [save]
+
+
+def test_a_reset_box_among_several_is_the_one_whose_group_names_the_reset():
+    """_reset_choice: of several email boxes in the reset's frame, the one whose own group (its <form>, or the boxes
+    and buttons in no form) holds a button that names the reset, and that button. A generic Submit, Send, Continue or
+    Next never counts (a job alerts form's), nor a button that signs them up; none, or more than one, is the person's."""
+    reset = {"id": "em", "kind": "email", "label": "Email"}
+    alerts = {"id": "al", "kind": "email", "label": "Email", "form": 0}
+    submit = {"id": "as", "text": "Submit", "form": 0}
+    send = {"id": "rs", "text": "Send reset link"}
+    assert pipeline._reset_choice([alerts, reset], [submit, send]) == (reset, send)
+    assert pipeline._reset_choice([reset, alerts], [send, submit]) == (reset, send)
+    # (the reset's own button generic too: not one the desk can tell)
+    assert pipeline._reset_choice([alerts, reset], [submit, {"id": "rs", "text": "Send"}]) is None
+    # (the alerts form's button names a link to jobs, never a reset; one that signs them up never counts)
+    assert pipeline._reset_choice([alerts, reset], [{"id": "as", "text": "Email me jobs like this", "form": 0},
+                                                    {"id": "rs", "text": "Continue"}]) is None
+    # (both in no form: their group is one, its button both's)
+    assert pipeline._reset_choice([reset, {**reset, "id": "al"}], [send]) is None
+    # (the reset's in a form, the alerts box in none)
+    in_form = {**reset, "form": 1}
+    assert pipeline._reset_choice([{**alerts, "form": None}, in_form],
+                                  [{"id": "as", "text": "Submit"}, {**send, "form": 1}]) == (in_form, {**send, "form": 1})
+
+
+SIGN_IN_IN_NO_FORM = """<h2>Sign In</h2><div><label for="em">Email</label><input id="em" type="email">
+<label for="pw">Password</label><input id="pw" type="password">
+<button type="button" onclick="log('signed-in:' + em.value + ':' + (pw.value === 'not-a-real-password'));
+  location.href = location.pathname.replace(/[^/]+$/, 'questions');">Sign In</button></div>"""
+CREATE_IN_NO_FORM = """<h2>Create your account</h2><div>
+<label for="em">Email</label><input id="em" type="email">
+<label for="em2">Retype Email</label><input id="em2" type="email">
+<label for="pw">Password</label><input id="pw" type="password">
+<label for="pw2">Verify New Password</label><input id="pw2" type="password">
+<button type="button" onclick="log('account')">Create Account</button></div>"""
+
+
+@pytest.mark.slow
+def test_a_sign_in_in_no_form_above_a_job_alerts_form_signs_in(srv, monkeypatch):
+    """The sixth review's probe: a sign-in drawn by a script, its boxes in no <form>, a job alerts sign-up's <form>
+    below it in the same frame ("Get new jobs by email", its "Submit"). Its password in no form: its email box is the
+    one in no form too, never the alerts form's, and it signs in."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    job = srv.add_job(url=ICIMS_HOST + "/jobs/2005/login", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        pressed = await _employer_around_icims(srv, {"login": _LOG_JS + SIGN_IN_IN_NO_FORM + _ALERTS_SUBMIT,
+                                                     "questions": ICIMS_QUESTIONS}, "", ICIMS_HOST)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=90, about=state(r))
+            return r, pressed
+        finally:
+            await applier.stop()
+
+    r, pressed = run(go())
+    said = [what for _, what in pressed]
+    assert said and said[0] == "signed-in:sam.rivera@example.com:true", (said, r.reason, r.log)
+    assert not any(w.startswith("alerts-") for w in said), (said, r.log)
+
+
+@pytest.mark.slow
+def test_a_create_account_in_no_form_below_a_job_alerts_form_leaves_its_box_alone(srv, monkeypatch):
+    """The sixth review's probe: a Create Account drawn by a script, its boxes in no <form> (Workday's "Retype Email"
+    as well), a job alerts sign-up's <form> above it in the same frame. Its email went into every email box there and its
+    details from the profile into every box, the alerts form's among them, whose change the typing alone sets off. Its
+    password boxes in no form: only the boxes in no form are its own, both its email boxes filled, the alerts box empty."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
+    job = srv.add_job(url=ICIMS_HOST + "/jobs/2005/login", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        pressed = await _employer_around_icims(srv, {"login": _LOG_JS + _ALERTS_SUBMIT + CREATE_IN_NO_FORM},
+                                               "", ICIMS_HOST)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=90, about=state(r))
+            return r, pressed, await r.page.evaluate("() => [em.value, em2.value, al.value]")
+        finally:
+            await applier.stop()
+
+    r, pressed, values = run(go())
+    said = [what for _, what in pressed]
+    assert not any(w.startswith("alerts-") for w in said), (said, r.log)
+    assert values == ["sam.rivera@example.com", "sam.rivera@example.com", ""], (values, r.reason, r.log)
+    assert any(line.startswith("filled the Create Account form") for line in r.log), r.log
+
+
 def test_a_reset_whose_email_box_is_in_two_frames_is_the_persons(srv, monkeypatch, job_apply_home):
     """A reset whose email boxes are in two frames, neither the one its "Forgot your password?" was pressed in nor
     headed as a reset's: not one the desk can tell, so it's the person's; nothing typed (the fourth review's stop; on the
