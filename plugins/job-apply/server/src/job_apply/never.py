@@ -1,7 +1,7 @@
 """What the Job Desk never agrees to, ticks or presses for the person, whichever path asks (CLAUDE.md's "Rules the
 product keeps"): a newsletter, job alerts, a talent community, marketing, texts or calls, being contacted or kept on
 file for other roles, their data shared or kept, cookies (their own rule), a legal waiver or arbitration, the terms of
-employment.
+employment, more than the background check that comes with applying (a credit report, medical records).
 
 One list, by kind (NEVER), read by every path that agrees, ticks or presses for them through _never_for_them: a
 notice, a terms gate and an attestation (settings.accept_notices), a Create Account's terms boxes, its privacy
@@ -49,6 +49,15 @@ EMAILS = "emails or updates"
 #   username": the reviews of 0.3.133's and 0.3.208)
 MAIL = "an email or a message"
 # (both read with the words after them: "emails about my application" is no sign-up)
+# - more than the background check that comes with applying (a credit report, medical records, ...): read wherever the
+#   precise kinds are
+BEYOND_CHECK = "more than the background check"
+# The job picks a site sends: job alerts by other names (Insight Enterprises' "job recommendations by email", live run
+# 145; the review of fix-accept-gates)
+JOB_PICKS = (r"(?:job|career) (?:recommendations?|matches|suggestions?)\b|"
+             r"recommended (?:jobs|roles|positions|openings)\b|"
+             r"personali[sz]ed (?:job|career) (?:suggestions?|recommendations?|matches)\b|"
+             r"jobs? that match(?:es)? (?:your|my) (?:profile|skills|resume|interests|experience)\b")
 
 # By kind, in the order a match is named. Every word each path's own list held before is here (the tests keep those
 # lists, word for word, and check each path still refuses them)
@@ -59,18 +68,43 @@ NEVER: dict[str, re.Pattern[str]] = {kind: re.compile(words, re.I | re.S) for ki
     # that reach was dropped on purpose (Oct 18): a notice of a work-related injury, or a certification under penalty
     # of perjury, is no waiver
     "arbitration": r"arbitrat",
-    "waiver": r"\bwaive|\bjury\b|non-?compete|non-?solicit",
+    # (and a release from liability, a class or collective action given up, an agreement not to compete, a shorter
+    # time to sue: the review of fix-accept-gates)
+    "waiver": r"\bwaive|\bjury\b|non-?compete|non-?solicit|\bnot to compete\b|\bhold(?:s|ing)? harmless\b|"
+              r"\breleas\w*\b[^.]{0,80}\b(?:from|of) (?:any |all )?(?:and all )?(?:liabilit\w*|claims?)\b|"
+              r"\bclass(?: or collective)? actions?\b|\bclass[- ]wide\b|\bcollective actions?\b|"
+              r"\b(?:lawsuits?|suits?|claims?|actions?)\b[^.]{0,60}\b(?:filed|brought|commenced)\b[^.]{0,30}\bwithin\b|"
+              r"\bstatutes? of limitations?\b",
     # the terms of employment, never a site's terms of use: an at-will statement, "the terms and conditions of my
-    # employment", an employment agreement (BrassRing's "Employment At Will" step, Edward Jones' run 89)
+    # employment", an employment agreement (BrassRing's "Employment At Will" step, Edward Jones' run 89); and an at-will
+    # statement in other words ("may be terminated at any time, with or without cause or notice", "terminable at the
+    # will of either party", "may end my employment at any time for any reason", no contract for a definite period: the
+    # review of fix-accept-gates)
     "at-will": r"\bat[- ]will\b|\b(?:terms|conditions)\b[^.]{0,30}\bof (?:my |your |this |the )?employment\b|"
-               r"\bemployment (?:agreement|contract)\b",
-    # a sign-up in so many words, however deep in a notice ("By clicking Accept you also join our Talent Community")
+               r"\bemployment (?:agreement|contract)\b|\bcontract of employment\b|\bwith or without (?:cause|notice|"
+               r"reason)\b|\bwithout cause\b|\bterminable\b|\bat the will of\b|\bdefinite (?:period|term|duration)\b|"
+               r"\b(?:end|terminate)\w* (?:my |your |the )?employment(?: relationship)? at any time\b|"
+               r"\bat any time,? for any (?:lawful )?reason\b|\bfor any reason or no reason\b",
+    # a sign-up in so many words, however deep in a notice ("By clicking Accept you also join our Talent Community");
+    # and job picks sent by email, in either order ("You will also receive job recommendations by email": Insight
+    # Enterprises' "Data Privacy Agreement", live run 145; "We'll email you job matches": the review of
+    # fix-accept-gates)
     "signs up": r"\b(?:join\w*|subscrib\w*|sign(?:s|ed|ing)? (?:you )?up|receiv\w*|enrol\w*|added to|opt(?:s|ed)? "
                 r"(?:you )?in)\b.{0,60}?\b(?:talent (?:community|network|pool)|candidate (?:community|network)|"
-                r"newsletters?|job alerts?|marketing|promotion\w*)",
+                r"newsletters?|job alerts?|marketing|promotion\w*)|"
+                rf"\b(?:receiv\w*|e-?mail\w*|send\w*|deliver\w*)\b[^.]{{0,40}}\b(?:{JOB_PICKS})|"
+                rf"\b(?:{JOB_PICKS})[^.]{{0,40}}\b(?:e-?mail\w*|inbox|sent to you|send you|delivered to you)\b",
     # (and career updates or news: a newsletter by another name, the review of run 144's fixes)
     "newsletter": r"newsletter|mailing list|subscri|\bcareers? (?:updates|news)\b",
-    "job alerts": r"job alerts?|alerts? by e-?mail|e-?mail alerts?|notify me|similar (?:jobs|openings|roles)",
+    # (and job picks the person receives, gets or is sent, or by email, and the plainer kinds of them in any words: job
+    # alerts by another name, the review of fix-accept-gates. Not job recommendations on the site alone: "we provide
+    # job recommendations to you" is how it works)
+    "job alerts": r"job alerts?|alerts? by e-?mail|e-?mail alerts?|notify me|similar (?:jobs|openings|roles)|"
+                  rf"\b(?:receiv\w*|get|send\w*|e-?mail\w*|deliver\w*)\b[^.]{{0,40}}\b(?:{JOB_PICKS})|"
+                  rf"\b(?:{JOB_PICKS})[^.]{{0,40}}\b(?:e-?mail\w*|inbox|sent|send|delivered)\b|"
+                  r"\bjob matches\b|\brecommended (?:jobs|roles|positions|openings)\b|"
+                  r"\bpersonali[sz]ed (?:job|career) (?:suggestions?|recommendations?|matches)\b|"
+                  r"\bjobs? that match(?:es)? (?:your|my) (?:profile|skills|resume|interests|experience)\b",
     # (and a candidate community: a talent community by another name, the review of run 144's fixes)
     "talent community": r"talent (?:community|network|pool)|candidate (?:community|network)|stay informed|keep me",
     "marketing": r"marketing|promotion|campaigns?",
@@ -82,7 +116,18 @@ NEVER: dict[str, re.Pattern[str]] = {kind: re.compile(words, re.I | re.S) for ki
     "being contacted": r"contact(?:ed)? me|be contacted|send me",
     "other roles": r"other (?:\w+ )?(?:roles|positions|jobs|openings|opportunities)",
     FUTURE_ROLES: r"future (?:job |career )?(?:opportunities|openings|roles|positions)",
-    "their data shared": r"share my|affiliat",
+    # (and "the sharing of my information with third parties": the review of fix-accept-gates)
+    "their data shared": r"share my|\bshar\w* (?:of )?my\b|affiliat",
+    # more than the background check that comes with applying, which CLAUDE.md's attestation names alone: a consumer
+    # credit report, medical records, a former employer's records, a social media review (the review of
+    # fix-accept-gates). Not "the company may call my references", an attestation's own words (the review of 0.3.208)
+    BEYOND_CHECK: r"\bconsumer (?:credit )?reports?\b|\b(?:obtain|procur|request|run|pull|review|access)\w*\b[^.]{0,40}"
+                  r"\bcredit (?:reports?|histor\w*|checks?|records?)\b|\bmedical (?:records?|histor\w*)\b|"
+                  r"\b(?:releas|disclos|obtain|access)\w*\b[^.]{0,40}\bmedical (?:information|data)\b|"
+                  r"\b(?:contact|call)\w*\b[^.]{0,40}\b(?:former|previous|past|prior) employers?\b|"
+                  r"\b(?:former|previous|past|prior) employers?\b[^.]{0,60}\b(?:releas|provid|disclos)\w*\b|"
+                  r"\bsocial media (?:accounts?|profiles?|activit\w*|presence|posts?|review)\b|"
+                  r"\breview\w*\b[^.]{0,40}\bsocial media\b",
     "their data kept": r"keep (?:my|your) (?:profile|information|data|resume)|retain (?:my|your)",
     "cookies": r"cookie",
     PARAGRAPH_WORDS: r"\btexts?\b|\bcalls?\b|\balerts?\b|\bnotif(?:y|ied|ications?)\b|partners|staffing|share your|"
