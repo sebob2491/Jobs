@@ -49,6 +49,8 @@ from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _ac
 from .never import (ANYWHERE, CALLS_OR_TEXTS, EMAILS, FUTURE_ROLES, MAIL, NEVER, PARAGRAPH_WORDS, PRECISE,
                     _never_for_them)
 
+
+# ---------------------------------------------------------- timings and limits
 NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before calling it a stall
 ONCE_SETTLE = 1.0  # seconds after filling the person's answers before checking they stayed in
 MAX_STEPS = 30  # passes over a job's pages (Avnet's Workday, run 53: an account and seven steps took 15)
@@ -146,6 +148,9 @@ SHARED_LOOK_BACK = 30  # seconds looked back for a job's code while an earlier j
 WENT_IN_ANSWERS = 150
 WENT_IN_CHARS = 200
 WENT_IN_LINES = 30
+
+
+# ------------------------------------------ the codes and links the inbox gave
 # The codes the inbox gave, each with the job it went to: one is never another job's (Mayo Clinic's
 # Oracle site, run 49, was given onsemi's code, mailed from the same Oracle address a minute before and put in
 # there). And the password reset links it gave, each opened once: a reset's link works once, and one opened again
@@ -167,6 +172,7 @@ def _link_opened(link: str) -> bool:
     return any(k[1] == link for k in list(_MAIL_TAKEN))
 
 
+# ------------------------------- statuses, and the queue kept across a restart
 FINISHED = {"applied", "interviewing", "offer", "rejected", "withdrawn"}  # tracker statuses never applied to again
 BEGUN = {"in_progress", "ready_to_submit"}  # tracker statuses of a job begun and not sent in yet
 UNSKIP_WAIT = 10  # seconds an Undo waits for the worker to finish the step a job was skipped in
@@ -257,6 +263,8 @@ def _give_back_queue_lock() -> None:
         with contextlib.suppress(OSError):
             os.close(held[0])
 
+
+# ------------------------ what a page says: bot checks, errors, closed, verify
 _BOT_TITLE = re.compile(r"just a moment|attention required|access denied|pardon our interruption|security check|"
                         r"are you a robot|bot (?:check|detection)", re.I)
 # A bare "403 Forbidden" (Valleywise Health's postings, to the desk's browser) or "406 Not Acceptable"
@@ -372,6 +380,9 @@ _VERIFY_SENT = re.compile(r"\b(?:e-?mail|link|message)\b[^.?!]{0,40}\b(?:has bee
 # A sign-in page's button that sends the verification email again (Workday's "Resend Account Verification")
 _RESEND_VERIFY = re.compile(r"^(?:re-?send|request|send)(?: (?:the|a|an|me|my|another|new))*(?: account)?"
                             r"(?: (?:e-?mail|verification|confirmation|activation))+(?: (?:e-?mail|link|again))?$", re.I)
+
+
+# ------------------------------------------- emailed codes and sign-in buttons
 _CODE_FIELD = re.compile(r"verification code|one[- ]time (?:pass)?code|passcode|security code|\bcode\b.{0,40}"
                          r"(?:sent|email)|enter (?:the )?(?:\d-digit )?code|\botp\b", re.I)
 
@@ -408,6 +419,9 @@ _CODE_SENDS = re.compile(r"^submit$", re.I)
 _APPLICATION_WORD = re.compile(r"\bapplication\b|\bapply\b", re.I)
 _TRY_LATER = re.compile(r"\btoo many\b.{0,30}\b(?:attempts|requests|tries)\b|\btry again (?:later|in \d+)|\brate[- ]limit",
                         re.I)
+
+
+# ------------------------ accounts: their buttons, boxes and terms, and resets
 _CREATE_ACCOUNT = re.compile(r"^(?:proceed to |continue to )?(create (?:an |your |a new )?account|sign up|register)"
                              r"(?: now)?[.!]?$|^don['\u2019]?t have an account(?: yet)?\??$|"  # (SuccessFactors' link)
                              r"^new user\??$", re.I)  # (Taleo's button)
@@ -552,6 +566,9 @@ _QUESTION_LIKE = re.compile(r"\?|^\s*(?:what|which|who|whose|where|when|why|how|
                             r"\b(?:maiden|born|birth|childhood|favou?rite|first (?:pet|car|school|job|employer|street|"
                             r"teacher|concert))\b", re.I)
 _SOCIAL = re.compile(r"\b(google|apple|linked ?in|facebook|microsoft|indeed|seek)\b", re.I)
+
+
+# ------------------------------------------------- steps, sign-ups and ways in
 # (and BrassRing's "Let's get started", its application's first page once the account is made: probe 81)
 _STEP = re.compile(r"^(save (?:and|&) continue|continue|next|next step|review|review (?:and|&) submit|"
                    r"review application|proceed|go to next step|start|let[\u2019']?s get started)$", re.I)
@@ -611,6 +628,9 @@ _APPLY_SENDS = re.compile(r"^(apply|apply now|apply online|easy apply|quick appl
                           r"(?: online)?|apply to (?:this )?job)$", re.I)
 _AVOID = re.compile(r"autofill|with resume|resume parse|sign ?in|log ?in|create account|register|upload|back|"
                     r"previous|cancel|save for later|withdraw|delete|remove|search|share|print|email (?:me|this)", re.I)
+
+
+# ---------------------------------------- notices, agreements and attestations
 # A button that agrees to something ("I Acknowledge the Privacy Notice", Schwab's iCIMS sign-in):
 # never pressed for the person
 _AGREEMENT = re.compile(r"^(?:i )?(?:acknowledge|agree|accept|consent)\b.*\b(?:notice|terms|policy|privacy|statement|"
@@ -754,6 +774,9 @@ def _terms_notice(heading: str, text: str) -> tuple[bool, bool]:
     if _never_for_them(said, only=_AGREEMENT_KINDS) or _never_for_them(text, only=ANYWHERE) or _NOT_A_NOTICE.search(said):
         return False, False
     return named or bool(_TERMS.search(text) and _ACCEPTS.search(text)), named
+
+
+# ---------------------------------------------------------------- what went in
 # A fill the page never let happen (it timed out, its script failed, a dialog stood over the box):
 # the profile has the answer, so it's no question for the person
 _FILL_BROKE = re.compile(r"^(?:TimeoutError|Error|TargetClosedError|DialogOpen)\b")
@@ -870,6 +893,7 @@ class WentIn:
                 "left": [dict(e) for e in self.left.values()], "full": self.full}
 
 
+# -------------------------------------- a job's run, and a pass over its pages
 LAST_ACTION_KEPT = 300  # characters of a last action's target kept (Run.did): scrubbed, then cut, where it's said
 
 # Why a job stopped for the person, as a word that stays put when the words said to them change (the review of Oct 18:
@@ -1244,6 +1268,7 @@ class _Then(Enum):
     ON = "on"
 
 
+# -------------------------------------------------------------- reading a page
 def classify(data: dict[str, Any], text: str) -> str:
     """bot_check, sign_in, email_code, form or page."""
     if data.get("challenge"):  # a CAPTCHA's pictures over the page (iCIMS after its email step)
@@ -1407,6 +1432,7 @@ def _page_info(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# ------------------------------------------------------ the Job Desk's applier
 class Applier:
     """Works through queued jobs in the background: up to settings.jobs_at_once at a time (the desk's "Jobs at once"),
     each in a task and a browser tab of its own.
@@ -1476,7 +1502,7 @@ class Applier:
         # where each skipped job was, for Undo: its run's status ("" with no run yet) and its place in the queue
         self._before_skip: dict[int, tuple[str, int | None]] = {}
 
-    # ------------------------------------------------------------- control
+    # ------------------------------------------------- queue and lifecycle
     def restore(self) -> None:
         """The desk starting: keep its queue from now on, unless another desk does (QUEUE_LOCK), and, at its first start,
         pick up the queue it kept before a restart (_restore_queue). Before it serves its page (Desk.start): a call from
@@ -1909,7 +1935,7 @@ class Applier:
         self._note_activity(run, data)
         return self._twice(run, self._looks_past(run, data, text))
 
-    # ------------------------------------------------------------- kept across a restart
+    # ----------------------------------------------- kept across a restart
     def _kept(self, run: Run) -> bool:
         """Is this job among the queue kept for a restart, outside the queue's own tasks: under way (or its pass cut
         short by the desk stopping or the browser closing), waiting on the person, or with a Submit pressed for it?"""
@@ -2146,7 +2172,7 @@ class Applier:
                    | {mail[1] for mail, job_id in list(_MAIL_TAKEN.items()) if job_id == run.job_id} if len(v.strip()) >= 3}
         return {v for v in hidden if " ".join(v.split()).casefold() not in _DESK_WORDS}
 
-    # ------------------------------------------------------------- worker
+    # --------------------- the worker: rounds, tabs, sites and inbox holds
     async def _worker(self) -> None:
         while True:
             try:
@@ -2408,7 +2434,7 @@ class Applier:
                 self._note_history(run, outcome, began, kind, at_once, need, reason, code)
             self._wake.set()
 
-    # ------------------------------------------------------------- jobs at once
+    # -------------------------------------------------------- jobs at once
     def _blocker(self) -> Run | None:
         """The job holding the queue for the person's hands (the first to pause, of those that do): one whose tab is up
         before those waiting their turn to be brought up (_behind), whose turn comes once it's done."""
@@ -2807,7 +2833,7 @@ class Applier:
             return False
         return time.time() - run.moved_since >= POLL_SECONDS
 
-    # ------------------------------------------------------------- the inbox
+    # ------------------------------------------------------ mail and codes
     def mail_login(self) -> tuple[str, str] | None:
         """The profile's email address and the app password saved for it, unless that
         password was turned down (a new one is tried)."""
@@ -3093,7 +3119,7 @@ class Applier:
             return None
         return self._account_button(data.get("actions") or [], _CODE_SENDS)
 
-    # ------------------------------------------------------------- one job
+    # ---------------------------------- one job: log, pause, look and open
     def _log(self, run: Run, text: str) -> None:
         """A line in the job's log (its last 40 are kept), with when it was logged beside it (Run.log_at)."""
         if len(run.log_at) != len(run.log):  # (lines put there some other way have no time of their own)
@@ -3299,6 +3325,7 @@ class Applier:
         self._pause(run, "maybe_duplicate", found[0], code="maybe_duplicate")
         return True
 
+    # ---------------------------------------------- the drive and its laps
     async def _drive(self, run: Run) -> None:
         srv = self.srv
         if self._already_done(run):
@@ -4981,6 +5008,7 @@ class Applier:
         self._pause(run, "stuck", stuck, code="upload_not_kept")
         return False
 
+    # --------------------------------------------------------------- waits
     async def _new_tab_soon(self, run: Run, seconds: float) -> bool:
         """Follow a tab that opens a little after a click (the browser makes it current)."""
         deadline = time.monotonic() + seconds
@@ -5085,6 +5113,7 @@ class Applier:
 
         return await self._until(seconds, 1, progress)
 
+    # ------------------------------------------------------------- filling
     async def _fill_once(self, run: Run, data: dict[str, Any]) -> dict[str, dict[str, Any]]:
         """Answers the person gave for this application only (not remembered). Returns the
         ones that didn't go in, by question: the field, the reason, and the entries to
@@ -5519,6 +5548,7 @@ class Applier:
         return " ".join(said), rest, ("degree_list" if no_choice or kinds or unlisted else "box_refused_answer"
                                       if refused else "page_not_loaded" if unloaded else "profile_gap")
 
+    # ------------------------------------------------------------ accounts
     @staticmethod
     def _account_button(actions: list[dict[str, Any]], pattern: re.Pattern[str], full: bool = True) -> dict[str, Any] | None:
         """A page's own button for an account step: not a cookie banner's, a footer box's, or a
@@ -5978,6 +6008,7 @@ class Applier:
                 return data, text
             await asyncio.sleep(0.5)
 
+    # ----------------------------------------------------- password resets
     async def _ask_for_reset(self, run: Run, data: dict[str, Any], tried: dict[str, int]) -> str | None:
         """settings.manage_accounts: the saved password didn't sign in to an account there, so ask
         the site to email a password reset (its "Forgot password?", the profile's email), and wait
@@ -6380,6 +6411,7 @@ class Applier:
                     "press: press it in the desk's browser window if you're happy to, then press Carry on.",
                     code="sends_first")
 
+    # ----------------------------------- cookies, notices and attestations
     async def _decline_cookies(self, run: Run, data: dict[str, Any], text: str) -> bool | None:
         """Press Reject / Decline / Necessary on a cookie banner. Banners cover forms and catch
         clicks. One with no way to decline (TI's "Manage Preferences" or "Agree and Proceed") is
@@ -6570,6 +6602,7 @@ class Applier:
             out.append(q)
         return out
 
+    # ------------------------------------------------------------- sign-in
     async def _signing_in_still(self) -> bool:
         """After a sign-in was sent, its form still on show and nothing said wrong: a site that takes a moment
         to sign in (Intel's and TEL's Workday took a few seconds, nightly live check Oct 11). True when the
@@ -6805,6 +6838,7 @@ class Applier:
                            "application. Then press \u201cI submitted it myself\u201d here.",
                            code="account_as_you_apply")
 
+    # --------------------------------------------------- finish and submit
     async def _bring_forward(self, run: Run) -> None:
         """Bring the job's tab to the front for the person: never over another job's tab they're at for the desk (a
         round, a pause that needs their hands, or a sign-in they're still at work in after the queue went on): this one
@@ -6987,6 +7021,7 @@ class Applier:
         self._log(run, run.reason)
 
 
+# ---------------------------------------------------- helpers: password resets
 _APPLICATION_FIELD = re.compile(r"first name|last name|full name|legal name|resume|\bcv\b|phone|address|"
                                 r"authori[sz]ed|sponsor|start (?:the |your |an? )?appl", re.I)  # "email to start application"
 
@@ -7054,6 +7089,7 @@ def _account_and_application(data: dict[str, Any]) -> bool:
     return len(others) >= 5 and any(_APPLICATION_FIELD.search(f.get("label") or "") for f in others)
 
 
+# ------------------------ helpers: questions, errors, notices and attestations
 def _required_by_errors(result: dict[str, Any], data: dict[str, Any]) -> None:
     """A question left empty as optional that the page's errors name ("Errors Found Error-Please indicate
     your veteran status.", Workday's, live test 2, issue #112, note 18) is required after all: the page
@@ -7271,6 +7307,7 @@ def _agreement_button(data: dict[str, Any]) -> dict[str, Any] | None:
                 None)
 
 
+# ---------------------------------- helpers: the kept queue, a tailored resume
 def _pressed_before(job: dict[str, Any]) -> bool:
     """Was Submit pressed for this job with no confirmation showing? submit_application keeps
     a record of each press in the job's folder, so this outlasts a restart of the desk."""
@@ -7331,6 +7368,7 @@ def tailored_ready(job: dict[str, Any]) -> bool:
     return bool(tailored_document(job, "resume")) and not too_long
 
 
+# ---------------------------------- helpers: sign-in pages, security questions
 _CONTACT_FIELD = re.compile(r"^((first|last|full|given|family|legal) )?name$|^e ?mail( address)?$|^(mobile |cell )?phone"
                             r"( number)?$|^(zip|postal)( code)?$")
 
@@ -7459,6 +7497,7 @@ def _email_first_account(data: dict[str, Any]) -> bool:
             and bool(re.search(r"\baccount\b", headings, re.I)) and not _NOT_TERMS.search(headings))
 
 
+# ---------------------------------------------------- helpers: waiting on mail
 def _mail_from(run: Run) -> float:
     """When a job's emailed code or link may have been sent: as its step that may email began on the way to its pause
     (_take_inbox), but never more than LOOK_BACK before its pause (as on its own); else as it paused."""
@@ -7496,6 +7535,7 @@ def _may_email(run: Run, data: dict[str, Any], kind: str, view: str | None, fini
             or kind == "form" and _email_step(data))  # (never a posting's job alerts box: a "page")
 
 
+# ----------------------------------- helpers: saved passwords and their places
 # A posting page's own boxes, never an application's: Phenom's "Save Job" ticks and its chatbot's box
 _PAGE_WIDGET = re.compile(r"^save (?:this )?job$|\bchat ?bot\b", re.I)
 
@@ -7677,6 +7717,7 @@ def _password_tip(url: str) -> str:
     return f" Save {article} {system} password on the desk and it fills these in for you next time."
 
 
+# ------------------------------- helpers: settings, the test identity, secrets
 def _may_manage_accounts() -> bool:
     try:
         return config.Profile.load().settings.may_manage_accounts
@@ -7735,6 +7776,7 @@ def _secret(name: str) -> str | None:
         return None
 
 
+# ------------------------------------------------ helpers: steps and addresses
 def _empty_required(data: dict[str, Any]) -> list[dict[str, Any]]:
     return [f for f in data.get("fields") or [] if f.get("required") and not f.get("disabled") and not f.get("aside")
             and f.get("kind") != "password" and is_empty_value(f.get("value"))]
@@ -7861,6 +7903,7 @@ def _above(url: str, below: str) -> bool:
     return b.path.rstrip("/").startswith(a.path.rstrip("/") + "/")
 
 
+# -------------------------------------------------- helpers: making an account
 def _account_step(data: dict[str, Any]) -> bool:
     """A page about making an account, with nothing to fill and a button that makes one: not a
     page that only has a "Register" link in its header."""
@@ -8093,6 +8136,7 @@ def _choices_left(data: dict[str, Any]) -> str:
                    for f, options in left[:2])
 
 
+# ----------------------------------- helpers: assessments, step buttons, pages
 _ASSESSMENT = re.compile(r"^(?:take|start|begin|launch|complete|go to)\s+(?:the\s+|your\s+|an?\s+)?"
                          r"(?:online\s+)?assessments?$", re.I)
 
@@ -8288,6 +8332,7 @@ def _sent_already(data: dict[str, Any], text: str, moved: bool) -> str:
     return _applied_before(data, text)
 
 
+# ------------------------------- helpers: entry blocks, applied before, closed
 # A block's own Delete, and nothing else's ("Delete Military Experience 2", "Delete Job Reference 1" aren't a job's)
 _BLOCK_KINDS = {"work": r"(?:work|employment|professional)\s+(?:experience|history)|employment|experience",
                 "education": r"education(?:al)?(?:\s+(?:history|background))?"}
@@ -8370,6 +8415,7 @@ def _short_said(site: str, short: dict[str, tuple[int, int]]) -> str:
             "what covers it, then press Carry on. Pressing Carry on with nothing added goes on without them.")
 
 
+# --------------------------------------------------------- helpers: whose mail
 def _site(run: Run, data: dict[str, Any]) -> str:
     ats = detect_ats(data.get("url") or "")
     if ats in ("company_site", ""):
@@ -8463,6 +8509,7 @@ def _another_employers_mail(company: str, own: frozenset[str]) -> Callable[[str,
     return others
 
 
+# -------------------- helpers: the "What went in" panel, and a draft's changes
 # A box whose answer never goes on the "What went in" panel, by its words (each of its label, section, sub-label and
 # name): a password's, an emailed code's (a bare "Code" too, never a ZIP or area code), a security question's or its
 # answer's (_SECURITY_QUESTION's too), as none is ever logged, saved or reported either
@@ -8790,6 +8837,7 @@ def _went_left(run: Run, result: dict[str, Any], *pages: dict[str, Any]) -> None
     run.went_in.leave({places[f"{url} {i}"] for i in bases if f"{url} {i}" in places}, left)
 
 
+# ---------------------------------- helpers: keys, and pages named for the log
 def question_key(label: str) -> str:
     return norm(clean_label(label))
 
