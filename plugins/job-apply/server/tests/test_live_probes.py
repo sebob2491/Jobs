@@ -35,6 +35,13 @@ li = lp.live_identity
 PIPELINE_SOURCE = Path(__file__).resolve().parents[1] / "src" / "job_apply" / "pipeline.py"
 WORKFLOW = Path(__file__).resolve().parents[4] / ".github" / "workflows" / "live-nightly.yml"
 
+
+def _driver_source() -> str:
+    """The driver's source: pipeline.py and its mixins (pipeline_*.py, Applier's bases), read as one."""
+    return "\n".join(p.read_text(encoding="utf-8")
+                     for p in [PIPELINE_SOURCE, *sorted(PIPELINE_SOURCE.parent.glob("pipeline_*.py"))])
+
+
 # (made up: a Gmail address can't have an underscore, so this one is no one's; the passwords are no one's either)
 EMAIL = "jobdesk_test_not_real@gmail.com"
 SITE = "Probe-Site-Pass-2026#x"
@@ -377,7 +384,7 @@ def test_a_site_already_on_the_derived_password_is_set_back_and_checked_by_pass_
 
 def test_the_probe_reads_the_desks_own_words():
     """The steps are read from pipeline.py's log lines: each one the probe looks for is still the desk's."""
-    source = PIPELINE_SOURCE.read_text(encoding="utf-8")
+    source = _driver_source()
     for words in ("with your saved password", "your saved password didn't sign in on {site}, so I asked it to email a "
                   "password reset", "opened the password reset link from your email", "set your saved password as "
                   "{site}'s new one", "reached the review page", "to create your account on {site}",

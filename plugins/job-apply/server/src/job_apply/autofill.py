@@ -220,16 +220,17 @@ _DEGREES = [
 
 def _containing(want: str, normed: list[tuple[str, str]]) -> str | None:
     """The one option that contains `want` as whole words, or that it contains."""
-    contains = [o for o, n in normed if want and _within_words(want, n)]
+    contains = [o for o, n in normed if want and within_words(want, n)]
     if len(contains) == 1:
         return contains[0]
-    contained = [o for o, n in normed if n and _within_words(n, want)]
+    contained = [o for o, n in normed if n and within_words(n, want)]
     return contained[0] if len(contained) == 1 and not contains else None
 
 
-def _within_words(part: str, whole: str) -> bool:
-    """`part` in `whole` as whole words, both norm()'s text (a regex per choice of a long list took a compile each)."""
-    return f" {part} " in f" {whole} "
+def within_words(part: str, whole: str) -> bool:
+    """`part` in `whole` as whole words ("TEL" isn't in "Intel", nor "ASM" in "ASML"), both norm()'s text (a regex per
+    choice of a long list took a compile each). Never an empty `part`. (search._pick's too.)"""
+    return bool(part) and f" {part} " in f" {whole} "
 
 
 # A degree's kind within its level, each as written in full or abbreviated (on norm()'s text: "B.S." is "b s")
@@ -526,7 +527,7 @@ def _containment_choice(want: str, wanted: set[str], normed: list[tuple[str, str
     """The one choice that contains the answer, else the one the answer contains (whole words), or None; and the
     choices that contain it (the one whose extra words the answer's aliases, `wanted`, explain first, else the one with
     the fewest)."""
-    contains = [o for o, n in normed if want and _within_words(want, n)]
+    contains = [o for o, n in normed if want and within_words(want, n)]
     if len(contains) == 1:
         return contains[0], contains
     if len(contains) > 1:
@@ -537,7 +538,7 @@ def _containment_choice(want: str, wanted: set[str], normed: list[tuple[str, str
             return len(set(_strip_codes(norm(o)).split()) - set(want.split()) - known)
         contains.sort(key=extra)
     # whole words only: "male" is in "female", "no" in "not"
-    contained = [o for o, n in normed if n and _within_words(n, want)]
+    contained = [o for o, n in normed if n and within_words(n, want)]
     if len(contained) == 1:
         return contained[0], contains
     return None, contains

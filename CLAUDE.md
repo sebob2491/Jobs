@@ -13,7 +13,8 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
 ## Layout (job-apply)
 
 - `server/src/job_apply/`: the MCP server (`server.py`, Claude's tools) and its parts:
-  - `pipeline.py`: the Job Desk's application driver;
+  - `pipeline.py`: the Job Desk's application driver, with its accounts, mail and filling parts in `pipeline_accounts.py`,
+    `pipeline_mail.py` and `pipeline_filling.py` (mixins that read pipeline's names as `pipeline.X`);
   - `desk.py` and `static/desk.html`: the Job Desk page;
   - `autofill.py`: answers from the profile;
   - `never.py`: what the desk never agrees to, ticks or presses for the person (one list, every path);

@@ -46,6 +46,9 @@ FLOORS: dict[str, float] = {
     "job_apply.mailbox": 92.3,
     "job_apply.never": 98.0,
     "job_apply.pipeline": 91.5,
+    "job_apply.pipeline_accounts": 85.2,  # (the pipeline's own tests alone, Oct 19: the full suite runs at least as much)
+    "job_apply.pipeline_filling": 94.3,
+    "job_apply.pipeline_mail": 87.9,
     "job_apply.postings": 95.5,
     "job_apply.recommend": 94.5,
     "job_apply.render": 92.2,

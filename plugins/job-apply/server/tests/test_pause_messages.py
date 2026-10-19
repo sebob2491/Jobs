@@ -15,6 +15,14 @@ ACTION = re.compile(r"\b(press|answer|sign in|log in|create|reload|solve|fill|ch
                     r"leave|skip|mark|check|try)\b", re.I)
 
 
+def _driver_source() -> str:
+    """The driver's source: pipeline.py and its mixins (pipeline_*.py, Applier's bases), read as one, less what a mixin
+    declares of the applier's own for the type checker (`if TYPE_CHECKING:`), which would stand for the methods it names."""
+    mixins = [re.sub(r"(?ms)^    if TYPE_CHECKING:.*?(?=^    \S)", "", p.read_text(encoding="utf-8"))
+              for p in sorted(PIPELINE.parent.glob("pipeline_*.py"))]
+    return "\n".join([PIPELINE.read_text(encoding="utf-8"), *mixins])
+
+
 def _words(node: ast.AST) -> str:
     """A message's own words, its computed parts as "{}" (both branches of a conditional)."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -139,7 +147,7 @@ def _places(target: ast.AST, name: str) -> list[tuple[int, ...]]:
 
 def _stops() -> tuple[list[tuple[int, list[str] | None]], ast.Module]:
     """Each _pause call's line and every message its reason can be (None: one that can't be read)."""
-    tree = ast.parse(PIPELINE.read_text(encoding="utf-8"))
+    tree = ast.parse(_driver_source())
     source = _Source(tree)
     pauses = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "_pause"]
     return [(n.lineno, source.said(n.args[2]) if len(n.args) >= 3 else None) for n in pauses
@@ -229,7 +237,7 @@ def test_the_window_has_one_name_and_so_has_i_submitted_it():
     window" everywhere; and the card's button the person presses after sending an application on the site themselves
     is "I submitted it myself", never "I submitted it" or "I submitted it already". So do the reasons the form's
     readers give for a box they couldn't fill, which the card shows beside its question."""
-    said = _said(ast.parse(PIPELINE.read_text(encoding="utf-8")))
+    said = _said(ast.parse(_driver_source()))
     for name in ("browser_menus.py", "browser_dates.py", "browser_uploads.py"):
         said += [(f"{name}:{line}", text) for line, text in
                  _said(ast.parse((PIPELINE.parent / name).read_text(encoding="utf-8")))]
@@ -247,7 +255,7 @@ def test_the_job_button_is_carry_on_and_resume_is_only_the_document():
     """The review of Oct 18 (U3): the job's "Resume" button sat beside "Use my usual resume" and "Tailor my resume for
     each job", and about 45 stops ended "then press Resume". The button is "Carry on" (the queue's "Carry on with the
     queue"), and every message says so: on the desk, "Resume" is only ever the document."""
-    said = _said(ast.parse(PIPELINE.read_text(encoding="utf-8")))
+    said = _said(ast.parse(_driver_source()))
     for name in ("desk.py", "server.py", "browser_menus.py", "browser_dates.py", "browser_uploads.py"):
         said += [(f"{name}:{line}", text) for line, text in
                  _said(ast.parse((PIPELINE.parent / name).read_text(encoding="utf-8")))]
@@ -282,7 +290,7 @@ def test_every_stop_has_a_code_in_stop_codes():
     so the nightly sorts stops by it and never by a message's words. And every code is one some stop gives."""
     from job_apply.pipeline import STOP_CODES
 
-    tree = ast.parse(PIPELINE.read_text(encoding="utf-8"))
+    tree = ast.parse(_driver_source())
     functions = {f.name: f for f in ast.walk(tree) if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))}
     where = {id(n): f.name for f in functions.values() for n in ast.walk(f)}  # (the innermost: walked last)
     pauses = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "_pause"]
@@ -344,7 +352,7 @@ EXPECTED_CODES = {
 
 
 def test_a_stop_the_desk_caused_is_coded_as_the_desks():
-    tree = ast.parse(PIPELINE.read_text(encoding="utf-8"))
+    tree = ast.parse(_driver_source())
     found: dict[str, set[str]] = {}
     for call in ast.walk(tree):
         if not (isinstance(call, ast.Call) and getattr(call.func, "attr", "") in ("_pause", "_account_theirs")):

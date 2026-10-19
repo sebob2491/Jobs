@@ -67,7 +67,7 @@ from bs4 import BeautifulSoup
 from . import config
 from . import workplace as wplace
 from .ats import csod_parts, shared_system, workday_parts
-from .autofill import US_STATES, norm
+from .autofill import US_STATES, norm, within_words
 from .postings import (USER_AGENT, csod_context, csod_place, html_to_text, icims_workplace, place_in_text, posted_date,
                        said_workplace, smartrecruiters_workplace, successfactors_place, successfactors_workplace)
 
@@ -2753,17 +2753,14 @@ def _pick(companies: list[dict[str, Any]], names: list[str] | None) -> list[dict
         return companies
     wanted = [norm(n) for n in names]
 
-    def words_in(part: str, whole: str) -> bool:  # whole words: "TEL" isn't in "Intel", nor "ASM" in "ASML"
-        return bool(part) and f" {part} " in f" {whole} "
-
     def named(w: str, name: str) -> bool:
-        # or the start of the name, when that's more than a short code: "Applied Material", "Micro";
-        # or the name inside what was asked for when the rest only says what kind of company it
-        # is ("Intel Corporation"), not when it names another ("Maricopa County Community
-        # College District" isn't Maricopa County)
-        if words_in(w, name) or len(w) >= 5 and name.startswith(w):
+        # whole words ("TEL" isn't in "Intel", nor "ASM" in "ASML"), or the start of the name, when that's more than a
+        # short code: "Applied Material", "Micro"; or the name inside what was asked for when the rest only says what
+        # kind of company it is ("Intel Corporation"), not when it names another ("Maricopa County Community College
+        # District" isn't Maricopa County)
+        if within_words(w, name) or len(w) >= 5 and name.startswith(w):
             return True
-        return words_in(name, w) and set(w.split()) - set(name.split()) <= _COMPANY_WORDS
+        return within_words(name, w) and set(w.split()) - set(name.split()) <= _COMPANY_WORDS
 
     return [c for c in companies if any(named(w, norm(c["name"])) for w in wanted)]
 
