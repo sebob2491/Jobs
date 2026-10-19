@@ -1931,7 +1931,9 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
      lambda p, j: "Yes" if p.get("work_history") else None, 60, None),
     # "Do you have a Bachelor's degree?": see _has_degree
     ("has_degree", _DEGREE_ONLY, _has_degree, 200, {"select", "listbox", "combobox", "radio_group"}),
-    ("degree", r"highest (level of )?(education|degree)|^degree$|education level", _highest_degree, 80, None),
+    # (and the current level, the highest had: NNSS's "What is your current level of education?", live run 144)
+    ("degree", r"highest (level of )?(education|degree)|(current|present) level of education|"
+     r"^(what is )?(your )?level of education$|^degree$|education level", _highest_degree, 80, None),
     ("school", r"^(school|university|college|institution)\b(?!.*\b(licen[cs]\w*|certif\w*|major|degree|gpa|city|state|"
      r"location|country|year|date|address|"
      r"zip|postal|phone|e ?mail|fax|code)\b)",
