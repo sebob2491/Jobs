@@ -567,16 +567,25 @@ _SIDE_BOX =re.compile(r"job alerts?|alerts? by e-?mail|e-?mail alerts?|newslette
 # A button that signs the person up, whose words say so ("Subscribe", "Join our Talent Community", "Sign up for job
 # alerts"): never pressed for them in an account's or a reset's steps, wherever it stands (_account_button, _sign_in,
 # _sign_in_ways, the Resend, a Create Account's last step). The kinds of _never_for_them's that a sign-up's button
-# says, and a button's own way of saying job alerts ("Email me jobs like this"), which a box's or a page's words may
-# say of something else ("text messages about jobs like this one" beside a consent): a button's alone
-_SIGN_UP_KINDS = ("signs up", "newsletter", "job alerts", "talent community", "marketing")
-_JOBS_LIKE_THIS = re.compile(r"\bjobs like (?:this|these)\b", re.I)
+# says, texts or calls among them, and a button's own ways of saying job alerts ("Email me jobs like this", "Send me
+# jobs", "Email me new jobs", "Set up an alert"), which a box's or a page's words may say of something else ("text
+# messages about jobs like this one" beside a consent): a button's alone. Never an account's or a reset's own ("Email
+# me a reset link", "Send me a code", "Resend verification email")
+_SIGN_UP_KINDS = ("signs up", "newsletter", "job alerts", "talent community", "marketing", "texts or calls")
+_SIGN_UP_BUTTON = re.compile(r"\bjobs like (?:this|these)\b|\b(?:e-?mail|send|text) me\b.{0,40}?\b(?:jobs?|openings|roles|"
+                             r"positions|opportunities|updates|alerts?|texts|news)\b|\bjobs? to my e-?mail\b|"
+                             r"\bsave (?:this |my )?search\b|\b(?:set up|create|get|add)\b.{0,12}\balerts?\b|"
+                             r"\b(?:notify|keep|update) me\b|\bget (?:notified|updates)\b|\bsign me up\b|\bopt[- ]?in\b|"
+                             r"\bstay (?:connected|in touch)\b|\bsubscribe\b|"
+                             r"\bsign ?up (?:for|to)\b(?! (?:an? |your |my )?account)",
+                             re.I)
 
 
 def _signs_them_up(action: dict[str, Any]) -> bool:
-    """Does this button's own text sign the person up for job alerts, a newsletter, a talent community or marketing?"""
+    """Does this button's own text sign the person up for job alerts, a newsletter, a talent community, marketing or
+    texts?"""
     said = final_text(action.get("text") or "")
-    return _never_for_them(said, only=_SIGN_UP_KINDS) is not None or bool(_JOBS_LIKE_THIS.search(said))
+    return _never_for_them(said, only=_SIGN_UP_KINDS) is not None or bool(_SIGN_UP_BUTTON.search(said))
 # Words that ask the person to go on with the form, after a step of it thanks them for applying
 # ("Thank you for your application. Please complete the below questions.")
 _GO_ON = re.compile(r"\bplease (?:complete|continue|answer|proceed|fill|finish|go on)\b|\b(?:complete|answer|"
@@ -5891,11 +5900,21 @@ class Applier:
         # where the look says each frame's: an iCIMS page around iCIMS' frame has an "Email me jobs like this" form)
         boxes = [f for f in mine["fields"] if f.get("kind") in ("text", "email") and not f.get("aside")
                  and re.search(r"e-?mail|user ?name|login", f.get("label") or "", re.I)]
-        raw = data.get("frame_headings")
-        framed: dict[str, Any] = raw if isinstance(raw, dict) else {}
-        resets = {p for p, hs in framed.items() if _RESET_PAGE.search(" ".join(hs or []))}
-        if resets:
-            boxes = [f for f in boxes if _frame_of(f) in resets]
+        # the frame its "Forgot your password?" was pressed in is the reset's (iCIMS': its own page may head it
+        # "Password Assistance", or not at all); else the frame its headings say is a reset's. Boxes in more than one
+        # frame, and none of them named so: not one the desk can tell, the person's (the fourth review)
+        own = [f for f in boxes if _frame_of(f) == _frame_of(forgot)]
+        if own:
+            boxes = own
+        else:
+            raw = data.get("frame_headings")
+            framed: dict[str, Any] = raw if isinstance(raw, dict) else {}
+            resets = {p for p, hs in framed.items() if _RESET_PAGE.search(" ".join(hs or []))}
+            if resets:
+                boxes = [f for f in boxes if _frame_of(f) in resets]
+            if len({_frame_of(f) for f in boxes}) > 1:
+                return await instead("opened its password reset, whose email box I couldn't tell from another form's "
+                                     "on the page", data)
         if (not _RESET_PAGE.search(" ".join([text[:2000], *(data.get("headings") or [])])) or not boxes or not address
                 or any(f.get("kind") == "password" for f in mine["fields"])):
             return await instead("opened its password reset, which isn't one I can fill in", data)

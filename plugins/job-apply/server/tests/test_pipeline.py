@@ -7945,31 +7945,47 @@ def test_a_framed_icims_reset_presses_its_own_buttons_never_the_employers(srv, m
 
 
 # A job alerts sign-up of an iCIMS page's own, above iCIMS' frame: its Email box and "Email me jobs like this"
-JOB_ALERTS_FORM = """<form onsubmit="event.preventDefault(); log('alerts-signup:' + document.getElementById('al').value)">
-<label for="al">Email</label><input id="al" type="email"><button type="submit">Email me jobs like this</button></form>"""
+def _job_alerts_form(button: str) -> str:
+    """A job alerts sign-up of an iCIMS page's own, above iCIMS' frame: its Email box and its button."""
+    return ("""<form onsubmit="event.preventDefault(); log('alerts-signup:' + document.getElementById('al').value)">
+<label for="al">Email</label><input id="al" type="email"><button type="submit">%s</button></form>""" % button)
+
+
+# iCIMS' forgot-password page headed otherwise ("Password Assistance"), or not at all
+ICIMS_FORGOT_PLAIN = ICIMS_FORGOT.replace("<h2>Reset your password</h2>",
+                                          "<h2>Password Assistance</h2><p>Forgot your password? Enter your email.</p>")
+ICIMS_FORGOT_NO_HEADING = ICIMS_FORGOT.replace("<h2>Reset your password</h2>",
+                                               "<p>Forgot your password? Enter your email.</p>")
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("box", [True, False], ids=["with-alerts-box", "button-only"])
-def test_icims_outer_page_with_job_alerts_email_box(srv, monkeypatch, job_apply_home, box):
-    """The third review's probe: an iCIMS page around iCIMS' frame (both in the saved password's place) with a job
-    alerts sign-up of its own above the frame, an Email box and "Email me jobs like this". The reset's email went into
-    that box and its button was pressed (it matches a reset's "e-mail me"), signing the person up for job alerts, and the
-    desk logged that it had asked for a reset. The reset's email box is its own frame's (by its headings), never a side
-    box's, and a button that signs the person up is never pressed in an account's or a reset's steps."""
+@pytest.mark.parametrize("button, forgot", [
+    *((b, f) for b in ("Email me jobs like this", "Email me new jobs", "Send me jobs")
+      for f in ("reset-heading", "plain-heading", "no-heading")),
+    ("", "reset-heading")], ids=lambda v: v.replace(" ", "-") if v else "button-only")
+def test_icims_outer_page_with_job_alerts_email_box(srv, monkeypatch, job_apply_home, button, forgot):
+    """The third and fourth reviews' probes: an iCIMS page around iCIMS' frame (both in the saved password's place)
+    with a job alerts sign-up of its own above the frame, an Email box and a button ("Email me jobs like this", "Email
+    me new jobs", "Send me jobs"), iCIMS' forgot-password page headed "Reset your password", "Password Assistance" or
+    nothing. The reset's email went into that box and its button was pressed, signing the person up for job alerts, and
+    the desk logged that it had asked for a reset. The reset's email box is the frame's its "Forgot your password?" was
+    pressed in, never a side box's, and a button that signs the person up is never pressed in an account's or a reset's
+    steps. "button-only": the page's own "Email me jobs like this" button alone, beside its "Next" and "Save Job"."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setenv("JOB_APPLY_SECRET_ICIMS_PASSWORD", "not-a-real-password")
     manage_accounts(job_apply_home)
     watched_inbox(monkeypatch, reset_link=ICIMS_HOST + "/jobs/2003?reset=abc")
     job = srv.add_job(url=ICIMS_HOST + "/jobs/2003", title="FSE", company="Example Fab")["job"]
     applier = Applier(srv)
-    page = _employer_page(widget=False, links=False).replace(
-        "<h1>Field Service Technician</h1>", "<h1>Field Service Technician</h1>" + (JOB_ALERTS_FORM if box else ""))
-    # ("button-only": the page's own "Email me jobs like this" button alone, beside its "Next" and "Save Job")
+    page = _employer_page(widget=False, links=False)
+    if button:  # (the form's button alone: the page's own is another's)
+        page = page.replace("<h1>Field Service Technician</h1>", "<h1>Field Service Technician</h1>"
+                            + _job_alerts_form(button)).replace("Email me jobs like this</button></p>", "Share</button></p>")
+    fg = {"reset-heading": ICIMS_FORGOT, "plain-heading": ICIMS_FORGOT_PLAIN, "no-heading": ICIMS_FORGOT_NO_HEADING}[forgot]
 
     async def go():
         pressed = await _employer_around_icims(srv, {"login": ICIMS_CREATE_EXISTS, "signin": ICIMS_SIGN_IN,
-                                                     "forgot": ICIMS_FORGOT, "new-password": ICIMS_NEW_PASSWORD,
+                                                     "forgot": fg, "new-password": ICIMS_NEW_PASSWORD,
                                                      "questions": ICIMS_QUESTIONS}, page, ICIMS_HOST)
         applier.start()
         try:
@@ -7992,10 +8008,14 @@ def test_a_button_that_signs_them_up_is_never_an_account_step():
     never pressed for the person in an account's or a reset's steps; "Sign Up", "Send reset link", "Email me a reset
     link" and "Create Account" are steps."""
     for text in ("Email me jobs like this", "Subscribe", "Join our Talent Community", "Sign up for job alerts",
-                 "Get the newsletter", "Notify me of jobs like these"):
+                 "Get the newsletter", "Notify me of jobs like these", "Email me new jobs", "Send me jobs", "Text me jobs",
+                 "Send jobs to my email", "Save search and email me", "Set up an alert", "Create job alert",
+                 "Get notified", "Keep me updated", "Sign up for updates", "Send me texts", "Opt in"):
         assert pipeline._signs_them_up({"text": text}), text
         assert pipeline.Applier._account_button([{"id": "a", "text": text}], pipeline._RESET_ASK, full=False) is None
-    for text in ("Sign Up", "Send reset link", "Email me a reset link", "Create Account", "Continue"):
+    for text in ("Sign Up", "Send reset link", "Email me a reset link", "Create Account", "Continue", "Email me a code",
+                 "Send me a code", "Resend verification email", "Send me a reset link", "Email me the link",
+                 "Sign Up for an account", "Save Password"):
         assert not pipeline._signs_them_up({"text": text}), text
 
 
