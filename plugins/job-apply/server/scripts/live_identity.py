@@ -34,6 +34,10 @@ FIRST_NAME, LAST_NAME = "Jobdesk", "Test"
 PHONE = "480-555-0199"  # a 555 number, as the fake profile's
 RESUME_NOTE = "Automated test resume for the Job Desk live check — not a real applicant"  # (both profiles')
 RESUME_NAME = "jobdesk-test-resume.pdf"
+# and a test cover letter beside it: a questionnaire that requires one (CSN's and NSU's Workday, run 144) stopped the
+# check there, as the profile had none
+COVER_LETTER_NOTE = "Automated test cover letter for the Job Desk live check — not a real applicant"
+COVER_LETTER_NAME = "jobdesk-test-cover-letter.pdf"
 EMPLOYERS_FILE = Path(__file__).with_name("test_identity_employers.yaml")
 # The broad check's employers whose sites refuse its example.com address (their Workday, live run 19):
 # there it gives the test identity's inbox instead, so the check sees how far it gets. Only the
@@ -143,6 +147,22 @@ def resume_pdf(profile: Mapping[str, Any]) -> bytes:
     return tiny_pdf(lines)
 
 
+def cover_letter_pdf(profile: Mapping[str, Any]) -> bytes:
+    """A one-page cover letter for the live check's applicant, made at run time as resume_pdf is: who it is, and that
+    it's a test with nothing in it true."""
+    personal = profile.get("personal") or {}
+    return tiny_pdf([
+        (18, f"{personal.get('first_name', FIRST_NAME)} {personal.get('last_name', LAST_NAME)}"),
+        (10, " | ".join(str(p) for p in (personal.get("email"), personal.get("phone")) if p)),
+        (10, ""),
+        (12, COVER_LETTER_NOTE + "."),
+        (10, "Made by the Job Desk plugin's live check (scripts/live_smoke.py). Nothing in it is true."),
+        (10, ""),
+        (10, "It stands in for an applicant's own letter, so the check goes on past a form's \"upload your cover"),
+        (10, "letter\". Please disregard it."),
+    ])
+
+
 def broad_email(company: str, env: Mapping[str, str]) -> str | None:
     """The broad check's email at this employer: the test identity's inbox (LIVE_TEST_EMAIL) where
     the site refuses example.com, when the run has it; else None, for its own example.com one."""
@@ -151,13 +171,14 @@ def broad_email(company: str, env: Mapping[str, str]) -> str | None:
 
 
 def with_test_resume(profile: Mapping[str, Any], folder: Path) -> dict[str, Any]:
-    """The profile with a test resume of its own: resume_pdf written into `folder` (the run's
-    home) and the profile's documents pointing to it, so the live check reaches the steps past a
-    form's "upload your resume"."""
-    resume = folder / RESUME_NAME
+    """The profile with a test resume and a test cover letter of its own: resume_pdf and cover_letter_pdf written into
+    `folder` (the run's home) and the profile's documents pointing to them, so the live check reaches the steps past a
+    form's "upload your resume" (and a required "upload your cover letter": CSN's and NSU's Workday, run 144)."""
+    resume, letter = folder / RESUME_NAME, folder / COVER_LETTER_NAME
     own: dict[str, Any] = copy.deepcopy(dict(profile))
-    own["documents"] = {**(own.get("documents") or {}), "resume": str(resume)}
+    own["documents"] = {**(own.get("documents") or {}), "resume": str(resume), "cover_letter": str(letter)}
     resume.write_bytes(resume_pdf(own))
+    letter.write_bytes(cover_letter_pdf(own))
     return own
 
 

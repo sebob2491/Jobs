@@ -12986,6 +12986,28 @@ def test_what_a_filled_page_still_needs_is_said_the_same_way_on_each_path(srv):
     assert not applier._stop_for_what_is_left(nothing, "", [], []) and nothing.status != "needs_you"
 
 
+def test_a_file_the_profile_has_no_place_for_is_named_as_the_persons(srv):
+    """NSU's Workday (live run 144) requires a "Reference Contact Information" file: the profile has no place for one,
+    but the pause told the person to set documents.resume or documents.cover_letter, as for a missing resume. It names
+    the box and says it's theirs to attach; a resume or cover letter still says where the profile points to one."""
+    applier = Applier(srv)
+    refs = {"label": "Please upload your Reference Contact Information.*", "kind": "file",
+            "section": "Application Questions 1 of 3"}
+    cover = {"label": "Please upload your Letter of Application/Cover Letter.*", "kind": "file"}
+    only = Run(1)
+    assert applier._stop_for_what_is_left(only, "", [], [refs])
+    assert only.need == "stuck" and only.code == "profile_gap" and only.reason == (
+        "The form wants a file your profile has no place for: “Please upload your Reference Contact Information”. "
+        "Attach it in the desk's browser window, then press Carry on."), only.reason
+    both = Run(2)
+    assert applier._stop_for_what_is_left(both, "", [], [cover, refs])
+    assert both.reason == (
+        "The form wants a file (Please upload your Letter of Application/Cover Letter.*) and the profile doesn't say "
+        "where yours is: ask Claude to set documents.resume (or documents.cover_letter) in profile.yaml, then press "
+        "Carry on. It also wants a file your profile has no place for: “Please upload your Reference Contact "
+        "Information”: attach it in the desk's browser window."), both.reason
+
+
 def test_a_button_gone_as_it_was_clicked_is_looked_at_again(srv, monkeypatch):
     """APS's SuccessFactors sign-in (live run 17, Oct 11): a button went from the page as it was clicked, with
     nothing like it to find ("KeyError: Nothing clickable matches 'ewr4'"), and the job failed with "Something

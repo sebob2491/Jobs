@@ -121,6 +121,42 @@ def test_a_hidden_file_box_is_named_by_its_own_upload_button(srv, tmp_path):
     assert [f["label"] for f in got] == ["Upload Resume", "Upload Cover Letter", "Transcript", "Portfolio"]
 
 
+WORKDAY_UPLOAD = ('<div data-automation-id="formField-" data-fkit-id="primaryQuestionnaire--a{n}">'
+                  '<div id="rich-label{n}"><div data-automation-id="richText"><p><b>{question}</b>{star}</p></div>'
+                  '</div><div><div style="width: 100%"><div aria-labelledby="rich-label{n}" '
+                  'data-automation-id="a{n}-FileUpload"><div><div data-automation-id="file-upload-drop-zone">'
+                  '<div>Drop files here</div><div><div>or</div>'
+                  '<button type="button" data-automation-id="select-files"><span>Select files</span></button>'
+                  '</div></div><input data-automation-id="file-upload-input-ref" multiple type="file"></div>'
+                  '</div></div></div></div>')
+
+
+def test_a_workday_questionnaire_file_box_is_named_by_its_question(srv, tmp_path):
+    """CSN's, NSU's and UNLV's Workday (live run 144): a questionnaire's file boxes were read as "Drop files here or
+    Select files", the words of the drop zone before the input, so the cover letter's box wasn't known for one and the
+    pause named nothing the person could find. The box's "...-FileUpload" wrapper is labelled (aria-labelledby) by the
+    question's own rich text."""
+    star = '<abbr class="requiredAsterisk" title="required">*</abbr>'
+    got = fields_of(srv, tmp_path, '<div aria-labelledby="sec" role="group"><h3 id="sec">Application Questions</h3>'
+                    + WORKDAY_UPLOAD.format(n=155, question="Please upload your Letter of Application/Cover Letter.",
+                                            star=star)
+                    + WORKDAY_UPLOAD.format(n=156, question="Please upload your Reference Contact Information.",
+                                            star="") + '</div>')
+    assert [(f["kind"], f["label"], f["required"]) for f in got] == [
+        ("file", "Please upload your Letter of Application/Cover Letter.*", True),
+        ("file", "Please upload your Reference Contact Information.", False)]
+
+
+def test_a_drop_zones_words_dont_name_its_file_box(srv, tmp_path):
+    """A drop zone's own words, "Drop files here or Select files" (Workday's, live run 144), say nothing about what the
+    box takes: they're as generic as "Attach", and the heading before the box names it."""
+    got = fields_of(srv, tmp_path, '<div><h4>Cover Letter</h4><div><div><div>Drop files here</div><div>or</div>'
+                                   '<button type="button">Select files</button></div><input type="file"></div></div>'
+                                   '<div><h4>Transcript</h4><div><div>Drag and drop files here or browse files</div>'
+                                   '<input type="file"></div></div>')
+    assert [f["label"] for f in got] == ["Cover Letter", "Transcript"]
+
+
 def test_a_loading_indicator_on_show_is_said(srv, tmp_path):
     """Workday's loading dots where a step's questions go (KLA's, live, Oct 2026), or a spinner marked
     busy, are said; a hidden one, or a step's progress bar with its value, isn't a page loading."""

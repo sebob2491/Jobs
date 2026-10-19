@@ -128,6 +128,17 @@ def test_the_broad_checks_fake_profile_gets_a_test_resume_too(tmp_path):
     assert {k: v for k, v in profile.items() if k != "documents"} == {k: v for k, v in BASE.items() if k != "documents"}
 
 
+def test_the_fake_profile_has_a_test_cover_letter_too(tmp_path):
+    """CSN's and NSU's Workday questionnaires require a cover letter (live run 144): the fake profile had none, so the
+    check stopped there. It gets a test cover letter beside its test resume, saying what it is."""
+    profile = li.with_test_resume(BASE, tmp_path)
+    letter = Path(profile["documents"]["cover_letter"])
+    assert letter == tmp_path / li.COVER_LETTER_NAME and "cover_letter" not in BASE["documents"]
+    pdf = letter.read_bytes()
+    assert count_pages(pdf) == 1 and li.COVER_LETTER_NOTE.encode("cp1252") in pdf and b"(Testy McTestface)" in pdf
+    assert Path(profile["documents"]["resume"]).name == li.RESUME_NAME
+
+
 def test_the_broad_check_gives_the_test_inbox_only_where_example_com_is_refused():
     """Onto Innovation's and Robert Half's Workday refuse the broad check's example.com address (live
     run 19): there, and only there, it gives the test identity's inbox (the owner's call, Oct 11)."""

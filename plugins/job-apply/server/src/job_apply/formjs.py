@@ -219,6 +219,19 @@ EXTRACT_JS = r"""
     if (al) return clean(al);
     if (el.placeholder) return clean(el.placeholder);
     if (el.title) return clean(el.title);
+    // a file box inside an upload widget labelled for it: Workday's questionnaire, its "...-FileUpload" wrapper
+    // labelled by the question's own rich text ("Please upload your Letter of Application/Cover Letter."), not the drop
+    // zone's words before the box (CSN's, NSU's and UNLV's, live run 144); never a group's or a section's label
+    if (el.type === 'file') {
+      for (let up = el.parentElement, i = 0; up && i < 3; up = up.parentElement, i++) {
+        if (up.matches('form, fieldset, [role="group"], [role="radiogroup"], [role="region"], [role="dialog"]')) break;
+        if (up.hasAttribute('aria-labelledby')) {
+          const t = labelledBy(up);
+          if (t) return t;
+          break;
+        }
+      }
+    }
     return preceding(el) || el.name || '';
   };
   const groupQuestion = (container, first) => {
@@ -425,7 +438,9 @@ EXTRACT_JS = r"""
 
   // "search", "job-search", "jobSearchForm"; not "research" ("toyotaresearchinstitute")
   const isSearchName = (s) => !!s && (/(^|[^a-zA-Z])search/i.test(s) || /[a-z]Search/.test(s));
-  const GENERIC_FILE = /^(attach|upload|choose (a )?file|browse|select files?|add (a )?file|drop (your )?files? here|or|enter manually)$/i;
+  // (and a drop zone's words, "Drop files here or Select files": Workday's, live run 144)
+  const GENERIC_FILE = new RegExp('^(attach|upload|choose (a )?file|browse|select files?|add (a )?file|'
+    + '((drag (and|&) )?drop (your )?files? here)( or (select|browse|choose|upload) (your )?files?)?|or|enter manually)$', 'i');
   const HONEYPOT = /for robots|robots only|if you('| a)?re (a )?human|not (be )?(filled|entered) by humans|honey ?pot|leave this field (blank|empty)/i;
   const fields = [];
   const fieldEls = new Map();  // each field's element (a group's first member), for the aside pass

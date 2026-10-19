@@ -40,7 +40,8 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 from . import config, history, mailbox, report
 from .search import every_employer
 from .ats import ATS_NAMES, JOB_BOARDS, detect_ats, host_of, shared_system
-from .autofill import (clean_label, entry_list_unloaded, _CHOICE_KINDS, is_empty_value, kept_documents, norm,
+from .autofill import (_OTHER_DOCUMENT, clean_label, entry_list_unloaded, _CHOICE_KINDS, is_empty_value,
+                       kept_documents, norm,
                        profile_entries, unset_choice, polarity, tailored_document, works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
                       confirmations, declines_cookies, final_text, may_accept_cookies, questions_shown)
@@ -289,6 +290,11 @@ _LINK_SPENT = re.compile(r"\b(?:link|token|reset|url)s?\b[^.!?\n]{0,40}?\b(?:exp
                          r"\bpassword reset failed\b", re.I)
 # ...unless said only of what may be, or what to do if it were
 _ONLY_IF = re.compile(r"^\W*(?:if|in case|should|when)\b|\b(?:may|might|could) be\b", re.I)
+# A file box for a document the profile has no place for (it holds a resume and a cover letter): its words name
+# another (references, a transcript, a veteran's or an additional document), and no resume or cover letter
+_PROFILE_FILE = re.compile(r"\b(?:resume|résumé|cv|curriculum|cover)", re.I)
+_OTHER_FILE = re.compile(_OTHER_DOCUMENT.pattern + r"|\b(?:additional|supporting|other|veterans?'?)\s+"
+                         r"(?:documents?|files?|attachments?)\b", re.I)
 _PASSWORD_USED = re.compile(r"\bpasswords?\b[^.!?\n]{0,40}?\b(?:(?:recently|previously) used|used (?:recently|before|"
                             r"previously)|(?:already )?been used|can(?:not|'t|\u2019t| not) be re-?used|"
                             r"same as (?:your |the |a |any of your )?(?:current|old|previous|last|recent)|"
@@ -2679,10 +2685,22 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         unfilled, pending = _unfilled(pending)
         couldnt = f" {_couldnt_fill(unfilled)}" if unfilled else ""
         them = "it" if len(pending) == 1 else "them"
+        # a file the profile has no place for (only a resume and a cover letter: NSU's Workday "Reference Contact
+        # Information", live run 144) is the person's to attach, named; never "set documents.resume" for it
+        others = [f for f in missing_files if _OTHER_FILE.search(f.get("label") or "")
+                  and not _PROFILE_FILE.search(f.get("label") or "")]
+        documents = [f for f in missing_files if f not in others]
+        named = " and ".join(f"“{clean_label(f.get('label') or '').rstrip(' .')}”" for f in others)
+        attach = f"attach {'it' if len(others) == 1 else 'them'} in the desk's browser window"
         if missing_files:
-            self._pause(run, "stuck", "The form wants a file (" + ", ".join(f["label"] for f in missing_files)
-                        + ") and the profile doesn't say where yours is: ask Claude to set documents.resume (or "
-                        "documents.cover_letter) in profile.yaml, then press Carry on."
+            self._pause(run, "stuck", ("The form wants a file (" + ", ".join(f["label"] for f in documents)
+                                       + ") and the profile doesn't say where yours is: ask Claude to set "
+                                       "documents.resume (or documents.cover_letter) in profile.yaml, then press Carry "
+                                       "on." + (f" It also wants a file your profile has no place for: {named}: "
+                                                f"{attach}." if others else "")
+                                       if documents else
+                                       f"The form wants a file your profile has no place for: {named}. "
+                                       f"{attach[0].upper()}{attach[1:]}, then press Carry on.")
                         + (f" {gaps}" if gaps else "")
                         + (f" It also has {_count(len(pending), 'question')} your profile doesn't answer."
                            if pending else "")
