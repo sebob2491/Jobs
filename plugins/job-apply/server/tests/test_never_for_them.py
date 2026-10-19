@@ -539,3 +539,15 @@ def test_the_sites_privacy_statements_in_the_plural_are_its_terms(named):
                                      "receive our newsletter.")
     assert not pipeline._terms_above(f"By creating a candidate account, you join our talent community under Example "
                                      f"Resort {named}.")
+
+
+@pytest.mark.parametrize("words", ["Sign up for career updates. See our privacy notice.",
+                                   "By creating an account, you agree to receive career news. See our privacy policy.",
+                                   "You consent to Example Resort's privacy statement and to our candidate community.",
+                                   "By creating an account you join our Candidate Network under our privacy policy."])
+def test_career_updates_and_a_candidate_community_are_refused(words):
+    """The review of the plural terms (run 144): "career updates" (a newsletter by another name) and a "candidate
+    community" (a talent community by another name) beside the site's privacy notice read as its terms alone, so a
+    bare "I agree" under them would be ticked. They're the person's, wherever they're read."""
+    assert not pipeline._terms_above(words)
+    assert _never_for_them(words, only=PRECISE) in {"newsletter", "talent community", "signs up"}
