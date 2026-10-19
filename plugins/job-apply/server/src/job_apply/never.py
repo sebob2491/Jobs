@@ -60,10 +60,12 @@ JOB_PICKS = (r"(?:job|career) (?:recommendations?|matches|suggestions?)\b|"
              r"jobs? that match(?:es)? (?:your|my) (?:profile|skills|resume|interests|experience)\b")
 # An at-will statement's words that say so only beside employment ("may be terminated at any time, with or without cause
 # or notice", "terminable at the will of either party", "for any definite period"), and the words for employment
+# ("Either party may end the relationship at any time, with or without cause": the third review of fix-accept-gates)
 _AT_WILL_WORDS = (r"(?:with or without (?:cause|notice|reason)|without cause|terminable|at the will of|"
                   r"definite (?:period|term|duration)|at any time,? for any (?:lawful )?reason|for any reason or no "
                   r"reason)")
-_EMPLOYED = r"(?:employ\w*|jobs?|positions?|hir(?:e|ed|ing)|dismiss\w*|discharg\w*)"
+_EMPLOYED = (r"(?:employ\w*|jobs?|positions?|hir(?:e|ed|ing)|dismiss\w*|discharg\w*|"
+             r"(?:end|terminat)\w* (?:the |this |our |my |your |their )?(?:employment |working )?relationship)")
 
 # By kind, in the order a match is named. Every word each path's own list held before is here (the tests keep those
 # lists, word for word, and check each path still refuses them)

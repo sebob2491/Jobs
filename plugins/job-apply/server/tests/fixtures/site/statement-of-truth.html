@@ -6,7 +6,8 @@
      Online, a "Statement of Truth" whose only ways on are "I Accept" and "I Decline" (and the site's Sign In). Its
      words certify that the application's information is true, say what a false statement costs, and name what's
      needed before employment begins. ?atwill=1: its words also make employment at will; ?arbitration=1: they also
-     bind the person to arbitration; ?claim=1: they also say the person holds the license -->
+     bind the person to arbitration; ?claim=1: they also say the person holds the license; ?br=1: the certification
+     goes on past a line break to a commitment (the third review of fix-accept-gates) -->
 <header><a href="#signin">Sign In</a> <a href="#search">Job Search</a></header>
 <h1>Statement of Truth</h1>
 <label for="lang">Select a language</label>
@@ -14,7 +15,7 @@
 <div class="statement">
   <p>NOTE: It's very important that during the application process you upload all required documents as per the job
      description (e.g. high school diploma/college degree, CPR certification, teaching license, etc.)</p>
-  <p>Each time that I save this online application, I am certifying that the information, statements, and
+  <p id="certify">Each time that I save this online application, I am certifying that the information, statements, and
      documentation submitted on or in conjunction with this employment application are true, correct, complete, and
      accurate as of the date and time this online application is saved.</p>
   <p>I acknowledge and understand that any false, misleading, or incomplete statement, misrepresentation, or omission
@@ -41,6 +42,12 @@
     + 'arbitration.');
   if (params.get('claim')) document.getElementById('duty').textContent = 'I certify that I hold a current teaching '
     + 'license from the State Board of Education.';
+  if (params.get('br')) {
+    const certify = document.getElementById('certify');
+    certify.textContent = certify.textContent.trim().replace(/\.$/, '');
+    certify.append(document.createElement('br'), 'and will undertake two years of service with the District and '
+      + 'comply with all District policies.');
+  }
   document.getElementById('accept').addEventListener('click', () => { location.href = '../generic_form.html'; });
   document.getElementById('decline').addEventListener('click', () => { document.body.textContent = 'You declined.'; });
 </script>

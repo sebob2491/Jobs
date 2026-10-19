@@ -590,6 +590,7 @@ def test_job_picks_in_other_words_are_job_alerts(words):
 @pytest.mark.parametrize("words, kind", [
     ("I understand that my employment may be terminated at any time, with or without cause or notice.", "at-will"),
     ("Employment is terminable at the will of either party.", "at-will"),
+    ("Either party may end the relationship at any time, with or without cause.", "at-will"),
     ("The District may end my employment at any time for any reason.", "at-will"),
     ("Nothing in this application creates a contract of employment for any definite period.", "at-will"),
     ("New employees may be dismissed without cause.", "at-will"),

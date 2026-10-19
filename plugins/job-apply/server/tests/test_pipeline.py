@@ -1768,8 +1768,8 @@ def test_a_privacy_agreement_before_the_application_is_accepted_for_the_person(s
 
 @pytest.mark.parametrize("settings, query", [({}, ""), ({"accept_notices": False}, ""),
                                              ({"submit_mode": "dry_run"}, ""), ({}, "?atwill=1"),
-                                             ({}, "?arbitration=1"), ({}, "?claim=1")],
-                         ids=["on", "off", "practice", "at-will", "arbitration", "claim"])
+                                             ({}, "?arbitration=1"), ({}, "?claim=1"), ({}, "?br=1")],
+                         ids=["on", "off", "practice", "at-will", "arbitration", "claim", "line-break"])
 def test_a_statement_of_truth_is_accepted_for_the_person(srv, monkeypatch, job_apply_home, settings, query):
     """Clark County School District's Taleo (live run 145): after Apply Online, a "Statement of Truth" whose ways on
     are "I Accept" and "I Decline", its words an application's attestation that its information is true (and what a
@@ -1832,8 +1832,8 @@ def test_an_attestation_gate_is_one_that_certifies_the_application_and_no_more()
     accept = {"id": "b1", "text": "I Accept"}
     assert gate(accept, TRUTH, TRUTH_WORDS)
     assert gate({"id": "b1", "text": "I Agree"}, {"headings": ["Applicant Certification"]},
-                "I certify that the answers given in this application are true and complete. I authorize Example "
-                "School District to verify them through a background check.")
+                "I certify that the answers given in this application are true and complete. I consent to a "
+                "background check and verification of my information.")
     for button, about, said in (
             ({"text": "I Accept and Apply"}, TRUTH, TRUTH_WORDS),  # (it sends too)
             ({"text": "I Accept the Terms"}, TRUTH, TRUTH_WORDS),
@@ -1869,9 +1869,40 @@ def test_an_attestation_gate_is_one_that_certifies_the_application_and_no_more()
             "I accept any assignment", "I will pay all fees",
             "I agree to:\n- a polygraph examination\n- a processing fee of $50\n- any assignment",
             "i agree to pay a processing fee of fifty dollars.",
-            "If you decline to pay the processing fee, you will not be allowed to edit your application."):
+            "If you decline to pay the processing fee, you will not be allowed to edit your application.",
+            # The third review: a sentence past a line break, a list's items with no bullets, a table's cells, other
+            # voices and other words; so the whole page is read as an allowlist
+            cert + "\nand agree to pay a $50 processing fee.",
+            cert + "\nand will undertake two years of service.",
+            cert + " and undertake to work any shift.", cert + " and to be bound by all District policies.",
+            cert + " and will comply with all District policies.", cert + " and will relocate as needed.",
+            cert + " and will work overtime when asked.",
+            cert + " and will reimburse training costs if I leave within a year.",
+            cert + " and obligate myself to two years of service.", cert + " and the terms of the offer letter.",
+            "By pressing I Accept and agreeing to pay a $50 fee, I certify that the information is true.",
+            "When I accept a polygraph examination and pay the fee, I certify that the information is true.",
+            "Acceptance of this statement constitutes consent to a polygraph examination.",
+            "Accepting this statement also authorizes the District to obtain driving records.",
+            "This acceptance constitutes your consent to a polygraph examination.",
+            "I acknowledge and understand that any false statement shall result in:\nmy dismissal\nrepayment of all "
+            "wages received",
+            "I certify that the information is true and complete, and I also agree to:\na two-year service commitment",
+            "I agree to the following:\na. a two-year service commitment",
+            "I certify that the information is true.\tTwo-year service commitment required\tAgreed",
+            "Sign In I agree to serve two years",
+            "We, the undersigned, agree to a two-year service commitment.",
+            "The undersigned agrees to a two-year service commitment.",
+            "Signature of applicant constitutes agreement to a two-year service commitment.",
+            "You will be required to serve two years with the District.",
+            "If you decline to agree to a two-year service commitment, you will not be allowed to edit your "
+            "application.",
+            "If you decline, you will be logged out and your service bond is forfeited.",
+            "Either party may end the relationship at any time, with or without cause."):
         words = TRUTH_WORDS.replace("\nNotice -", f"\n{more}\nNotice -")
         assert words != TRUTH_WORDS and not gate(accept, TRUTH, words), more
+    label = "I agree to a two-year service commitment"  # (a sentence that is an action's label too)
+    assert not gate(accept, {**TRUTH, "actions": [*TRUTH["actions"], {"id": "b3", "text": label}]},
+                    TRUTH_WORDS.replace("\nNotice -", f"\n{label}\nNotice -"))
 
 
 @pytest.mark.parametrize("more", [
