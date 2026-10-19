@@ -306,7 +306,8 @@ def doctor(plugin_root: Path, env: dict[str, str]) -> None:
     if not wanted <= set(checks):
         raise Failed(f"the doctor's report lacks {sorted(wanted - set(checks))}")
     if problems - CLEAN_MACHINE_PROBLEMS:
-        raise Failed(f"the doctor found problems a clean machine shouldn't have: {sorted(problems - CLEAN_MACHINE_PROBLEMS)}")
+        raise Failed("the doctor found problems a clean machine shouldn't have: "
+                     f"{sorted(problems - CLEAN_MACHINE_PROBLEMS)}")
     if said.returncode != (1 if problems else 0) or report.get("ok") is not (not problems):
         raise Failed(f"the doctor exited {said.returncode} (ok: {report.get('ok')}) with problems {sorted(problems)}")
     print(f"doctor: exit {said.returncode}, the problems a clean machine has ({', '.join(sorted(problems)) or 'none'})",

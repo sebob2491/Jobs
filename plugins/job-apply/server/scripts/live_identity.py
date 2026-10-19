@@ -288,8 +288,8 @@ def everywhere_employers(lists: Mapping[str, Path] | None = None) -> list[dict[s
             if not isinstance(c, dict) or not isinstance(c.get("search"), dict) or not c["search"] or c["name"] in seen:
                 continue
             seen.add(c["name"])
-            out.append({"name": c["name"], "list": name, "role": role, "system": SYSTEM_OF_SEARCH.get(str(next(iter(c["search"]))),
-                                                                          str(next(iter(c["search"])))),
+            out.append({"name": c["name"], "list": name, "role": role,
+                        "system": SYSTEM_OF_SEARCH.get(str(next(iter(c["search"]))), str(next(iter(c["search"])))),
                         "why": "every employer on the lists (the owner's call, Oct 11)"})
     return out
 

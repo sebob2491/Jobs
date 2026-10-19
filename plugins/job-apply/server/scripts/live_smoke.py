@@ -1,6 +1,7 @@
 """Live smoke test against real employer career sites. Read-only by design.
 
-    uv run python scripts/live_smoke.py --out live-report [--companies "KLA,ASM"] [--fixtures] [--parallel 4] [--role hr|finance]
+    uv run python scripts/live_smoke.py --out live-report [--companies "KLA,ASM"] [--fixtures] [--parallel 4]
+        [--role hr|finance]
 
 For each company with a `search` config in data/companies.yaml:
   1. search_company_jobs for a broad query, and keep the first result;
@@ -22,9 +23,9 @@ own; every site is still visited once. --shard I/N runs only the I-th of N group
 
 Safety: JOB_APPLY_NEVER_SUBMIT=1 is forced, so nothing can be submitted. The only file
 uploaded is a test resume made for the run (live_identity.resume_pdf: it says it's a test and
-that nothing in it is true; with --tailored-resume, the weekly probe's own, which says so too). It never clicks sign-in, account creation, "Autofill with
-Resume", "Next", or third-party apply buttons (LinkedIn, Indeed, SEEK), and LinkedIn and
-Indeed are never contacted.
+that nothing in it is true; with --tailored-resume, the weekly probe's own, which says so too). It never clicks sign-in,
+account creation, "Autofill with Resume", "Next", or third-party apply buttons (LinkedIn, Indeed, SEEK), and LinkedIn
+and Indeed are never contacted.
 
 With LIVE_TEST_EMAIL set (and no --test-identity), the employers whose sites refuse example.com
 (live_identity.INBOX_AT) get the test identity's inbox address instead, masked like the test
@@ -83,7 +84,8 @@ from typing import Any, Callable
 from urllib.parse import urlsplit
 
 os.environ["JOB_APPLY_NEVER_SUBMIT"] = "1"
-os.environ.setdefault("JOB_APPLY_DATE_TRACE", "1")  # each step of a Workday date said in the log (what the site does with it)
+# each step of a Workday date said in the log (what the site does with it)
+os.environ.setdefault("JOB_APPLY_DATE_TRACE", "1")
 os.environ["JOB_APPLY_HEADLESS"] = "1"
 _HOME = Path(tempfile.mkdtemp(prefix="job-apply-live-"))
 os.environ["JOB_APPLY_HOME"] = str(_HOME)
@@ -131,7 +133,8 @@ ROLES: dict[str, dict[str, Any]] = {
         "education_history": [{"school": "Arizona State University", "degree": "Bachelor of Science",
                                "major": "Business Administration", "start": 2016, "end": 2020}],
         "education": {"highest_degree": "Bachelor's Degree",
-                      "degrees_earned": [{"level": "high_school"}, {"level": "bachelor", "field": "Business Administration"}]},
+                      "degrees_earned": [{"level": "high_school"},
+                                         {"level": "bachelor", "field": "Business Administration"}]},
     },
     "finance": {
         "query_az": "financial analyst | accountant | accounting | finance",
@@ -153,16 +156,18 @@ ROLES: dict[str, dict[str, Any]] = {
         "address": {"line1": "495 S Main St", "city": "Las Vegas", "state": "NV", "postal_code": "89101",
                     "country": "United States"},
         "preferences": {"locations": ["Las Vegas, NV", "Henderson, NV", "North Las Vegas, NV"]},
-        "work_history": [{"title": "Systems Administrator", "company": "Example Data Center", "location": "Las Vegas, NV",
-                          "start": "2022-06", "end": "present",
+        "work_history": [{"title": "Systems Administrator", "company": "Example Data Center",
+                          "location": "Las Vegas, NV", "start": "2022-06", "end": "present",
                           "description": "Ran Windows and Linux servers, backups and patching for a colocation site."},
                          {"title": "Help Desk Technician", "company": "Example Resorts", "location": "Las Vegas, NV",
                           "start": "2019-08", "end": "2022-05",
-                          "description": "Answered staff tickets, imaged laptops and reset accounts in Active Directory."}],
+                          "description": "Answered staff tickets, imaged laptops and reset "
+                                         "accounts in Active Directory."}],
         "education_history": [{"school": "Arizona State University", "degree": "Bachelor of Science",
                                "major": "Information Technology", "start": 2015, "end": 2019}],
         "education": {"highest_degree": "Bachelor's Degree",
-                      "degrees_earned": [{"level": "high_school"}, {"level": "bachelor", "field": "Information Technology"}]},
+                      "degrees_earned": [{"level": "high_school"},
+                                         {"level": "bachelor", "field": "Information Technology"}]},
     },
 }
 
@@ -269,7 +274,8 @@ def profile_values(path: Path | None = None) -> dict[str, Any]:
                 for e in prof.get(key) or [] if isinstance(e, dict)]
 
     def employers(profile: dict[str, Any]) -> set[str]:
-        return {str(e["company"]) for e in profile.get("work_history") or [] if isinstance(e, dict) and e.get("company")}
+        return {str(e["company"]) for e in profile.get("work_history") or []
+                if isinstance(e, dict) and e.get("company")}
 
     personal = prof.get("personal") or {}
     degrees = (prof.get("education") or {}).get("degrees_earned") or []
@@ -298,14 +304,16 @@ def start_test_identity(announce: bool = True, everywhere: bool = False, derived
     employers = live_identity.everywhere_employers() if everywhere else live_identity.load_employers()
     unknown = [e["role"] for e in employers if e["role"] not in ROLES]
     if unknown:
-        raise ValueError(f"{live_identity.EMPLOYERS_FILE.name}: no role named {unknown[0]!r}; roles: {', '.join(ROLES)}")
+        raise ValueError(f"{live_identity.EMPLOYERS_FILE.name}: no role named "
+                         f"{unknown[0]!r}; roles: {', '.join(ROLES)}")
     os.environ.update(live_identity.secret_env(site, inbox))
     os.environ.update(away)  # (Workday's alone: the probe's tenants are Workday's)
     os.environ[live_identity.IDENTITY_SWITCH] = "1"  # (config.live_test_identity: with the profile's email)
     TEST_IDENTITY = True
     ROLE_AT.clear()
     ROLE_AT.update({e["name"]: e["role"] for e in employers})
-    (_HOME / "companies.yaml").write_text(yaml.safe_dump({"lists": sorted({e["list"] for e in employers})}), encoding="utf-8")
+    (_HOME / "companies.yaml").write_text(yaml.safe_dump({"lists": sorted({e["list"] for e in employers})}),
+                                          encoding="utf-8")
     if announce:
         print(f"Test identity: {live_identity.FIRST_NAME} {live_identity.LAST_NAME} ({live_identity.EMAIL_MASK}), at "
               + ", ".join(f"{e['name']} ({e['system']})" for e in employers)
@@ -383,8 +391,8 @@ def _save(path: Path, text: str) -> None:
     path.write_text(_mask(text), encoding="utf-8")
 
 
-APPLY = re.compile(r"^(apply( now| for (this|the) (job|position|role)( online)?)?|quick apply|apply to (this )?job|i'?m interested|"
-                   r"start (your |my )?application|apply manually)$", re.I)
+APPLY = re.compile(r"^(apply( now| for (this|the) (job|position|role)( online)?)?|quick apply|apply to (this )?job|"
+                   r"i'?m interested|start (your |my )?application|apply manually)$", re.I)
 NEVER = re.compile(r"autofill|resume|last application|submit|sign ?in|log ?in|create account|register|upload|"
                    r"linked ?in|indeed|seek|google|facebook|next|continue|save", re.I)
 COMPANY_TIMEOUT = 150
@@ -510,7 +518,8 @@ def _page_stand_in(page: str) -> str:
     head = []
     ctx = csod_context(page)
     if ctx:
-        head.append(f"<script>csod.context={json.dumps({k: ctx[k] for k in ('token', 'cultureID') if k in ctx})};</script>")
+        head.append(f"<script>csod.context={json.dumps({k: ctx[k] for k in ('token', 'cultureID') if k in ctx})}"
+                    ";</script>")
     if m := _ORACLE_HOST.search(page):
         head.append(f'<link rel="preconnect" href="https://{m.group(0)}">')
     return f"<html><head>{''.join(head)}</head><body></body></html>"
@@ -542,8 +551,8 @@ async def save_posting(url: str, answers: dict[str, Any]) -> Path | None:
     if path.exists():
         return None
     raw = {"system": system,
-           "note": f"Recorded by live_smoke.py --save-postings on {datetime.date.today().isoformat()}, scrubbed: look it "
-                   "over before committing it (the repo is public).",
+           "note": f"Recorded by live_smoke.py --save-postings on {datetime.date.today().isoformat()}, scrubbed: look "
+                   "it over before committing it (the repo is public).",
            "posting_url": url,
            "answers": {u: _page_stand_in(b) if isinstance(b, str) else _without_people(b) for u, b in answers.items()}}
     text = scrub_others(redact(json.dumps(raw, ensure_ascii=False), personal_strings(Profile.load())))
@@ -666,7 +675,8 @@ PROBES = {
     "Infineon": "https://jobs.infineon.com/careers?query=field%20service&domain=infineon.com",
     "ASML": "https://www.asml.com/en/careers/find-your-job?query=field%20service",
     "Texas Instruments": "https://careers.ti.com/en/sites/CX/jobs?keyword=technician",
-    "onsemi": "https://hctz.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/jobs?keyword=field+service",
+    "onsemi": "https://hctz.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/"
+              "CX_1001/jobs?keyword=field+service",
     # Employers not in companies.yaml go here while their job board is worked out: what it's
     # built on, and how a listing looks. (SUSS MicroTec, Oct 2026: an EQS board of 80
     # openings, none in Arizona; its US ones are in Williston, VT.)
@@ -791,7 +801,8 @@ async def probe_form(name: str, url: str, press: str) -> dict[str, Any]:
             import httpx
 
             from job_apply.postings import USER_AGENT
-            async with httpx.AsyncClient(headers={"User-Agent": USER_AGENT}, follow_redirects=True, timeout=30) as client:
+            async with httpx.AsyncClient(headers={"User-Agent": USER_AGENT}, follow_redirects=True,
+                                         timeout=30) as client:
                 r = await client.get(posting)
             text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", r.text))
             i = text.find(links[0]["text"][:20])
@@ -826,8 +837,8 @@ async def probe_json(name: str, url: str, warm: str | None = None) -> dict[str, 
             return {"keys": sorted(data)[:30] if isinstance(data, dict) else type(data).__name__}
         items = view.get("data") or []
         field = lambda it, k: ((it.get("fields") or {}).get(k) or {}).get("value")  # noqa: E731
-        return {"paging": view.get("pagingInfo"), "count": len(items), "ids": [it.get("resourceId") for it in items[:5]],
-                "titles": [field(it, "Description") for it in items],
+        return {"paging": view.get("pagingInfo"), "count": len(items),
+                "ids": [it.get("resourceId") for it in items[:5]], "titles": [field(it, "Description") for it in items],
                 "places": [field(it, "LocationOfJobDescriptionForSort") for it in items],
                 "first": [{k: str(v.get("value") if isinstance(v, dict) else v)[:600]
                            for k, v in (it.get("fields") or {}).items()} for it in items[:2]],
@@ -969,8 +980,9 @@ JOB_LINKS_JS = r"""() => {
 # Hosts of the job systems the search knows, or might learn: a careers page's links to one
 # of these say where its openings really live.
 ATS_HOST = re.compile(r"myworkdayjobs|myworkdaysite|myworkday\.com|icims\.com|applicantstack|greenhouse\.io|lever\.co|"
-                      r"eightfold\.ai|successfactors|sapsf|oraclecloud|smartrecruiters|phenompeople|paylocity|ultipro|ukg|"
-                      r"adp\.com|bamboohr|jobvite|taleo|workable|recruitee|ashbyhq|breezy|applytojob|dayforce|hrmos|softgarden", re.I)
+                      r"eightfold\.ai|successfactors|sapsf|oraclecloud|smartrecruiters|phenompeople|paylocity|ultipro|"
+                      r"ukg|adp\.com|bamboohr|jobvite|taleo|workable|recruitee|ashbyhq|breezy|applytojob|"
+                      r"dayforce|hrmos|softgarden", re.I)
 
 
 _PLACE_KEY = re.compile(r"locat|city|country|state|region|address|place|site", re.I)
@@ -1018,7 +1030,8 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
             body = await r.text()
         except Exception as e:
             body = f"unreadable: {e}"
-        out: dict[str, Any] = {"url": r.url[:600], "request": (r.request.post_data or "")[:3000], "response": body[:keep]}
+        out: dict[str, Any] = {"url": r.url[:600], "request": (r.request.post_data or "")[:3000],
+                               "response": body[:keep]}
         try:  # a list of openings (SUSS; Paycom's under a key): the fields one has, and a whole one
             items = json.loads(body)
             if isinstance(items, dict):
@@ -1038,7 +1051,8 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
             out["widgets"] = [{
                 "keys": sorted(k for k in w if k not in ("content", "facet")),
                 "total_item": w.get("total_item"),
-                "facets": {f.get("name"): [v.get("text") for v in f.get("value") or []][:20] for f in w.get("facet") or []},
+                "facets": {f.get("name"): [v.get("text") for v in f.get("value") or []][:20]
+                           for f in w.get("facet") or []},
                 "locations": [c.get("job_location") for c in w.get("content") or []],
             } for w in json.loads(body).get("widgets") or []]
         except Exception:
@@ -1082,7 +1096,7 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
           const text = document.body.innerText;
           const i = text.search(/location/i);
           return {bits, ld, around: i >= 0 ? text.slice(Math.max(0, i - 100), i + 300) : ''};
-        }""")
+        }""")  # noqa: E501
         # the markup of anything that reads like an apply or sign-in button, whatever it's drawn with
         rec["apply_buttons"] = await tab.evaluate("""() => [...document.querySelectorAll('body *')]
           .filter((e) => /^\\s*(apply( now)?|quick apply|sign in)\\s*$/i.test(e.textContent || '') && e.children.length < 4)
@@ -1091,8 +1105,9 @@ async def probe_page(name: str, url: str) -> dict[str, Any]:
                                    form_fields: e.form ? [...e.form.elements].filter((f) => /^(INPUT|SELECT|TEXTAREA)$/.test(f.tagName)
                                      && !/^(hidden|submit|button|image|reset)$/i.test(f.type || '')
                                      && !!(f.offsetWidth || f.offsetHeight)).length : null,
-                                   parent: (e.parentElement ? e.parentElement.outerHTML : '').slice(0, 300)}))""")
-        hrefs = await tab.evaluate("() => [...document.querySelectorAll('a[href], iframe[src]')].map(e => e.href || e.src)")
+                                   parent: (e.parentElement ? e.parentElement.outerHTML : '').slice(0, 300)}))""")  # noqa: E501
+        hrefs = await tab.evaluate("() => [...document.querySelectorAll('a[href], "
+                                   "iframe[src]')].map(e => e.href || e.src)")
         rec["ats_links"] = sorted({h for h in hrefs if ATS_HOST.search(h)})[:10]
         rec["frames"] = [f.url[:200] for f in tab.frames if f is not tab.main_frame][:5]
     except Exception as e:
@@ -1172,8 +1187,8 @@ async def main() -> int:
     ap.add_argument("--everywhere", action="store_true",
                     help="with --test-identity: at every employer with a search on the lists in "
                          "live_identity.LIST_ROLES, each with its list's role (semiconductor-az: technician jobs, "
-                         "phoenix-metro: HR, las-vegas: IT), not only test_identity_employers.yaml's (the owner's call, "
-                         "Oct 11); the ones with no search are said on LIVE_SKIPPED lines")
+                         "phoenix-metro: HR, las-vegas: IT), not only test_identity_employers.yaml's (the owner's "
+                         "call, Oct 11); the ones with no search are said on LIVE_SKIPPED lines")
     ap.add_argument("--machine", default="",
                     help="with --test-identity: M/N, this machine's share of the run on N machines at once (0-based): "
                          "its groups are the M-th of every N of live_identity.arrange's, so a code-sending system's "
@@ -1350,7 +1365,8 @@ async def main() -> int:
 
     await server.close_browser()
     _save(args.out / "report.json", json.dumps(records, indent=2, default=str))
-    lines = ["| Company | AZ matches | Posting | Form fields | Autofilled | Failed | Notes |", "|---|---|---|---|---|---|---|"]
+    lines = ["| Company | AZ matches | Posting | Form fields | Autofilled | Failed | Notes |",
+             "|---|---|---|---|---|---|---|"]
     for r in records:
         s = r.get("search_az") or {}
         p = r.get("posting") or {}
@@ -1526,7 +1542,7 @@ _MARKUP_JS = r"""
            box: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)],
            on_top: hit === el || el.contains(hit) ? 'itself' : (hit ? short(hit).slice(0, 300) : null) };
 }
-"""
+"""  # noqa: E501
 
 
 async def _account_page(press: str | None) -> dict[str, Any]:
@@ -1554,7 +1570,8 @@ async def account_form() -> dict[str, Any]:
 
     try:
         form = await server.inspect_form(include_dropdown_options=False)
-        email_step = next((a for a in form["actions"] if re.match(r"^sign in with email$", a["text"].strip(), re.I)), None)
+        email_step = next((a for a in form["actions"]
+                           if re.match(r"^sign in with email$", a["text"].strip(), re.I)), None)
         if not form["fields"] and email_step is not None:
             # Workday's "Sign in with Apple / Google / email" step: this only shows the form
             await server.click(email_step["id"])
@@ -1576,7 +1593,8 @@ async def account_form() -> dict[str, Any]:
                 await page.goto(signin_url)
                 await asyncio.sleep(6)
                 again = await server.inspect_form(include_dropdown_options=False)
-                step = next((a for a in again["actions"] if re.match(r"^sign in with email$", a["text"].strip(), re.I)), None)
+                step = next((a for a in again["actions"]
+                             if re.match(r"^sign in with email$", a["text"].strip(), re.I)), None)
                 if not again["fields"] and step is not None:
                     await server.click(step["id"])
                     await asyncio.sleep(4)
@@ -1632,7 +1650,7 @@ _LIST_JS = r"""
            active: el.getAttribute('aria-activedescendant'),
            around: short(el.closest('[data-automation-id="multiSelectContainer"]') || el.parentElement).slice(0, 1500) };
 }
-"""
+"""  # noqa: E501
 
 
 # A box's open menu as the desk reads it (formjs FIELD_OPTIONS_JS: the visible options, wherever they are), and its
@@ -1675,7 +1693,7 @@ _MENU_JS = r"""
            first: opts.slice(0, 2).map((o) => short(o, 1200)), box: box ? short(box, 2500) : null, chain,
            automation: [...new Set(prompts)].slice(0, 40) };
 }
-"""
+"""  # noqa: E501
 
 
 async def _desk_steps(page: Any, loc: Any, fid: str, typed: str) -> dict[str, Any]:
@@ -1728,7 +1746,7 @@ _GEOMETRY_JS = r"""
                                       before: opts.filter((o) => o.getAttribute('data-ja-before')).length })),
            others: others.slice(0, 12).map((f) => ({ at: r(f), name: (f.getAttribute('aria-label') || f.id || '').slice(0, 40) })) };
 }
-"""
+"""  # noqa: E501
 
 
 FINAL_BOXES = 12  # boxes final_form keeps
@@ -1752,7 +1770,8 @@ async def final_form() -> dict[str, Any]:
         return bool(f.get("invalid") or f.get("error") or (f.get("required") and is_empty_value(f.get("value")))
                     or (len(label) >= 3 and label in said))
     boxes = [{k: (f.get(k)[:FINAL_CHOICES] if k == "options" and isinstance(f.get(k), list) else f.get(k))
-              for k in ("label", "kind", "section", "value", "required", "options", "error") if f.get(k) not in (None, "", [])}
+              for k in ("label", "kind", "section", "value", "required", "options", "error")
+              if f.get(k) not in (None, "", [])}
              for f in data.get("fields") or [] if wanted(f)]
     return {"url": data.get("url"), "errors": errors,
             "actions": [str(a.get("text"))[:60] + (" (disabled)" if a.get("disabled") else "")
@@ -1900,7 +1919,8 @@ def best_posting(results: list[dict[str, Any]]) -> dict[str, Any]:
 ASSESSMENT_PAGES = 100  # (Circle K's: a page for each statement, run 62)
 ASSESSMENT_SECONDS = 600
 ASSESSMENT_OPEN_WAIT = 20  # seconds for the assessment to open after Take Assessment (Circle K's: a moment after)
-TAKE_BUTTON_WAIT = 6  # seconds for the Take Assessment button itself to be drawn (a slow page, or a slow Windows runner)
+# seconds for the Take Assessment button itself to be drawn (a slow page, or a slow Windows runner)
+TAKE_BUTTON_WAIT = 6
 ASSESSMENT_LOOK = 0.5  # seconds between looks for that button, and for the assessment's tab
 ASSESSMENT_TAB_WAIT = 1000  # ms for a tab just opened to have its address
 ASSESSMENT_ANSWERED_WAIT = 1500  # ms for a page's way on to be drawn once it's answered (Circle K's Next)
@@ -1909,10 +1929,11 @@ ASSESSMENT_CLICK_WAIT = 1500  # ms for a page to go on after a click on its answ
 _TAKE_ASSESSMENT = re.compile(r"^(?:take|start|begin|launch|continue)\s+(?:the\s+|your\s+)?assessment\b", re.I)
 _ASSESSMENT_ON = re.compile(r"^(?:next|continue|start|begin|get started|let'?s (?:begin|start)|proceed|ok|okay|"
                             r"i agree|agree|accept|i accept|i understand|i'?m ready|ready|"
-                            r"(?:start|begin|continue|resume)\s+(?:the\s+)?(?:assessment|test|questionnaire|survey|section))$",
+                            r"(?:start|begin|continue|resume)\s+(?:the\s+)?(?:assessment|test|"
+                            r"questionnaire|survey|section))$",
                             re.I)
-_ASSESSMENT_DONE = re.compile(r"^(?:submit|finish|done|complete|submit\s+(?:the\s+)?(?:assessment|test|answers?|questionnaire|"
-                              r"survey)|finish\s+(?:the\s+)?(?:assessment|test))$", re.I)
+_ASSESSMENT_DONE = re.compile(r"^(?:submit|finish|done|complete|submit\s+(?:the\s+)?(?:assessment|test|answers?|"
+                              r"questionnaire|survey)|finish\s+(?:the\s+)?(?:assessment|test))$", re.I)
 # (never these, whatever they say: a cookie banner's, a sign-in with another site, a way back, an application's)
 _NOT_PRESSED = re.compile(r"cookie|google|linkedin|facebook|apple|microsoft|\bback\b|application|\bapply\b", re.I)
 # (and never ticked: a sign-up of any sort)
@@ -1942,7 +1963,8 @@ def assessment_answer(field: dict[str, Any]) -> Any:
 def _applicants_page(data: dict[str, Any]) -> bool:
     """A page with the applicant's own details in its boxes (an application's, not an assessment's)."""
     email = os.environ.get("LIVE_TEST_EMAIL", "").strip().lower()
-    own = {v for v in (email, live_identity.LAST_NAME.lower(), f"{live_identity.FIRST_NAME} {live_identity.LAST_NAME}".lower(),
+    own = {v for v in (email, live_identity.LAST_NAME.lower(),
+                       f"{live_identity.FIRST_NAME} {live_identity.LAST_NAME}".lower(),
                        FAKE_PROFILE["personal"]["email"].lower()) if v}
     return any(str(f.get("value") or "").strip().lower() in own for f in data.get("fields") or [])
 
@@ -1951,8 +1973,8 @@ def _applicants_page(data: dict[str, Any]) -> bool:
 # Predictive Index's "Welcome!", its name and email filled in: Taylor Morrison's, run 61). Only these: a page with the
 # applicant's details on any other site is taken for the application's (an employer's own page that greets the
 # applicant by name, say), and nothing on it is filled or pressed
-ASSESSMENT_VENDORS = {"predictiveindex.com", "shl.com", "hirevue.com", "criteriacorp.com", "wonderlic.com", "harver.com",
-                      "testgorilla.com", "pymetrics.ai"}
+ASSESSMENT_VENDORS = {"predictiveindex.com", "shl.com", "hirevue.com", "criteriacorp.com", "wonderlic.com",
+                      "harver.com", "testgorilla.com", "pymetrics.ai"}
 
 
 def _assessment_vendor(host: str) -> bool:
@@ -2003,7 +2025,7 @@ _ANSWER_TILES_JS = """() => {
     tiles = [...rows.values()].filter((r) => r.length > 1).sort((a, b) => after(b) - after(a))[0] || [];
   }
   return tiles.slice(0, 12).map((el, i) => { el.setAttribute('data-ja-tile', String(i)); return txt(el); });
-}"""
+}"""  # noqa: E501
 
 # (never a tile that agrees to something, signs up, shares, or leaves: only an answer's)
 _NOT_A_TILE = re.compile(r"\bi agree\b|\bi accept\b|consent|\bshare\b|privacy|terms|policy|\bhelp\b|\bexit\b|"
@@ -2011,8 +2033,8 @@ _NOT_A_TILE = re.compile(r"\bi agree\b|\bi accept\b|consent|\bshare\b|privacy|te
 
 # A box about an assessment taken before (its score or results brought in), or one that shares the results: never
 # ticked as an answer
-_TAKEN_BEFORE = re.compile(r"(?:already|previously|before)\b.{0,40}\b(?:taken|completed|done)\b|\btaken\b.{0,20}\bbefore\b|"
-                           r"score id|existing (?:score|results?)|\bshare\b", re.I)
+_TAKEN_BEFORE = re.compile(r"(?:already|previously|before)\b.{0,40}\b(?:taken|completed|done)\b|"
+                           r"\btaken\b.{0,20}\bbefore\b|score id|existing (?:score|results?)|\bshare\b", re.I)
 
 # An assessment's "most likely / least likely" question: each answer with a check mark to pick it as the most likely
 # response and an X as the least (Circle K's, run 64: "Select the ✓ next to the response you feel would be your most
@@ -2030,7 +2052,7 @@ _BEST_WORST_JS = """() => {
   best.forEach((el, i) => el.setAttribute('data-ja-best', String(i)));
   worst.forEach((el, i) => el.setAttribute('data-ja-worst', String(i)));
   return [best.length, worst.length];
-}"""
+}"""  # noqa: E501
 
 # A page's words (what a click on it changed, or not)
 _PAGE_WORDS_JS = "() => (document.body.innerText || '').slice(0, 5000)"
@@ -2136,7 +2158,8 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
         actions = [a for a in data.get("actions") or [] if not a.get("disabled") and not a.get("cookie")
                    and not _NOT_PRESSED.search(a.get("text") or "")]
         # (a box unticked is a question unanswered too: Circle K's "Answers", run 60, a row of boxes to tick one of)
-        fields = [f for f in data.get("fields") or [] if not f.get("disabled") and f.get("kind") not in ("file", "password")
+        fields = [f for f in data.get("fields") or []
+                  if not f.get("disabled") and f.get("kind") not in ("file", "password")
                   and (is_empty_value(f.get("value")) or f.get("kind") == "checkbox" and f.get("value") is False)]
         boxes = [f for f in fields if f.get("kind") == "checkbox" and not _SIGN_UP_BOX.search(f.get("label") or "")]
         answers = [{"id": f["id"], "value": v} for f in fields if f.get("kind") != "checkbox"
@@ -2176,10 +2199,11 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
                       # (what the page says, and the choices it holds: why a page didn't move on, PI's in run 62)
                       "errors": [_mask(e)[:120] for e in (data.get("errors") or [])[:3]],
                       "chosen": [[(f.get("label") or "")[:50], _mask(str(f.get("value")))[:60]]
-                                 for f in (data.get("fields") or []) if f.get("kind") in ("checkbox_group", "radio_group")
+                                 for f in (data.get("fields") or [])
+                                 if f.get("kind") in ("checkbox_group", "radio_group")
                                  and not is_empty_value(f.get("value"))][:4],
-                      "answered": sum(1 for r in filled if r.get("ok")), "buttons": [a.get("text") for a in actions][:12],
-                      "pressed": on.get("text") if on else None})
+                      "answered": sum(1 for r in filled if r.get("ok")),
+                      "buttons": [a.get("text") for a in actions][:12], "pressed": on.get("text") if on else None})
         if on is None and not answers and sends:
             # its answers as tiles to click (Circle K's, run 62): one at random, and the page read again (its Auto
             # Advance goes on by itself; else its way on comes). Or its "most likely / least likely" marks (Circle K's,
@@ -2239,12 +2263,14 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
             # wrong, a box alone that the press left unticked (never one for an assessment taken before: its score ID)
             # (as many more as the page asks: "Please select 5 more words", PI's, run 63; else one)
             asked = max(1, next((int(m.group(1)) for e in data.get("errors") or [] if (m := re.search(
-                r"\b(\d{1,2}) more (?:words?|options?|items?|choices?|answers?|adjectives?|selections?)\b", e, re.I))), 1))
+                r"\b(\d{1,2}) more (?:words?|options?|items?|choices?|answers?|adjectives?|selections?)\b", e,
+                re.I))), 1))
             more_ticks = [{"id": f["id"], "value": [*f["value"], *random.sample(rest, min(asked, len(rest)))]}
                           for f in data.get("fields") or [] if f.get("kind") == "checkbox_group" and isinstance(
                               f.get("value"), list) and f["value"] and not _SIGN_UP_BOX.search(f.get("label") or "")
                           and (rest := [o for o in f.get("options") or [] if o and o not in f["value"]
-                                        and not is_empty_value(o) and not re.match(r"^(select|choose|--|please)", o, re.I)
+                                        and not is_empty_value(o)
+                                        and not re.match(r"^(select|choose|--|please)", o, re.I)
                                         and not _SIGN_UP_BOX.search(o)])]
             lone = [f for f in data.get("fields") or [] if f.get("kind") == "checkbox"]
             if data.get("errors") and len(lone) == 1 and lone[0].get("value") is False and not lone[0].get("disabled") \
@@ -2252,7 +2278,8 @@ async def _take_assessment(run: Any, steps: list[dict[str, Any]], rec: dict[str,
                     and not _TAKEN_BEFORE.search(lone[0].get("label") or ""):
                 more_ticks.append({"id": lone[0]["id"], "value": True})
             if more_ticks:
-                steps[-1]["ticked_more"] = sum(1 for r in (await server.fill_form(more_ticks))["results"] if r.get("ok"))
+                steps[-1]["ticked_more"] = sum(1 for r in (await server.fill_form(more_ticks))["results"]
+                                               if r.get("ok"))
         seen.append(key)
         await browser._locator(page, on["id"]).click(timeout=10000)  # (a vendor's page: never the application's)
         await page.wait_for_timeout(ASSESSMENT_CLICK_WAIT)
@@ -2282,7 +2309,8 @@ async def finish_account_choices(run: Any) -> str:
     # the account form's own button (as the desk's _make_account has it), never a footer's or a banner's
     button = next((a for a in data.get("actions") or [] if (a.get("text") or "").strip() == pressed
                    and not a.get("disabled") and not a.get("cookie") and not a.get("aside")
-                   and (a.get("account_form") or a.get("in_account_form") or a.get("form_submit") and a.get("after_password"))),
+                   and (a.get("account_form") or a.get("in_account_form")
+                        or a.get("form_submit") and a.get("after_password"))),
                   None)
     if sum(f.get("kind") == "password" for f in fields) < 2 or not left or button is None:
         return ""
@@ -2297,10 +2325,12 @@ async def finish_account_choices(run: Any) -> str:
     filled = (await server.fill_form(answers)).get("results") or []
     if not any(r.get("ok") for r in filled):
         return ""
-    await server.browser._locator(run.page, button["id"]).click(timeout=10000)  # (the account's, never an application's)
+    # (the account's, never an application's)
+    await server.browser._locator(run.page, button["id"]).click(timeout=10000)
     await asyncio.sleep(ACCOUNT_MADE_WAIT)
-    return "; ".join(f"{_mask(f.get('label') or '')[:60]}: {_mask(str(a['value']))[:60]}" for f, a in zip(left, answers)) \
-        + f"; pressed \u201c{pressed}\u201d"
+    return ("; ".join(f"{_mask(f.get('label') or '')[:60]}: {_mask(str(a['value']))[:60]}"
+                      for f, a in zip(left, answers))
+            + f"; pressed \u201c{pressed}\u201d")
 
 
 def agreed_words(agreed: list[dict[str, Any]], seen: set[tuple[str, str, str]] | None = None) -> list[dict[str, Any]]:
@@ -2321,8 +2351,9 @@ def agreed_words(agreed: list[dict[str, Any]], seen: set[tuple[str, str, str]] |
             if key in seen:
                 continue
             seen.add(key)
-        out.append({"what": str(a.get("what") or ""), "heading": scrub(a.get("heading")), "button": scrub(a.get("button")),
-                    "words": scrub(a.get("words")), "choices": [scrub(c) for c in a.get("choices") or []],
+        out.append({"what": str(a.get("what") or ""), "heading": scrub(a.get("heading")),
+                    "button": scrub(a.get("button")), "words": scrub(a.get("words")),
+                    "choices": [scrub(c) for c in a.get("choices") or []],
                     "windows": [scrub(w) for w in a.get("windows") or []], "sha": key[0]})
     return out
 
@@ -2395,7 +2426,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                     # (as the desk's card keys them: a label more than one box has, a date's Month, Day and Year,
                     # by its own box, or the year's answer goes in all three and the date is asked again and again)
                     own = labels.count(q.get("label") or "") > 1 or (
-                        q.get("role") == "spinbutton" and str(q.get("sublabel") or "").lower() in ("month", "day", "year"))
+                        q.get("role") == "spinbutton"
+                        and str(q.get("sublabel") or "").lower() in ("month", "day", "year"))
                     key = placed_key(q) if own else question_key(q.get("label") or "")
                     run.once[key] = fake_answer(q)
                 applier.enqueue(job["id"], front=True)
@@ -2492,8 +2524,8 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
 async def drop_tailored_resume(job: dict[str, Any]) -> dict[str, Any]:
     """--tailored-resume (the weekly probe, scripts/live_probes.py): a clearly marked tailored test resume in the job's
     folder, made as render_document makes one (its Markdown printed to a PDF by render.to_html and render_pdf) from
-    this run's own fake profile, under a name of its own (live_probes.tailored_name(), new each day, never the profile resume's
-    live_identity.RESUME_NAME), so the review page tells the two apart. The desk prefers it to the profile's
+    this run's own fake profile, under a name of its own (live_probes.tailored_name(), new each day, never the profile
+    resume's live_identity.RESUME_NAME), so the review page tells the two apart. The desk prefers it to the profile's
     (autofill.tailored_document): "picked" says which file that finds. What was done, or the "error"."""
     from job_apply import render
     from job_apply.autofill import tailored_document
@@ -2541,7 +2573,8 @@ async def report_inbox(company: str, applier: Any, run: Any) -> None:
         senders = applier._mail_senders(run)  # (who this job's code may come from)
         report.update(await asyncio.to_thread(live_identity.inbox_report, os.environ, senders, run.paused_at))
         report["mail_problem"] = applier.mail_problem  # (what the desk itself said of reading the inbox)
-        report["desk"] = {"looks": getattr(run, "mail_looks", None), "last": getattr(run, "mail_last", None)}  # (its own looks)
+        # (its own looks)
+        report["desk"] = {"looks": getattr(run, "mail_looks", None), "last": getattr(run, "mail_last", None)}
     except Exception as e:  # a diagnostic: the run's record stands without it
         report["error"] = f"{type(e).__name__}: {str(e)[:200]}"
     print("LIVE_INBOX " + json.dumps(report, default=str), flush=True)

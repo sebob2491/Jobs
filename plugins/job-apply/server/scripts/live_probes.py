@@ -141,7 +141,8 @@ def secrets_of(env: Mapping[str, str]) -> tuple[str, list[str]]:
 
 STEPS = ("refused", "reset_asked", "email_read", "password_set", "signed_in", "reached_application")
 STEP_WORDS = {"refused": "refused", "reset_asked": "reset asked for", "email_read": "email read",
-              "password_set": "new password set", "signed_in": "signed in", "reached_application": "reached the application"}
+              "password_set": "new password set", "signed_in": "signed in",
+              "reached_application": "reached the application"}
 # (the desk's own log lines, pipeline.py's words)
 _PRESSED = re.compile(r"^pressed \u201c[^\u201d]+\u201d with your saved password")
 _REFUSED = re.compile(r"saved password,? (?:which )?didn't sign in", re.I)
@@ -152,7 +153,8 @@ _ACCOUNT_PRESSED = re.compile(r"^pressed \u201c[^\u201d]+\u201d to (?:create|fin
 # a step of the application itself, past the sign-in
 _APPLICATION = re.compile(r"^(?:filled \d+ (?:field|answer)|clicked \u201c|reached the review page|ticked \u201c|"
                           r"picked \u201c|chose \u201c|left \d+ |answered )")
-_REVIEW = live_compare.REACHED  # as far as a run goes ("ready", "needs_you your_submit"): the person's own Submit is next
+# as far as a run goes ("ready", "needs_you your_submit"): the person's own Submit is next
+_REVIEW = live_compare.REACHED
 _SIGN_IN_NEEDS = {"sign_in", "email_code", "bot_check"}
 # What the site or the person stops a run with, never the desk's to get past: the live check's outcomes that are the
 # site's alone (no posting found, a site down for maintenance, a bot check), and a stop whose reason (or, for a CAPTCHA
@@ -330,7 +332,8 @@ def reset_result(tenant: Mapping[str, str], first_rec: Mapping[str, Any] | None,
     if warning and second is not None and _REUSED.search(second["said"]):
         warning += (" But the site's words say it won't take a password it had before, so that reset may be "
                     "refused the same way: look at it before the next nightly.")
-    passes = [{"pass": 1, "saved": "derived", "ran": True, **first, "status": first_status[0], "status_why": first_status[1]},
+    passes = [{"pass": 1, "saved": "derived", "ran": True, **first, "status": first_status[0],
+               "status_why": first_status[1]},
               {"pass": 2, "saved": "real", "ran": second is not None, **(second or {}), "status": second_status[0],
                "status_why": second_status[1]}]
     statuses = {first_status[0], second_status[0]}
@@ -345,9 +348,10 @@ TAILORED_NAME = "Jobdesk_Test_Tailored_Probe_Resume.pdf"  # (its stem ends in "r
 
 
 def tailored_name(day: datetime.date | None = None) -> str:
-    """The tailored test resume's name for a run: a new one each day ("Jobdesk_Test_Tailored_Probe_20261018_Resume.pdf"),
-    so a Workday account that kept last week's (NXP's) is told from this week's, and the review page showing the name
-    means the desk put this one in, not that it left last week's (the kept-resume review of Oct 18)."""
+    """The tailored test resume's name for a run: a new one each day
+    ("Jobdesk_Test_Tailored_Probe_20261018_Resume.pdf"), so a Workday account that kept last week's (NXP's) is told from
+    this week's, and the review page showing the name means the desk put this one in, not that it left last week's (the
+    kept-resume review of Oct 18)."""
     return f"{Path(TAILORED_NAME).stem[:-len('_Resume')]}_{(day or datetime.date.today()):%Y%m%d}_Resume.pdf"
 TAILORED_NOTE = ("TAILORED TEST RESUME, made by the Job Desk's weekly probe (scripts/live_probes.py) to see that the "
                  "application takes it. Not a real applicant; nothing in it is true.")
@@ -391,7 +395,8 @@ def files_shown(text: str) -> list[str]:
     return list(dict.fromkeys(_FILE_NAME.findall(text)))[:8]
 
 
-def tailored_check(text: str, tailored: str = TAILORED_NAME, profiles: str = live_identity.RESUME_NAME) -> dict[str, Any]:
+def tailored_check(text: str, tailored: str = TAILORED_NAME,
+                   profiles: str = live_identity.RESUME_NAME) -> dict[str, Any]:
     """Which resume the review page's words show: "pass" when the tailored one and not the profile's, else "fail"
     with what it shows instead (the profile's, both, or neither). By the names' stems, in any letter case, with "_",
     "-" and spaces alike."""
@@ -533,7 +538,8 @@ async def run_probes(out: Path, probes: Iterable[str], companies: str = "") -> N
     if "reset" in probes:
         for tenant in chosen(RESET_TENANTS, companies):
             name = tenant["name"]
-            print(f"\n== reset probe, {name}: pass 1, Workday's saved password derived from the site password", flush=True)
+            print(f"\n== reset probe, {name}: pass 1, Workday's saved password derived from the site password",
+                  flush=True)
             first_dir = out / folder_of("reset", name, 1)
             await run_one(run_args(name, first_dir, derived=True), first_dir)
             if pass_two_needed(reset_steps(read_record(first_dir, name))):
@@ -541,7 +547,8 @@ async def run_probes(out: Path, probes: Iterable[str], companies: str = "") -> N
                 second_dir = out / folder_of("reset", name, 2)
                 await run_one(run_args(name, second_dir), second_dir)
             else:
-                print(f"\n== reset probe, {name}: pass 2 not needed (the site's password was never changed)", flush=True)
+                print(f"\n== reset probe, {name}: pass 2 not needed (the site's password was never changed)",
+                      flush=True)
     if "tailored" in probes:
         for employer in chosen(TAILORED_EMPLOYERS, companies):
             print(f"\n== tailored-resume probe, {employer['name']}", flush=True)
@@ -628,7 +635,8 @@ def summary_lines(results: Mapping[str, Any]) -> list[str]:
             out.append(f"  WARNING: {r['warning']}")
     for r in results.get("tailored") or []:
         out.append(f"tailored {r['employer']}: {STATUS_WORDS[r['status']]}: {r['detail']}"
-                   + (f"; the page's files: {', '.join(r['shown'])}" if r.get("shown") else "") + f"; ended {r['ended']}")
+                   + (f"; the page's files: {', '.join(r['shown'])}" if r.get("shown") else "")
+                   + f"; ended {r['ended']}")
     return out
 
 
@@ -646,10 +654,10 @@ def report_markdown(results: Mapping[str, Any]) -> str:
         lines += [""] if said else []
     if results.get("reset"):
         lines += ["### Password reset (Workday, the test identity's account)", "",
-                  "Pass 1 saves a password derived from the real one, which the site refuses: the desk resets the site to "
-                  "it. Pass 2 saves the real one: the desk resets it back.", "",
-                  "| Tenant | Pass | Saved | " + " | ".join(STEP_WORDS[k].capitalize() for k in STEPS) + " | Ended | Result |",
-                  "|---|---|---|" + "---|" * len(STEPS) + "---|---|"]
+                  "Pass 1 saves a password derived from the real one, which the site refuses: the desk resets the site "
+                  "to it. Pass 2 saves the real one: the desk resets it back.", "",
+                  "| Tenant | Pass | Saved | " + " | ".join(STEP_WORDS[k].capitalize() for k in STEPS)
+                  + " | Ended | Result |", "|---|---|---|" + "---|" * len(STEPS) + "---|---|"]
         for r in results["reset"]:
             for p in r["passes"]:
                 if not p["ran"]:
@@ -668,8 +676,9 @@ def report_markdown(results: Mapping[str, Any]) -> str:
                 lines.append(f"  - **{_cell(r['warning'])}**")
         lines.append("")
     if results.get("tailored"):
-        lines += ["### Tailored resume", "", f"The job's folder held a tailored test resume (Jobdesk_Test_Tailored_Probe_<day>_Resume.pdf, a new name each day); the "
-                  f"profile's is {live_identity.RESUME_NAME}.", "",
+        lines += ["### Tailored resume", "", "The job's folder held a tailored test resume "
+                  "(Jobdesk_Test_Tailored_Probe_<day>_Resume.pdf, a new name each day); "
+                  f"the profile's is {live_identity.RESUME_NAME}.", "",
                   "| Employer | Files the review page shows | Result | Detail |", "|---|---|---|---|"]
         for r in results["tailored"]:
             lines.append(f"| {_cell(r['employer'])} | {_cell(', '.join(r.get('shown') or []) or 'none')} | "

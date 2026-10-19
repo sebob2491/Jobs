@@ -41,7 +41,8 @@ FAKE_PROFILE: dict[str, Any] = {
     # person's to choose from a bare "Bachelor's Degree", and ten employers' stopped there, nightly Oct 11)
     # as setup writes it: the degrees confirmed finished answer "Do you have a Bachelor's degree?"
     "education": {"highest_degree": "Bachelor's Degree",
-                  "degrees_earned": [{"level": "high_school"}, {"level": "bachelor", "field": "Electrical Engineering"}]},
+                  "degrees_earned": [{"level": "high_school"},
+                                     {"level": "bachelor", "field": "Electrical Engineering"}]},
     # (accept_cookies, as a person may set it: a banner with no way to decline, Texas Instruments' Oracle one, is
     # accepted, so the check sees past it; one that can be declined still is: the owner asked, Oct 13)
     "settings": {"submit_mode": "dry_run", "browser_channel": "chromium", "headless": True, "accept_cookies": True},

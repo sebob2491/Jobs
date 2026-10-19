@@ -164,7 +164,8 @@ def main(argv: list[str] | None = None) -> int:
         changed = changed_files(args.base)
         tests = {p.relative_to(SERVER).as_posix(): text for p, text in _read(SERVER / "tests", "*.py").items()}
         modules: dict[str, str] = {}
-        for p, text in _read(SERVER / "src" / "job_apply", "*.py").items():  # (a mixin's imports are its class's module's)
+        # (a mixin's imports are its class's module's)
+        for p, text in _read(SERVER / "src" / "job_apply", "*.py").items():
             key = "job_apply." + module_of(p.name)
             modules[key] = modules.get(key, "") + text
         modules |= {p.stem: text for p, text in _read(SERVER / "scripts", "*.py").items()}
