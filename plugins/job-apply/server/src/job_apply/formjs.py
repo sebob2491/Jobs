@@ -127,6 +127,15 @@ EXTRACT_JS = r"""
     }
     return ticked;
   };
+  // Oracle's cx-multi-select (Recruiting Cloud's "select all that apply" question, MSTS' run 144): an input whose ticked
+  // choices show as pills under its box, beside its container; the input holds only words typed to search. null for
+  // any other box
+  const cxTicked = (el) => {
+    const box = el.tagName === 'INPUT' ? el.closest('.cx-multi-select-container') : null;
+    if (!box || !box.parentElement) return null;
+    return Array.from(box.parentElement.querySelectorAll(':scope > .cx-multi-select-pill__values '
+      + '.cx-multi-select-pill__value-text')).map(txt).filter(Boolean);
+  };
   const byId = (id) => (id ? document.getElementById(id) : null);
   // a wrapper folded shut (height or width 0, its overflow hidden: an accordion closed) hides what's in it, though
   // each box keeps its own size (the review of Oct 15); read once a wrapper per look
@@ -472,6 +481,7 @@ EXTRACT_JS = r"""
     const native = twin && twin.tagName === 'SELECT' ? twin : null;
     // (BrassRing's search box standing for a select of several choices: the question itself, not a site's search)
     const standIn = tagName === 'input' && role === 'combobox' && standsFor(el) && standsFor(el).multiple ? standsFor(el) : null;
+    const cx = role === 'combobox' ? cxTicked(el) : null;  // (Oracle's multi-select: its pills)
     // (and no other element acting as a button: a site's own menus, a header's language picker, aren't its form)
     if (role === 'button' && !['button', 'input', 'select', 'textarea'].includes(tagName) && !native) continue;
     // (the select such a search box stands for is that box's question, never one of its own: BrassRing's hides it only
@@ -508,11 +518,11 @@ EXTRACT_JS = r"""
       // its chosen items sit beside the input's own box, in the prompt's outer container
       const workday = el.closest('[data-automation-id="multiSelectContainer"]')
         || el.closest('[data-automation-id="multiselectInputContainer"]');
-      const pills = standIn ? searchTicked(el, standIn)
+      const pills = cx ? cx : standIn ? searchTicked(el, standIn)
         : workday ? Array.from(workday.querySelectorAll('[data-automation-id="selectedItem"], [class*="selected" i] [class*="label" i]')).map(txt).filter(Boolean)
         : pillsNear(el);
       if (pills.length) value = pills.join(', ');
-      else if (workday || standIn) value = '';  // text left in its search box isn't a choice; nor is "0 items selected"
+      else if (workday || standIn || cx) value = '';  // text left in its search box isn't a choice; nor is "0 items selected"
       else if (!el.value) value = shownNear(el);  // react-select shows the choice beside an empty input
       if (standIn) {  // (its choices, where the select holds them; BrassRing's lists them only once opened)
         const named = Array.from(standIn.options).filter((o) => o.value !== '').map((o) => clean(o.text)).filter(Boolean);
@@ -598,7 +608,7 @@ EXTRACT_JS = r"""
     if (kind === 'combobox' && el.getAttribute('aria-haspopup') === 'grid') f.search = true;
     // SuccessFactors' paginated select: lists 100 entries at a time, the rest by search
     if (kind === 'combobox' && el.classList.contains('rcmpaginatedselectinput')) f.paged = true;
-    if (el.multiple || (standIn && standIn.multiple)) f.multiple = true;
+    if (el.multiple || (standIn && standIn.multiple) || (kind === 'combobox' && cx)) f.multiple = true;
     // a list whose first choice (or preset country) the desk judged the site's once: a pick of it since is the person's
     if ((kind === 'select' || kind === 'listbox' || kind === 'combobox') && el.hasAttribute('data-ja-default-judged')) f.judged = true;
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') f.disabled = true;
@@ -1558,8 +1568,9 @@ WORKDAY_PROMPT_JS = r"""
 
 
 # A jQuery UI multiselect's button ("<id>-button" over a hidden <select multiple>: BrassRing's "Please check each
-# applicable box", Edward Jones' run 87), or BrassRing's search box standing for one (run 88): the choices it has ticked
-# (its select's, and those its widget lists beside it), or null for any other control
+# applicable box", Edward Jones' run 87), BrassRing's search box standing for one (run 88), or Oracle's cx-multi-select
+# (run 144): the choices it has ticked (its select's, and those its widget lists beside it; Oracle's pills), or null for
+# any other control
 TWIN_TICKED_JS = r"""
 (el) => {
   const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
@@ -1592,6 +1603,12 @@ TWIN_TICKED_JS = r"""
     }
     return ticked;
   };
+  // and Oracle's cx-multi-select: the pills under its box (MSTS' run 144)
+  const cx = el.tagName === 'INPUT' ? el.closest('.cx-multi-select-container') : null;
+  if (cx && cx.parentElement) {
+    return Array.from(cx.parentElement.querySelectorAll(':scope > .cx-multi-select-pill__values '
+      + '.cx-multi-select-pill__value-text')).map((p) => clean(p.textContent)).filter(Boolean);
+  }
   const stood = el.tagName === 'INPUT' && el.getAttribute('select') ? document.getElementById(el.getAttribute('select')) : null;
   if (stood && stood.tagName === 'SELECT') return stood.multiple ? searchTicked(el, stood) : null;
   const twin = el.id && el.id.endsWith('-button') ? document.getElementById(el.id.slice(0, -'-button'.length)) : null;

@@ -264,9 +264,12 @@ def may_accept_cookies(info: dict[str, Any]) -> bool:
 POSTING_PAGE_RE = re.compile(r"career(?:_|%5f)ns=job(?:_|%5f)listing(?:&|#|$)", re.I)
 SHORT_MENU = 12  # a menu this short shows every choice; a longer one may show only some
 _SEARCH_PAGE = 15  # BrassRing's search box lists its choices 15 at a time: a full page may have more past it
-# a multiselect's row that shows its choice ticked (BrassRing's pseudo-checkbox, or its row's own class)
+# a multiselect's row that shows its choice ticked (BrassRing's pseudo-checkbox, or its row's own class; a list of
+# several choices whose row says it's selected: Oracle's cx-multi-select, run 144)
 _ROW_TICKED_JS = ("el => !!(el.closest('li.checked') "
-                  "|| el.querySelector('.pseudocheckbox.checked, .pseudocheckbox[aria-checked=\"true\"]'))")
+                  "|| el.querySelector('.pseudocheckbox.checked, .pseudocheckbox[aria-checked=\"true\"]') "
+                  "|| el.closest('[role=\"listbox\"][aria-multiselectable=\"true\"] "
+                  "[role=\"option\"][aria-selected=\"true\"]'))")
 POPUP_FOLLOW = 15  # seconds after a click of ours in which a tab it opens is followed
 FRAME_WAIT = 8  # seconds for a job board's frame (iCIMS's openings) to load its page, all told
 SETTLE_WAIT = 8  # seconds for a job board's page to stop loading things, at most

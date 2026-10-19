@@ -244,7 +244,9 @@ class MenusMixin:
         taken where it then shows ticked; never clicked again, which would untick it. BrassRing's search box for
         several choices (run 88) works alike: its list opens on the Down key and shows a page of 15, its choices known
         only once it's open; an answer that page doesn't show, or shows only a near neighbour of ("South Asian" for
-        "Asian": the review's), is searched for, and the exact one taken."""
+        "Asian": the review's), is searched for, and the exact one taken. Oracle's cx-multi-select too (MSTS' question
+        7, run 144): its choices ticked show as pills under its box, and it sets its answer only as its list closes
+        (closed here after the tick, the focus taken off it)."""
         names = bool(field.get("names"))
         options = field.get("options") or []
         choice = choose_option(value, options, names=names) if options else None

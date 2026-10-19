@@ -414,6 +414,43 @@ def test_a_brassring_search_box_ticks_the_answer_itself_once(srv, query, given, 
     assert run(tab.evaluate(pills)) == ticked
 
 
+def test_an_oracle_multi_select_is_read_from_its_pills_and_ticked_once(srv):
+    """Oracle's cx-multi-select (Mission Support and Test Services' question 7, the nightly's run 144): a box whose
+    choices, once ticked, show as pills under it. Its pills weren't read, so a pick that went in read as empty: the
+    desk's second try at the answer clicked the choice again, which unticked it, and the same question was asked seven
+    rounds. Its value is its pills; a choice is clicked once, only where it isn't ticked, and taken where its pill then
+    shows; the list is closed after (the widget sets the answer only then)."""
+    page = run(srv.browser.goto(fixture_url("site/oracle-multiselect.html")))
+    assert page["fields"] == 2, page
+    form = run(srv.browser.inspect(include_dropdown_options=True))
+    q7 = next(f for f in form["fields"] if f["label"].startswith("7. Have you ever worked for Example Labs"))
+    assert (q7["kind"], q7.get("value"), q7.get("required")) == ("combobox", "", True), q7
+    assert "N/A" in q7.get("options", []), q7
+    tab = run(srv.browser.page())
+    pills = ("() => Array.from(document.querySelectorAll('.cx-multi-select-pill__value-text'))"
+             ".map((p) => p.textContent.trim())")
+    for _ in range(2):  # (given again, a second try or a second pass: it stays ticked)
+        done = run(srv.browser.fill([{"id": q7["id"], "value": "N/A"}]))
+        assert all(r["ok"] for r in done), done
+        assert run(tab.evaluate(pills)) == ["N/A"]
+        assert run(tab.evaluate("() => window.committed")) == ["N/A"]  # (its list closed: the answer set)
+        after = next(f for f in run(srv.browser.inspect(include_dropdown_options=False))["fields"]
+                     if f["id"] == q7["id"])
+        assert after.get("value") == "N/A", after
+
+
+def test_an_oracle_multi_select_that_wont_take_a_pick_says_so(srv):
+    """A pick the box doesn't take (no pill after the click) is said, for the person to tick it, never taken for an
+    answer: read as filled, the same question would come back each round with the desk sure it had answered it."""
+    page_of(srv, "site/oracle-multiselect.html", "?refuse")
+    form = run(srv.browser.inspect(include_dropdown_options=True))
+    q7 = next(f for f in form["fields"] if f["label"].startswith("7. Have you ever worked for Example Labs"))
+    done = run(srv.browser.fill([{"id": q7["id"], "value": "N/A"}]))
+    assert not done[0]["ok"] and "desk's browser window" in done[0]["error"], done
+    after = next(f for f in run(srv.browser.inspect(include_dropdown_options=False))["fields"] if f["id"] == q7["id"])
+    assert after.get("value") == "", after
+
+
 def test_a_security_answer_put_in_is_never_read_back_nor_saved(srv, tmp_path):
     """An account's security answer from the desk's card (the review of the card): its box is marked before it's filled,
     so it reads back "(set)", as a password, even where the box held it already ("already set"), shows as dots, and
