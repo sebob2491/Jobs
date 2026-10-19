@@ -1948,13 +1948,23 @@ def test_worked_there_before_only_where_the_profile_names_the_employer_itself():
     ("New York Life", "New York Times", "No"), ("New Mexico Gas", "New Mexico State University", "No"),
     ("North Carolina State", "North Carolina Central", "No"), ("United States Postal Service", "United States Air Force", "No"),
     ("Community Health Systems", "Community Health Network", "No"), ("National Park Service", "National Park Foundation", "No"),
-    # (nor a two-letter first word read as a short form)
-    ("TTM Technologies", "TT Electronics", "No"), ("SK Hynix", "Southwest Key", "No"), ("JB Hunt", "Johnson Brothers", "No"),
-    ("GE Aerospace", "Global Equities", "No"), ("AB Electronics", "American Bank", "No"),
-    ("ON Semiconductor", "Oracle Network", "No"), ("ON Semiconductor", "Onsite Nursing", "No"),
-    ("EE Times", "Electrical Engineering", "No"), ("PF Changs", "Phoenix Fire", "No"), ("BD Medical", "Banner Desert", "No"),
-    ("ST Microelectronics", "Sound Transit", "No"), ("JE Dunn", "Jones Electric", "No"),
+    # a two-letter first word may be the initials of a name's first words: asked, never No, though most such pairs are
+    # two employers (the fourth review: "GD Mission Systems" is General Dynamics Mission Systems', "GE Aerospace" General
+    # Electric's, and a wrong No is a false answer where a wrong ask costs a question). Never Yes
+    ("TTM Technologies", "TT Electronics", None), ("SK Hynix", "Southwest Key", None), ("JB Hunt", "Johnson Brothers", None),
+    ("GE Aerospace", "Global Equities", None), ("AB Electronics", "American Bank", None),
+    ("ON Semiconductor", "Oracle Network", None), ("ON Semiconductor", "Onsite Nursing", None),
+    ("EE Times", "Electrical Engineering", None), ("PF Changs", "Phoenix Fire", None), ("BD Medical", "Banner Desert", None),
+    ("ST Microelectronics", "Sound Transit", None), ("JE Dunn", "Jones Electric", None),
     ("GE", "General Electric", None),
+    # (the fourth review's: real same employers that round 3 made a firm No)
+    ("GD Mission Systems", "General Dynamics Mission Systems", None), ("GE Aerospace", "General Electric", None),
+    ("GE Vernova", "General Electric", None), ("GE Healthcare", "General Electric", None),
+    ("GE", "General Electric Aviation", None), ("HP Enterprise", "Hewlett Packard Enterprise", None),
+    ("TI", "Texas Instruments Tucson", None), ("JB Hunt", "J.B. Hunt Transport", None),
+    ("TE Connectivity", "Tyco Electronics", None), ("UA", "University of Arizona Health Sciences", None),
+    ("Arizona Public Service", "Arizona Public Svc", None), ("Texas Instruments - Sherman", "Texas Instruments Tucson", None),
+    ("Arizona State Univ", "Arizona State University", None),
     # the employer itself: Yes
     ("Wells Fargo & Company", "Wells Fargo", "Yes"), ("Texas Instruments Incorporated", "Texas Instruments", "Yes"),
 ])

@@ -808,37 +808,59 @@ _GENERIC_SECOND = {"department", "public", "board", "federal", "health", "states
 _SMALL_WORDS = {"of", "and", "the", "for", "at", "de"}
 
 
-def _short_forms(name: str, whole: bool = False) -> set[str]:
+def _short_forms(name: str) -> set[str]:
     """What a name of several words may be shortened to: its initials, of the whole and of its first words, with its
     small words and without, with its legal words and without ("Taiwan Semiconductor Manufacturing Company": tsmc;
     "Analog Devices, Inc.": adi; "Tokyo Electron Limited": tel; "University Medical Center of Southern Nevada": umc);
-    and its initials before its last word ("University of Arizona": uarizona). `whole`: the initials of the whole name
-    alone (for a two-letter short form: "GE" is General Electric's, never "Global Equities Holdings"' first two)."""
+    and its initials before its last word ("University of Arizona": uarizona). Of its first words too: "GE" may be
+    "General Electric Aviation"'s, "TI" "Texas Instruments Tucson"'s (and "TT" "TTM Technologies"': only ever asked)."""
     forms: set[str] = set()
     for words in (norm(name).split(), _employer_key(name).split()):
         if words and words[0] == "the":
             words = words[1:]
         big = [w for w in words if w not in _SMALL_WORDS]
         for ws in (words, big):
-            forms |= {"".join(w[0] for w in ws[:n]) for n in range(len(ws) if whole else 2, len(ws) + 1)}
-        if len(big) >= 2 and not whole:
+            forms |= {"".join(w[0] for w in ws[:n]) for n in range(2, len(ws) + 1)}
+        if len(big) >= 2:
             forms.add("".join(w[0] for w in big[:-1]) + big[-1])
     return forms
 
 
 def _as_short(name: str) -> set[str]:
     """How a name may be another's short form: a name of one word, as it is ("ASU", "UArizona"); one of single letters
-    and small words, as its letters ("U of A": ua, uoa); one whose first word isn't a common one, as that word, of three
-    letters or more ("TSMC Arizona": tsmc, "UMC Southern Nevada": umc; never "TT Electronics", "SK Hynix", "GE
-    Aerospace": two letters are any two words' initials)."""
-    words = _employer_key(name).split()
+    and small words, as its letters ("U of A": ua, uoa); one whose first word isn't a common one, as that word ("TSMC
+    Arizona": tsmc, "UMC Southern Nevada": umc, "GD Mission Systems": gd, "J.B. Hunt": jb). A two-letter word is any
+    two words' initials ("TT Electronics" may be "TTM Technologies"'s), so it only ever asks: a may-be is never a Yes."""
+    words = _fold(_employer_key(name)).split()
     if not words:
         return set()
     if len(words) == 1:
         return {words[0]} if len(words[0]) >= 2 else set()
     if all(len(w) == 1 or w in _SMALL_WORDS for w in words):
         return {"".join(w[0] for w in words), "".join(w for w in words if len(w) == 1)}
-    return {words[0]} if len(words[0]) >= 3 and words[0] not in _COMMON_FIRST else set()
+    return {words[0]} if len(words[0]) >= 2 and words[0] not in _COMMON_FIRST else set()
+
+
+# Words a name may be shortened to, read as the word itself where two names are compared ("Arizona Public Svc")
+_ABBREVIATED = {"svc": "service", "svcs": "services", "co": "company", "corp": "corporation", "intl": "international",
+                "univ": "university", "med": "medical", "ctr": "center", "tech": "technology", "mfg": "manufacturing",
+                "technologies": "technology"}
+
+
+def _fold(key: str) -> str:
+    """A name's key (_employer_key) with its abbreviations written out (_ABBREVIATED) and its initials' letters
+    together ("j b hunt": jb hunt, as "J.B. Hunt" is written "JB Hunt" too), for telling whether two names may be one
+    employer's (_may_be_employer), never whether they are (_same_employer)."""
+    out: list[str] = []
+    run = False  # (the last word out is single letters run together)
+    for word in key.split():
+        letter = len(word) == 1 and word.isalpha()
+        if letter and run:
+            out[-1] += word
+        else:
+            out.append(_ABBREVIATED.get(word, word))
+        run = letter or (run and letter)
+    return " ".join(out)
 
 
 def _same_employer(a: str, b: str) -> bool:
@@ -865,7 +887,7 @@ def _may_be_employer(a: str, b: str) -> bool:
     may-be beside it can still make the question the person's (a "Yes, previously" at Banner Health, with a job now at
     Banner Bank, is asked: it may be "currently"). "Maricopa County Community College District" (MCCCD) and "Maricopa
     Community Colleges" are out of these rules' reach: two names of the one employer that share no short form."""
-    ka, kb = _employer_key(a), _employer_key(b)
+    ka, kb = _fold(_employer_key(a)), _fold(_employer_key(b))
     if not (ka and kb):
         return False
     if re.search(rf"(^| ){re.escape(ka)}( |$)", kb) or re.search(rf"(^| ){re.escape(kb)}( |$)", ka):
@@ -873,11 +895,13 @@ def _may_be_employer(a: str, b: str) -> bool:
     if ka.replace(" ", "") == kb.replace(" ", ""):
         return True
     for short, long in ((a, b), (b, a)):
-        if " " in _employer_key(long) and any(s in _short_forms(long, whole=len(s) == 2) for s in _as_short(short)):
+        if " " in _employer_key(long) and _as_short(short) & _short_forms(long):
             return True
     wa, wb = (_leading_words(k) for k in (ka, kb))
-    if not (wa and wb) or wa[0] != wb[0] or wa[0] in _STATE_BY_NAME:
-        return False  # (never by a state's name: "Arizona Department of ..." are many, "New York Life" isn't the Times)
+    if not (wa and wb) or wa[0] != wb[0]:
+        return False
+    # (a state's name alone is no employer: "Arizona Department of ..." are many, "New York Life" isn't the Times; but
+    # "Texas Instruments - Sherman" and "Texas Instruments Tucson" are by the next word, read below)
     if len(wa[0]) >= 3 and wa[0] not in _COMMON_FIRST:
         return True
     return (len(wa) >= 2 and wa[:2] == wb[:2] and wa[1] not in _COMMON_FIRST and wa[1] not in _GENERIC_SECOND
