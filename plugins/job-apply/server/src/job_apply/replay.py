@@ -218,7 +218,7 @@ def _box_plans(data: dict[str, Any], prof: config.Profile) -> list[dict[str, Any
     return out
 
 
-def _agreements(data: dict[str, Any], words: str, hidden: str = "") -> dict[str, Any]:
+def _agreements(data: dict[str, Any], words: str, read: dict[str, str] | None = None) -> dict[str, Any]:
     """The verdicts on what the page asks to be agreed to, as the desk's rules give them: a page's button that agrees
     (pipeline._agreement_button) and whether it's a terms gate the desk presses (_terms_gate, with
     settings.accept_notices), and a dialog over the page that nothing else answers (_notice) and whether it may be
@@ -231,7 +231,9 @@ def _agreements(data: dict[str, Any], words: str, hidden: str = "") -> dict[str,
     button = pipeline._agreement_button(data)
     if button is not None:
         about = " ".join([*(data.get("headings") or []), str(data.get("title") or "")])
-        gate = pipeline._terms_gate(button, data, words) or pipeline._attestation_gate(button, data, words, hidden)
+        # (an attestation's gate on what it reads of the page whole: Browser.gate_read, None where that fails closed)
+        gate = pipeline._terms_gate(button, data, words) or pipeline._attestation_gate(
+            button, data, *((read["visible"], read["hidden"]) if read is not None else ("", None)))
         out["agreement"] = {
             "button": " ".join(str(button.get("text") or "").split()),
             "terms_gate": gate,
@@ -267,7 +269,7 @@ async def replay(path: Path, profile: Path | None = None, browser: Browser | Non
         try:
             data, said = await fixtures.read_saved(_Reader(session), page)
             words = await session.visible_text(40000)  # (what the desk's terms gate reads: the page's words, whole)
-            hidden = await session.hidden_text(40000)  # (and what an attestation's gate reads out of sight)
+            read = await session.gate_read(40000)  # (and what an attestation's gate reads: None where it fails closed)
         finally:
             await session.close()
         decision = fixtures.decide(data, said, prof)
@@ -283,7 +285,7 @@ async def replay(path: Path, profile: Path | None = None, browser: Browser | Non
             "dialogs": [" ".join(str(d.get("heading") or d.get("text") or "")[:80].split())
                         for d in data.get("dialogs") or []],
             "boxes": _box_plans(data, prof),
-            **_agreements(data, words, hidden),
+            **_agreements({**data, "url": address or data.get("url")}, words, read),
         }
 
 

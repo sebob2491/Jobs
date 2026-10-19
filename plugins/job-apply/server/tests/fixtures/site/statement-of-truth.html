@@ -55,6 +55,45 @@
       + 'training costs if I leave early.</p>';
     document.querySelector('.statement').appendChild(more);
   }
+  // (the fifth review: terms the person can see or open that the page's drawn words don't hold, and what can't be
+  // read whole: ?textarea=1, ?details2=1 (bare words in a closed section named for the page), ?shadow=1 (an open
+  // shadow root), ?closed-shadow=1, ?canvas=1, ?after=1 (words in ::after), ?frame=1)
+  const TERMS = 'I agree to a two-year service commitment and to repay all training costs if I leave early.';
+  const statement = document.querySelector('.statement');
+  if (params.get('textarea')) {
+    const box = document.createElement('textarea');
+    box.readOnly = true; box.rows = 3; box.cols = 80; box.value = TERMS;
+    statement.appendChild(box);
+  }
+  if (params.get('details2')) {
+    const more = document.createElement('details');
+    more.innerHTML = '<summary>Statement of Truth</summary>';
+    more.append(TERMS);
+    statement.appendChild(more);
+  }
+  for (const mode of ['shadow', 'closed-shadow']) {
+    if (!params.get(mode)) continue;
+    customElements.define('x-' + mode, class extends HTMLElement {
+      constructor() { super(); this.attachShadow({ mode: mode === 'shadow' ? 'open' : 'closed' }).innerHTML = '<p>' + TERMS + '</p>'; }
+    });
+    statement.appendChild(document.createElement('x-' + mode));
+  }
+  if (params.get('canvas')) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 600; canvas.height = 30;
+    statement.appendChild(canvas);
+    canvas.getContext('2d').fillText(TERMS, 0, 20);
+  }
+  if (params.get('after')) {
+    const style = document.createElement('style');
+    style.textContent = '.statement::after { content: "' + TERMS + '"; }';
+    document.head.appendChild(style);
+  }
+  if (params.get('frame')) {
+    const frame = document.createElement('iframe');
+    frame.srcdoc = '<p>' + TERMS + '</p>';
+    statement.appendChild(frame);
+  }
   document.getElementById('accept').addEventListener('click', () => { location.href = '../generic_form.html'; });
   document.getElementById('decline').addEventListener('click', () => { document.body.textContent = 'You declined.'; });
 </script>

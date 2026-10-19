@@ -4273,9 +4273,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
             words = await srv.page_text(GATE_WORDS)  # (what _terms_gate reads, kept with the agreement: Run.agreed)
             # (an employer's privacy notice or terms; or an application's attestation that its information is true, a
             # "Statement of Truth": Clark County School District's Taleo, run 145)
-            # (and what it holds out of sight, which an attestation's gate reads too)
-            if (_terms_gate(agree, data, words)
-                    or _attestation_gate(agree, data, words, await srv.browser.hidden_text(GATE_WORDS))) \
+            # (which reads the page again, whole, failing closed: Browser.gate_read)
+            if (_terms_gate(agree, data, words) or _attestation_gate(agree, data, *await self._gate_read())) \
                     and _may_accept_notices():
                 run.did("pressed", agree)
                 try:
@@ -5084,6 +5083,15 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         await self._notice_closed(heading)
         return "started"
 
+    async def _gate_read(self) -> tuple[str, str | None]:
+        """An attestation gate's page read whole (Browser.gate_read): its drawn words and every other word the person
+        can see or open; ("", None) where it can't be read whole, which _attestation_gate leaves to the person."""
+        try:
+            read = await self.srv.browser.gate_read(GATE_WORDS)
+        except Exception:  # (any failure fails closed)
+            read = None
+        return (read["visible"], read["hidden"]) if read is not None else ("", None)
+
     async def _press_agreement(self, element_id: str) -> dict[str, Any]:
         """Press a button found to agree for the person (settings.accept_notices: a terms gate's way
         on, a notice's agree), as the click tool does. Saying so lets the live check's test identity
@@ -5692,12 +5700,16 @@ _ATTESTATION_SHAPES = (
 )
 # The page's own furniture, which says nothing in the person's name, by name alone (the fourth review of
 # fix-accept-gates: no rule of a few words, which let "Unpaid training period." through): its skip links and sign-in
-# line, its language picker, its navigation, its note to upload the documents a posting asks for, a browser's cookies
-# warning (Taleo's, Clark County School District's page)
+# line, its language picker, its navigation and its links' titles, its note to upload the documents a posting asks for,
+# a browser's cookies warning (Taleo's, Clark County School District's page, run 145, which holds the titles and the
+# warning out of sight: Browser.gate_read)
 _NAVIGATION = re.compile(r"\b(?:welcome|sign in|sign out|log ?in|log ?out|job search|printable format|my jobpage|"
                          r"select a language|english|spanish|español|french|français)\b", re.I)
 _FURNITURE = re.compile(r"(?:go|skip) to (?:the )?main content(?: section)?|(?:beginning|end) of the main content "
                         r"section|you are not signed in|"
+                        # (its links' titles, as Taleo writes them)
+                        r"log in to the system|go to the section job search|view a printable version of the "
+                        r"(?:privacy agreement|statement of truth|page)|"
                         r"note\s*:\s*it'?s very important that (?:during the application process )?you upload all "
                         r"required documents(?: as per the job description)?(?: \(e\.g\.(?P<named>[^()]*)\))?|"
                         r"the action cannot be completed|cookies are not enabled on your browser|please enable cookies "
@@ -5738,10 +5750,11 @@ _SHARED = re.compile(r"\bshar\w*\b[^.]{0,40}\b(?:information|data|details)\b[^.]
 
 
 def _plain_label(label: str) -> bool:
-    """A button's or link's label that's the page's furniture: the gate's own bare accept or decline, or four words or
-    fewer that commit no one and name no more words than the page shows ("Job Search", "Printable Format")."""
-    return bool(re.fullmatch(r"(?:i )?(?:accept|agree|decline|disagree)", label, re.I)) \
-        or len(label.split()) <= 4 and not _COMMITS.search(label) and not _NAMES_MORE.search(label)
+    """A button's or link's label that's the page's furniture: the gate's own bare accept or decline, or the page's
+    navigation by name (_NAVIGATION: "Job Search", "Printable Format"), and no other (the fifth review of
+    fix-accept-gates)."""
+    return bool(re.fullmatch(r"(?:i )?(?:accept|agree|decline|disagree)", label, re.I)
+                or not _NAVIGATION.sub(" ", label).strip(" |·-–"))
 
 
 def _gate_furniture(said: str, labels: set[str], named: set[str]) -> bool:
@@ -5801,7 +5814,14 @@ def _gate_sentences(text: str, labels: set[str], named: set[str]) -> list[str]:
     return [s for s in out if not _gate_furniture(s, labels, named)]
 
 
-def _attestation_gate(button: dict[str, Any], data: dict[str, Any], text: str, hidden: str = "") -> bool:
+# Where an attestation's gate is agreed to at all: Oracle Taleo's career sections, where the Statement of Truth is a
+# standard step (the coordinator's call in the fifth review of fix-accept-gates); on any other host it's the person's
+def _on_taleo(url: Any) -> bool:
+    host = host_of(str(url or ""))
+    return host == "taleo.net" or host.endswith(".taleo.net")
+
+
+def _attestation_gate(button: dict[str, Any], data: dict[str, Any], text: str, hidden: str | None = "") -> bool:
     """A page whose way on is an application's attestation that its information is true (_ATTESTATION_PAGE: a
     "Statement of Truth"), which settings.accept_notices accepts for the person as CLAUDE.md's attestation: its bare
     "I Accept" (never one that names more, or sends); every sentence on the page, in any voice, one of the shapes it
@@ -5809,14 +5829,15 @@ def _attestation_gate(button: dict[str, Any], data: dict[str, Any], text: str, h
     employment, the background check's consent, the notice of what declining does) or the page's furniture, one of
     them certifying; and, as a second guard, nowhere in its words what's never agreed to for the person (_attests_more,
     a legal waiver, arbitration, the terms of employment) nor their information shared (_SHARED). A page cut off at
-    GATE_WORDS is the person's; so is one that holds words out of sight (`hidden`: Browser.hidden_text, a collapsed
-    "Additional terms") but its furniture or the same shapes, as terms there would be agreed to unread. The reviews of
-    fix-accept-gates."""
+    GATE_WORDS is the person's; so is one that holds words the person can see or open but its drawn text doesn't
+    (`hidden`: Browser.gate_read's, a collapsed "Additional terms", a read-only box, a shadow root) but its furniture
+    or the same shapes, as terms there would be agreed to unread, and one that couldn't be read whole (`hidden` None:
+    it fails closed). Only on Oracle Taleo's hosts (_on_taleo). The reviews of fix-accept-gates."""
     said = final_text(button.get("text") or "")
     about = _gate_about(button, data)
-    if not _BARE_ACCEPT.match(said) or not _ATTESTATION_PAGE.search(about) \
-            or _never_for_them(f"{said} {about}", only=_AGREEMENT_KINDS) \
-            or len(text or "") >= GATE_WORDS or len(hidden or "") >= GATE_WORDS:
+    if hidden is None or not _on_taleo(data.get("url")) or not _BARE_ACCEPT.match(said) \
+            or not _ATTESTATION_PAGE.search(about) or _never_for_them(f"{said} {about}", only=_AGREEMENT_KINDS) \
+            or len(text or "") >= GATE_WORDS or len(hidden) >= GATE_WORDS:
         return False
     labels = {" ".join(str(a.get("text") or "").split()) for a in data.get("actions") or []} - {""}
     named = {" ".join(str(h).split()) for h in [*(data.get("headings") or []), data.get("title") or ""]} - {""}

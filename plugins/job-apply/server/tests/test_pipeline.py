@@ -1766,20 +1766,34 @@ def test_a_privacy_agreement_before_the_application_is_accepted_for_the_person(s
     assert "collects the personal information you give" in gate[0]["words"] and "agreed" not in r.public()
 
 
-@pytest.mark.parametrize("settings, query", [({}, ""), ({"accept_notices": False}, ""),
-                                             ({"submit_mode": "dry_run"}, ""), ({}, "?atwill=1"),
-                                             ({}, "?arbitration=1"), ({}, "?claim=1"), ({}, "?br=1"),
-                                             ({}, "?details=1")],
-                         ids=["on", "off", "practice", "at-will", "arbitration", "claim", "line-break", "details"])
-def test_a_statement_of_truth_is_accepted_for_the_person(srv, monkeypatch, job_apply_home, settings, query):
+@pytest.mark.parametrize("settings, query, how", [
+    ({}, "", ""), ({"accept_notices": False}, "", ""), ({"submit_mode": "dry_run"}, "", ""), ({}, "?atwill=1", ""),
+    ({}, "?arbitration=1", ""), ({}, "?claim=1", ""), ({}, "?br=1", ""), ({}, "?details=1", ""),
+    ({}, "?textarea=1", ""), ({}, "?details2=1", ""), ({}, "?shadow=1", ""), ({}, "?closed-shadow=1", ""),
+    ({}, "?canvas=1", ""), ({}, "?after=1", ""), ({}, "?frame=1", ""), ({}, "", "throws"), ({}, "", "hangs"),
+    ({}, "", "not-taleo")],
+    ids=["on", "off", "practice", "at-will", "arbitration", "claim", "line-break", "details", "textarea",
+         "details-bare-words", "shadow-root", "closed-shadow-root", "canvas", "after", "frame", "read-throws",
+         "read-hangs", "not-taleo"])
+def test_a_statement_of_truth_is_accepted_for_the_person(srv, monkeypatch, job_apply_home, settings, query, how):
     """Clark County School District's Taleo (live run 145): after Apply Online, a "Statement of Truth" whose ways on
     are "I Accept" and "I Decline", its words an application's attestation that its information is true (and what a
     false statement costs, and what's needed before employment begins). With settings.accept_notices the desk accepts
     it for the person and says so, as CLAUDE.md's attestation; it stopped for them before (agreement_theirs). With
     the setting off, in practice mode, or where its words also make employment at will, bind them to arbitration or
-    say something of them (a license held), it's theirs."""
+    say something of them (a license held), it's theirs; so is a page with words the person can see or open that its
+    drawn text doesn't hold (a read-only box, a closed section, a shadow root), one that can't be read whole (a closed
+    shadow root, a canvas, words in ::after, a frame, a read that fails or hangs), and one off Oracle Taleo's hosts
+    (the reviews of fix-accept-gates). The fixture is a local file: on Taleo's host but for "not-taleo"."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    if how != "not-taleo":
+        monkeypatch.setattr(pipeline, "_on_taleo", lambda url: True)
+    if how == "throws":
+        monkeypatch.setattr(browser_module, "GATE_READ_JS", "() => { throw new Error('unread'); }")
+    if how == "hangs":
+        monkeypatch.setattr(browser_module, "GATE_READ_JS", "() => new Promise(() => {})")
+        monkeypatch.setattr(browser_module, "READ_TIMEOUT", 1)
     notice_settings(job_apply_home, **settings)
     job = srv.add_job(url=fixture_url("site/statement-of-truth.html") + query, title="Office Specialist",
                       company="Example School District")["job"]
@@ -1795,7 +1809,7 @@ def test_a_statement_of_truth_is_accepted_for_the_person(srv, monkeypatch, job_a
             await applier.stop()
 
     r = run(go())
-    if settings or query:
+    if settings or query or how:
         assert (r.status, r.need, r.code) == ("needs_you", "stuck", "agreement_theirs"), (r.reason, r.log)
         assert "“I Accept”" in r.reason and r.url.endswith("statement-of-truth.html" + query), (r.reason, r.url)
         assert not any(line.startswith("agreed") for line in r.log), r.log
@@ -1807,7 +1821,8 @@ def test_a_statement_of_truth_is_accepted_for_the_person(srv, monkeypatch, job_a
     assert "true, correct, complete" in gate[0]["words"] and "agreed" not in r.public()
 
 
-TRUTH = {"headings": ["Statement of Truth"], "title": "Statement of Truth",
+TRUTH = {"url": "https://example.taleo.net/careersection/application.jss", "headings": ["Statement of Truth"],
+         "title": "Statement of Truth",
          "actions": [{"id": "b1", "text": "I Accept"}, {"id": "b2", "text": "I Decline"}]}
 # (Clark County School District's, live run 145, in its own shape: the information certified true, what a false
 # statement costs, what's needed before employment begins, the notice of what declining does)
@@ -1832,7 +1847,7 @@ def test_an_attestation_gate_is_one_that_certifies_the_application_and_no_more()
     gate = pipeline._attestation_gate
     accept = {"id": "b1", "text": "I Accept"}
     assert gate(accept, TRUTH, TRUTH_WORDS)
-    assert gate({"id": "b1", "text": "I Agree"}, {"headings": ["Applicant Certification"]},
+    assert gate({"id": "b1", "text": "I Agree"}, {"url": TRUTH["url"], "headings": ["Applicant Certification"]},
                 "I certify that the answers given in this application are true and complete. I consent to a "
                 "background check and verification of my information.")
     for button, about, said in (
@@ -1931,6 +1946,17 @@ def test_an_attestation_gate_is_one_that_certifies_the_application_and_no_more()
     cookies = ("The action cannot be completed. Cookies are not enabled on your browser. Please enable cookies in your "
                "browser preferences and refresh your browser to continue.")  # (Clark County School District's, hidden)
     assert gate(accept, TRUTH, TRUTH_WORDS, cookies)
+    # The fifth review: only on Oracle Taleo's hosts; a page that couldn't be read whole (None) is the person's; Taleo's
+    # own link titles are its furniture; a label is furniture only as the page's navigation by name
+    for url in ("https://careers.example.com/statement", "https://taleo.net.example.com/x", ""):
+        assert not gate(accept, {**TRUTH, "url": url}, TRUTH_WORDS), url
+    assert gate(accept, {**TRUTH, "url": "https://ccsd.taleo.net/careersection/application.jss"}, TRUTH_WORDS)
+    assert not gate(accept, TRUTH, TRUTH_WORDS, None)
+    assert gate(accept, TRUTH, TRUTH_WORDS, "Log in to the system\nGo to the section Job Search\nView a printable "
+                                            "version of the privacy agreement\n" + cookies)
+    for label in ("Staff Directory", "Benefits", "Overtime Policy"):
+        words = TRUTH_WORDS.replace("\nNotice -", f"\n{label}\nNotice -")
+        assert not gate(accept, {**TRUTH, "actions": [*TRUTH["actions"], {"id": "b6", "text": label}]}, words), label
     for hidden in ("I agree to a two-year service commitment and to repay all training costs if I leave early.",
                    "Overtime expected.", cookies + "\nAdditional terms apply."):
         assert not gate(accept, TRUTH, TRUTH_WORDS, hidden), hidden
