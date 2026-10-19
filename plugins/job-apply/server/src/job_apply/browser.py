@@ -206,7 +206,10 @@ CAPTCHA_SAYS = ("A CAPTCHA (a bot check: an \"I'm not a robot\" box or pictures)
 # A CAPTCHA's own frames: never read as part of the form. iCIMS's sign-in pages carry a hidden
 # hCaptcha whose "Verify" and "Refresh Challenge." read as the page's buttons, and the desk
 # never touches a CAPTCHA anyway
-_CAPTCHA_FRAME = re.compile(r"^https?://([\w-]+\.)*(hcaptcha\.com|recaptcha\.net|challenges\.cloudflare\.com)/|"
+# (and DataDome's, geo.captcha-delivery.com: its block over Wynn's and Boyd's SmartRecruiters postings, live run 144,
+# whose feedback form's Comment box was read as the application)
+_CAPTCHA_FRAME = re.compile(r"^https?://([\w-]+\.)*(hcaptcha\.com|recaptcha\.net|challenges\.cloudflare\.com|"
+                            r"captcha-delivery\.com)/|"
                             r"^https?://(www\.)?google\.com/recaptcha/", re.I)
 # A video player's frame: never read as part of the page. Oracle's job pages carry a media slider whose
 # YouTube embed says "This video is private ... Sign in." in a `.ytp-error` box, which read as the

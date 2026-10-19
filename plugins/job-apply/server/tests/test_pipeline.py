@@ -453,6 +453,51 @@ def test_a_captcha_challenge_after_a_click_waits_for_the_person(srv, monkeypatch
     assert "clicked “Next”" in log and "CAPTCHA" in reason
 
 
+# DataDome's block page, as its frame showed it over Wynn's and Boyd's SmartRecruiters postings (live run 144): its
+# words, its feedback button, and its contact form's Comment box
+DATADOME_BLOCK = ('<html lang="en"><head><title>You have been blocked</title></head>'
+                  '<body class="dd-response-page--hard-block" data-dd-response-page="hard-block">'
+                  '<div class="captcha" id="captcha-container"><p>Access is temporarily restricted</p>'
+                  '<p>We detected unusual activity from your device or network.</p>'
+                  '<p>Need help? <button type="button" id="show-human-auth">Submit feedback.</button></p>'
+                  '<form action="/contact-human" method="post"><fieldset><legend>Reason for contacting us (required):'
+                  '</legend><textarea id="human-comment" name="human-comment" placeholder="Comment" rows="4">'
+                  '</textarea></fieldset><button type="submit">Send</button></form></div>'
+                  '<script>document.getElementById("human-comment").addEventListener("input", () => '
+                  'parent.postMessage("typed", "*"))</script></body></html>')
+
+
+@pytest.mark.parametrize("where", ["frame", "page"])
+def test_a_datadome_block_is_a_bot_check_not_a_form(srv, monkeypatch, where):
+    """Wynn's and Boyd's SmartRecruiters postings (live run 144) came up as DataDome's block ("Access is temporarily
+    restricted"), in a frame from geo.captcha-delivery.com: its feedback form's Comment box was read as the application,
+    and the desk said it couldn't find the way on. It's a bot check: the person's, said as one, and nothing in it is
+    typed into or pressed. The same block as the page itself, on the site's own address, is one too."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    url = (fixture_url("site/datadome-block.html") if where == "frame"
+           else "https://jobs.example-ats.example/oneclick-ui/company/ExampleResort/publication/1001")
+    job = srv.add_job(url=url, title="IT Support Specialist", company="Example Resort")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await srv.browser.page()
+        for host in ("https://geo.captcha-delivery.com/**", "https://jobs.example-ats.example/**"):
+            await srv.browser._ctx.route(host, lambda route: route.fulfill(status=403, content_type="text/html",
+                                                                          body=DATADOME_BLOCK))
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert (r.need, r.code) == ("bot_check", "bot_check"), (r.need, r.reason, r.log)
+    assert not any(line.startswith(("clicked", "filled", "typed", "pressed")) for line in r.log), r.log
+
+
 def test_saved_password_signs_in_without_the_person(srv, monkeypatch):
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     saved_password(monkeypatch)

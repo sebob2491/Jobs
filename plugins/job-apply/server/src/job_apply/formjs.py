@@ -1575,8 +1575,9 @@ CHALLENGE_JS = r"""
 () => Array.from(document.querySelectorAll('iframe')).some((f) => {
   const src = f.getAttribute('src') || '';
   const title = f.getAttribute('title') || '';
-  if (!/hcaptcha\.com.*challenge|recaptcha\/(api2|enterprise)\/bframe|challenges\.cloudflare\.com/i.test(src)
-      && !/(hcaptcha|recaptcha|captcha).*challenge|challenge.*(hcaptcha|recaptcha|captcha)/i.test(title)) return false;
+  // (and DataDome's frame, its challenge or its block: Wynn's and Boyd's SmartRecruiters postings, live run 144)
+  if (!/hcaptcha\.com.*challenge|recaptcha\/(api2|enterprise)\/bframe|challenges\.cloudflare\.com|captcha-delivery\.com/i.test(src)
+      && !/(hcaptcha|recaptcha|captcha).*challenge|challenge.*(hcaptcha|recaptcha|captcha)|datadome/i.test(title)) return false;
   const r = f.getBoundingClientRect();
   const s = getComputedStyle(f);
   return r.width > 150 && r.height > 150 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth

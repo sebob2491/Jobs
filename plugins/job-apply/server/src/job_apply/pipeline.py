@@ -371,6 +371,10 @@ _BOT_TEXT = re.compile(r"verify (?:that )?you are (?:a )?human|are you a robot|"
                        r"your browser)|press (?:&|and) hold|complete the security check|unusual traffic from your|"
                        r"enable javascript and cookies to continue|request unsuccessful|you have been blocked", re.I)
 _CAPTCHA = re.compile(r"i'?m not a robot|i am human|hcaptcha|recaptcha challenge", re.I)
+# A bot-protection service's block page, whatever boxes it shows (DataDome's over Wynn's and Boyd's SmartRecruiters
+# postings, live run 144: "Access is temporarily restricted", and a feedback form with a Comment box): the person's
+_BLOCK_PAGE = re.compile(r"access is temporarily restricted|you have been blocked|"
+                         r"we detected unusual activity from your (?:device|network)", re.I)
 _VERIFY_EMAIL = re.compile(r"verif(?:y|ication)\b.{0,40}\b(?:e-?mail|account|link)|check your (?:e-?mail|inbox)", re.I)
 # A sign-in refused because the account's email was never verified (Workday's "Verify your account before you sign in
 # or request a verification email.", beside its "Resend Account Verification": the test identity's Vanguard, run 98,
@@ -1309,6 +1313,8 @@ def classify(data: dict[str, Any], text: str) -> str:
     """bot_check, sign_in, email_code, form or page."""
     if data.get("challenge"):  # a CAPTCHA's pictures over the page (iCIMS after its email step)
         return "bot_check"
+    if _BLOCK_PAGE.search(data.get("title") or "") or _BLOCK_PAGE.search(text[:3000]):
+        return "bot_check"  # (a block page's own feedback form is no application: DataDome's, run 144)
     # (never the page's own language picker: Linde's Cornerstone requisition page, run 75, came up empty but for its
     # unlabelled language list, and was read as a form, so it was never reloaded)
     fields = [f for f in _app_fields(data) if not f.get("disabled")]
