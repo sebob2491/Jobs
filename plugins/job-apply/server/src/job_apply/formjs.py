@@ -205,6 +205,10 @@ EXTRACT_JS = r"""
     const ids = (el.getAttribute('aria-labelledby') || '').split(/\s+/).filter((i) => i && i !== el.id);
     return clean(ids.map((i) => txt(byId(i))).join(' '));
   };
+  // A file box's words that say nothing of what it takes ("Attach"); and a drop zone's, "Drop files here or Select
+  // files" (Workday's, live run 144)
+  const GENERIC_FILE = new RegExp('^(attach|upload|choose (a )?file|browse|select files?|add (a )?file|'
+    + '((drag (and|&) )?drop (your )?files? here)( or (select|browse|choose|upload) (your )?files?)?|or|enter manually)$', 'i');
   const labelFor = (el) => {
     const ff = el.closest('[data-automation-id^="formField"]');
     if (ff) {
@@ -221,10 +225,15 @@ EXTRACT_JS = r"""
     if (el.title) return clean(el.title);
     // a file box inside an upload widget labelled for it: Workday's questionnaire, its "...-FileUpload" wrapper
     // labelled by the question's own rich text ("Please upload your Letter of Application/Cover Letter."), not the drop
-    // zone's words before the box (CSN's, NSU's and UNLV's, live run 144); never a group's or a section's label
-    if (el.type === 'file') {
+    // zone's words before the box (CSN's, NSU's and UNLV's, live run 144). Only a wrapper that holds this box and no
+    // other, and only where the words before the box say nothing of their own: never a group's, a section's or a
+    // tab's label over several boxes ("Resume and Cover Letter" over a resume's box and a cover letter's: the review)
+    const before = preceding(el);
+    if (el.type === 'file' && (!before || GENERIC_FILE.test(before))) {
       for (let up = el.parentElement, i = 0; up && i < 3; up = up.parentElement, i++) {
-        if (up.matches('form, fieldset, [role="group"], [role="radiogroup"], [role="region"], [role="dialog"]')) break;
+        if (up.matches('form, fieldset, section, [role="group"], [role="radiogroup"], [role="region"], '
+                       + '[role="dialog"], [role="tabpanel"]')) break;
+        if ([...up.querySelectorAll(CONTROL)].some((c) => c !== el)) break;
         if (up.hasAttribute('aria-labelledby')) {
           const t = labelledBy(up);
           if (t) return t;
@@ -232,7 +241,7 @@ EXTRACT_JS = r"""
         }
       }
     }
-    return preceding(el) || el.name || '';
+    return before || el.name || '';
   };
   const groupQuestion = (container, first) => {
     if (container) {
@@ -438,9 +447,6 @@ EXTRACT_JS = r"""
 
   // "search", "job-search", "jobSearchForm"; not "research" ("toyotaresearchinstitute")
   const isSearchName = (s) => !!s && (/(^|[^a-zA-Z])search/i.test(s) || /[a-z]Search/.test(s));
-  // (and a drop zone's words, "Drop files here or Select files": Workday's, live run 144)
-  const GENERIC_FILE = new RegExp('^(attach|upload|choose (a )?file|browse|select files?|add (a )?file|'
-    + '((drag (and|&) )?drop (your )?files? here)( or (select|browse|choose|upload) (your )?files?)?|or|enter manually)$', 'i');
   const HONEYPOT = /for robots|robots only|if you('| a)?re (a )?human|not (be )?(filled|entered) by humans|honey ?pot|leave this field (blank|empty)/i;
   const fields = [];
   const fieldEls = new Map();  // each field's element (a group's first member), for the aside pass
@@ -863,8 +869,10 @@ EXTRACT_JS = r"""
     const a = { id: idOf(el), text: t };
     if (applyItem) a.menu = true;
     // a link in the site's own header or navigation, and where it goes: the site's "Apply Now" there (Station
-    // Casinos' Oracle, live run 144: a link to its list of jobs) isn't a posting's own way in
-    if (el.tagName === 'A' && el.closest('header, nav, [role="banner"], [role="navigation"]')) {
+    // Casinos' Oracle, live run 144: a link to its list of jobs) isn't a posting's own way in. Not a header in the
+    // page's main part or its article: a posting's own, with its title and its Apply (the review)
+    if (el.tagName === 'A' && el.closest('header, nav, [role="banner"], [role="navigation"]')
+        && !el.closest('main, article, [role="main"]')) {
       a.site_nav = true;
       if (/^https?:/i.test(el.href || '')) a.goes_to = el.href;
     }

@@ -147,6 +147,45 @@ def test_a_workday_questionnaire_file_box_is_named_by_its_question(srv, tmp_path
         ("file", "Please upload your Reference Contact Information.", False)]
 
 
+@pytest.mark.parametrize("around", ['section aria-labelledby="h"', 'div aria-labelledby="h"',
+                                    'div role="tabpanel" aria-labelledby="h"'])
+def test_a_section_labelled_for_its_heading_doesnt_name_each_file_box_in_it(srv, tmp_path, around):
+    """The review of the Workday fix (run 144): a section, a plain block or a tab labelled by its heading
+    ("Resume and Cover Letter") named every file box in it, so the resume's box could get the cover letter. A wrapper's
+    label names a file box only where it holds that box alone and the words before the box say nothing of their
+    own."""
+    tag = around.split()[0]
+    got = fields_of(srv, tmp_path, f'<{around}><h2 id="h">Resume and Cover Letter</h2>'
+                                   '<div><span>Resume *</span><input type="file" required></div>'
+                                   '<div><span>Cover letter</span><input type="file"></div></' + tag + '>')
+    assert [(f["label"], f["required"]) for f in got] == [("Resume *", True), ("Cover letter", False)]
+    # nor one box alone in it whose own words name it
+    got = fields_of(srv, tmp_path, f'<{around}><h2 id="h">Attachments</h2><div><span>Transcript</span>'
+                                   '<input type="file"></div></' + tag + '>')
+    assert [f["label"] for f in got] == ["Transcript"]
+
+
+def test_a_postings_own_header_isnt_the_sites(srv, tmp_path):
+    """The review of the Station Casinos fix (run 144): a posting's own <header> in its <article> (its title and its
+    Apply) read as the site's header, so its Apply went after a "similar jobs" Apply below it. Only a header or
+    navigation outside the page's main part, or its article, is the site's own; its link to the list of jobs is never
+    the way in."""
+    from job_apply.pipeline import pick_next
+
+    page = tmp_path / "posting.html"
+    page.write_text('<!doctype html><html><body><header><a href="https://jobs.example.com/requisitions">Apply Now</a>'
+                    '</header><main><article><header><h1>Banquet Server</h1>'
+                    '<a href="https://jobs.example.com/job/1001/apply">Apply Now</a></header><p>Serve guests.</p>'
+                    '</article><aside><h2>Similar jobs</h2><p>Valet Attendant</p>'
+                    '<a href="https://jobs.example.com/job/1002/apply">Apply Now</a></aside></main></body></html>',
+                    encoding="utf-8")
+    run(srv.browser.goto(page.resolve().as_uri()))
+    actions = run(srv.browser.inspect(include_dropdown_options=False))["actions"]
+    applies = [a for a in actions if a["text"] == "Apply Now"]
+    assert [bool(a.get("site_nav")) for a in applies] == [True, False, False], applies
+    assert pick_next(actions, in_form=False)["id"] == applies[1]["id"]
+
+
 def test_a_drop_zones_words_dont_name_its_file_box(srv, tmp_path):
     """A drop zone's own words, "Drop files here or Select files" (Workday's, live run 144), say nothing about what the
     box takes: they're as generic as "Attach", and the heading before the box names it."""

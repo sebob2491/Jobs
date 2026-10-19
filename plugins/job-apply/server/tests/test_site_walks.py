@@ -337,6 +337,56 @@ def test_an_apply_that_lands_on_the_list_of_jobs_is_gone_back_from(srv, fake_ats
     no_submit(fake_ats, srv, r)
 
 
+def test_a_list_of_jobs_the_browsers_back_doesnt_leave_is_left_for_the_posting(srv, fake_ats, job_apply_home):
+    """The review of the Station Casinos fix: an Apply that takes the tab to the list with location.replace leaves no
+    posting in the tab's history, so Back doesn't get there, and the desk said it went back when it hadn't. It opens
+    the posting again instead, and says it went back only when it's there."""
+    job = srv.add_job(url=ORACLE + ORACLE_JOB, title="Resort Guest Room Attendant", company="Example Resort")["job"]
+    applier = Desk(srv).applier
+
+    async def go():
+        await fake_ats.serve(srv, ORACLE, [(re.escape(ORACLE_JOB), "oracle-replace-to-list-posting.html"),
+                                           *ORACLE_LIST])
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until_stopped(r)
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert (r.status, r.need, r.code) == ("needs_you", "stuck", "no_way_in"), (r.status, r.need, r.reason, r.log)
+    assert r.page.url.endswith(ORACLE_JOB), r.page.url
+    assert "so I went back to the posting" in r.reason, r.reason
+    assert sum("went back to the posting" in line for line in r.log) == 2, r.log  # (the first time, and the stop)
+    assert r.log.count("clicked “Apply Now”") == 2, r.log
+
+
+def test_a_closed_postings_apply_to_the_list_of_jobs_is_skipped_as_closed(srv, fake_ats, job_apply_home):
+    """The review of the Station Casinos fix: a closed posting whose Apply goes to the list of jobs, which says "This
+    job is no longer available", was gone back from and stopped on as no way in. The site's words that it closed are
+    what's said: skipped as closed, as before."""
+    job = srv.add_job(url=ORACLE + ORACLE_JOB, title="Resort Guest Room Attendant", company="Example Resort")["job"]
+    applier = Desk(srv).applier
+
+    async def go():
+        await fake_ats.serve(srv, ORACLE, [(re.escape(ORACLE_JOB), "oracle-link-to-list-posting.html"),
+                                           (re.escape("/hcmUI/CandidateExperience/en/sites/CX_1/requisitions"),
+                                            "oracle-job-list-closed.html")])
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until_stopped(r)
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.code != "no_way_in" and "no longer available" in r.reason, (r.status, r.need, r.reason, r.log)
+    assert not any("went back to the posting" in line for line in r.log), r.log
+
+
 # ---------------------------------------------------------------------------------------- iCIMS
 ICIMS = "https://careers-examplefab.icims.com"
 ICIMS_JOB = "/jobs/2002/field-service-technician"

@@ -10430,6 +10430,21 @@ def test_an_agreement_is_left_to_the_person_and_a_captchas_buttons_arent_the_pag
     assert not {"Verify", "Refresh Challenge."} & set(r.page_info.get("actions") or []), r.page_info
 
 
+def test_a_sign_ins_lockout_isnt_a_bot_check():
+    """The review of the DataDome fix: "Access is temporarily restricted" over a sign-in's boxes is the site's lockout
+    after too many tries, not a bot-protection service's block: still a sign-in. A block page with only its feedback
+    form's box is a bot check, and "You have been blocked" is one wherever it's said."""
+    password = {"id": "p", "kind": "password", "label": "Password"}
+    comment = {"id": "c", "kind": "textarea", "label": "Comment"}
+    said = "Access is temporarily restricted. Too many sign-in attempts: try again in 15 minutes."
+    assert classify({"fields": [{"id": "e", "kind": "email", "label": "Email"}, password], "actions": []},
+                    said) == "sign_in"
+    assert classify({"fields": [comment], "actions": []}, said) == "bot_check"
+    assert classify({"fields": [comment], "actions": []},
+                    "We detected unusual activity from your device or network.") == "bot_check"
+    assert classify({"title": "You have been blocked", "fields": [password], "actions": []}, "") == "bot_check"
+
+
 def test_an_apply_button_with_an_arrow_isnt_read_as_an_emailed_link():
     """A posting that mentions checking your email, with "Apply now »": the way in, not a
     "we emailed you a link" page."""
@@ -12970,6 +12985,20 @@ def test_a_tab_on_another_job_named_in_the_query_isnt_carried_on_with(srv, monke
 
     monkeypatch.setattr(srv.browser, "peek", peek)
     assert run(applier._gone_home(left, SimpleNamespace(url=tab_url))) is gone
+
+
+@pytest.mark.parametrize("url", ["https://jobs.example.com/jobs?jvi=oAb12cd,Job",  # Jobvite's
+                                 "https://careers.example.com/jobs?id=1001",
+                                 "https://careers.example.com/search?selectedJob=1001",
+                                 "https://recruiting.example.com/JobBoard/abc/jobs?opportunityId=9a8b7c6d-1"])
+def test_a_job_named_in_a_list_of_jobs_address_is_that_jobs_page(url):
+    """The review of the Station Casinos fix: an address that names one job in its query (Jobvite's jvi, an id, a
+    selectedJob, UKG Pro's opportunityId) is that job's page, not the site's list of jobs, though its path is one.
+    (Only there: read as the job's own key where the careers home is told apart, UKG's application steps without its
+    opportunityId would be its home, test_site_walks' UKG walk.)"""
+    assert not pipeline._job_list(url)
+    assert pipeline._job_list(url.split("?")[0])
+    assert pipeline._job_ids("https://recruiting.example.com/JobBoard/abc/OpportunityDetail?opportunityId=5005") == {}
 
 
 def test_a_word_under_a_job_key_in_the_address_isnt_a_job_id(srv, monkeypatch):

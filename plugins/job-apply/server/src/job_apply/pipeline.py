@@ -373,8 +373,11 @@ _BOT_TEXT = re.compile(r"verify (?:that )?you are (?:a )?human|are you a robot|"
 _CAPTCHA = re.compile(r"i'?m not a robot|i am human|hcaptcha|recaptcha challenge", re.I)
 # A bot-protection service's block page, whatever boxes it shows (DataDome's over Wynn's and Boyd's SmartRecruiters
 # postings, live run 144: "Access is temporarily restricted", and a feedback form with a Comment box): the person's
-_BLOCK_PAGE = re.compile(r"access is temporarily restricted|you have been blocked|"
-                         r"we detected unusual activity from your (?:device|network)", re.I)
+_BLOCK_PAGE = re.compile(r"you have been blocked", re.I)
+# ...and its words that a sign-in's lockout may say too ("Access is temporarily restricted" after too many tries): a
+# block only where there's no password box (the review of the DataDome fix)
+_BLOCK_WORDS = re.compile(r"access is temporarily restricted|we detected unusual activity from your (?:device|network)",
+                          re.I)
 _VERIFY_EMAIL = re.compile(r"verif(?:y|ication)\b.{0,40}\b(?:e-?mail|account|link)|check your (?:e-?mail|inbox)", re.I)
 # A sign-in refused because the account's email was never verified (Workday's "Verify your account before you sign in
 # or request a verification email.", beside its "Resend Account Verification": the test identity's Vanguard, run 98,
@@ -1313,7 +1316,9 @@ def classify(data: dict[str, Any], text: str) -> str:
     """bot_check, sign_in, email_code, form or page."""
     if data.get("challenge"):  # a CAPTCHA's pictures over the page (iCIMS after its email step)
         return "bot_check"
-    if _BLOCK_PAGE.search(data.get("title") or "") or _BLOCK_PAGE.search(text[:3000]):
+    said = f"{data.get('title') or ''}\n{text[:3000]}"
+    if _BLOCK_PAGE.search(said) or _BLOCK_WORDS.search(said) and not any(
+            f.get("kind") == "password" for f in data.get("fields") or []):
         return "bot_check"  # (a block page's own feedback form is no application: DataDome's, run 144)
     # (never the page's own language picker: Linde's Cornerstone requisition page, run 75, came up empty but for its
     # unlabelled language list, and was read as a form, so it was never reloaded)
@@ -3265,16 +3270,23 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         if not _job_list(url) or _job_list(came_from) or \
                 (urlparse(url).hostname or "").lower() != (urlparse(came_from).hostname or "").lower():
             return _Then.ON
+        if _closed_notice(lap.data, lap.text):
+            return _Then.ON  # (the site says the posting closed: said, and skipped, as it is: the review)
         ps.list_returns += 1
         with contextlib.suppress(Exception):
             await run.page.go_back(wait_until="load")
+        if _bare(run.page.url) != _bare(came_from):
+            # (Back that doesn't get there: a list the site went to with location.replace, or in a tab of its own)
+            with contextlib.suppress(Exception):
+                await run.page.goto(came_from, wait_until="load")
+        back = _bare(run.page.url) == _bare(came_from)
         ps.waited.clear()  # (the page gone back to is a new visit: its late buttons waited on again)
-        if ps.list_returns > 1:
+        if ps.list_returns > 1 or not back:
             await self._bring_forward(run)
             self._pause(run, "stuck", f"“{button}” on this job's page goes to {_site(run, lap.data)}'s list "
-                        "of jobs, not to this job's application, so I went back to the posting. Open the job's "
-                        "application in the desk's browser window, then press Carry on; or skip the job.",
-                        code="no_way_in")
+                        "of jobs, not to this job's application"
+                        + (", so I went back to the posting" if back else "") + ". Open the job's application in the "
+                        "desk's browser window, then press Carry on; or skip the job.", code="no_way_in")
             return _Then.STOP
         self._log(run, f"“{button}” went to {_site(run, lap.data)}'s list of jobs, not this job's "
                   "application, so I went back to the posting")
@@ -6190,6 +6202,11 @@ def _bare(url: str) -> str:
 # The query keys that name a job in an address: Eightfold's pid, Taleo's job, SuccessFactors'
 # career_job_req_id, Greenhouse's gh_jid, and the usual jobId / reqId
 _JOB_ID_KEY = re.compile(r"pid|job|jid|gh_jid|job_?id|req_?id|job_?req_?id|requisition_?id|career_job_req_id", re.I)
+# ...and, for telling one job's page from a list of jobs only (_job_list), a few more: Jobvite's jvi, UKG Pro's
+# opportunityId, a selectedJob and a plain id (the review of the Station Casinos fix). Not for _gone_home's: there a
+# key the job's own address has and the page it was left on lacks reads as a page away from it (UKG's walk with
+# opportunityId: its application's steps, without it, read as its careers home, and the job was opened again)
+_ONE_JOB_KEY = re.compile(_JOB_ID_KEY.pattern + r"|jvi|id|selected_?job|opportunity_?id", re.I)
 
 
 def _job_ids(url: str) -> dict[str, str]:
@@ -6207,7 +6224,8 @@ _JOB_LIST_PATH = re.compile(r"/(?:jobs|requisitions|job-?search|search-?jobs|sea
 def _job_list(url: Any) -> bool:
     """Is this address a site's list of jobs (_JOB_LIST_PATH), not a job's own page?"""
     parts = urlparse(str(url or ""))
-    return parts.scheme in ("http", "https") and bool(_JOB_LIST_PATH.search(parts.path)) and not _job_ids(str(url))
+    one_job = any(_ONE_JOB_KEY.fullmatch(k) and re.search(r"\d", v) for k, v in parse_qsl(parts.query))
+    return parts.scheme in ("http", "https") and bool(_JOB_LIST_PATH.search(parts.path)) and not one_job
 
 
 def _above(url: str, below: str) -> bool:
