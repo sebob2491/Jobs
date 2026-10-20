@@ -1082,9 +1082,10 @@ class Run:
     moved_since: float = 0.0  # since when every look has found its paused tab past the pause
     pause_sig: tuple | None = None  # how the paused page looked: the same page is never past itself
     once_page: dict[str, tuple] = field(default_factory=dict)  # where each this-application answer went in
-    # optional boxes (placed_key) the site emptied of the person's answer after its second try: left empty, not filled
-    # again (_fill_once)
-    once_left: set[str] = field(default_factory=set)
+    # optional boxes (placed_key) the site emptied of the person's answer after its second try, each with its label's
+    # key: left empty, not filled again while they stay optional and unflagged (_fill_once); the person's answer to the
+    # question again takes it off (Desk's answers)
+    once_left: dict[str, str] = field(default_factory=dict)
     mail_checked: float = 0.0  # when the inbox was last looked at for its emailed code or link
     mail_done: bool = False  # the code or link from the inbox went in: no more looking
     # the employer's own mail domains, from its list (looked up once), and _another_employers_mail's answer for this

@@ -827,3 +827,16 @@ def test_a_framed_gates_own_words_are_its_frames_alone(srv, tmp_path):
     run(srv.browser.goto(page.resolve().as_uri()))
     actions = run(srv.browser.inspect(include_dropdown_options=False))["actions"]
     assert actions and run(srv.browser.own_frame_text(actions[0]["id"])) is None  # (no words at all)
+    # a tracking pixel's frame (1x1, or hidden) holds no words: the gate's own still read alone; a drawn one isn't
+    # (the third review of run 147's fixes)
+    for frame, alone in (('<iframe src="gate.html" width="1" height="1" style="border: 0"></iframe>', True),
+                         # (Google Tag Manager's noscript frame)
+                         ('<iframe src="gate.html" height="0" width="0" style="display:none;visibility:hidden">'
+                          '</iframe>', True),
+                         ('<iframe src="gate.html" width="300" height="80"></iframe>', False)):
+        page.write_text('<!doctype html><html><body><h2>Privacy Agreement</h2><p>Read our privacy agreement.</p>'
+                        f'<button>I Agree</button>{frame}</body></html>', encoding="utf-8")
+        run(srv.browser.goto(page.resolve().as_uri()))
+        actions = run(srv.browser.inspect(include_dropdown_options=False))["actions"]
+        own = run(srv.browser.own_frame_text(next(a for a in actions if a["text"] == "I Agree")["id"]))
+        assert (own is not None and "Read our privacy agreement." in own) is alone, (frame, own)

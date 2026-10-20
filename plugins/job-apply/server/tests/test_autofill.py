@@ -2024,6 +2024,22 @@ def test_us_in_capitals_is_the_country_never_this_employer():
         assert resolve_field(f(asked, "radio_group", options=yes_no), past, {"company": "Intel"}).value == "No", asked
 
 
+def test_us_the_country_is_never_us_bank_by_its_first_letter():
+    """The third review of run 147's fixes: at U.S. Bank the employer's first word was "u", which "the US Postal
+    Service" holds once "US" is read as the country's ("U.S."): "No" where the person is asked. Its leading words up to
+    one of 3 letters or more name it ("u s bank"); its own name still does, and "us" still means it."""
+    yes_no = ["Yes", "No"]
+    job = {"company": "U.S. Bank"}
+    for past, asked in (("US Airways", "Have you ever worked for US Airways?"),
+                        ("United States Postal Service", "Have you ever worked for the US Postal Service?"),
+                        ("US Steel", "Have you ever been employed by US Steel?")):
+        assert resolve_field(f(asked, "radio_group", options=yes_no), _worked_at(past), job) is None, asked
+    for asked in ("Have you ever worked for U.S. Bank?", "Have you ever worked for us before?"):
+        assert resolve_field(f(asked, "radio_group", options=yes_no), _worked_at("Wells Fargo"), job).value == "No"
+    assert resolve_field(f("Have you ever worked for U.S. Bank?", "radio_group", options=yes_no),
+                         _worked_at("U.S. Bank"), job).value == "Yes"
+
+
 def test_a_former_employee_question_naming_another_company_is_never_answered_from_this_ones():
     """An employer's form (live, Oct 2026) asked "Are you a current or former employee of Ernst &
     Young?": the desk took it for a question about working for the employer applied to, which

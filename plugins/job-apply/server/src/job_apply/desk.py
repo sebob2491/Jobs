@@ -1006,6 +1006,10 @@ class Desk:
             label, value = str(a.get("label") or ""), a.get("value")
             if not label or value in (None, "") or question_key(label) in account:
                 continue
+            # (answered again: a box the site had emptied of it, left empty while optional, is filled again)
+            for box, asked in list(run.once_left.items()):
+                if question_key(label) in (box, asked):
+                    del run.once_left[box]
             if a.get("remember", True) and " | " not in label:  # (one box's own answer is never remembered)
                 # an answer naming this employer ("Acme website") is remembered as "Company Website", or not at
                 # all: it isn't the answer at another employer's

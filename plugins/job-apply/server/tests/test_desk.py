@@ -791,6 +791,26 @@ def test_two_boxes_with_one_label_keep_their_own_answers(srv, job_apply_home):
     assert config.saved_answers() == []
 
 
+def test_answering_again_fills_a_box_the_site_had_emptied(srv, job_apply_home):
+    """The third review of run 147's fixes: an optional box the site emptied of the person's answer is left empty
+    (Run.once_left); answered again on the card (the site since said it's required), it's filled again: by its label,
+    or by the box's own key."""
+    from job_apply.pipeline import Run, placed_key, question_key
+
+    job = srv.add_job(url="https://example.com/a", title="FSE", company="Example Fab")["job"]
+    desk = Desk(srv)
+    box = {"label": "Years in a cleanroom", "section": "Questions"}
+    other = {"label": "Shift", "section": "Questions"}
+    run = Run(job["id"], "FSE", "Example Fab", status="needs_you", need="questions")
+    run.once_left = {placed_key(box): question_key(box["label"]), placed_key(other): question_key(other["label"])}
+    desk.applier.runs[job["id"]] = run
+    desk.answer(job["id"], [{"label": "Years in a cleanroom", "value": "3", "remember": False}])
+    assert run.once_left == {placed_key(other): question_key(other["label"])}
+    run.status, run.need = "needs_you", "questions"  # (asking again)
+    desk.answer(job["id"], [{"label": "Questions | Shift | ", "value": "Days"}])
+    assert run.once_left == {}
+
+
 def test_a_remembered_answer_replaces_one_given_for_this_application_only(srv, job_apply_home):
     """The page turned down an answer given for this application only, and the person answers
     again, remembering it: the earlier answer isn't tried again ahead of it."""

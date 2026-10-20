@@ -1037,9 +1037,15 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
             try:
                 page = await self.page()
                 frame = self._frame_for(page, element_id)
-                if any(not f.is_detached() and f.url != "about:blank" and not _MEDIA_FRAME.match(f.url)
-                       and not _CAPTCHA_FRAME.match(f.url) for f in frame.child_frames):
-                    return None
+                for f in frame.child_frames:
+                    if f.is_detached() or f.url == "about:blank" or _MEDIA_FRAME.match(f.url) \
+                            or _CAPTCHA_FRAME.match(f.url):
+                        continue
+                    # (one drawn nowhere, or a pixel's size, holds no words to read: a tag manager's or a tracking
+                    # pixel's, on many real gates: the third review of run 147's fixes)
+                    box = await _bounded((await _bounded(f.frame_element())).bounding_box())
+                    if box is not None and box["width"] >= 2 and box["height"] >= 2:
+                        return None
                 text = str(await _bounded(frame.evaluate(VISIBLE_TEXT_JS)) or "")
             except (PlaywrightError, _Hung, KeyError):
                 return None

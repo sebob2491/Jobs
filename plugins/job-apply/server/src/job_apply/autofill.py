@@ -1019,7 +1019,11 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     # Holdings' "Have you ever been employed by UCT?", run 147, wasn't known for the employer's). Never a bracket's
     # words read as one: "(NNSS)" names a site, "(US)" a country
     aliases = employer_aliases(str(job.get("company") or ""))
-    first = "(?:" + "|".join(re.escape(n) for n in dict.fromkeys([company.split()[0], *aliases])) + ")"
+    # (its first word, or where that's under 3 letters its leading words up to one that isn't: U.S. Bank is "u s bank",
+    # never "u", which "the US Postal Service" holds once "US" is the country's: the third review of run 147's fixes)
+    words = company.split()
+    lead = " ".join(words[:next((i + 1 for i, w in enumerate(words) if len(w) >= 3), len(words))])
+    first = "(?:" + "|".join(re.escape(n) for n in dict.fromkeys([lead, *aliases])) + ")"
     names_it = re.search(r"\b(employ\w*|work\w*|intern\w*|contract\w*)( \w+){0,3}? (by|for|at|with|"
                          rf"of) (the |any |an? )?{first}\b"
                          # onsemi's "worked in any onsemi establishment" (never "worked in Arizona": a place)

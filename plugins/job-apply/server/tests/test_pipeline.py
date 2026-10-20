@@ -1170,6 +1170,42 @@ def test_an_answer_the_site_empties_again_after_the_second_try_goes_back_to_the_
     assert list(run(applier._fill_once(r, flagged))) == [question_key(extra)]
 
 
+def test_a_box_left_empty_while_optional_is_filled_once_the_site_wants_it(srv, monkeypatch):
+    """The third review of run 147's fixes: a box read as optional that the site emptied is left empty (Run.once_left);
+    when the site then says it's required, or the page says it's wrong, it's filled again, never skipped every round."""
+    from job_apply.pipeline import Run, placed_key
+
+    filled = []
+
+    class Stub:
+        async def fill_form(self, values):
+            filled.extend(values)
+            return {"ok": True, "results": [{"id": v["id"], "ok": True} for v in values]}
+
+    label = "Years of cleanroom experience"
+    box = {"id": "n3", "label": label, "kind": "text", "value": "", "required": False}
+    applier = Applier(srv)
+    applier.srv = Stub()
+    monkeypatch.setattr(pipeline, "ONCE_SETTLE", 0)
+    for now, errors in (({"required": True}, []), ({}, [f"{label} is required"]), ({"invalid": True}, [])):
+        page = {"url": "https://x.example/apply", "headings": ["Questions"], "fields": [{**box, **now}],
+                "errors": errors}
+
+        async def look(page=page, **kw):
+            return {**page, "fields": [{**page["fields"][0], "value": "3"}]}, ""
+        applier._look = look
+        r = Run(1, "Engineer", "Example Clean")
+        r.once[question_key(label)] = "3"
+        r.once_left[placed_key(box)] = question_key(label)
+        filled.clear()
+        assert run(applier._fill_once(r, page)) == {}
+        assert [v["id"] for v in filled] == ["n3"], (now, errors, filled)
+    # (still optional and nothing said: left as it was)
+    page = {"url": "https://x.example/apply", "headings": ["Questions"], "fields": [box]}
+    filled.clear()
+    assert run(applier._fill_once(r, page)) == {} and filled == []
+
+
 def test_a_job_skipped_while_submit_for_me_checks_it_isnt_submitted(srv):
     from job_apply.pipeline import Run
 
