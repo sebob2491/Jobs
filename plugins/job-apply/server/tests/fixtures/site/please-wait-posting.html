@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Field Technician Job Details</title>
+<style>.menu { display: none; } .open > .menu { display: block; }</style>
+</head>
+<body>
+<!-- like EY's SuccessFactors posting (run 147): "Apply now" opens a menu whose "Apply Now" shows "Please wait..."
+     while the site sends the applicant on to its application, which takes a while (here 8 s, to a first step) -->
+<h1>Field Technician</h1>
+<h2>Job description</h2>
+<p>Install and service equipment at customer sites.</p>
+<div id="group">
+  <button type="button" aria-haspopup="true" aria-expanded="false" id="toggle">Apply now</button>
+  <ul class="menu"><li role="none"><a role="menuitem" href="#" id="manual">Apply Now</a></li></ul>
+</div>
+<div id="wait" role="alert" hidden><span class="spinner"></span>Please wait...</div>
+<script>
+  const group = document.getElementById('group');
+  document.getElementById('toggle').addEventListener('click', () => {
+    group.classList.toggle('open');
+    document.getElementById('toggle').setAttribute('aria-expanded', group.classList.contains('open'));
+  });
+  document.getElementById('manual').addEventListener('click', (e) => {
+    e.preventDefault();
+    group.classList.remove('open');
+    document.getElementById('toggle').setAttribute('aria-expanded', 'false');
+    document.getElementById('wait').hidden = false;
+    setTimeout(() => { location.href = 'step1.html'; }, 8000);
+  });
+</script>
+</body>
+</html>

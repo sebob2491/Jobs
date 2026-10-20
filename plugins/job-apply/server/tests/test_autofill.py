@@ -1938,6 +1938,27 @@ def test_previously_employed_by_any_of_the_employers_companies():
                              {"company": "Arizona State University"}) is None, asked
 
 
+def test_previously_employed_by_the_employers_short_name_in_brackets():
+    """UCT's UKG Pro (run 147): "Have you ever been employed by UCT, or worked at UCT on a Temporary/Contractor
+    basis?" at Ultra Clean Holdings (UCT): the desk knew the employer by its first word alone ("ultra"), so the question
+    wasn't known for one about working there, and the person was asked. The short name its listed name gives in
+    brackets is the employer's too, answered from the profile as before; never a bracket's other words, nor another
+    employer's short name."""
+    yes_no = ["Yes", "No"]
+    uct = f("Have you ever been employed by UCT, or worked at UCT on a Temporary/Contractor basis?", "radio_group",
+            options=yes_no)
+    assert resolve_field(uct, prof(), {"company": "Ultra Clean Holdings (UCT)"}).value == "No"
+    tel = f("Have you previously worked for TEL?", "radio_group", options=yes_no)
+    assert resolve_field(tel, prof(), {"company": "Tokyo Electron (TEL)"}).value == "No"
+    cla = f("Have you ever been employed by CLA?", "radio_group", options=yes_no)
+    assert resolve_field(cla, prof(), {"company": "CliftonLarsonAllen (CLA)"}).value == "No"
+    # never another employer's short name, nor a bracket's words that aren't one
+    assert resolve_field(f("Have you ever been employed by UCT?", "radio_group", options=yes_no), prof(),
+                         {"company": "Tokyo Electron (TEL)"}) is None
+    assert resolve_field(f("Have you ever been employed by Resorts World?", "radio_group", options=yes_no), prof(),
+                         {"company": "Station Casinos (Red Rock Resorts)"}) is None
+
+
 def test_a_former_employee_question_naming_another_company_is_never_answered_from_this_ones():
     """An employer's form (live, Oct 2026) asked "Are you a current or former employee of Ernst &
     Young?": the desk took it for a question about working for the employer applied to, which

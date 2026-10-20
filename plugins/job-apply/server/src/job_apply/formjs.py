@@ -623,6 +623,9 @@ EXTRACT_JS = r"""
       else if (al && al !== label && al.length < 40 && !label.includes(al)) sub = al;
       if (sub) f.sublabel = sub;
       if (role === 'spinbutton') f.role = 'spinbutton';
+      // a text box that keeps only a number (UKG Pro's question box, autoNumeric's: run 147, anything else emptied)
+      if (el.getAttribute('data-automation') === 'numeric-response'
+          || /\bautoNumeric\s*:/.test(el.getAttribute('data-bind') || '')) f.numeric = true;
     }
     if (options) f.options = options;
     // a Workday search prompt: what it lists on opening is only its top level
@@ -972,7 +975,8 @@ EXTRACT_JS = r"""
     if (!/[\p{L}\p{N}]/u.test(t)) continue;
     const r = el.getBoundingClientRect();
     if (r.width <= 1 || r.height <= 1) continue;  // screen-reader announcements ("… page is loaded")
-    if (/\bpage is loaded\b|^loading\b/i.test(t)) continue;
+    // (nor a site's word that it's on its way, EY's "Please wait..." in an alert, run 147: busy, never an error)
+    if (/\bpage is loaded\b|^loading\b|^(?:please wait|redirecting)\b[\s,.!]*(?:\.\.\.|…)?$/i.test(t)) continue;
     if (t && t.length < 300 && visible(el) && !errors.includes(t)) errors.push(t);
     if (errors.length >= 10) break;
   }
@@ -1030,6 +1034,17 @@ EXTRACT_JS = r"""
   const bones = () => [...document.querySelectorAll('div, span')].some((el) => el.childElementCount === 0
     && /^loading(?:\.\.\.|\u2026)?$/i.test((el.textContent || '').trim()) && el.nextElementSibling
     && el.nextElementSibling.getAttribute('aria-hidden') === 'true' && visible(el.nextElementSibling));
+  // and a site's own word that it's on its way somewhere, on show: "Please wait...", "Loading...", "Redirecting..."
+  // (EY's posting while it sent the applicant on to SuccessFactors, run 147: the desk took it for a page going
+  // nowhere). Only those words alone, with their dots, in a box drawn on the page; never a screen reader's alone
+  const waiting = () => [...document.querySelectorAll('div, span, p, [role="alert"], [role="status"]')].some((el) => {
+    const t = (el.textContent || '').trim();
+    if (t.length > 60 || !/^(?:(?:please wait|loading|redirecting(?: you)?)[\s,.!]*)+(?:\.\.\.|…)$/i.test(t)) {
+      return false;
+    }
+    const r = el.getBoundingClientRect();
+    return r.width > 1 && r.height > 1 && visible(el) && !faded(el);  // (faded: below, read once busy is)
+  });
   // and Workday's step still drawing: under its progress bar, only its loading dots, boxes with no words, no names and
   // nothing to press (Grand Canyon University's Create Account/Sign In, run 69: no automation id on them)
   const drawing = () => {
@@ -1061,7 +1076,7 @@ EXTRACT_JS = r"""
     return false;
   };
   const busy = [...document.querySelectorAll(LOADING)].some((el) => visible(el) && !faded(el)) || bones() || drawing()
-    || empty;
+    || empty || waiting();
   return { fields, actions, errors, headings, dialogs, ...(busy ? { busy: true } : {}),
            ...(empty ? { empty_frame: true } : {}) };
 }

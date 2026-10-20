@@ -314,6 +314,8 @@ _CONTENT_MISSING = re.compile(r"\bcontent missing\b", re.I)
 _REFRESH_ASKED = re.compile(r"\bsomething went wrong\b.{0,200}\b(?:refresh|reload) (?:the|this) page\b", re.I | re.S)
 _TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$|^\s*(?:406\s*)?(?:request )?not acceptable\s*$|"
                           r"^\s*your request has been blocked\.?\s*$", re.I)  # (Workday's, its title empty)
+# a bare 403 or 406 as a page's whole title (UKG Pro's sign-in, run 147: "403" over a body of "403 Forbidden" alone)
+_TURNED_AWAY_CODE = re.compile(r"^\s*(?:(?:http\s+)?(?:error|status)\s+)?40[36]\s*$", re.I)
 # A job system's own error page (iCIMS's, run 74: "Oops, something went wrong", then "Technical Details:")
 _ERROR_PAGE = re.compile(r"\bsomething went wrong\b|\btechnical details\b", re.I)
 # A web server's own error page, bare: its title or first heading a 5xx's words as a whole and nothing else (nginx's
@@ -3331,7 +3333,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         heads = lap.data.get("headings") or []
         deep = heads[1:] if (_ERROR_PAGE.search(lap.text[:2000])
                              and pick_next(lap.data.get("actions") or [], lap.kind == "form") is None) else []
-        refused = next((t for t in [lap.data.get("title") or "", *heads[:1], *deep] if _TURNED_AWAY.search(t)), "")
+        refused = next((t for t in [lap.data.get("title") or "", *heads[:1], *deep] if _TURNED_AWAY.search(t)), "") \
+            or _turned_away_page(lap.data, lap.text)
         if lap.kind in ("page", "form") and bare and refused:
             refusal = re.sub(r"\s+", " ", refused).strip()
             self._pause(run, "stuck", f"{_site(run, lap.data)} turned the desk's browser away ({refusal}). "
@@ -4048,6 +4051,13 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
             # the nightly of Oct 12: "Take Assessment" beside its Save and Continue): a test of the person
             await self._assessment_pause(run, lap.data, test)
             return _Then.STOP
+        if circling and lap.data.get("busy") and ("circling", len(ps.pressed)) not in ps.waited:
+            # the site still on its way somewhere ("Please wait...": EY's posting while it sent the applicant on to
+            # SuccessFactors, run 147, and the desk stopped before it got there): waited on once for the page to
+            # change, as a blank page is, before it counts as going nowhere (once, whatever the page draws meanwhile)
+            ps.waited.add(("circling", len(ps.pressed)))
+            if await self._wait_for_change(lap.data, BLANK_PAGE_WAIT):
+                return _Then.AGAIN
         if circling:
             # "next" on a list of jobs (a link to a search page): its pages differ, but no
             # application ever opens
@@ -6883,13 +6893,29 @@ def _own_draft(action: dict[str, Any], data: dict[str, Any], job_url: str) -> bo
     return bool(ids & pieces)
 
 
+def _turned_away_page(data: dict[str, Any], text: str) -> str:
+    """A page that is only a refusal of the browser, said in its words: its whole text, where that's short and a
+    refusal's words alone ("403 Forbidden" with no heading: UKG Pro's sign-in for Nikon Precision and UCT, run 147, and
+    the desk took it for a blank page and loaded it again twice), or else a bare 403 or 406 for its title on a page with
+    nothing else on it. "" when it isn't one."""
+    words = re.sub(r"\s+", " ", text or "").strip()
+    if len(words) <= 80 and _TURNED_AWAY.search(words):
+        return words
+    title = str(data.get("title") or "").strip()
+    if (_TURNED_AWAY_CODE.match(title) and not _app_fields(data) and not data.get("actions")
+            and not data.get("headings") and len(words) <= 80):
+        return title
+    return ""
+
+
 def _nothing_drawn(data: dict[str, Any], text: str) -> bool:
     """A page with nothing drawn on it: no headings, boxes (but its own language picker) or buttons (Eightfold's apply
     page, issue #112, note 40: its app shell, and no form), and nothing in its words that says why. Never a bot check
     or a CAPTCHA (the person's), nor a page whose words are its own message: a posting closed, an error the page shows
-    or the site's own error page, a confirmation, an application sent before."""
+    or the site's own error page, a confirmation, an application sent before, the browser turned away."""
     if _app_fields(data) or data.get("actions") or data.get("headings") or data.get("captcha") \
-            or data.get("challenge") or data.get("empty_frame") or any(_errorish(e) for e in data.get("errors") or []):
+            or data.get("challenge") or data.get("empty_frame") or any(_errorish(e) for e in data.get("errors") or []) \
+            or _turned_away_page(data, text):
         return False
     said = (text or "")[:3000]
     return not (_BOT_BADGE.search(said) or _BOT_TEXT.search(said) or _ROBOT.search(said) or _closed_notice(data, said)

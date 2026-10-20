@@ -79,9 +79,23 @@ class FillingMixin:
             filled |= {by_id[f["id"]] for f in fills} - set(failed)
             for key in {by_id[f["id"]] for f in fills} - set(failed):
                 run.once_page.setdefault(key, here)
-            if attempt == 0:
-                await asyncio.sleep(pipeline.ONCE_SETTLE)  # long enough for an answer that won't stick to be gone
-                data, _ = await self._look(text=False)
+            await asyncio.sleep(pipeline.ONCE_SETTLE)  # long enough for an answer that won't stick to be gone
+            data, _ = await self._look(text=False)
+            if attempt == 1:
+                # gone again after the second try: the site won't keep it (UKG Pro's number box, run 147, empties itself
+                # of anything but a number, and the desk said it filled the answer and asked for it again each round).
+                # It goes back to the person, said so; never another answer made up in its place
+                now = {f.get("id"): f for f in data.get("fields") or []}
+                for f in fills:
+                    key, box = by_id[f["id"]], now.get(f["id"])
+                    if key in failed or box is None or not (is_empty_value(box.get("value")) or unset_choice(box)):
+                        continue
+                    asked = fields[f["id"]]
+                    number = asked.get("numeric") or asked.get("input_type") == "number"
+                    failed[key] = {**{k: asked[k] for k in ("id", "kind", "label", "section", "required", "options")
+                                      if asked.get(k) not in (None, [])},
+                                   "error": "the site didn't keep your answer" + (
+                                       ": this box takes a number" if number else ", and emptied the box again")}
         filled -= set(failed)
         pipeline._went_in(run, [{"id": fid, "value": run.once.get(key)} for fid, key in sent.items() if key in filled],
                           first, data)
@@ -263,15 +277,16 @@ class FillingMixin:
         pass: Workday's My Experience drew the account's saved school (or job) after the desk had looked for it and
         added one (Hitachi High-Tech America's, run 92; U.S. Bank's and Baker Tilly's, runs 52 and 62), and the page
         then had more blocks than the profile has entries. The empty one goes with its own Delete, as many as the desk
-        added (`added`, by kind: taken down as they go), only the last block of its kind, never its only one (a block
-        before others would hand its number on), and only the very block an Add the desk pressed drew
-        (browser_blocks.py's added_blocks); once a block (`tried`). A block with anything in it, or one the desk didn't
-        add, stays the person's (_entry_gaps says so). Where the site drew the saved entry INTO the desk's block
-        (Workday numbers its blocks by place: Arizona State University's, run 108, the desk's mark left on a block now
-        holding the saved job, and a new empty block after it, unmarked), the marked block holds a value the desk never
-        put there (a text box or list neither among `filled`, the boxes its own fills went into on this pass, by id, nor
-        showing one of `given`, what they put there: a box drawn again under a new id, or a once-answer, is still the
-        desk's), and the empty last block is the desk's own. True when it deleted one."""
+        added (`added`, by kind: taken down as they go; or, on a later pass, the block the desk's mark is on: KLA's,
+        run 147), only the last block of its kind, never its only one (a block before others would hand its number on;
+        a marked one numbered 2 or more isn't, though the ones before it aren't drawn yet), and only the very block an
+        Add the desk pressed drew (browser_blocks.py's added_blocks); once a block (`tried`). A block with anything in
+        it, or one the desk didn't add, stays the person's (_entry_gaps says so). Where the site drew the saved entry
+        INTO the desk's block (Workday numbers its blocks by place: Arizona State University's, run 108, the desk's mark
+        left on a block now holding the saved job, and a new empty block after it, unmarked), the marked block holds a
+        value the desk never put there (a text box or list neither among `filled`, the boxes its own fills went into on
+        this pass, by id, nor showing one of `given`, what they put there: a box drawn again under a new id, or a
+        once-answer, is still the desk's), and the empty last block is the desk's own. True when it deleted one."""
         prof = config.Profile.load()
         extra: dict[str, str] = {}  # block: its kind
         for q in pending:
@@ -281,14 +296,27 @@ class FillingMixin:
         deletes = [a for a in data.get("actions") or [] if not a.get("disabled")
                    and re.match(r"^(?:delete|remove)\b", final_text(a.get("text") or ""), re.I)]
         for block, kind in extra.items():
-            if added.get(kind, 0) < 1 or block in tried:
+            if block in tried:
                 continue
             numbered = re.compile(rf"^(?:{pipeline._BLOCK_KINDS[kind]})\s+(\d+)\s*$", re.I)
             # the blocks of its kind by their boxes, and by their Deletes (a block's boxes can be drawn after it)
             blocks = sorted({str(x.get("section") or "") for x in [*(data.get("fields") or []), *deletes]
                              if numbered.match(str(x.get("section") or ""))},
                             key=lambda s: int(re.findall(r"\d+", s)[-1]))
-            if len(blocks) < 2 or blocks[-1] != block:
+            if not blocks or blocks[-1] != block:
+                continue
+            # the very block the desk's own press drew (browser_blocks.py's add_entries marks it), never a saved one
+            # drawn beside it, empty for a moment (the review of 0.3.173): a block it can't tell so is the person's.
+            # The mark says so on a later pass too: the person's Carry on, where this pass added none (`added` is the
+            # pass's own; KLA's Workday, run 147, stopped again on the desk's own empty block)
+            marked = [h for h in await self.srv.browser.added_blocks() if numbered.match(h)]
+            own = pipeline._block_key(block) in {pipeline._block_key(h) for h in marked}
+            if added.get(kind, 0) < 1 and not own:
+                continue
+            # never its kind's only block: one the desk's own Add drew, numbered 2 or more, isn't, though the blocks
+            # before it aren't read yet (KLA's, run 147: Workday's "refresh" reload drew the saved job above the desk's
+            # block late, its boxes and Delete not there yet)
+            if len(blocks) < 2 and not (own and int(re.findall(r"\d+", block)[-1]) >= 2):
                 continue
             boxes = [f for f in data.get("fields") or [] if f.get("section") == block]
             if not boxes or any(not is_empty_value(f.get("value")) and not unset_choice(f) for f in boxes):
@@ -296,12 +324,9 @@ class FillingMixin:
             delete = pipeline._own_delete(deletes, block)
             if delete is None:
                 continue
-            # the very block the desk's own press drew (browser_blocks.py's add_entries marks it), never a saved one
-            # drawn beside it, empty for a moment (the review of 0.3.173): a block it can't tell so is the person's.
             # Unless the mark sits on a block of this kind the site filled (values in it the desk never typed: the saved
             # entry drawn into the desk's own, the empty one after it then the desk's)
-            marked = [h for h in await self.srv.browser.added_blocks() if numbered.match(h)]
-            reused = pipeline._block_key(block) not in {pipeline._block_key(h) for h in marked}
+            reused = not own
             if reused:
                 def site_filled(heading: str) -> bool:
                     # a text box or list with a value the desk didn't put there: not one it filled (by id), nor showing
@@ -326,7 +351,7 @@ class FillingMixin:
             now, _ = await self._look(text=False)
             if any(f.get("section") == block for f in now.get("fields") or []):
                 return False  # still there (a "Are you sure?" over it, say): the person's
-            added[kind] -= 1
+            added[kind] = max(0, added.get(kind, 0) - 1)
             thing = "schools" if kind == "education" else "jobs"
             self._log(run, f"deleted {block}: an empty block past your profile's {thing}, " + (
                 f"left over after the page drew the {thing} saved there into the one I had added" if reused

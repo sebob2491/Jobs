@@ -72,6 +72,39 @@ def test_workdays_whole_step_loading_page_is_busy_while_on_show(srv, tmp_path):
         assert bool(run(srv.browser.inspect(include_dropdown_options=False)).get("busy")) is busy, style
 
 
+def test_a_ukg_number_box_is_read_as_one(srv, tmp_path):
+    """UCT's UKG Pro (run 147): a question's text box that keeps only a number (data-automation="numeric-response",
+    autoNumeric's) is read as such, for the desk to say so when the site empties an answer from it. A plain text box
+    isn't."""
+    got = fields_of(srv, tmp_path, '<label for="a">On a scale of 1-5, how do you rate it?</label>'
+                                   '<input type="text" id="a" data-automation="numeric-response" '
+                                   'data-bind="autoNumeric: answer, settings: { vMax: 999 }">'
+                                   '<label for="b">Years of experience</label><input type="text" id="b" '
+                                   'data-bind="autoNumeric: years">'
+                                   '<label for="c">Your answer</label><input type="text" id="c" data-bind="value: x">')
+    assert [f.get("numeric") for f in got] == [True, True, None], got
+
+
+def test_a_please_wait_on_show_is_busy(srv, tmp_path):
+    """EY's posting (run 147) said "Please wait..." while the site sent the applicant on to SuccessFactors: busy while
+    on show. Those words alone, with their dots; never words that only begin so, a bare "Loading", one hidden, or a
+    screen reader's alone."""
+    page = tmp_path / "form.html"
+    for html, busy in (('<div role="alert"><span class="spin"></span>Please wait...</div>', True),
+                       ('<p>Loading, please wait…</p>', True),
+                       ('<span>Redirecting you...</span>', True),
+                       ('<p>Loading docks and warehouse experience...</p>', False),
+                       ('<p>Please wait for a recruiter to contact you...</p>', False),
+                       ('<span>Loading</span>', False),
+                       ('<div role="alert" hidden>Please wait...</div>', False),
+                       ('<div style="position: absolute; width: 1px; height: 1px; overflow: hidden">Loading...</div>',
+                        False)):
+        page.write_text(f"<!doctype html><html><body><h1>Job description</h1><button>Apply now</button>{html}"
+                        "</body></html>", encoding="utf-8")
+        run(srv.browser.goto(page.resolve().as_uri()))
+        assert bool(run(srv.browser.inspect(include_dropdown_options=False)).get("busy")) is busy, html
+
+
 def test_workdays_step_body_with_only_its_loading_dots_is_busy(srv, tmp_path):
     """Grand Canyon University's Workday (run 69): its Create Account/Sign In step's body under the progress bar was
     only Workday's three loading dots, boxes with no words and no automation id: busy. Not a body with words, a box to

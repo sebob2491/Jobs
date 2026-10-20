@@ -1013,7 +1013,11 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     if not company:
         return None
     asked = norm(label)
-    first = re.escape(company.split()[0])
+    # the employer by its first word, or by the short name its listed name gives in brackets ("Ultra Clean Holdings
+    # (UCT)": "Have you ever been employed by UCT?", run 147, wasn't known for the employer's; Tokyo Electron (TEL),
+    # CliftonLarsonAllen (CLA))
+    shorts = [s.lower() for s in re.findall(r"\(([A-Z][A-Z0-9]{1,5})\)", str(job.get("company") or ""))]
+    first = "(?:" + "|".join(re.escape(n) for n in dict.fromkeys([company.split()[0], *shorts])) + ")"
     names_it = re.search(r"\b(employ\w*|work\w*|intern\w*|contract\w*)( \w+){0,3}? (by|for|at|with|"
                          rf"of) (the |any |an? )?{first}\b"
                          # onsemi's "worked in any onsemi establishment" (never "worked in Arizona": a place)
