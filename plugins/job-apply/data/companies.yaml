@@ -82,6 +82,7 @@ companies:
     search: {greenhouse: asm}
   - name: Tokyo Electron (TEL)
     careers_url: https://tel.wd3.myworkdayjobs.com/TEL-Careers
+    aliases: [TEL]            # what its questions call it ("Have you previously worked for TEL?")
     ats: workday
     az_sites: Chandler
     confidence: high
@@ -198,6 +199,7 @@ companies:
     search: {greenhouse: marketechinternationalcorporationusa}
   - name: Ultra Clean Holdings (UCT)
     careers_url: https://www.uct.com/careers
+    aliases: [UCT]            # what its questions call it ("Have you ever been employed by UCT ...?", run 147)
     ats: ukg
     az_sites: Phoenix (fab onsite cleaning and chemical-line technicians)
     confidence: high          # live check, Oct 2026: 49 Phoenix openings, "FAB Onsite Tech" among them

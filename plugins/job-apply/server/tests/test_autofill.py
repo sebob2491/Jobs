@@ -3,6 +3,7 @@ import pytest
 from job_apply.autofill import (
     choose_option,
     clean_label,
+    employer_aliases,
     choose_place,
     is_decline,
     is_empty_value,
@@ -1938,13 +1939,16 @@ def test_previously_employed_by_any_of_the_employers_companies():
                              {"company": "Arizona State University"}) is None, asked
 
 
-def test_previously_employed_by_the_employers_short_name_in_brackets():
+def test_previously_employed_by_a_short_name_its_entry_gives_it():
     """UCT's UKG Pro (run 147): "Have you ever been employed by UCT, or worked at UCT on a Temporary/Contractor
     basis?" at Ultra Clean Holdings (UCT): the desk knew the employer by its first word alone ("ultra"), so the question
-    wasn't known for one about working there, and the person was asked. The short name its listed name gives in
-    brackets is the employer's too, answered from the profile as before; never a bracket's other words, nor another
-    employer's short name."""
+    wasn't known for one about working there, and the person was asked. A short name the employer's entry on the lists
+    gives it (`aliases`) is the employer's too, answered from the profile as before; never another employer's."""
     yes_no = ["Yes", "No"]
+    assert employer_aliases("Ultra Clean Holdings (UCT)") == ["uct"]
+    assert employer_aliases("Tokyo Electron (TEL)") == ["tel"]
+    assert employer_aliases("CliftonLarsonAllen (CLA)") == ["cla"]
+    assert employer_aliases("Mission Support and Test Services (NNSS)") == []  # (NNSS names a site, not the employer)
     uct = f("Have you ever been employed by UCT, or worked at UCT on a Temporary/Contractor basis?", "radio_group",
             options=yes_no)
     assert resolve_field(uct, prof(), {"company": "Ultra Clean Holdings (UCT)"}).value == "No"
@@ -1952,11 +1956,36 @@ def test_previously_employed_by_the_employers_short_name_in_brackets():
     assert resolve_field(tel, prof(), {"company": "Tokyo Electron (TEL)"}).value == "No"
     cla = f("Have you ever been employed by CLA?", "radio_group", options=yes_no)
     assert resolve_field(cla, prof(), {"company": "CliftonLarsonAllen (CLA)"}).value == "No"
-    # never another employer's short name, nor a bracket's words that aren't one
+    # never another employer's short name
     assert resolve_field(f("Have you ever been employed by UCT?", "radio_group", options=yes_no), prof(),
                          {"company": "Tokyo Electron (TEL)"}) is None
-    assert resolve_field(f("Have you ever been employed by Resorts World?", "radio_group", options=yes_no), prof(),
-                         {"company": "Station Casinos (Red Rock Resorts)"}) is None
+
+
+def _worked_at(*companies: str) -> Profile:
+    return Profile({"work_history": [{"company": c, "title": "Technician", "start": "2018-01", "end": "2020-01"}
+                                     for c in companies]})
+
+
+@pytest.mark.parametrize("past, company, asked", [
+    # a past employer holding the employer's short name or its own name: maybe the one asked about
+    ("TEL Technology Center America", "Tokyo Electron (TEL)", "Have you previously worked for TEL?"),
+    ("TEL Technology Center America", "Tokyo Electron (TEL)", "Have you previously worked for Tokyo Electron?"),
+    ("UCT Thermal Solutions", "Ultra Clean Holdings (UCT)", "Have you ever been employed by UCT?"),
+    # a bracket's words are no short name: NNSS is a site, "US" a country
+    ("National Security Technologies (NSTec)", "Mission Support and Test Services (NNSS)",
+     "Have you ever worked at NNSS?"),
+    ("National Security Technologies (NSTec)", "Mission Support and Test Services (NNSS)",
+     "Have you ever been employed at the NNSS?"),
+    ("Honeywell", "Thermo Fisher Scientific (US)", "Have you ever been employed by a US federal contractor?"),
+    # the employer's customers, not working for it
+    ("Acme", "Tokyo Electron (TEL)", "Have you ever worked at TEL customer sites, such as Intel?"),
+])
+def test_worked_there_before_is_the_persons_where_the_profile_cant_say(past, company, asked):
+    """The review of run 147's fixes: reading a bracket's words as the employer's short name gave a "No" where the
+    profile can't say it (a past job at "TEL Technology Center America" applying to Tokyo Electron (TEL)), or where the
+    question asks about something else (NNSS, the site; "US"). Asked of the person."""
+    q = f(asked, "radio_group", options=["Yes", "No"])
+    assert resolve_field(q, _worked_at(past), {"company": company}) is None, (past, company, asked)
 
 
 def test_a_former_employee_question_naming_another_company_is_never_answered_from_this_ones():

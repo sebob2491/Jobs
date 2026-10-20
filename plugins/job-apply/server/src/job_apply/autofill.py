@@ -1013,11 +1013,11 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     if not company:
         return None
     asked = norm(label)
-    # the employer by its first word, or by the short name its listed name gives in brackets ("Ultra Clean Holdings
-    # (UCT)": "Have you ever been employed by UCT?", run 147, wasn't known for the employer's; Tokyo Electron (TEL),
-    # CliftonLarsonAllen (CLA))
-    shorts = [s.lower() for s in re.findall(r"\(([A-Z][A-Z0-9]{1,5})\)", str(job.get("company") or ""))]
-    first = "(?:" + "|".join(re.escape(n) for n in dict.fromkeys([company.split()[0], *shorts])) + ")"
+    # the employer by its first word, or by a short name its entry on the lists gives it (`aliases`: Ultra Clean
+    # Holdings' "Have you ever been employed by UCT?", run 147, wasn't known for the employer's). Never a bracket's
+    # words read as one: "(NNSS)" names a site, "(US)" a country
+    aliases = employer_aliases(str(job.get("company") or ""))
+    first = "(?:" + "|".join(re.escape(n) for n in dict.fromkeys([company.split()[0], *aliases])) + ")"
     names_it = re.search(r"\b(employ\w*|work\w*|intern\w*|contract\w*)( \w+){0,3}? (by|for|at|with|"
                          rf"of) (the |any |an? )?{first}\b"
                          # onsemi's "worked in any onsemi establishment" (never "worked in Arizona": a place)
@@ -1035,8 +1035,11 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     if not names_it and other:
         return None
     if re.search(rf"\b{first}( \w+){{0,2}} (tools?|systems?|equipment|products?|software|technolog\w*|machines?|"
-                 r"platforms?|scanners?|metrology|etch|deposition|parts)\b", asked):
-        return None  # "worked with KLA metrology systems": the employer's products, not working for it
+                 r"platforms?|scanners?|metrology|etch|deposition|parts|customers?|clients?|suppliers?|vendors?|"
+                 r"partners?|competitors?)\b", asked):
+        # "worked with KLA metrology systems": the employer's products, not working for it; "worked at TEL customer
+        # sites": its customers'
+        return None
     past = [norm(c) for c in _listed(prof.get("history.previous_employers"))]
     entries = [e for e in _listed(prof.get("work_history")) if isinstance(e, dict)]
     past += [norm(e.get("company")) for e in entries]
@@ -1047,10 +1050,34 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
         # affiliates": the profile can't say it's none of those
         if any(_may_be_employer(c, company) for c in past if c) or re.search(r"\b(subsidiar|affiliat)", asked):
             return None
+        # nor one whose name holds this one's own name or a short name of it as words ("TEL Technology Center America"
+        # at Tokyo Electron (TEL), "UCT Thermal Solutions" at Ultra Clean Holdings (UCT)): the profile can't say it's
+        # another
+        own = norm(re.sub(r"\([^)]*\)", " ", str(job.get("company") or "")))
+        if any(re.search(rf"(^| ){re.escape(n)}( |$)", c) for n in {own, *aliases} - {""} for c in past if c):
+            return None
         return "No"
     if works_there_now(prof, company):  # (a job now whose name only holds this one's: the person's to say)
         return "Yes, currently" if any(_same_employer(c, company) for c in _current_employers(prof)) else None
     return "Yes, previously"
+
+
+def employer_aliases(company: str) -> list[str]:
+    """The short names the employer's entry on the person's lists gives it (`aliases: [UCT]`), as norm() writes them:
+    only those of 3 letters or more; none where the lists can't be read."""
+    from .search import every_employer  # (search reads this module: imported when asked)
+
+    try:
+        entries = every_employer()
+    except Exception:  # (a companies file written oddly: no short names, as before)
+        return []
+    key, out = norm(company), []
+    for c in entries:
+        if key and norm(c.get("name") or "") == key:
+            named = c.get("aliases")
+            out += [norm(a) for a in (named if isinstance(named, list) else [named])
+                    if isinstance(a, str) and len(re.sub(r"[^a-z0-9]", "", norm(a))) >= 3]
+    return list(dict.fromkeys(out))
 
 
 def _current_employers(prof: Profile) -> list[str]:
