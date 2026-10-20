@@ -45,8 +45,8 @@ from .autofill import (_OTHER_DOCUMENT, clean_label, entry_list_unloaded, _CHOIC
                        profile_entries, unset_choice, polarity, tailored_document, works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
                       confirmations, declines_cookies, final_text, may_accept_cookies, questions_shown)
-from .never import (ANYWHERE, CALLS_OR_TEXTS, EMAILS, FUTURE_ROLES, GATE_PAGE, MAIL, NEVER, PARAGRAPH_WORDS,
-                    PRECISE, _never_for_them)
+from .never import (ANYWHERE, CALLS_OR_TEXTS, EMAILS, FUTURE_ROLES, GATE_OWN, GATE_PAGE, MAIL, NEVER,
+                    PARAGRAPH_WORDS, PRECISE, _never_for_them)
 from .pipeline_accounts import AccountsMixin
 from .pipeline_filling import FillingMixin
 from .pipeline_mail import MailMixin
@@ -3911,7 +3911,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
                      else lap.text)
         gate_now = lap.action is None and (button := _agreement_button(lap.data)) is not None \
             and f"{_page_key(lap.data)} {button['text'].strip()}" not in ps.agreed \
-            and _terms_gate(button, lap.data, gate_text) and _may_accept_notices()
+            and _terms_gate(button, lap.data, gate_text, await self._gate_own_words(button)) and _may_accept_notices()
         # (a form with no button at all yet is a step still being drawn too: KLA's Workday showed only the last
         # step's resume box for a while, its questions and Save and Continue drawn after, live run 9, Oct 11)
         # (a greyed-out step button, or a page busy loading, is the branch below's)
@@ -4284,7 +4284,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
             # (an employer's privacy notice or terms; or an application's attestation that its information is true, a
             # "Statement of Truth": Clark County School District's Taleo, run 145)
             # (which reads the page again, whole, failing closed: Browser.gate_read)
-            if (_terms_gate(agree, data, words) or _attestation_gate(agree, data, *await self._gate_read())) \
+            if (_terms_gate(agree, data, words, await self._gate_own_words(agree))
+                    or _attestation_gate(agree, data, *await self._gate_read())) \
                     and _may_accept_notices():
                 run.did("pressed", agree)
                 try:
@@ -5093,6 +5094,14 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         await self._notice_closed(heading)
         return "started"
 
+    async def _gate_own_words(self, button: dict[str, Any]) -> str | None:
+        """A gate's own words: those of the frame that holds its button (Browser.own_frame_text), for _terms_gate to
+        read for job opportunities sent. None where they can't be read: the page's whole words are read then."""
+        try:
+            return await self.srv.browser.own_frame_text(str(button.get("id") or ""), GATE_WORDS)
+        except Exception:  # (any failure: the page's words, read whole, which refuse more)
+            return None
+
     async def _gate_read(self) -> tuple[str, str | None]:
         """An attestation gate's page read whole (Browser.gate_read): its drawn words and every other word the person
         can see or open; ("", None) where it can't be read whole, which _attestation_gate leaves to the person."""
@@ -5614,21 +5623,23 @@ def _attestation(q: dict[str, Any]) -> Any:
     return yes[0] if len(yes) == 1 else None
 
 
-def _terms_gate(button: dict[str, Any], data: dict[str, Any], text: str = "") -> bool:
+def _terms_gate(button: dict[str, Any], data: dict[str, Any], text: str = "", own: str | None = None) -> bool:
     """A page whose way on accepts the employer's privacy notice or terms ("I Acknowledge the
     Privacy Notice"; "I Accept" under a "Privacy Agreement" heading): its button, headings or title
     say so, not a privacy link in its footer. Never one that also sends the application ("I Accept
     and Apply"), nor one about what's never agreed to (_never_for_them: a talent community, an arbitration agreement),
     nor one on a page whose words (`text`, the page's, read whole by the callers) waive a right (arbitration, a
-    jury trial: the review of Oct 15) or send the person job opportunities (Kforce's privacy agreement, run 147:
-    never.GATE_PAGE).
+    jury trial: the review of Oct 15), nor one whose own words (`own`, the words of the frame that holds its button;
+    the page's where they aren't given) send the person job opportunities (Kforce's privacy agreement, run 147:
+    never.GATE_OWN).
     Its headings are those of its own frame: Charles Schwab's careers page around its iCIMS frame
     has a "Join our talent network" sign-up of its own beside the gate (live, Oct 10). So the page's words are read
-    for a legal waiver and job opportunities sent alone, never for that sign-up beside it."""
+    for a legal waiver alone, and the gate's own for job opportunities sent, never for that sign-up beside it."""
     said = button.get("text") or ""
     about = _gate_about(button, data)
     if _SENDS_TOO.search(said) or _never_for_them(f"{said} {about}", only=_AGREEMENT_KINDS) \
-            or _never_for_them(text or "", only=GATE_PAGE):
+            or _never_for_them(text or "", only=GATE_PAGE) \
+            or _never_for_them(text if own is None else own, only=GATE_OWN):
         return False
     return bool(_TERMS.search(said) or _TERMS.search(about))
 
@@ -6898,7 +6909,9 @@ def _turned_away_page(data: dict[str, Any], text: str) -> str:
     """A page that is only a refusal of the browser, said in its words: its whole text, where that's short and a
     refusal's words alone ("403 Forbidden" with no heading: UKG Pro's sign-in for Nikon Precision and UCT, run 147, and
     the desk took it for a blank page and loaded it again twice), or else a bare 403 or 406 for its title on a page with
-    nothing else on it. "" when it isn't one."""
+    nothing else on it. "" when it isn't one, and on a page with a bot check (the person's: said as one)."""
+    if data.get("captcha") or data.get("challenge"):
+        return ""
     words = re.sub(r"\s+", " ", text or "").strip()
     if len(words) <= 80 and _TURNED_AWAY.search(words):
         return words

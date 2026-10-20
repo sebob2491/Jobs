@@ -39,6 +39,7 @@ class FillingMixin:
             return {}
         filled: set[str] = set()
         failed: dict[str, dict[str, Any]] = {}
+        dropped: set[str] = set()  # (optional ones the site emptied after the second try: left empty)
         # (the page as it was, and each box an answer was sent to, with its key: for the "What went in" panel)
         first = data
         sent: dict[str, str] = {}
@@ -84,7 +85,8 @@ class FillingMixin:
             if attempt == 1:
                 # gone again after the second try: the site won't keep it (UKG Pro's number box, run 147, empties itself
                 # of anything but a number, and the desk said it filled the answer and asked for it again each round).
-                # It goes back to the person, said so; never another answer made up in its place
+                # A required one goes back to the person, said so; never another answer made up in its place. An
+                # optional one is left empty, and said in the log
                 now = {f.get("id"): f for f in data.get("fields") or []}
                 for f in fills:
                     key, box = by_id[f["id"]], now.get(f["id"])
@@ -92,11 +94,18 @@ class FillingMixin:
                         continue
                     asked = fields[f["id"]]
                     number = asked.get("numeric") or asked.get("input_type") == "number"
+                    if not asked.get("required"):
+                        dropped.add(key)
+                        run.once.pop(key, None)  # (not tried again on every look at the page)
+                        self._log(run, "the site didn't keep your answer to the optional "
+                                  f"“{pipeline._short(clean_label(asked.get('label') or '') or 'question')}”"
+                                  + (" (the box takes a number)" if number else "") + ", so it's left empty")
+                        continue
                     failed[key] = {**{k: asked[k] for k in ("id", "kind", "label", "section", "required", "options")
                                       if asked.get(k) not in (None, [])},
                                    "error": "the site didn't keep your answer" + (
                                        ": this box takes a number" if number else ", and emptied the box again")}
-        filled -= set(failed)
+        filled -= set(failed) | dropped
         pipeline._went_in(run, [{"id": fid, "value": run.once.get(key)} for fid, key in sent.items() if key in filled],
                           first, data)
         if filled:

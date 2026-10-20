@@ -1106,7 +1106,8 @@ def test_an_answer_the_site_empties_again_after_the_second_try_goes_back_to_the_
     """UCT's UKG Pro (run 147): a question's box keeps only a number (autoNumeric's) and emptied itself of the answer
     given; filled twice, the desk said "filled 1 answer(s) you gave" and asked for it again each round, saying nothing.
     An answer still gone after the second try didn't go in: it goes back to the person, with what the site wants
-    (never an answer made up for it); one that stays in is filled, as before."""
+    (never an answer made up for it); one that stays in is filled, as before. An optional one the site empties is left
+    empty, said in the log, and not tried again (the review of run 147's fixes)."""
     from job_apply.pipeline import Run
 
     filled = []
@@ -1118,12 +1119,14 @@ def test_an_answer_the_site_empties_again_after_the_second_try_goes_back_to_the_
 
     rate = "How do you rate your ability to read drawings? On a scale of 1-5, 5 being best."
     years = "How many years of experience do you have?"
+    extra = "Years of cleanroom experience (optional)"
     page = {"url": "https://x.example/apply", "headings": ["Questions"],
             "fields": [{"id": "n1", "label": rate, "kind": "text", "value": "", "required": True, "numeric": True},
-                       {"id": "t2", "label": years, "kind": "text", "value": "", "required": True}]}
+                       {"id": "t2", "label": years, "kind": "text", "value": "", "required": True},
+                       {"id": "n3", "label": extra, "kind": "text", "value": "", "required": False, "numeric": True}]}
 
-    async def look(**kw):  # (the number box empties itself; the other keeps what went in)
-        return {**page, "fields": [page["fields"][0], {**page["fields"][1], "value": "4"}]}, ""
+    async def look(**kw):  # (the number boxes empty themselves; the other keeps what went in)
+        return {**page, "fields": [page["fields"][0], {**page["fields"][1], "value": "4"}, page["fields"][2]]}, ""
 
     applier = Applier(srv)
     applier.srv = Stub()
@@ -1132,13 +1135,20 @@ def test_an_answer_the_site_empties_again_after_the_second_try_goes_back_to_the_
     r = Run(1, "Engineer", "Example Clean")
     r.once[question_key(rate)] = "Very good"
     r.once[question_key(years)] = "4"
+    r.once[question_key(extra)] = "Some"
     failed = run(applier._fill_once(r, page))
-    assert [v["id"] for v in filled] == ["n1", "t2", "n1"], filled  # (the second try, then it's the person's)
+    # (the second try, then it's the person's)
+    assert [v["id"] for v in filled] == ["n1", "t2", "n3", "n1", "n3"], filled
     assert list(failed) == [question_key(rate)], failed
     assert failed[question_key(rate)]["error"] == "the site didn't keep your answer: this box takes a number", failed
     assert failed[question_key(rate)]["label"] == rate
     assert "filled 1 answer(s) you gave for this application" in r.log, r.log
     assert "1 of your answers didn't go in" in r.log, r.log
+    assert ("the site didn't keep your answer to the optional “Years of cleanroom experience (optional)” (the box "
+            "takes a number), so it's left empty") in r.log, r.log
+    filled.clear()
+    assert list(run(applier._fill_once(r, page))) == [question_key(rate)]
+    assert "n3" not in [v["id"] for v in filled], filled  # (not tried again)
 
 
 def test_a_job_skipped_while_submit_for_me_checks_it_isnt_submitted(srv):
@@ -5077,7 +5087,6 @@ def test_station_casinos_code_from_its_own_domain_is_its_own(job_apply_home):
     (job_apply_home / "companies.yaml").write_text(yaml.safe_dump({"lists": ["las-vegas"]}), encoding="utf-8")
     assert "stationcasinos.com" in pipeline._employer_mail_domains("Station Casinos (Red Rock Resorts)", set())
     assert "stationcasinos.com" not in pipeline._employer_mail_domains("NV Energy", set())
-
 
 
 def test_a_job_search_reached_mid_sign_in_opens_the_job_again_once(srv, monkeypatch, job_apply_home):
@@ -10974,6 +10983,16 @@ def test_a_bare_403_page_with_no_heading_is_the_browser_turned_away_not_a_blank_
     assert r.code == "site_blocks", r.code
 
 
+def test_a_bot_checks_403_page_is_no_refusal_of_the_browser():
+    """The review of run 147's fixes: a short refusal page with a bot check or a CAPTCHA on it is the bot check's (the
+    person's, said as one), never read as the browser turned away."""
+    assert pipeline._turned_away_page({"title": "403"}, "403 Forbidden") == "403 Forbidden"
+    assert pipeline._turned_away_page({"title": "403"}, "") == "403"
+    for check in ({"captcha": "A CAPTCHA"}, {"challenge": True}):
+        assert pipeline._turned_away_page({"title": "403", **check}, "403 Forbidden") == "", check
+        assert pipeline._nothing_drawn({"title": "403", **check}, "403 Forbidden") is False
+
+
 @pytest.mark.parametrize("page, said, reloaded", [("bad-gateway.html", "502 Bad Gateway", True),
                                                   ("ukg-posting-502.html", "502 Bad Gateway", False),
                                                   ("service-unavailable-retry.html", "503 Service Unavailable", True)])
@@ -12040,7 +12059,6 @@ def test_an_extra_block_is_deleted_only_when_empty_last_and_one_the_desk_added(s
     gone.clear()
     assert not run(applier._drop_added_extra(r, page(three), [extra("Education 3")], {"education": 1}, tried))
     assert clicked == ["d:Education 3"]
-
 
 
 def test_the_desks_own_empty_block_is_deleted_before_the_saved_one_draws_and_on_a_later_pass(srv):

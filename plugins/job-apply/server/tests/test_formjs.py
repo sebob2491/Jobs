@@ -103,6 +103,11 @@ def test_a_please_wait_on_show_is_busy(srv, tmp_path):
                         "</body></html>", encoding="utf-8")
         run(srv.browser.goto(page.resolve().as_uri()))
         assert bool(run(srv.browser.inspect(include_dropdown_options=False)).get("busy")) is busy, html
+    # never an error either, whatever its box says it is (the review of run 147's fixes: "Redirecting you...")
+    for said in ("Please wait...", "Redirecting you...", "Redirecting…"):
+        page.write_text(f'<!doctype html><html><body><div role="alert">{said}</div></body></html>', encoding="utf-8")
+        run(srv.browser.goto(page.resolve().as_uri()))
+        assert run(srv.browser.inspect(include_dropdown_options=False))["errors"] == [], said
 
 
 def test_workdays_step_body_with_only_its_loading_dots_is_busy(srv, tmp_path):
@@ -786,3 +791,22 @@ def test_each_question_in_one_fieldset_is_its_own_and_a_hint_inside_a_group_isnt
     assert [f["label"] for f in got if f["kind"] == "radio_group"] == [
         "Are you at least 18 years of age?", "Will you now or in the future require visa sponsorship?",
         "Do you have a valid driver's license?", "Are you legally authorized to work in the United States?"]
+
+
+def test_a_framed_gates_own_words_are_its_frames_alone(srv, tmp_path):
+    """A gate in a frame on a careers page (Charles Schwab's iCIMS, live, Oct 10) is read for job opportunities sent
+    in its own words alone (pipeline._terms_gate's `own`): its frame's, never the careers page's around it."""
+    (tmp_path / "gate.html").write_text("<!doctype html><html><body><h2>Privacy Agreement</h2><p>Read our privacy "
+                                        "agreement.</p><button>I Accept</button></body></html>", encoding="utf-8")
+    page = tmp_path / "careers.html"
+    page.write_text('<!doctype html><html><body><p>Join our talent network: we will email you new job '
+                    'opportunities.</p><button>Search jobs</button><iframe src="gate.html"></iframe></body></html>',
+                    encoding="utf-8")
+    run(srv.browser.goto(page.resolve().as_uri()))
+    actions = run(srv.browser.inspect(include_dropdown_options=False))["actions"]
+    accept = next(a for a in actions if a["text"] == "I Accept")
+    search = next(a for a in actions if a["text"] == "Search jobs")
+    own = run(srv.browser.own_frame_text(accept["id"]))
+    assert "Read our privacy agreement." in own and "talent network" not in own, own
+    assert "talent network" in run(srv.browser.own_frame_text(search["id"]))
+    assert run(srv.browser.own_frame_text("f99-gone")) is None

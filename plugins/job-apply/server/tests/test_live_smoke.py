@@ -118,13 +118,15 @@ def test_the_live_checks_throwaway_answers_fit_the_box_and_never_make_up_an_ssn(
           {"label": "Your rating", "kind": "text", "input_type": "number"},
           {"label": "Social Security Number*", "kind": "text"},
           {"label": "SSN (last 4 digits)", "kind": "text", "numeric": True},
-          {"label": "Why do you want this job?", "kind": "textarea"}]
+          {"label": "Why do you want this job?", "kind": "textarea"},
+          {"label": "Have you ever worked for the Social Security Administration?", "kind": "text"}]
     out = subprocess.run([sys.executable, "-c", RUN_FAKE, json.dumps(qs)], cwd=SERVER, capture_output=True, text=True,
                          encoding="utf-8", timeout=120)
     line = next((x for x in out.stdout.splitlines() if x.startswith("RESULT ")), None)
     assert line, out.stdout[-2000:] + out.stderr[-3000:]
     assert json.loads(line[len("RESULT "):]) == [["5", False], ["10", False], ["1", False], ["1", False],
-                                                 [None, True], [None, True], ["Test answer", False]]
+                                                 [None, True], [None, True], ["Test answer", False],
+                                                 ["Test answer", False]]
     # (and the rounds end at one, never answering it: live_smoke's question rounds read asks_ssn)
     text = (SCRIPTS / "live_smoke.py").read_text(encoding="utf-8")
     assert "if any(asks_ssn(q) for q in run.questions):" in text

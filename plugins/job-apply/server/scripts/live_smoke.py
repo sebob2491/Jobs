@@ -1422,7 +1422,8 @@ async def print_shot(name: str, page: Any) -> None:
 
 # A Social Security Number asked for: never made up, not even a throwaway one (Clark County School District's Taleo
 # refused "0", run 147): the applicant's own, and as far as a run goes for the test identity
-_SSN = re.compile(r"\bsocial security\b|\bssn\b|\bsocial insurance number\b", re.I)
+# (the number itself: never "worked for the Social Security Administration")
+_SSN = re.compile(r"\bsocial security (?:number|no\b|#)|\bssn\b|\bsocial insurance number\b", re.I)
 # "On a scale of 1-5", "on a scale from 1 to 10": its top (UCT's UKG Pro, run 147, kept only a number in its box)
 _SCALE = re.compile(r"\bscale (?:of|from) (\d+)\s*(?:-|\u2013|\u2014|to)\s*(\d+)", re.I)
 

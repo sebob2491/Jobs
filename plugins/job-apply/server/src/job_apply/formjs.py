@@ -976,7 +976,7 @@ EXTRACT_JS = r"""
     const r = el.getBoundingClientRect();
     if (r.width <= 1 || r.height <= 1) continue;  // screen-reader announcements ("… page is loaded")
     // (nor a site's word that it's on its way, EY's "Please wait..." in an alert, run 147: busy, never an error)
-    if (/\bpage is loaded\b|^loading\b|^(?:please wait|redirecting)\b[\s,.!]*(?:\.\.\.|…)?$/i.test(t)) continue;
+    if (/\bpage is loaded\b|^loading\b|^(?:please wait|redirecting(?: you)?)\b[\s,.!]*(?:\.\.\.|…)?$/i.test(t)) continue;
     if (t && t.length < 300 && visible(el) && !errors.includes(t)) errors.push(t);
     if (errors.length >= 10) break;
   }
@@ -1038,6 +1038,7 @@ EXTRACT_JS = r"""
   // (EY's posting while it sent the applicant on to SuccessFactors, run 147: the desk took it for a page going
   // nowhere). Only those words alone, with their dots, in a box drawn on the page; never a screen reader's alone
   const waiting = () => [...document.querySelectorAll('div, span, p, [role="alert"], [role="status"]')].some((el) => {
+    if (el.childElementCount > 2) return false;  // (the words' own box, a spinner beside them at most: cheap first)
     const t = (el.textContent || '').trim();
     if (t.length > 60 || !/^(?:(?:please wait|loading|redirecting(?: you)?)[\s,.!]*)+(?:\.\.\.|…)$/i.test(t)) {
       return false;
