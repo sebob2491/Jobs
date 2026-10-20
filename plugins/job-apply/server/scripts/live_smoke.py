@@ -1420,8 +1420,23 @@ async def print_shot(name: str, page: Any) -> None:
         print(f"\nLIVE_SHOT {json.dumps(name)} failed: {e}", flush=True)
 
 
+# A Social Security Number asked for: never made up, not even a throwaway one (Clark County School District's Taleo
+# refused "0", run 147): the applicant's own, and as far as a run goes for the test identity
+_SSN = re.compile(r"\bsocial security\b|\bssn\b|\bsocial insurance number\b", re.I)
+# "On a scale of 1-5", "on a scale from 1 to 10": its top (UCT's UKG Pro, run 147, kept only a number in its box)
+_SCALE = re.compile(r"\bscale (?:of|from) (\d+)\s*(?:-|\u2013|\u2014|to)\s*(\d+)", re.I)
+
+
+def asks_ssn(q: dict[str, Any]) -> bool:
+    """Does the question ask for a Social Security Number (_SSN)?"""
+    return bool(_SSN.search(str(q.get("label") or "")))
+
+
 def fake_answer(q: dict[str, Any]) -> Any:
-    """A throwaway answer for a question the fake profile can't answer (this run only)."""
+    """A throwaway answer for a question the fake profile can't answer (this run only). None for a Social Security
+    Number (asks_ssn): never made up."""
+    if asks_ssn(q):
+        return None
     options = [o for o in q.get("options") or []
                if o and not is_empty_value(o) and not re.match(r"^(select|choose|--|please)", o, re.I)]
     if q.get("kind") == "checkbox":
@@ -1440,13 +1455,16 @@ def fake_answer(q: dict[str, Any]) -> Any:
         return {"month": f"{today.month:02d}", "day": f"{today.day:02d}", "year": str(today.year)}[part]
     label = q.get("label") or ""
     # (an answer the site takes: U-Haul's and Baker Tilly's refused "0" hours, "0" salary and "Test answer" pay)
-    if span := re.search(r"between (\d+) and (\d+)", label, re.I):
+    if span := re.search(r"between (\d+) and (\d+)", label, re.I) or _SCALE.search(label):
         return span.group(2)
     if re.search(r"salary|pay requirement|compensation|desired pay|wage|earnings", label, re.I):  # (Taylor Morrison's
         # "Desired Annual Earnings" refused "Test answer" five rounds running, run 49)
         return "50000"
     if re.search(r"year|salary|number|how many|zip|postal|\bgpa\b", q.get("label") or "", re.I):
         return "0"
+    # a box that keeps only a number (UKG Pro's, the form reader's `numeric`; an <input type="number">): one
+    if q.get("numeric") or q.get("input_type") == "number":
+        return "1"
     # a skill a Workday skills search finds (HonorHealth's required "Type to Add Skills", probe 50: "Test answer"
     # matches none, and the desk would ask again and again)
     if re.search(r"\bskills?\b", label, re.I):
@@ -2319,7 +2337,7 @@ async def finish_account_choices(run: Any) -> str:
     if pipeline._captcha_on(data) or pipeline._security_asked(data) or pipeline._account_and_application(data) \
             or any(pipeline._never_for_them(" ".join([f.get("label") or "", *(f.get("options") or [])]),
                                             only=pipeline._AGREEMENT_KINDS)
-                   or _SIGN_UP_BOX.search(f.get("label") or "") for f in left):
+                   or _SIGN_UP_BOX.search(f.get("label") or "") or asks_ssn(f) for f in left):
         return ""
     answers = [{"id": f["id"], "value": fake_answer(f)} for f in left]
     filled = (await server.fill_form(answers)).get("results") or []
@@ -2420,6 +2438,11 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                     # the last round: its questions stay as they are, for the list probe below (answered and queued
                     # again, they were cleared, and the job was still running when the run was stopped: run 44's
                     # Workday lists at Air Products, ASML and Wells Fargo were never probed)
+                    break
+                if any(asks_ssn(q) for q in run.questions):
+                    # a Social Security Number asked: the applicant's own, never made up (fake_answer), so as far as
+                    # the run goes, as the person would be asked it here
+                    rec["rounds"][-1]["expected_end"] = "a Social Security Number asked: the applicant's own"
                     break
                 labels = [q.get("label") or "" for q in run.questions]
                 for q in run.questions:
