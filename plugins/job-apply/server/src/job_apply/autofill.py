@@ -20,7 +20,7 @@ from typing import Any, Callable, NamedTuple
 
 from . import config
 from .config import Profile, expand, question_core
-from .never import _never_for_them
+from .never import JOB_NEWS, _never_for_them
 
 US_STATES = {
     "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas", "CA": "California",
@@ -2169,7 +2169,7 @@ _POINTS_AWAY = re.compile(r"\b(?:above|below|following|these|those|this|that|it|
 # terms of employment, a sign-up in so many words, keeping their data and cookies. Not "on-call", "staffing" or
 # "notified", nor an employer's offers, affiliates or other openings, which its notice names: the review of 0.3.208)
 _NOTICE_OF_CONSENT = re.compile(r"terms|privacy|consent|agree|authori[sz]|acknowledg|certif|attest|signature", re.I)
-_CONSENT_KINDS = frozenset({"talent community", "job alerts", "newsletter", "marketing", "texts or calls",
+_CONSENT_KINDS = frozenset({"talent community", "job alerts", JOB_NEWS, "newsletter", "marketing", "texts or calls",
                             "arbitration", "waiver", "at-will", "signs up", "their data kept", "cookies"})
 
 

@@ -45,8 +45,8 @@ from .autofill import (_OTHER_DOCUMENT, clean_label, entry_list_unloaded, _CHOIC
                        profile_entries, unset_choice, polarity, tailored_document, works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
                       confirmations, declines_cookies, final_text, may_accept_cookies, questions_shown)
-from .never import (ANYWHERE, CALLS_OR_TEXTS, EMAILS, FUTURE_ROLES, MAIL, NEVER, PARAGRAPH_WORDS, PRECISE,
-                    _never_for_them)
+from .never import (ANYWHERE, CALLS_OR_TEXTS, EMAILS, FUTURE_ROLES, GATE_PAGE, MAIL, NEVER, PARAGRAPH_WORDS,
+                    PRECISE, _never_for_them)
 from .pipeline_accounts import AccountsMixin
 from .pipeline_filling import FillingMixin
 from .pipeline_mail import MailMixin
@@ -5620,14 +5620,15 @@ def _terms_gate(button: dict[str, Any], data: dict[str, Any], text: str = "") ->
     say so, not a privacy link in its footer. Never one that also sends the application ("I Accept
     and Apply"), nor one about what's never agreed to (_never_for_them: a talent community, an arbitration agreement),
     nor one on a page whose words (`text`, the page's, read whole by the callers) waive a right (arbitration, a
-    jury trial: the review of Oct 15).
+    jury trial: the review of Oct 15) or send the person job opportunities (Kforce's privacy agreement, run 147:
+    never.GATE_PAGE).
     Its headings are those of its own frame: Charles Schwab's careers page around its iCIMS frame
     has a "Join our talent network" sign-up of its own beside the gate (live, Oct 10). So the page's words are read
-    for a legal waiver alone, never for that sign-up beside it."""
+    for a legal waiver and job opportunities sent alone, never for that sign-up beside it."""
     said = button.get("text") or ""
     about = _gate_about(button, data)
     if _SENDS_TOO.search(said) or _never_for_them(f"{said} {about}", only=_AGREEMENT_KINDS) \
-            or _never_for_them(text or "", only={"arbitration", "waiver"}):
+            or _never_for_them(text or "", only=GATE_PAGE):
         return False
     return bool(_TERMS.search(said) or _TERMS.search(about))
 

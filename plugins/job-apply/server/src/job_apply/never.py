@@ -52,9 +52,17 @@ MAIL = "an email or a message"
 # - more than the background check that comes with applying (a credit report, medical records, ...): read wherever the
 #   precise kinds are
 BEYOND_CHECK = "more than the background check"
+# Job opportunities sent to the person, or the person contacted about them: job alerts in other words, in an agreement's
+# own words however deep they sit (Kforce's required privacy agreement, live run 147: "... authorize Kforce to collect,
+# transmit, use and store your PI ... including, but not limited to, sending you further information about Kforce job
+# opportunities"; "we may contact you about other job opportunities"). Never the application's own ("communicating with
+# you about your application", "contact you about this position"), nor being considered for other positions (an account
+# form's consent: Northrop's, the owner's call of Oct 10). Read wherever the precise kinds are, and in a terms gate's
+# whole page (GATE_PAGE) and a notice's whole words (ANYWHERE)
+JOB_NEWS = "job opportunities sent"
 # The job picks a site sends: job alerts by other names (Insight Enterprises' "job recommendations by email", live run
 # 145; the review of fix-accept-gates)
-JOB_PICKS = (r"(?:job|career) (?:recommendations?|matches|suggestions?)\b|"
+JOB_PICKS =(r"(?:job|career) (?:recommendations?|matches|suggestions?)\b|"
              r"recommended (?:jobs|roles|positions|openings)\b|"
              r"personali[sz]ed (?:job|career) (?:suggestions?|recommendations?|matches)\b|"
              r"jobs? that match(?:es)? (?:your|my) (?:profile|skills|resume|interests|experience)\b")
@@ -115,6 +123,12 @@ NEVER: dict[str, re.Pattern[str]] = {kind: re.compile(words, re.I | re.S) for ki
                   r"\bjob matches\b|\brecommended (?:jobs|roles|positions|openings)\b|"
                   r"\bpersonali[sz]ed (?:job|career) (?:suggestions?|recommendations?|matches)\b|"
                   r"\bjobs? that match(?:es)? (?:your|my) (?:profile|skills|resume|interests|experience)\b",
+    # (more than one: "an email about your application for this job opportunity" is the application's own)
+    JOB_NEWS: r"\b(?:send\w*|e-?mail\w*|forward\w*|mail\w*|text\w*)\b (?:to )?(?:you|me)\b[^.;]{0,60}?"
+              r"\b(?:job|career|employment|work) (?:opportunities|openings|vacancies)\b|"
+              r"\b(?:contact\w*|reach\w* out to|get(?:ting)? in touch with)\b (?:you|me)\b[^.;]{0,30}?\babout "
+              r"(?:any |other |future |new |additional |similar |further |more )?(?:job |career |employment )?"
+              r"(?:opportunities|openings|vacancies)\b",
     # (and a candidate community: a talent community by another name, the review of run 144's fixes)
     "talent community": r"talent (?:community|network|pool)|candidate (?:community|network)|stay informed|keep me",
     "marketing": r"marketing|promotion|campaigns?",
@@ -156,10 +170,14 @@ NEVER: dict[str, re.Pattern[str]] = {kind: re.compile(words, re.I | re.S) for ki
 # The kinds whose words say what they are wherever they're read: every path that agrees for the person reads these
 PRECISE = frozenset(NEVER) - {BOX_WORDS, PARAGRAPH_WORDS, FUTURE_ROLES, EMAILS, MAIL}
 # What a long notice's or page's words are read for wherever in them they sit: a legal waiver, and a sign-up in so many
-# words. The rest of such words name the employer's practices (its affiliates, its marketing, its cookies: APS's privacy
-# statement, live) and the other positions it may suggest (Micron's AI notice, live), so they're read where the notice
-# says what it is (its heading, its opening)
-ANYWHERE = frozenset({"arbitration", "waiver", "signs up"})
+# words, job opportunities sent among them. The rest of such words name the employer's practices (its affiliates, its
+# marketing, its cookies: APS's privacy statement, live) and the other positions it may suggest (Micron's AI notice,
+# live), so they're read where the notice says what it is (its heading, its opening)
+ANYWHERE = frozenset({"arbitration", "waiver", "signs up", JOB_NEWS})
+# What a terms gate's whole page is read for (pipeline._terms_gate): a legal waiver, and job opportunities sent in the
+# agreement's own words (Kforce's, run 147). Not every sign-up in so many words: a careers page's own "Join our talent
+# network" beside the gate isn't the gate's (Charles Schwab's, live, Oct 10)
+GATE_PAGE = frozenset({"arbitration", "waiver", JOB_NEWS})
 
 
 def _about_the_application(tail: str) -> bool:

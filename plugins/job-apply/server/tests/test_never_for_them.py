@@ -9,8 +9,8 @@ import pytest
 
 from job_apply import config, formjs, pipeline
 from job_apply.autofill import _CONSENT_KINDS, _answer_bank
-from job_apply.never import (ANYWHERE, BEYOND_CHECK, BOX_WORDS, EMAILS, FUTURE_ROLES, MAIL, NEVER, PARAGRAPH_WORDS,
-                             PRECISE, _never_for_them)
+from job_apply.never import (ANYWHERE, BEYOND_CHECK, BOX_WORDS, EMAILS, FUTURE_ROLES, GATE_PAGE, JOB_NEWS, MAIL, NEVER,
+                             PARAGRAPH_WORDS, PRECISE, _never_for_them)
 
 # One sentence for each kind never agreed to for the person, worded as the tests of each path word theirs, and
 # without words that agree (each path's own words do that)
@@ -21,6 +21,7 @@ SAID = {
     "signs up": "join our Talent Community",
     "newsletter": "get the monthly newsletter",
     "job alerts": "get job alerts for roles like this one",
+    JOB_NEWS: "let Example Corp forward you details of new job openings",
     "talent community": "have a place in the Talent Network",
     "marketing": "get marketing and promotional material",
     "offers": "get special offers",
@@ -144,7 +145,7 @@ PATHS = {
     "a terms gate, by its page's words": (
         lambda c: pipeline._terms_gate({"text": "I Accept"}, {"headings": ["Privacy Agreement"]},
                                        "Please read our privacy agreement." + _by(c)),
-        frozenset({"arbitration", "waiver"})),
+        GATE_PAGE),
     "a privacy notice, by its opening": (
         lambda c: pipeline._terms_notice(POLICY, (_by(c) + " " + POLICY_TEXT).strip())[0], AGREEMENT),
     # (its long text names its affiliates, marketing and cookies as its practices: APS's, live)
@@ -164,7 +165,7 @@ PATHS = {
     # (the review of Oct 15)
     "the test identity's notice": (
         lambda c: pipeline._agreeable_notice(STATEMENT, f"{_by(c).strip()} {STATEMENT_TEXT}".strip(), True)[0],
-        frozenset({"signs up", "cookies", "arbitration", "waiver"})),
+        frozenset({"signs up", JOB_NEWS, "cookies", "arbitration", "waiver"})),
     "a remembered answer at another employer": (_remembered, _CONSENT_KINDS),
     # (a cookie banner's is its own rule's; what else a page's agreement button says is _terms_gate's)
     "a page's agreement button": (
@@ -645,3 +646,49 @@ def test_a_check_of_the_application_itself_is_still_its_own(words):
     may call my references"); only a credit report, medical records released, a former employer's records, a social
     media review are."""
     assert _never_for_them(words, only=PRECISE) is None, words
+
+
+# Kforce's required privacy agreement (live run 147), its words made up but for the clause that sends job opportunities
+KFORCE_LIKE = ("By clicking “I Accept” below, you agree to the preceding terms and authorize Example Staffing to "
+               "collect, transmit, use and store your PI in a database where it will be used for the application "
+               "process and as further outlined in the Privacy Policy below including, but not limited to, {clause}, "
+               "communicating with you about your application, or for administration purposes.")
+
+
+@pytest.mark.parametrize("clause", ["sending you further information about Example Staffing job opportunities",
+                                    "emailing you new career opportunities",
+                                    "to contact you about other job opportunities",
+                                    "reaching out to you about future opportunities"])
+def test_job_opportunities_sent_are_job_alerts_even_inside_a_required_gate(clause):
+    """Kforce's required privacy agreement (live run 147) let it use the person's data for "sending you further
+    information about Kforce job opportunities", and the desk pressed its "I Accept" (a terms gate) for them: job alerts
+    in other words, which the desk never agrees to, required or not. Read in a terms gate's whole page, a notice's
+    words however deep, an attestation's and an account box's own words; the gate is the person's."""
+    words = KFORCE_LIKE.format(clause=clause)
+    assert _never_for_them(words, only=GATE_PAGE) == JOB_NEWS, words
+    assert not pipeline._terms_gate({"text": "I Accept"}, {"headings": ["Privacy Agreement"]}, words)
+    assert not pipeline._agreeable_notice(POLICY, POLICY_TEXT * 5 + words, False)[0]
+    assert not _attests("checkbox", f"{PRIVACY}. {words}")
+    assert not pipeline._terms_boxes(_box(f"{TERMS_BOX}. {words}"))
+
+
+@pytest.mark.parametrize("words", [KFORCE_LIKE.format(clause="processing your application"),
+                                   "We may contact you about your application or this position.",
+                                   "We will send you an email about your application for this job opportunity.",
+                                   "Recruiters may contact you about the job you applied for."])
+def test_the_applications_own_mail_is_still_no_job_opportunities_sent(words):
+    """What the application itself brings (an email about it, a recruiter's call about the job applied to) is no job
+    opportunities sent: a gate that says no more is still agreed to (settings.accept_notices)."""
+    assert _never_for_them(words, only={JOB_NEWS}) is None, words
+    assert pipeline._terms_gate({"text": "I Accept"}, {"headings": ["Privacy Agreement"]}, words)
+
+
+def test_a_consent_to_other_positions_is_given_only_when_it_sends_no_job_opportunities():
+    """Northrop's "Contact Consent" (the owner's call, Oct 10) is still given on its own words; with job opportunities
+    sent in them too it's the person's (CLAUDE.md: never when its words also sign the person up for job alerts)."""
+    assert pipeline._other_positions_consent({"kind": "checkbox", "label": OTHER_POSITIONS}) is True
+    assert pipeline._other_positions_consent({"kind": "checkbox", "label": OTHER_POSITIONS + ", in addition to the "
+                                              "role(s) to which I apply"}) is True
+    for more in ("and Example Corp may send me information about job opportunities",
+                 "and recruiters may contact me about other opportunities"):
+        assert pipeline._other_positions_consent({"kind": "checkbox", "label": f"{OTHER_POSITIONS}, {more}"}) is None
