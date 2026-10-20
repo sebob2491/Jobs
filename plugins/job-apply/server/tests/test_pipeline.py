@@ -5070,6 +5070,15 @@ def test_an_employers_code_from_its_parents_or_its_sites_domain_is_its_own(job_a
     assert "brkenergy.com" not in pipeline._employer_mail_domains("Mission Support and Test Services (NNSS)", set())
 
 
+def test_station_casinos_code_from_its_own_domain_is_its_own(job_apply_home):
+    """Run 147 (the Las Vegas list's accounts check): Station Casinos' Oracle Recruiting mailed its "Confirm your
+    identity" code from stationcasinos.com, which wasn't read as the employer's (only Oracle's own senders were), and
+    the code the inbox had was waited out. Its entry names it."""
+    (job_apply_home / "companies.yaml").write_text(yaml.safe_dump({"lists": ["las-vegas"]}), encoding="utf-8")
+    assert "stationcasinos.com" in pipeline._employer_mail_domains("Station Casinos (Red Rock Resorts)", set())
+    assert "stationcasinos.com" not in pipeline._employer_mail_domains("NV Energy", set())
+
+
 
 def test_a_job_search_reached_mid_sign_in_opens_the_job_again_once(srv, monkeypatch, job_apply_home):
     """Edwards Vacuum's SuccessFactors (the probe of Oct 12): after the wait on a reset email, the site had already
