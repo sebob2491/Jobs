@@ -1030,14 +1030,20 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
     async def own_frame_text(self, element_id: str, max_chars: int = 8000) -> str | None:
         """The visible words of the frame that holds this element alone (the page itself for one in no frame): a
         framed gate's own agreement, never the careers page around it (pipeline._terms_gate). None where it can't be
-        read."""
+        read alone: a frame with frames of its own in it (the agreement's words may sit in one: its innerText never
+        holds them; never a player's, a bot check's or a blank one), a read that fails, or no words at all. The caller
+        reads the page's whole words then."""
         async with self._lock:
             try:
                 page = await self.page()
-                text = await _bounded(self._frame_for(page, element_id).evaluate(VISIBLE_TEXT_JS))
+                frame = self._frame_for(page, element_id)
+                if any(not f.is_detached() and f.url != "about:blank" and not _MEDIA_FRAME.match(f.url)
+                       and not _CAPTCHA_FRAME.match(f.url) for f in frame.child_frames):
+                    return None
+                text = str(await _bounded(frame.evaluate(VISIBLE_TEXT_JS)) or "")
             except (PlaywrightError, _Hung, KeyError):
                 return None
-            return str(text or "")[:max_chars]
+            return text[:max_chars] if text.strip() else None
 
     async def gate_read(self, max_chars: int = 8000) -> dict[str, str] | None:
         """What an attestation's gate reads of the page (GATE_READ_JS): its drawn words ("visible") and every other

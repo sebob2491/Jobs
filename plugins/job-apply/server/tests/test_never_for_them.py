@@ -690,7 +690,15 @@ def test_job_opportunities_sent_are_job_alerts_even_inside_a_required_gate(claus
                                    "We will send you a confirmation email each time you apply for job openings.",
                                    "We will email you when the job openings you applied for are filled or closed.",
                                    "We may text you about interview times for the job openings you applied to.",
-                                   "We may contact you regarding the job openings you applied for."])
+                                   "We may contact you regarding the job openings you applied for.",
+                                   # (the second review of run 147's fixes)
+                                   "We may contact you when you apply for job openings.",
+                                   "We will notify you of the status of your application for job openings.",
+                                   "We may contact you with opportunities to give feedback on our hiring process.",
+                                   "We will inform you of your rights and of equal employment opportunities under "
+                                   "the law.",
+                                   "We will contact you regarding your application for employment opportunities at "
+                                   "our company."])
 def test_the_applications_own_mail_is_still_no_job_opportunities_sent(words):
     """What the application itself brings (an email about it, a recruiter's call about the job applied to) is no job
     opportunities sent: a gate that says no more is still agreed to (settings.accept_notices)."""
@@ -719,7 +727,12 @@ def test_a_consent_to_other_positions_is_given_only_when_it_sends_no_job_opportu
                                    "USAA Talent Acquisition will only send you information regarding employment "
                                    "opportunities.",
                                    "We may also use your information to contact you about other job opportunities "
-                                   "that may be of interest to you."])
+                                   "that may be of interest to you.",
+                                   # Aristocrat's (captured live, run 145), and "with" job openings
+                                   "Do you consent to Aristocrat retaining your application data and using it to "
+                                   "contact you regarding future job opportunities?",
+                                   "We may email you with relevant job openings.",
+                                   "We may contact you with new job openings."])
 def test_job_opportunities_sent_in_other_words(words):
     """The review of run 147's fixes: job opportunities sent in other words than Kforce's are job alerts too."""
     assert _never_for_them(words, only={JOB_NEWS}) == JOB_NEWS, words

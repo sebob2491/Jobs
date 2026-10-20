@@ -62,6 +62,7 @@ class FillingMixin:
                     await self.srv.browser.mark_judged(same, [])
             fills = [{"id": fid, "value": run.once[key]} for fid, key in by_id.items()
                      if key in run.once and run.once_page.get(key, here) == here
+                     and pipeline.placed_key(fields[fid]) not in run.once_left
                      # (or still on its own "Not Specified", which isn't an answer: Kforce's, the probe of Oct 12; or on
                      # the site's first choice where the answer is another: the review of 0.3.138)
                      and (is_empty_value(fields[fid].get("value")) or unset_choice(fields[fid])
@@ -94,9 +95,14 @@ class FillingMixin:
                         continue
                     asked = fields[f["id"]]
                     number = asked.get("numeric") or asked.get("input_type") == "number"
-                    if not asked.get("required"):
+                    said = clean_label(asked.get("label") or "")
+                    flagged = box.get("invalid") or box.get("error") or said and any(
+                        said.lower() in str(e).lower() for e in data.get("errors") or [])
+                    if not asked.get("required") and not flagged:
+                        # (that box alone, by its own key, is not tried again on every look at the page: the answer
+                        # stays for any other box its label's key answers, the second review of run 147's fixes)
                         dropped.add(key)
-                        run.once.pop(key, None)  # (not tried again on every look at the page)
+                        run.once_left.add(pipeline.placed_key(asked))
                         self._log(run, "the site didn't keep your answer to the optional "
                                   f"“{pipeline._short(clean_label(asked.get('label') or '') or 'question')}”"
                                   + (" (the box takes a number)" if number else "") + ", so it's left empty")

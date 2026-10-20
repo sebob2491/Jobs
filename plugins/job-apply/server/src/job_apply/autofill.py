@@ -1012,7 +1012,9 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     company = norm(job.get("company"))
     if not company:
         return None
-    asked = norm(label)
+    # ("US" in capitals, or "us" before a name, is the country's: "worked for US Bank?", "US Airways", never "for us",
+    # this employer: the second review of run 147's fixes)
+    asked = norm(re.sub(r"\bUS\b|\bus(?= [A-Z])", "U.S.", label))
     # the employer by its first word, or by a short name its entry on the lists gives it (`aliases`: Ultra Clean
     # Holdings' "Have you ever been employed by UCT?", run 147, wasn't known for the employer's). Never a bracket's
     # words read as one: "(NNSS)" names a site, "(US)" a country
@@ -1062,22 +1064,34 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     return "Yes, previously"
 
 
+# Each employer's short names (employer_aliases), by norm() of its name, kept while its files stay as they were (their
+# paths and times): read again only when one changes, as Profile.load does (every list reread on each question took
+# 175 ms: the second review of run 147's fixes)
+_ALIASES: dict[tuple[tuple[str, int], ...], dict[str, list[str]]] = {}
+
+
 def employer_aliases(company: str) -> list[str]:
-    """The short names the employer's entry on the person's lists gives it (`aliases: [UCT]`), as norm() writes them:
-    only those of 3 letters or more; none where the lists can't be read."""
-    from .search import every_employer  # (search reads this module: imported when asked)
+    """The short names an employer's entry gives it (`aliases: [UCT]`), in the person's own companies file or any of
+    the plugin's lists (search.every_employer: the first entry of that name holds), as norm() writes them: only those
+    of 3 letters or more. None ([]) for an employer with no entry, or where the files can't be read."""
+    from .search import employer_lists, every_employer, own_companies_path  # (search reads this module)
 
     try:
-        entries = every_employer()
+        files = [own_companies_path(), *employer_lists().values()]
+        key = tuple((str(p), p.stat().st_mtime_ns if p.exists() else 0) for p in files)
+        table = _ALIASES.get(key)
+        if table is None:
+            table = {}
+            for c in every_employer():
+                named = c.get("aliases")
+                table.setdefault(norm(c.get("name") or ""), []).extend(
+                    norm(a) for a in (named if isinstance(named, list) else [named])
+                    if isinstance(a, str) and len(re.sub(r"[^a-z0-9]", "", norm(a))) >= 3)
+            _ALIASES.clear()
+            _ALIASES[key] = table
     except Exception:  # (a companies file written oddly: no short names, as before)
         return []
-    key, out = norm(company), []
-    for c in entries:
-        if key and norm(c.get("name") or "") == key:
-            named = c.get("aliases")
-            out += [norm(a) for a in (named if isinstance(named, list) else [named])
-                    if isinstance(a, str) and len(re.sub(r"[^a-z0-9]", "", norm(a))) >= 3]
-    return list(dict.fromkeys(out))
+    return list(dict.fromkeys(table.get(norm(company), []))) if norm(company) else []
 
 
 def _current_employers(prof: Profile) -> list[str]:

@@ -1149,6 +1149,25 @@ def test_an_answer_the_site_empties_again_after_the_second_try_goes_back_to_the_
     filled.clear()
     assert list(run(applier._fill_once(r, page))) == [question_key(rate)]
     assert "n3" not in [v["id"] for v in filled], filled  # (not tried again)
+    # (that box alone: its label's answer stays for another box it answers, the second review of run 147's fixes)
+    assert r.once[question_key(extra)] == "Some"
+    other = {**page, "headings": ["Questions"],
+             "fields": [{"id": "n4", "label": extra, "kind": "text", "value": "", "section": "Second site",
+                         "required": True}]}
+    filled.clear()
+
+    async def keeps(**kw):
+        return {**other, "fields": [{**other["fields"][0], "value": "Some"}]}, ""
+    applier._look = keeps
+    assert run(applier._fill_once(r, other)) == {} and [v["id"] for v in filled] == ["n4"], filled
+    # an optional box the page says is wrong once emptied goes back to the person, as a required one does
+    flagged = {**other, "fields": [{"id": "n5", "label": extra, "kind": "text", "value": "", "section": "Third",
+                                    "required": False}]}
+
+    async def flags(**kw):
+        return {**flagged, "fields": [{**flagged["fields"][0], "invalid": True}]}, ""
+    applier._look = flags
+    assert list(run(applier._fill_once(r, flagged))) == [question_key(extra)]
 
 
 def test_a_job_skipped_while_submit_for_me_checks_it_isnt_submitted(srv):

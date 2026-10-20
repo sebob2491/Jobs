@@ -60,25 +60,29 @@ BEYOND_CHECK = "more than the background check"
 # form's consent: Northrop's, the owner's call of Oct 10). Read wherever the precise kinds are, and in a terms gate's
 # own words (GATE_OWN) and a notice's whole words (ANYWHERE)
 JOB_NEWS = "job opportunities sent"
-# (its words: a verb that sends, never a noun ("the email you use", "the text you enter"), and never the person's own
-# applying ("each time you apply for job openings", "when the job openings you applied for are filled": the review of
-# run 147's fixes)
+# (its words: a verb that sends, never a noun ("the email you use", "the text you enter"), and never across the person's
+# own applying ("each time you apply for job openings", "when the job openings you applied for are filled"), their
+# application ("the status of your application for job openings") or equal employment opportunities: the reviews of run
+# 147's fixes)
 _SENT_NOT_NOUN = r"(?<!\bthe )(?<!\byour )(?<!\bour )(?<!\bthis )(?<!\ba )(?<!\ban )"
-_NOT_OWN_APPLYING = r"(?!\byou(?:'ve| have)? (?:apply|applied|use|used|enter|entered|submit\w*|provide\w*)\b)"
+_GAP = (r"(?:(?!\byou(?:'ve| have)? (?:apply|applied|use|used|enter|entered|submit\w*|provide\w*)\b|\byour "
+        r"application\b|\bequal\b)[^.;])")
 _OPENINGS = (r"(?:opportunities|openings|vacancies)\b(?! (?:that |which |for which )?you(?:'ve| have)? "
              r"(?:apply|applied|are applying)\b)")
+_SOME = r"(?:any |other |future |new |additional |similar |further |more |relevant )?"
+_JOBS = r"(?:job |career |employment |work )"
 _JOB_NEWS_WORDS = (
     # "sending you further information about Kforce job opportunities", "send you information regarding employment
     # opportunities" (USAA's, live), "email you new career opportunities"
     rf"{_SENT_NOT_NOUN}\b(?:send(?:s|ing)?|sent|e-?mail(?:s|ed|ing)?|text(?:s|ed|ing)?|forward(?:s|ed|ing)?) "
-    rf"(?:to )?(?:you|me)\b(?:{_NOT_OWN_APPLYING}[^.;]){{0,60}}?\b(?:job|career|employment|work) {_OPENINGS}|"
+    rf"(?:to )?(?:you|me)\b{_GAP}{{0,60}}?\b{_JOBS}{_OPENINGS}|"
     # "contact you about other job opportunities" (Caesars', live), "regarding future employment opportunities"
-    r"\b(?:contact\w*|reach\w* out to|get(?:ting)? in touch with) (?:you|me)\b[^.;]{0,30}?"
-    r"\b(?:about|regarding|concerning|for|on|with) (?:any |other |future |new |additional |similar |further |more |"
-    rf"relevant )?(?:job |career |employment |work )?{_OPENINGS}|"
+    # (Aristocrat's, live); with "with", only job opportunities (never "with opportunities to give feedback")
+    rf"\b(?:contact\w*|reach\w* out to|get(?:ting)? in touch with) (?:you|me)\b{_GAP}{{0,30}}?"
+    rf"\b(?:(?:about|regarding|concerning|for|on) {_SOME}{_JOBS}?|with {_SOME}{_JOBS}){_OPENINGS}|"
     # "notify you of other job openings", "inform you of new opportunities", "let you know about future opportunities"
     rf"\b(?:notif(?:y|ies|ied|ying)|inform(?:s|ed|ing)?|let(?:s|ting)? you know) (?:you )?(?:of|about)\b"
-    rf"(?:{_NOT_OWN_APPLYING}[^.;]){{0,40}}?\b(?:(?:job|career|employment|work) )?{_OPENINGS}")
+    rf"{_GAP}{{0,40}}?\b{_JOBS}?{_OPENINGS}")
 # The job picks a site sends: job alerts by other names (Insight Enterprises' "job recommendations by email", live run
 # 145; the review of fix-accept-gates)
 JOB_PICKS = (r"(?:job|career) (?:recommendations?|matches|suggestions?)\b|"

@@ -1082,6 +1082,9 @@ class Run:
     moved_since: float = 0.0  # since when every look has found its paused tab past the pause
     pause_sig: tuple | None = None  # how the paused page looked: the same page is never past itself
     once_page: dict[str, tuple] = field(default_factory=dict)  # where each this-application answer went in
+    # optional boxes (placed_key) the site emptied of the person's answer after its second try: left empty, not filled
+    # again (_fill_once)
+    once_left: set[str] = field(default_factory=set)
     mail_checked: float = 0.0  # when the inbox was last looked at for its emailed code or link
     mail_done: bool = False  # the code or link from the inbox went in: no more looking
     # the employer's own mail domains, from its list (looked up once), and _another_employers_mail's answer for this
@@ -1170,7 +1173,7 @@ class Run:
                                 "mail_last", "entries_short", "entries_told", "entries_ok", "account_answers",
                                 "employer_mail", "others_mail", "went_in", "agreed", "draft_pages", "submit_pressed",
                                 "sending", "cut_short", "started", "pass_steps", "rounds", "resumes", "marked",
-                                "maybe_shown", "kept_replaced")},
+                                "maybe_shown", "kept_replaced", "once_left")},
                 # (only for the cards that show it: a job queued or under way has none, and 30 of them made the
                 # page's state megabytes, every poll)
                 "went_in": None if self.status in ("queued", "running") else self.went_in.public(),

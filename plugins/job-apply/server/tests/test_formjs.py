@@ -808,5 +808,22 @@ def test_a_framed_gates_own_words_are_its_frames_alone(srv, tmp_path):
     search = next(a for a in actions if a["text"] == "Search jobs")
     own = run(srv.browser.own_frame_text(accept["id"]))
     assert "Read our privacy agreement." in own and "talent network" not in own, own
-    assert "talent network" in run(srv.browser.own_frame_text(search["id"]))
     assert run(srv.browser.own_frame_text("f99-gone")) is None
+    # a frame with a frame in it, its words maybe there (an "I Accept" on the page, the agreement in a frame on it:
+    # the second review of run 147's fixes), and one with no words: not read alone (None: the page's whole words are)
+    assert run(srv.browser.own_frame_text(search["id"])) is None
+    page.write_text('<!doctype html><html><body><h2>Privacy Agreement</h2><iframe src="gate.html"></iframe>'
+                    '<button>I Agree</button></body></html>', encoding="utf-8")
+    run(srv.browser.goto(page.resolve().as_uri()))
+    actions = run(srv.browser.inspect(include_dropdown_options=False))["actions"]
+    assert run(srv.browser.own_frame_text(next(a for a in actions if a["text"] == "I Agree")["id"])) is None
+    page.write_text('<!doctype html><html><body><p>Join our talent network.</p><button>Search jobs</button>'
+                    '</body></html>', encoding="utf-8")
+    run(srv.browser.goto(page.resolve().as_uri()))
+    actions = run(srv.browser.inspect(include_dropdown_options=False))["actions"]
+    assert "talent network" in run(srv.browser.own_frame_text(actions[0]["id"]))  # (no frame in it: read alone)
+    page.write_text('<!doctype html><html><body><button aria-label="I Accept"></button></body></html>',
+                    encoding="utf-8")
+    run(srv.browser.goto(page.resolve().as_uri()))
+    actions = run(srv.browser.inspect(include_dropdown_options=False))["actions"]
+    assert actions and run(srv.browser.own_frame_text(actions[0]["id"])) is None  # (no words at all)
