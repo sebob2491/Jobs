@@ -1102,6 +1102,110 @@ def test_a_this_application_answer_stays_on_its_page(srv):
         pipeline.ONCE_SETTLE = monkey
 
 
+def test_an_answer_the_site_empties_again_after_the_second_try_goes_back_to_the_person(srv, monkeypatch):
+    """UCT's UKG Pro (run 147): a question's box keeps only a number (autoNumeric's) and emptied itself of the answer
+    given; filled twice, the desk said "filled 1 answer(s) you gave" and asked for it again each round, saying nothing.
+    An answer still gone after the second try didn't go in: it goes back to the person, with what the site wants
+    (never an answer made up for it); one that stays in is filled, as before. An optional one the site empties is left
+    empty, said in the log, and not tried again (the review of run 147's fixes)."""
+    from job_apply.pipeline import Run
+
+    filled = []
+
+    class Stub:
+        async def fill_form(self, values):
+            filled.extend(values)
+            return {"ok": True, "results": [{"id": v["id"], "ok": True} for v in values]}
+
+    rate = "How do you rate your ability to read drawings? On a scale of 1-5, 5 being best."
+    years = "How many years of experience do you have?"
+    extra = "Years of cleanroom experience (optional)"
+    page = {"url": "https://x.example/apply", "headings": ["Questions"],
+            "fields": [{"id": "n1", "label": rate, "kind": "text", "value": "", "required": True, "numeric": True},
+                       {"id": "t2", "label": years, "kind": "text", "value": "", "required": True},
+                       {"id": "n3", "label": extra, "kind": "text", "value": "", "required": False, "numeric": True}]}
+
+    async def look(**kw):  # (the number boxes empty themselves; the other keeps what went in)
+        return {**page, "fields": [page["fields"][0], {**page["fields"][1], "value": "4"}, page["fields"][2]]}, ""
+
+    applier = Applier(srv)
+    applier.srv = Stub()
+    applier._look = look
+    monkeypatch.setattr(pipeline, "ONCE_SETTLE", 0)
+    r = Run(1, "Engineer", "Example Clean")
+    r.once[question_key(rate)] = "Very good"
+    r.once[question_key(years)] = "4"
+    r.once[question_key(extra)] = "Some"
+    failed = run(applier._fill_once(r, page))
+    # (the second try, then it's the person's)
+    assert [v["id"] for v in filled] == ["n1", "t2", "n3", "n1", "n3"], filled
+    assert list(failed) == [question_key(rate)], failed
+    assert failed[question_key(rate)]["error"] == "the site didn't keep your answer: this box takes a number", failed
+    assert failed[question_key(rate)]["label"] == rate
+    assert "filled 1 answer(s) you gave for this application" in r.log, r.log
+    assert "1 of your answers didn't go in" in r.log, r.log
+    assert ("the site didn't keep your answer to the optional “Years of cleanroom experience (optional)” (the box "
+            "takes a number), so it's left empty") in r.log, r.log
+    filled.clear()
+    assert list(run(applier._fill_once(r, page))) == [question_key(rate)]
+    assert "n3" not in [v["id"] for v in filled], filled  # (not tried again)
+    # (that box alone: its label's answer stays for another box it answers, the second review of run 147's fixes)
+    assert r.once[question_key(extra)] == "Some"
+    other = {**page, "headings": ["Questions"],
+             "fields": [{"id": "n4", "label": extra, "kind": "text", "value": "", "section": "Second site",
+                         "required": True}]}
+    filled.clear()
+
+    async def keeps(**kw):
+        return {**other, "fields": [{**other["fields"][0], "value": "Some"}]}, ""
+    applier._look = keeps
+    assert run(applier._fill_once(r, other)) == {} and [v["id"] for v in filled] == ["n4"], filled
+    # an optional box the page says is wrong once emptied goes back to the person, as a required one does
+    flagged = {**other, "fields": [{"id": "n5", "label": extra, "kind": "text", "value": "", "section": "Third",
+                                    "required": False}]}
+
+    async def flags(**kw):
+        return {**flagged, "fields": [{**flagged["fields"][0], "invalid": True}]}, ""
+    applier._look = flags
+    assert list(run(applier._fill_once(r, flagged))) == [question_key(extra)]
+
+
+def test_a_box_left_empty_while_optional_is_filled_once_the_site_wants_it(srv, monkeypatch):
+    """The third review of run 147's fixes: a box read as optional that the site emptied is left empty (Run.once_left);
+    when the site then says it's required, or the page says it's wrong, it's filled again, never skipped every round."""
+    from job_apply.pipeline import Run, placed_key
+
+    filled = []
+
+    class Stub:
+        async def fill_form(self, values):
+            filled.extend(values)
+            return {"ok": True, "results": [{"id": v["id"], "ok": True} for v in values]}
+
+    label = "Years of cleanroom experience"
+    box = {"id": "n3", "label": label, "kind": "text", "value": "", "required": False}
+    applier = Applier(srv)
+    applier.srv = Stub()
+    monkeypatch.setattr(pipeline, "ONCE_SETTLE", 0)
+    for now, errors in (({"required": True}, []), ({}, [f"{label} is required"]), ({"invalid": True}, [])):
+        page = {"url": "https://x.example/apply", "headings": ["Questions"], "fields": [{**box, **now}],
+                "errors": errors}
+
+        async def look(page=page, **kw):
+            return {**page, "fields": [{**page["fields"][0], "value": "3"}]}, ""
+        applier._look = look
+        r = Run(1, "Engineer", "Example Clean")
+        r.once[question_key(label)] = "3"
+        r.once_left[placed_key(box)] = question_key(label)
+        filled.clear()
+        assert run(applier._fill_once(r, page)) == {}
+        assert [v["id"] for v in filled] == ["n3"], (now, errors, filled)
+    # (still optional and nothing said: left as it was)
+    page = {"url": "https://x.example/apply", "headings": ["Questions"], "fields": [box]}
+    filled.clear()
+    assert run(applier._fill_once(r, page)) == {} and filled == []
+
+
 def test_a_job_skipped_while_submit_for_me_checks_it_isnt_submitted(srv):
     from job_apply.pipeline import Run
 
@@ -1201,6 +1305,34 @@ def test_a_list_of_jobs_isnt_paged_through(srv, monkeypatch):
     r = run(go())
     assert r.need == "stuck" and "three times" in r.reason, (r.reason, r.log)
     assert sum(entry == "clicked “next”" for entry in r.log) == 2
+
+
+def test_a_posting_saying_please_wait_is_waited_on_before_it_counts_as_going_nowhere(srv, monkeypatch):
+    """EY's posting (run 147): its Apply now showed "Please wait..." while the site sent the applicant on to
+    SuccessFactors, and the desk, about to press it a third time on the same page, stopped ("I pressed “Apply now”
+    three times ... and no application opened") before it got there. A page saying it's on its way is waited on once
+    for the page to change; the application then goes on. (The site sends it on 8 seconds after the press.)"""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    monkeypatch.setattr(pipeline, "BLANK_PAGE_WAIT", 20)
+    job = srv.add_job(url=fixture_url("site/please-wait-posting.html"), title="Field Technician",
+                      company="Example Advisory")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), timeout=120, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert "three times" not in r.reason, (r.status, r.reason, r.log)
+    # (on into the application: its first step filled and gone on from, to the questions the profile doesn't answer)
+    assert r.need == "questions" and r.url.endswith("step2.html"), (r.status, r.reason, r.log[-3:])
+    assert r.log[1:3] == ["clicked “Apply now”", "clicked “Apply Now”"], r.log
 
 
 def test_a_note_over_the_posting_is_dismissed(srv, monkeypatch):
@@ -5001,6 +5133,15 @@ def test_an_employers_code_from_its_parents_or_its_sites_domain_is_its_own(job_a
     assert "brkenergy.com" in pipeline._employer_mail_domains("NV Energy", set())
     assert "nv.doe.gov" in pipeline._employer_mail_domains("Mission Support and Test Services (NNSS)", set())
     assert "brkenergy.com" not in pipeline._employer_mail_domains("Mission Support and Test Services (NNSS)", set())
+
+
+def test_station_casinos_code_from_its_own_domain_is_its_own(job_apply_home):
+    """Run 147 (the Las Vegas list's accounts check): Station Casinos' Oracle Recruiting mailed its "Confirm your
+    identity" code from stationcasinos.com, which wasn't read as the employer's (only Oracle's own senders were), and
+    the code the inbox had was waited out. Its entry names it."""
+    (job_apply_home / "companies.yaml").write_text(yaml.safe_dump({"lists": ["las-vegas"]}), encoding="utf-8")
+    assert "stationcasinos.com" in pipeline._employer_mail_domains("Station Casinos (Red Rock Resorts)", set())
+    assert "stationcasinos.com" not in pipeline._employer_mail_domains("NV Energy", set())
 
 
 def test_a_job_search_reached_mid_sign_in_opens_the_job_again_once(srv, monkeypatch, job_apply_home):
@@ -10870,6 +11011,43 @@ def test_a_site_that_turns_the_browser_away_holds_nothing_up(srv, monkeypatch, p
     assert f"turned the desk's browser away ({said})" in r.reason
 
 
+@pytest.mark.parametrize("page", ["ukg-posting-403.html", "forbidden-bare.html"])
+def test_a_bare_403_page_with_no_heading_is_the_browser_turned_away_not_a_blank_page(srv, monkeypatch, page):
+    """UKG Pro's sign-in (Nikon Precision's and UCT's, run 147) answered the desk's Apply now with a page titled "403"
+    and only "403 Forbidden" in it, no heading: the title alone didn't read as a refusal, and the desk took the page for
+    a blank one, loaded it again twice, and said "The site may be slow". A short page whose whole words are a refusal
+    (or a bare 403 for its title) is the browser turned away: said at once, never loaded again."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/" + page), title="Field Service Engineer",
+                      company="Example Precision")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.need == "stuck" and not r.blocking, (r.need, r.reason)
+    assert "turned the desk's browser away (403 Forbidden)" in r.reason, (r.reason, r.log)
+    assert not any("loaded it again" in line or "reloaded" in line for line in r.log), r.log
+    assert r.code == "site_blocks", r.code
+
+
+def test_a_bot_checks_403_page_is_no_refusal_of_the_browser():
+    """The review of run 147's fixes: a short refusal page with a bot check or a CAPTCHA on it is the bot check's (the
+    person's, said as one), never read as the browser turned away."""
+    assert pipeline._turned_away_page({"title": "403"}, "403 Forbidden") == "403 Forbidden"
+    assert pipeline._turned_away_page({"title": "403"}, "") == "403"
+    for check in ({"captcha": "A CAPTCHA"}, {"challenge": True}):
+        assert pipeline._turned_away_page({"title": "403", **check}, "403 Forbidden") == "", check
+        assert pipeline._nothing_drawn({"title": "403", **check}, "403 Forbidden") is False
+
+
 @pytest.mark.parametrize("page, said, reloaded", [("bad-gateway.html", "502 Bad Gateway", True),
                                                   ("ukg-posting-502.html", "502 Bad Gateway", False),
                                                   ("service-unavailable-retry.html", "503 Service Unavailable", True)])
@@ -11936,6 +12114,64 @@ def test_an_extra_block_is_deleted_only_when_empty_last_and_one_the_desk_added(s
     gone.clear()
     assert not run(applier._drop_added_extra(r, page(three), [extra("Education 3")], {"education": 1}, tried))
     assert clicked == ["d:Education 3"]
+
+
+def test_the_desks_own_empty_block_is_deleted_before_the_saved_one_draws_and_on_a_later_pass(srv):
+    """KLA's Workday (run 147): after Workday's "something went wrong, refresh" reload, the account's saved job drew
+    above the block the desk had added, late, and the desk's own (its mark on it) became block 2 while block 1's boxes
+    and Delete weren't drawn yet: "its kind's only block", never deleted; and on the person's Carry on the pass had
+    added none, so it wasn't deleted then either: stuck on "Details the profile lacks". A marked block numbered 2 or
+    more isn't its kind's only one, and the mark says the block is the desk's own on any pass. Never an unmarked one,
+    nor one with anything in it. (The profile here has one school: Education 2 is past it.)"""
+    applier, clicked, gone, marked = Applier(srv), [], [], ["Education 2"]
+
+    class Browser:
+        async def added_blocks(self):
+            return marked
+
+    class Stub:
+        browser = Browser()
+
+        async def click(self, id):
+            clicked.append(id)
+            gone.append(id.split(":", 1)[1])
+            return {"clicked": True}
+    applier.srv = Stub()
+
+    def page(blocks, filled=()):
+        return {"fields": [{"id": f"s{i}", "label": "School or University*", "section": b, "required": True,
+                            "kind": "text", "value": "Example College" if b in filled else ""}
+                           for i, b in enumerate(blocks) if b not in gone],
+                "actions": [{"id": f"d:{b}", "text": "Delete", "section": b, "names_block": True}
+                            for b in blocks if b not in gone]}
+
+    async def look(**kw):
+        return page(["Education 1"]), ""
+    applier._look = look
+
+    def extra(block):
+        return {"id": "x", "label": "School or University*", "section": block, "required": True, "kind": "text"}
+
+    r = Run(1, "Technician", "Example Litho")
+    alone = ["Education 2"]  # (block 1 not drawn yet)
+    two = ["Education 1", "Education 2"]
+    # never: something in it, or an unmarked one on a later pass (none added on it), or an unmarked one alone
+    assert not run(applier._drop_added_extra(r, page(alone, filled=alone), [extra("Education 2")], {"education": 1},
+                                             set()))
+    marked[:] = []
+    assert not run(applier._drop_added_extra(r, page(two), [extra("Education 2")], {}, set()))
+    assert not run(applier._drop_added_extra(r, page(alone), [extra("Education 2")], {"education": 1}, set()))
+    assert not clicked
+    # the desk's own, empty, numbered 2, with block 1 not drawn yet: deleted
+    marked[:] = ["Education 2"]
+    assert run(applier._drop_added_extra(r, page(alone), [extra("Education 2")], {"education": 1}, set()))
+    assert clicked == ["d:Education 2"], clicked
+    # and on a later pass (none added on it): the mark says it's the desk's own
+    gone.clear()
+    assert run(applier._drop_added_extra(r, page(two), [extra("Education 2")], {}, set()))
+    assert clicked == ["d:Education 2"] * 2, clicked
+    assert sum(line.startswith("deleted Education 2: an empty block past your profile's schools")
+               for line in r.log) == 2, r.log
 
 
 @pytest.mark.slow

@@ -1027,6 +1027,30 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
                     parts.append(t)
             return "\n\n".join(parts)[:max_chars]
 
+    async def own_frame_text(self, element_id: str, max_chars: int = 8000) -> str | None:
+        """The visible words of the frame that holds this element alone (the page itself for one in no frame): a
+        framed gate's own agreement, never the careers page around it (pipeline._terms_gate). None where it can't be
+        read alone: a frame with frames of its own in it (the agreement's words may sit in one: its innerText never
+        holds them; never a player's, a bot check's or a blank one), a read that fails, or no words at all. The caller
+        reads the page's whole words then."""
+        async with self._lock:
+            try:
+                page = await self.page()
+                frame = self._frame_for(page, element_id)
+                for f in frame.child_frames:
+                    if f.is_detached() or f.url == "about:blank" or _MEDIA_FRAME.match(f.url) \
+                            or _CAPTCHA_FRAME.match(f.url):
+                        continue
+                    # (one drawn nowhere, or a pixel's size, holds no words to read: a tag manager's or a tracking
+                    # pixel's, on many real gates: the third review of run 147's fixes)
+                    box = await _bounded((await _bounded(f.frame_element())).bounding_box())
+                    if box is not None and box["width"] >= 2 and box["height"] >= 2:
+                        return None
+                text = str(await _bounded(frame.evaluate(VISIBLE_TEXT_JS)) or "")
+            except (PlaywrightError, _Hung, KeyError):
+                return None
+            return text[:max_chars] if text.strip() else None
+
     async def gate_read(self, max_chars: int = 8000) -> dict[str, str] | None:
         """What an attestation's gate reads of the page (GATE_READ_JS): its drawn words ("visible") and every other
         word the person can see or open ("hidden"). None, failing closed, where it can't be read whole: a page with

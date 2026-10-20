@@ -72,6 +72,44 @@ def test_workdays_whole_step_loading_page_is_busy_while_on_show(srv, tmp_path):
         assert bool(run(srv.browser.inspect(include_dropdown_options=False)).get("busy")) is busy, style
 
 
+def test_a_ukg_number_box_is_read_as_one(srv, tmp_path):
+    """UCT's UKG Pro (run 147): a question's text box that keeps only a number (data-automation="numeric-response",
+    autoNumeric's) is read as such, for the desk to say so when the site empties an answer from it. A plain text box
+    isn't."""
+    got = fields_of(srv, tmp_path, '<label for="a">On a scale of 1-5, how do you rate it?</label>'
+                                   '<input type="text" id="a" data-automation="numeric-response" '
+                                   'data-bind="autoNumeric: answer, settings: { vMax: 999 }">'
+                                   '<label for="b">Years of experience</label><input type="text" id="b" '
+                                   'data-bind="autoNumeric: years">'
+                                   '<label for="c">Your answer</label><input type="text" id="c" data-bind="value: x">')
+    assert [f.get("numeric") for f in got] == [True, True, None], got
+
+
+def test_a_please_wait_on_show_is_busy(srv, tmp_path):
+    """EY's posting (run 147) said "Please wait..." while the site sent the applicant on to SuccessFactors: busy while
+    on show. Those words alone, with their dots; never words that only begin so, a bare "Loading", one hidden, or a
+    screen reader's alone."""
+    page = tmp_path / "form.html"
+    for html, busy in (('<div role="alert"><span class="spin"></span>Please wait...</div>', True),
+                       ('<p>Loading, please wait…</p>', True),
+                       ('<span>Redirecting you...</span>', True),
+                       ('<p>Loading docks and warehouse experience...</p>', False),
+                       ('<p>Please wait for a recruiter to contact you...</p>', False),
+                       ('<span>Loading</span>', False),
+                       ('<div role="alert" hidden>Please wait...</div>', False),
+                       ('<div style="position: absolute; width: 1px; height: 1px; overflow: hidden">Loading...</div>',
+                        False)):
+        page.write_text(f"<!doctype html><html><body><h1>Job description</h1><button>Apply now</button>{html}"
+                        "</body></html>", encoding="utf-8")
+        run(srv.browser.goto(page.resolve().as_uri()))
+        assert bool(run(srv.browser.inspect(include_dropdown_options=False)).get("busy")) is busy, html
+    # never an error either, whatever its box says it is (the review of run 147's fixes: "Redirecting you...")
+    for said in ("Please wait...", "Redirecting you...", "Redirecting…"):
+        page.write_text(f'<!doctype html><html><body><div role="alert">{said}</div></body></html>', encoding="utf-8")
+        run(srv.browser.goto(page.resolve().as_uri()))
+        assert run(srv.browser.inspect(include_dropdown_options=False))["errors"] == [], said
+
+
 def test_workdays_step_body_with_only_its_loading_dots_is_busy(srv, tmp_path):
     """Grand Canyon University's Workday (run 69): its Create Account/Sign In step's body under the progress bar was
     only Workday's three loading dots, boxes with no words and no automation id: busy. Not a body with words, a box to
@@ -753,3 +791,52 @@ def test_each_question_in_one_fieldset_is_its_own_and_a_hint_inside_a_group_isnt
     assert [f["label"] for f in got if f["kind"] == "radio_group"] == [
         "Are you at least 18 years of age?", "Will you now or in the future require visa sponsorship?",
         "Do you have a valid driver's license?", "Are you legally authorized to work in the United States?"]
+
+
+def test_a_framed_gates_own_words_are_its_frames_alone(srv, tmp_path):
+    """A gate in a frame on a careers page (Charles Schwab's iCIMS, live, Oct 10) is read for job opportunities sent
+    in its own words alone (pipeline._terms_gate's `own`): its frame's, never the careers page's around it."""
+    (tmp_path / "gate.html").write_text("<!doctype html><html><body><h2>Privacy Agreement</h2><p>Read our privacy "
+                                        "agreement.</p><button>I Accept</button></body></html>", encoding="utf-8")
+    page = tmp_path / "careers.html"
+    page.write_text('<!doctype html><html><body><p>Join our talent network: we will email you new job '
+                    'opportunities.</p><button>Search jobs</button><iframe src="gate.html"></iframe></body></html>',
+                    encoding="utf-8")
+    run(srv.browser.goto(page.resolve().as_uri()))
+    actions = run(srv.browser.inspect(include_dropdown_options=False))["actions"]
+    accept = next(a for a in actions if a["text"] == "I Accept")
+    search = next(a for a in actions if a["text"] == "Search jobs")
+    own = run(srv.browser.own_frame_text(accept["id"]))
+    assert "Read our privacy agreement." in own and "talent network" not in own, own
+    assert run(srv.browser.own_frame_text("f99-gone")) is None
+    # a frame with a frame in it, its words maybe there (an "I Accept" on the page, the agreement in a frame on it:
+    # the second review of run 147's fixes), and one with no words: not read alone (None: the page's whole words are)
+    assert run(srv.browser.own_frame_text(search["id"])) is None
+    page.write_text('<!doctype html><html><body><h2>Privacy Agreement</h2><iframe src="gate.html"></iframe>'
+                    '<button>I Agree</button></body></html>', encoding="utf-8")
+    run(srv.browser.goto(page.resolve().as_uri()))
+    actions = run(srv.browser.inspect(include_dropdown_options=False))["actions"]
+    assert run(srv.browser.own_frame_text(next(a for a in actions if a["text"] == "I Agree")["id"])) is None
+    page.write_text('<!doctype html><html><body><p>Join our talent network.</p><button>Search jobs</button>'
+                    '</body></html>', encoding="utf-8")
+    run(srv.browser.goto(page.resolve().as_uri()))
+    actions = run(srv.browser.inspect(include_dropdown_options=False))["actions"]
+    assert "talent network" in run(srv.browser.own_frame_text(actions[0]["id"]))  # (no frame in it: read alone)
+    page.write_text('<!doctype html><html><body><button aria-label="I Accept"></button></body></html>',
+                    encoding="utf-8")
+    run(srv.browser.goto(page.resolve().as_uri()))
+    actions = run(srv.browser.inspect(include_dropdown_options=False))["actions"]
+    assert actions and run(srv.browser.own_frame_text(actions[0]["id"])) is None  # (no words at all)
+    # a tracking pixel's frame (1x1, or hidden) holds no words: the gate's own still read alone; a drawn one isn't
+    # (the third review of run 147's fixes)
+    for frame, alone in (('<iframe src="gate.html" width="1" height="1" style="border: 0"></iframe>', True),
+                         # (Google Tag Manager's noscript frame)
+                         ('<iframe src="gate.html" height="0" width="0" style="display:none;visibility:hidden">'
+                          '</iframe>', True),
+                         ('<iframe src="gate.html" width="300" height="80"></iframe>', False)):
+        page.write_text('<!doctype html><html><body><h2>Privacy Agreement</h2><p>Read our privacy agreement.</p>'
+                        f'<button>I Agree</button>{frame}</body></html>', encoding="utf-8")
+        run(srv.browser.goto(page.resolve().as_uri()))
+        actions = run(srv.browser.inspect(include_dropdown_options=False))["actions"]
+        own = run(srv.browser.own_frame_text(next(a for a in actions if a["text"] == "I Agree")["id"]))
+        assert (own is not None and "Read our privacy agreement." in own) is alone, (frame, own)

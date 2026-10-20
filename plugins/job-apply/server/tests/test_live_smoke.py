@@ -96,3 +96,37 @@ def test_the_it_role_is_a_coherent_las_vegas_help_desk_and_sysadmin_applicant():
     # the other roles keep the plain profile's Arizona address
     assert got["hr/plain"]["profile"]["personal"]["address"]["state"] == "AZ"
     assert yaml.safe_dump(profile)  # (as the run writes it)
+
+
+RUN_FAKE = """
+import json, sys
+sys.path.insert(0, "scripts")
+import live_smoke
+qs = json.loads(sys.argv[1])
+print("RESULT " + json.dumps([[live_smoke.fake_answer(q), live_smoke.asks_ssn(q)] for q in qs]))
+"""
+
+
+def test_the_live_checks_throwaway_answers_fit_the_box_and_never_make_up_an_ssn():
+    """Run 147: UCT's UKG Pro asked "How do you rate ...? On a scale of 1-5, 5 being best." in a box that keeps only a
+    number, and the run's "Test answer" was emptied again each round; Clark County School District's Taleo refused "0"
+    for a Social Security Number. A scale is answered with its top, a number box with a number, and a Social Security
+    Number is never made up (None: the run ends there for the test identity, as a person would be asked it)."""
+    qs = [{"label": "How do you rate your ability? On a scale of 1-5, 5 being best.", "kind": "text"},
+          {"label": "Rate it on a scale from 1 to 10", "kind": "text"},
+          {"label": "Your rating", "kind": "text", "numeric": True},
+          {"label": "Your rating", "kind": "text", "input_type": "number"},
+          {"label": "Social Security Number*", "kind": "text"},
+          {"label": "SSN (last 4 digits)", "kind": "text", "numeric": True},
+          {"label": "Why do you want this job?", "kind": "textarea"},
+          {"label": "Have you ever worked for the Social Security Administration?", "kind": "text"}]
+    out = subprocess.run([sys.executable, "-c", RUN_FAKE, json.dumps(qs)], cwd=SERVER, capture_output=True, text=True,
+                         encoding="utf-8", timeout=120)
+    line = next((x for x in out.stdout.splitlines() if x.startswith("RESULT ")), None)
+    assert line, out.stdout[-2000:] + out.stderr[-3000:]
+    assert json.loads(line[len("RESULT "):]) == [["5", False], ["10", False], ["1", False], ["1", False],
+                                                 [None, True], [None, True], ["Test answer", False],
+                                                 ["Test answer", False]]
+    # (and the rounds end at one, never answering it: live_smoke's question rounds read asks_ssn)
+    text = (SCRIPTS / "live_smoke.py").read_text(encoding="utf-8")
+    assert "if any(asks_ssn(q) for q in run.questions):" in text

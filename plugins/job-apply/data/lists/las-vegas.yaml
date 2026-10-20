@@ -44,6 +44,7 @@ companies:
   - name: Station Casinos (Red Rock Resorts)
     careers_url: https://ejfh.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/StationCasinos/
     ats: oracle_hcm           # stationcasinos.com's Careers link opens this Oracle Recruiting site
+    mail_domains: [stationcasinos.com]  # its Oracle's "Confirm your identity" code mails from here (live check, run 147)
     nv_sites: Las Vegas, Henderson, North Las Vegas
     confidence: high          # live check, Oct 2026: a Support Technician and an Application Engineer II in Las Vegas
     search: {oracle: {host: ejfh.fa.us6.oraclecloud.com, site: StationCasinos}}

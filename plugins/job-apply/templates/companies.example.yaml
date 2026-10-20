@@ -23,3 +23,5 @@ companies: []
 #     search: {workday: "https://example.wd1.myworkdayjobs.com/Careers"}
 #     mail_domains: [example.com]   # (optional) where its emailed sign-up codes come from, when that's
 #                                   # neither its careers site's domain nor its job system's
+#     aliases: [EXE]                # (optional) a short name its questions call it by, 3 letters or more
+#                                   # ("Have you ever worked for EXE?")

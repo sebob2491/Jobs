@@ -3,6 +3,7 @@ import pytest
 from job_apply.autofill import (
     choose_option,
     clean_label,
+    employer_aliases,
     choose_place,
     is_decline,
     is_empty_value,
@@ -1936,6 +1937,107 @@ def test_previously_employed_by_any_of_the_employers_companies():
     for asked in ("Have you ever worked in Arizona?", "Have you ever worked in Arizona State University labs?"):
         assert resolve_field(f(asked, "radio_group", options=yes_no), prof(),
                              {"company": "Arizona State University"}) is None, asked
+
+
+def test_previously_employed_by_a_short_name_its_entry_gives_it():
+    """UCT's UKG Pro (run 147): "Have you ever been employed by UCT, or worked at UCT on a Temporary/Contractor
+    basis?" at Ultra Clean Holdings (UCT): the desk knew the employer by its first word alone ("ultra"), so the question
+    wasn't known for one about working there, and the person was asked. A short name the employer's entry on the lists
+    gives it (`aliases`) is the employer's too, answered from the profile as before; never another employer's."""
+    yes_no = ["Yes", "No"]
+    assert employer_aliases("Ultra Clean Holdings (UCT)") == ["uct"]
+    assert employer_aliases("Tokyo Electron (TEL)") == ["tel"]
+    assert employer_aliases("CliftonLarsonAllen (CLA)") == ["cla"]
+    assert employer_aliases("Mission Support and Test Services (NNSS)") == []  # (NNSS names a site, not the employer)
+    uct = f("Have you ever been employed by UCT, or worked at UCT on a Temporary/Contractor basis?", "radio_group",
+            options=yes_no)
+    assert resolve_field(uct, prof(), {"company": "Ultra Clean Holdings (UCT)"}).value == "No"
+    tel = f("Have you previously worked for TEL?", "radio_group", options=yes_no)
+    assert resolve_field(tel, prof(), {"company": "Tokyo Electron (TEL)"}).value == "No"
+    cla = f("Have you ever been employed by CLA?", "radio_group", options=yes_no)
+    assert resolve_field(cla, prof(), {"company": "CliftonLarsonAllen (CLA)"}).value == "No"
+    # never another employer's short name
+    assert resolve_field(f("Have you ever been employed by UCT?", "radio_group", options=yes_no), prof(),
+                         {"company": "Tokyo Electron (TEL)"}) is None
+
+
+def _worked_at(*companies: str) -> Profile:
+    return Profile({"work_history": [{"company": c, "title": "Technician", "start": "2018-01", "end": "2020-01"}
+                                     for c in companies]})
+
+
+@pytest.mark.parametrize("past, company, asked", [
+    # a past employer holding the employer's short name or its own name: maybe the one asked about
+    ("TEL Technology Center America", "Tokyo Electron (TEL)", "Have you previously worked for TEL?"),
+    ("TEL Technology Center America", "Tokyo Electron (TEL)", "Have you previously worked for Tokyo Electron?"),
+    ("UCT Thermal Solutions", "Ultra Clean Holdings (UCT)", "Have you ever been employed by UCT?"),
+    # a bracket's words are no short name: NNSS is a site, "US" a country
+    ("National Security Technologies (NSTec)", "Mission Support and Test Services (NNSS)",
+     "Have you ever worked at NNSS?"),
+    ("National Security Technologies (NSTec)", "Mission Support and Test Services (NNSS)",
+     "Have you ever been employed at the NNSS?"),
+    ("Honeywell", "Thermo Fisher Scientific (US)", "Have you ever been employed by a US federal contractor?"),
+    # the employer's customers, not working for it
+    ("Acme", "Tokyo Electron (TEL)", "Have you ever worked at TEL customer sites, such as Intel?"),
+])
+def test_worked_there_before_is_the_persons_where_the_profile_cant_say(past, company, asked):
+    """The review of run 147's fixes: reading a bracket's words as the employer's short name gave a "No" where the
+    profile can't say it (a past job at "TEL Technology Center America" applying to Tokyo Electron (TEL)), or where the
+    question asks about something else (NNSS, the site; "US"). Asked of the person."""
+    q = f(asked, "radio_group", options=["Yes", "No"])
+    assert resolve_field(q, _worked_at(past), {"company": company}) is None, (past, company, asked)
+
+
+def test_an_employers_short_names_are_read_once_while_its_files_stay_the_same(job_apply_home, monkeypatch):
+    """The second review of run 147's fixes: employer_aliases read every list again on each question (175 ms). Read
+    once, and again only when a file changes (the person's own companies file too)."""
+    import os
+
+    from job_apply import search
+
+    reads = []
+    every = search.every_employer
+    monkeypatch.setattr(search, "every_employer", lambda: reads.append(1) or every())
+    own = job_apply_home / "companies.yaml"
+    own.write_text("lists: [phoenix-metro]\ncompanies:\n  - name: Example Fab\n    aliases: [EXF, EX]\n",
+                   encoding="utf-8")
+    assert employer_aliases("Example Fab") == ["exf"]  # (3 letters or more)
+    assert employer_aliases("CliftonLarsonAllen (CLA)") == ["cla"] and employer_aliases("Nobody") == []
+    assert len(reads) == 1
+    own.write_text("lists: [phoenix-metro]\ncompanies:\n  - name: Example Fab\n    aliases: [EFAB]\n",
+                   encoding="utf-8")
+    os.utime(own, ns=(own.stat().st_atime_ns, own.stat().st_mtime_ns + 10**9))
+    assert employer_aliases("Example Fab") == ["efab"] and len(reads) == 2
+
+
+def test_us_in_capitals_is_the_country_never_this_employer():
+    """The second review of run 147's fixes: "Have you ever worked for US Bank?" applying to Intel, with U.S. Bank in
+    the profile, said "No": "us" was read as this employer ("worked for us"). "US" in capitals, or "us" before a name,
+    is the country's (another organization: the person's); a plain "us" is still this employer."""
+    yes_no = ["Yes", "No"]
+    past = _worked_at("U.S. Bank")
+    for asked in ("Have you ever worked for US Bank?", "Have you ever been employed by US Airways?",
+                  "Have you ever been employed by the US Army?", "Have you ever worked for us Bank?"):
+        assert resolve_field(f(asked, "radio_group", options=yes_no), past, {"company": "Intel"}) is None, asked
+    for asked in ("Have you ever worked for us before?", "Have you ever worked with us in any capacity?",
+                  "Have you ever been employed by us?"):
+        assert resolve_field(f(asked, "radio_group", options=yes_no), past, {"company": "Intel"}).value == "No", asked
+
+
+def test_us_the_country_is_never_us_bank_by_its_first_letter():
+    """The third review of run 147's fixes: at U.S. Bank the employer's first word was "u", which "the US Postal
+    Service" holds once "US" is read as the country's ("U.S."): "No" where the person is asked. Its leading words up to
+    one of 3 letters or more name it ("u s bank"); its own name still does, and "us" still means it."""
+    yes_no = ["Yes", "No"]
+    job = {"company": "U.S. Bank"}
+    for past, asked in (("US Airways", "Have you ever worked for US Airways?"),
+                        ("United States Postal Service", "Have you ever worked for the US Postal Service?"),
+                        ("US Steel", "Have you ever been employed by US Steel?")):
+        assert resolve_field(f(asked, "radio_group", options=yes_no), _worked_at(past), job) is None, asked
+    for asked in ("Have you ever worked for U.S. Bank?", "Have you ever worked for us before?"):
+        assert resolve_field(f(asked, "radio_group", options=yes_no), _worked_at("Wells Fargo"), job).value == "No"
+    assert resolve_field(f("Have you ever worked for U.S. Bank?", "radio_group", options=yes_no),
+                         _worked_at("U.S. Bank"), job).value == "Yes"
 
 
 def test_a_former_employee_question_naming_another_company_is_never_answered_from_this_ones():

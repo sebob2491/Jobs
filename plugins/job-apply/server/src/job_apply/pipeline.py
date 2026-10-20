@@ -45,8 +45,8 @@ from .autofill import (_OTHER_DOCUMENT, clean_label, entry_list_unloaded, _CHOIC
                        profile_entries, unset_choice, polarity, tailored_document, works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
                       confirmations, declines_cookies, final_text, may_accept_cookies, questions_shown)
-from .never import (ANYWHERE, CALLS_OR_TEXTS, EMAILS, FUTURE_ROLES, MAIL, NEVER, PARAGRAPH_WORDS, PRECISE,
-                    _never_for_them)
+from .never import (ANYWHERE, CALLS_OR_TEXTS, EMAILS, FUTURE_ROLES, GATE_OWN, GATE_PAGE, MAIL, NEVER,
+                    PARAGRAPH_WORDS, PRECISE, _never_for_them)
 from .pipeline_accounts import AccountsMixin
 from .pipeline_filling import FillingMixin
 from .pipeline_mail import MailMixin
@@ -314,6 +314,8 @@ _CONTENT_MISSING = re.compile(r"\bcontent missing\b", re.I)
 _REFRESH_ASKED = re.compile(r"\bsomething went wrong\b.{0,200}\b(?:refresh|reload) (?:the|this) page\b", re.I | re.S)
 _TURNED_AWAY = re.compile(r"^\s*(?:403\s*)?forbidden\s*$|^\s*(?:406\s*)?(?:request )?not acceptable\s*$|"
                           r"^\s*your request has been blocked\.?\s*$", re.I)  # (Workday's, its title empty)
+# a bare 403 or 406 as a page's whole title (UKG Pro's sign-in, run 147: "403" over a body of "403 Forbidden" alone)
+_TURNED_AWAY_CODE = re.compile(r"^\s*(?:(?:http\s+)?(?:error|status)\s+)?40[36]\s*$", re.I)
 # A job system's own error page (iCIMS's, run 74: "Oops, something went wrong", then "Technical Details:")
 _ERROR_PAGE = re.compile(r"\bsomething went wrong\b|\btechnical details\b", re.I)
 # A web server's own error page, bare: its title or first heading a 5xx's words as a whole and nothing else (nginx's
@@ -1080,6 +1082,10 @@ class Run:
     moved_since: float = 0.0  # since when every look has found its paused tab past the pause
     pause_sig: tuple | None = None  # how the paused page looked: the same page is never past itself
     once_page: dict[str, tuple] = field(default_factory=dict)  # where each this-application answer went in
+    # optional boxes (placed_key) the site emptied of the person's answer after its second try, each with its label's
+    # key: left empty, not filled again while they stay optional and unflagged (_fill_once); the person's answer to the
+    # question again takes it off (Desk's answers)
+    once_left: dict[str, str] = field(default_factory=dict)
     mail_checked: float = 0.0  # when the inbox was last looked at for its emailed code or link
     mail_done: bool = False  # the code or link from the inbox went in: no more looking
     # the employer's own mail domains, from its list (looked up once), and _another_employers_mail's answer for this
@@ -1168,7 +1174,7 @@ class Run:
                                 "mail_last", "entries_short", "entries_told", "entries_ok", "account_answers",
                                 "employer_mail", "others_mail", "went_in", "agreed", "draft_pages", "submit_pressed",
                                 "sending", "cut_short", "started", "pass_steps", "rounds", "resumes", "marked",
-                                "maybe_shown", "kept_replaced")},
+                                "maybe_shown", "kept_replaced", "once_left")},
                 # (only for the cards that show it: a job queued or under way has none, and 30 of them made the
                 # page's state megabytes, every poll)
                 "went_in": None if self.status in ("queued", "running") else self.went_in.public(),
@@ -3331,7 +3337,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         heads = lap.data.get("headings") or []
         deep = heads[1:] if (_ERROR_PAGE.search(lap.text[:2000])
                              and pick_next(lap.data.get("actions") or [], lap.kind == "form") is None) else []
-        refused = next((t for t in [lap.data.get("title") or "", *heads[:1], *deep] if _TURNED_AWAY.search(t)), "")
+        refused = next((t for t in [lap.data.get("title") or "", *heads[:1], *deep] if _TURNED_AWAY.search(t)), "") \
+            or _turned_away_page(lap.data, lap.text)
         if lap.kind in ("page", "form") and bare and refused:
             refusal = re.sub(r"\s+", " ", refused).strip()
             self._pause(run, "stuck", f"{_site(run, lap.data)} turned the desk's browser away ({refusal}). "
@@ -3908,7 +3915,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
                      else lap.text)
         gate_now = lap.action is None and (button := _agreement_button(lap.data)) is not None \
             and f"{_page_key(lap.data)} {button['text'].strip()}" not in ps.agreed \
-            and _terms_gate(button, lap.data, gate_text) and _may_accept_notices()
+            and _terms_gate(button, lap.data, gate_text, await self._gate_own_words(button)) and _may_accept_notices()
         # (a form with no button at all yet is a step still being drawn too: KLA's Workday showed only the last
         # step's resume box for a while, its questions and Save and Continue drawn after, live run 9, Oct 11)
         # (a greyed-out step button, or a page busy loading, is the branch below's)
@@ -4048,6 +4055,13 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
             # the nightly of Oct 12: "Take Assessment" beside its Save and Continue): a test of the person
             await self._assessment_pause(run, lap.data, test)
             return _Then.STOP
+        if circling and lap.data.get("busy") and ("circling", len(ps.pressed)) not in ps.waited:
+            # the site still on its way somewhere ("Please wait...": EY's posting while it sent the applicant on to
+            # SuccessFactors, run 147, and the desk stopped before it got there): waited on once for the page to
+            # change, as a blank page is, before it counts as going nowhere (once, whatever the page draws meanwhile)
+            ps.waited.add(("circling", len(ps.pressed)))
+            if await self._wait_for_change(lap.data, BLANK_PAGE_WAIT):
+                return _Then.AGAIN
         if circling:
             # "next" on a list of jobs (a link to a search page): its pages differ, but no
             # application ever opens
@@ -4274,7 +4288,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
             # (an employer's privacy notice or terms; or an application's attestation that its information is true, a
             # "Statement of Truth": Clark County School District's Taleo, run 145)
             # (which reads the page again, whole, failing closed: Browser.gate_read)
-            if (_terms_gate(agree, data, words) or _attestation_gate(agree, data, *await self._gate_read())) \
+            if (_terms_gate(agree, data, words, await self._gate_own_words(agree))
+                    or _attestation_gate(agree, data, *await self._gate_read())) \
                     and _may_accept_notices():
                 run.did("pressed", agree)
                 try:
@@ -5083,6 +5098,14 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         await self._notice_closed(heading)
         return "started"
 
+    async def _gate_own_words(self, button: dict[str, Any]) -> str | None:
+        """A gate's own words: those of the frame that holds its button (Browser.own_frame_text), for _terms_gate to
+        read for job opportunities sent. None where they can't be read: the page's whole words are read then."""
+        try:
+            return await self.srv.browser.own_frame_text(str(button.get("id") or ""), GATE_WORDS)
+        except Exception:  # (any failure: the page's words, read whole, which refuse more)
+            return None
+
     async def _gate_read(self) -> tuple[str, str | None]:
         """An attestation gate's page read whole (Browser.gate_read): its drawn words and every other word the person
         can see or open; ("", None) where it can't be read whole, which _attestation_gate leaves to the person."""
@@ -5604,20 +5627,23 @@ def _attestation(q: dict[str, Any]) -> Any:
     return yes[0] if len(yes) == 1 else None
 
 
-def _terms_gate(button: dict[str, Any], data: dict[str, Any], text: str = "") -> bool:
+def _terms_gate(button: dict[str, Any], data: dict[str, Any], text: str = "", own: str | None = None) -> bool:
     """A page whose way on accepts the employer's privacy notice or terms ("I Acknowledge the
     Privacy Notice"; "I Accept" under a "Privacy Agreement" heading): its button, headings or title
     say so, not a privacy link in its footer. Never one that also sends the application ("I Accept
     and Apply"), nor one about what's never agreed to (_never_for_them: a talent community, an arbitration agreement),
     nor one on a page whose words (`text`, the page's, read whole by the callers) waive a right (arbitration, a
-    jury trial: the review of Oct 15).
+    jury trial: the review of Oct 15), nor one whose own words (`own`, the words of the frame that holds its button;
+    the page's where they aren't given) send the person job opportunities (Kforce's privacy agreement, run 147:
+    never.GATE_OWN).
     Its headings are those of its own frame: Charles Schwab's careers page around its iCIMS frame
     has a "Join our talent network" sign-up of its own beside the gate (live, Oct 10). So the page's words are read
-    for a legal waiver alone, never for that sign-up beside it."""
+    for a legal waiver alone, and the gate's own for job opportunities sent, never for that sign-up beside it."""
     said = button.get("text") or ""
     about = _gate_about(button, data)
     if _SENDS_TOO.search(said) or _never_for_them(f"{said} {about}", only=_AGREEMENT_KINDS) \
-            or _never_for_them(text or "", only={"arbitration", "waiver"}):
+            or _never_for_them(text or "", only=GATE_PAGE) \
+            or _never_for_them(text if own is None else own, only=GATE_OWN):
         return False
     return bool(_TERMS.search(said) or _TERMS.search(about))
 
@@ -6883,13 +6909,31 @@ def _own_draft(action: dict[str, Any], data: dict[str, Any], job_url: str) -> bo
     return bool(ids & pieces)
 
 
+def _turned_away_page(data: dict[str, Any], text: str) -> str:
+    """A page that is only a refusal of the browser, said in its words: its whole text, where that's short and a
+    refusal's words alone ("403 Forbidden" with no heading: UKG Pro's sign-in for Nikon Precision and UCT, run 147, and
+    the desk took it for a blank page and loaded it again twice), or else a bare 403 or 406 for its title on a page with
+    nothing else on it. "" when it isn't one, and on a page with a bot check (the person's: said as one)."""
+    if data.get("captcha") or data.get("challenge"):
+        return ""
+    words = re.sub(r"\s+", " ", text or "").strip()
+    if len(words) <= 80 and _TURNED_AWAY.search(words):
+        return words
+    title = str(data.get("title") or "").strip()
+    if (_TURNED_AWAY_CODE.match(title) and not _app_fields(data) and not data.get("actions")
+            and not data.get("headings") and len(words) <= 80):
+        return title
+    return ""
+
+
 def _nothing_drawn(data: dict[str, Any], text: str) -> bool:
     """A page with nothing drawn on it: no headings, boxes (but its own language picker) or buttons (Eightfold's apply
     page, issue #112, note 40: its app shell, and no form), and nothing in its words that says why. Never a bot check
     or a CAPTCHA (the person's), nor a page whose words are its own message: a posting closed, an error the page shows
-    or the site's own error page, a confirmation, an application sent before."""
+    or the site's own error page, a confirmation, an application sent before, the browser turned away."""
     if _app_fields(data) or data.get("actions") or data.get("headings") or data.get("captcha") \
-            or data.get("challenge") or data.get("empty_frame") or any(_errorish(e) for e in data.get("errors") or []):
+            or data.get("challenge") or data.get("empty_frame") or any(_errorish(e) for e in data.get("errors") or []) \
+            or _turned_away_page(data, text):
         return False
     said = (text or "")[:3000]
     return not (_BOT_BADGE.search(said) or _BOT_TEXT.search(said) or _ROBOT.search(said) or _closed_notice(data, said)

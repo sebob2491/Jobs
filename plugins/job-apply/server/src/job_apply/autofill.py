@@ -20,7 +20,7 @@ from typing import Any, Callable, NamedTuple
 
 from . import config
 from .config import Profile, expand, question_core
-from .never import _never_for_them
+from .never import JOB_NEWS, _never_for_them
 
 US_STATES = {
     "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas", "CA": "California",
@@ -1012,8 +1012,18 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     company = norm(job.get("company"))
     if not company:
         return None
-    asked = norm(label)
-    first = re.escape(company.split()[0])
+    # ("US" in capitals, or "us" before a name, is the country's: "worked for US Bank?", "US Airways", never "for us",
+    # this employer: the second review of run 147's fixes)
+    asked = norm(re.sub(r"\bUS\b|\bus(?= [A-Z])", "U.S.", label))
+    # the employer by its first word, or by a short name its entry on the lists gives it (`aliases`: Ultra Clean
+    # Holdings' "Have you ever been employed by UCT?", run 147, wasn't known for the employer's). Never a bracket's
+    # words read as one: "(NNSS)" names a site, "(US)" a country
+    aliases = employer_aliases(str(job.get("company") or ""))
+    # (its first word, or where that's under 3 letters its leading words up to one that isn't: U.S. Bank is "u s bank",
+    # never "u", which "the US Postal Service" holds once "US" is the country's: the third review of run 147's fixes)
+    words = company.split()
+    lead = " ".join(words[:next((i + 1 for i, w in enumerate(words) if len(w) >= 3), len(words))])
+    first = "(?:" + "|".join(re.escape(n) for n in dict.fromkeys([lead, *aliases])) + ")"
     names_it = re.search(r"\b(employ\w*|work\w*|intern\w*|contract\w*)( \w+){0,3}? (by|for|at|with|"
                          rf"of) (the |any |an? )?{first}\b"
                          # onsemi's "worked in any onsemi establishment" (never "worked in Arizona": a place)
@@ -1031,8 +1041,11 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     if not names_it and other:
         return None
     if re.search(rf"\b{first}( \w+){{0,2}} (tools?|systems?|equipment|products?|software|technolog\w*|machines?|"
-                 r"platforms?|scanners?|metrology|etch|deposition|parts)\b", asked):
-        return None  # "worked with KLA metrology systems": the employer's products, not working for it
+                 r"platforms?|scanners?|metrology|etch|deposition|parts|customers?|clients?|suppliers?|vendors?|"
+                 r"partners?|competitors?)\b", asked):
+        # "worked with KLA metrology systems": the employer's products, not working for it; "worked at TEL customer
+        # sites": its customers'
+        return None
     past = [norm(c) for c in _listed(prof.get("history.previous_employers"))]
     entries = [e for e in _listed(prof.get("work_history")) if isinstance(e, dict)]
     past += [norm(e.get("company")) for e in entries]
@@ -1043,10 +1056,46 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
         # affiliates": the profile can't say it's none of those
         if any(_may_be_employer(c, company) for c in past if c) or re.search(r"\b(subsidiar|affiliat)", asked):
             return None
+        # nor one whose name holds this one's own name or a short name of it as words ("TEL Technology Center America"
+        # at Tokyo Electron (TEL), "UCT Thermal Solutions" at Ultra Clean Holdings (UCT)): the profile can't say it's
+        # another
+        own = norm(re.sub(r"\([^)]*\)", " ", str(job.get("company") or "")))
+        if any(re.search(rf"(^| ){re.escape(n)}( |$)", c) for n in {own, *aliases} - {""} for c in past if c):
+            return None
         return "No"
     if works_there_now(prof, company):  # (a job now whose name only holds this one's: the person's to say)
         return "Yes, currently" if any(_same_employer(c, company) for c in _current_employers(prof)) else None
     return "Yes, previously"
+
+
+# Each employer's short names (employer_aliases), by norm() of its name, kept while its files stay as they were (their
+# paths and times): read again only when one changes, as Profile.load does (every list reread on each question took
+# 175 ms: the second review of run 147's fixes)
+_ALIASES: dict[tuple[tuple[str, int], ...], dict[str, list[str]]] = {}
+
+
+def employer_aliases(company: str) -> list[str]:
+    """The short names an employer's entry gives it (`aliases: [UCT]`), in the person's own companies file or any of
+    the plugin's lists (search.every_employer: the first entry of that name holds), as norm() writes them: only those
+    of 3 letters or more. None ([]) for an employer with no entry, or where the files can't be read."""
+    from .search import employer_lists, every_employer, own_companies_path  # (search reads this module)
+
+    try:
+        files = [own_companies_path(), *employer_lists().values()]
+        key = tuple((str(p), p.stat().st_mtime_ns if p.exists() else 0) for p in files)
+        table = _ALIASES.get(key)
+        if table is None:
+            table = {}
+            for c in every_employer():
+                named = c.get("aliases")
+                table.setdefault(norm(c.get("name") or ""), []).extend(
+                    norm(a) for a in (named if isinstance(named, list) else [named])
+                    if isinstance(a, str) and len(re.sub(r"[^a-z0-9]", "", norm(a))) >= 3)
+            _ALIASES.clear()
+            _ALIASES[key] = table
+    except Exception:  # (a companies file written oddly: no short names, as before)
+        return []
+    return list(dict.fromkeys(table.get(norm(company), []))) if norm(company) else []
 
 
 def _current_employers(prof: Profile) -> list[str]:
@@ -2165,7 +2214,7 @@ _POINTS_AWAY = re.compile(r"\b(?:above|below|following|these|those|this|that|it|
 # terms of employment, a sign-up in so many words, keeping their data and cookies. Not "on-call", "staffing" or
 # "notified", nor an employer's offers, affiliates or other openings, which its notice names: the review of 0.3.208)
 _NOTICE_OF_CONSENT = re.compile(r"terms|privacy|consent|agree|authori[sz]|acknowledg|certif|attest|signature", re.I)
-_CONSENT_KINDS = frozenset({"talent community", "job alerts", "newsletter", "marketing", "texts or calls",
+_CONSENT_KINDS = frozenset({"talent community", "job alerts", JOB_NEWS, "newsletter", "marketing", "texts or calls",
                             "arbitration", "waiver", "at-will", "signs up", "their data kept", "cookies"})
 
 

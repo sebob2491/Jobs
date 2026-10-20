@@ -52,6 +52,37 @@ MAIL = "an email or a message"
 # - more than the background check that comes with applying (a credit report, medical records, ...): read wherever the
 #   precise kinds are
 BEYOND_CHECK = "more than the background check"
+# Job opportunities sent to the person, or the person contacted about them: job alerts in other words, in an agreement's
+# own words however deep they sit (Kforce's required privacy agreement, live run 147: "... authorize Kforce to collect,
+# transmit, use and store your PI ... including, but not limited to, sending you further information about Kforce job
+# opportunities"; "we may contact you about other job opportunities"). Never the application's own ("communicating with
+# you about your application", "contact you about this position"), nor being considered for other positions (an account
+# form's consent: Northrop's, the owner's call of Oct 10). Read wherever the precise kinds are, and in a terms gate's
+# own words (GATE_OWN) and a notice's whole words (ANYWHERE)
+JOB_NEWS = "job opportunities sent"
+# (its words: a verb that sends, never a noun ("the email you use", "the text you enter"), and never across the person's
+# own applying ("each time you apply for job openings", "when the job openings you applied for are filled"), their
+# application ("the status of your application for job openings") or equal employment opportunities: the reviews of run
+# 147's fixes)
+_SENT_NOT_NOUN = r"(?<!\bthe )(?<!\byour )(?<!\bour )(?<!\bthis )(?<!\ba )(?<!\ban )"
+_GAP = (r"(?:(?!\byou(?:'ve| have)? (?:apply|applied|use|used|enter|entered|submit\w*|provide\w*)\b|\byour "
+        r"application\b|\bequal\b)[^.;])")
+_OPENINGS = (r"(?:opportunities|openings|vacancies)\b(?! (?:that |which |for which )?you(?:'ve| have)? "
+             r"(?:apply|applied|are applying)\b)")
+_SOME = r"(?:any |other |future |new |additional |similar |further |more |relevant )?"
+_JOBS = r"(?:job |career |employment |work )"
+_JOB_NEWS_WORDS = (
+    # "sending you further information about Kforce job opportunities", "send you information regarding employment
+    # opportunities" (USAA's, live), "email you new career opportunities"
+    rf"{_SENT_NOT_NOUN}\b(?:send(?:s|ing)?|sent|e-?mail(?:s|ed|ing)?|text(?:s|ed|ing)?|forward(?:s|ed|ing)?) "
+    rf"(?:to )?(?:you|me)\b{_GAP}{{0,60}}?\b{_JOBS}{_OPENINGS}|"
+    # "contact you about other job opportunities" (Caesars', live), "regarding future employment opportunities"
+    # (Aristocrat's, live); with "with", only job opportunities (never "with opportunities to give feedback")
+    rf"\b(?:contact\w*|reach\w* out to|get(?:ting)? in touch with) (?:you|me)\b{_GAP}{{0,30}}?"
+    rf"\b(?:(?:about|regarding|concerning|for|on) {_SOME}{_JOBS}?|with {_SOME}{_JOBS}){_OPENINGS}|"
+    # "notify you of other job openings", "inform you of new opportunities", "let you know about future opportunities"
+    rf"\b(?:notif(?:y|ies|ied|ying)|inform(?:s|ed|ing)?|let(?:s|ting)? you know) (?:you )?(?:of|about)\b"
+    rf"{_GAP}{{0,40}}?\b{_JOBS}?{_OPENINGS}")
 # The job picks a site sends: job alerts by other names (Insight Enterprises' "job recommendations by email", live run
 # 145; the review of fix-accept-gates)
 JOB_PICKS = (r"(?:job|career) (?:recommendations?|matches|suggestions?)\b|"
@@ -115,6 +146,8 @@ NEVER: dict[str, re.Pattern[str]] = {kind: re.compile(words, re.I | re.S) for ki
                   r"\bjob matches\b|\brecommended (?:jobs|roles|positions|openings)\b|"
                   r"\bpersonali[sz]ed (?:job|career) (?:suggestions?|recommendations?|matches)\b|"
                   r"\bjobs? that match(?:es)? (?:your|my) (?:profile|skills|resume|interests|experience)\b",
+    # (more than one: "an email about your application for this job opportunity" is the application's own)
+    JOB_NEWS: _JOB_NEWS_WORDS,
     # (and a candidate community: a talent community by another name, the review of run 144's fixes)
     "talent community": r"talent (?:community|network|pool)|candidate (?:community|network)|stay informed|keep me",
     "marketing": r"marketing|promotion|campaigns?",
@@ -156,10 +189,16 @@ NEVER: dict[str, re.Pattern[str]] = {kind: re.compile(words, re.I | re.S) for ki
 # The kinds whose words say what they are wherever they're read: every path that agrees for the person reads these
 PRECISE = frozenset(NEVER) - {BOX_WORDS, PARAGRAPH_WORDS, FUTURE_ROLES, EMAILS, MAIL}
 # What a long notice's or page's words are read for wherever in them they sit: a legal waiver, and a sign-up in so many
-# words. The rest of such words name the employer's practices (its affiliates, its marketing, its cookies: APS's privacy
-# statement, live) and the other positions it may suggest (Micron's AI notice, live), so they're read where the notice
-# says what it is (its heading, its opening)
-ANYWHERE = frozenset({"arbitration", "waiver", "signs up"})
+# words, job opportunities sent among them. The rest of such words name the employer's practices (its affiliates, its
+# marketing, its cookies: APS's privacy statement, live) and the other positions it may suggest (Micron's AI notice,
+# live), so they're read where the notice says what it is (its heading, its opening)
+ANYWHERE = frozenset({"arbitration", "waiver", "signs up", JOB_NEWS})
+# What a terms gate's whole page is read for (pipeline._terms_gate): a legal waiver
+GATE_PAGE = frozenset({"arbitration", "waiver"})
+# and what its own words are (the frame that holds its button: a framed application's, never the careers page around
+# it, whose own "Join our talent network" or job alerts widget isn't the gate's, Charles Schwab's, live, Oct 10): job
+# opportunities sent (Kforce's privacy agreement, run 147)
+GATE_OWN = frozenset({JOB_NEWS})
 
 
 def _about_the_application(tail: str) -> bool:

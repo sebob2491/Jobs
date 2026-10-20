@@ -9,8 +9,8 @@ import pytest
 
 from job_apply import config, formjs, pipeline
 from job_apply.autofill import _CONSENT_KINDS, _answer_bank
-from job_apply.never import (ANYWHERE, BEYOND_CHECK, BOX_WORDS, EMAILS, FUTURE_ROLES, MAIL, NEVER, PARAGRAPH_WORDS,
-                             PRECISE, _never_for_them)
+from job_apply.never import (ANYWHERE, BEYOND_CHECK, BOX_WORDS, EMAILS, FUTURE_ROLES, GATE_OWN, GATE_PAGE, JOB_NEWS,
+                             MAIL, NEVER, PARAGRAPH_WORDS, PRECISE, _never_for_them)
 
 # One sentence for each kind never agreed to for the person, worded as the tests of each path word theirs, and
 # without words that agree (each path's own words do that)
@@ -21,6 +21,7 @@ SAID = {
     "signs up": "join our Talent Community",
     "newsletter": "get the monthly newsletter",
     "job alerts": "get job alerts for roles like this one",
+    JOB_NEWS: "let Example Corp forward you details of new job openings",
     "talent community": "have a place in the Talent Network",
     "marketing": "get marketing and promotional material",
     "offers": "get special offers",
@@ -144,7 +145,13 @@ PATHS = {
     "a terms gate, by its page's words": (
         lambda c: pipeline._terms_gate({"text": "I Accept"}, {"headings": ["Privacy Agreement"]},
                                        "Please read our privacy agreement." + _by(c)),
-        frozenset({"arbitration", "waiver"})),
+        GATE_PAGE | GATE_OWN),
+    # (and the careers page around a framed gate, its own words read apart: the review of run 147's fixes)
+    "a framed terms gate, by the careers page around it": (
+        lambda c: pipeline._terms_gate({"text": "I Accept"}, {"headings": ["Privacy Agreement"]},
+                                       "Please read our privacy agreement." + _by(c),
+                                       "Please read our privacy agreement."),
+        GATE_PAGE),
     "a privacy notice, by its opening": (
         lambda c: pipeline._terms_notice(POLICY, (_by(c) + " " + POLICY_TEXT).strip())[0], AGREEMENT),
     # (its long text names its affiliates, marketing and cookies as its practices: APS's, live)
@@ -164,7 +171,7 @@ PATHS = {
     # (the review of Oct 15)
     "the test identity's notice": (
         lambda c: pipeline._agreeable_notice(STATEMENT, f"{_by(c).strip()} {STATEMENT_TEXT}".strip(), True)[0],
-        frozenset({"signs up", "cookies", "arbitration", "waiver"})),
+        frozenset({"signs up", JOB_NEWS, "cookies", "arbitration", "waiver"})),
     "a remembered answer at another employer": (_remembered, _CONSENT_KINDS),
     # (a cookie banner's is its own rule's; what else a page's agreement button says is _terms_gate's)
     "a page's agreement button": (
@@ -645,3 +652,102 @@ def test_a_check_of_the_application_itself_is_still_its_own(words):
     may call my references"); only a credit report, medical records released, a former employer's records, a social
     media review are."""
     assert _never_for_them(words, only=PRECISE) is None, words
+
+
+# Kforce's required privacy agreement (live run 147), its words made up but for the clause that sends job opportunities
+KFORCE_LIKE = ("By clicking “I Accept” below, you agree to the preceding terms and authorize Example Staffing to "
+               "collect, transmit, use and store your PI in a database where it will be used for the application "
+               "process and as further outlined in the Privacy Policy below including, but not limited to, {clause}, "
+               "communicating with you about your application, or for administration purposes.")
+
+
+@pytest.mark.parametrize("clause", ["sending you further information about Example Staffing job opportunities",
+                                    "emailing you new career opportunities",
+                                    "to contact you about other job opportunities",
+                                    "reaching out to you about future opportunities"])
+def test_job_opportunities_sent_are_job_alerts_even_inside_a_required_gate(clause):
+    """Kforce's required privacy agreement (live run 147) let it use the person's data for "sending you further
+    information about Kforce job opportunities", and the desk pressed its "I Accept" (a terms gate) for them: job alerts
+    in other words, which the desk never agrees to, required or not. Read in a terms gate's whole page, a notice's
+    words however deep, an attestation's and an account box's own words; the gate is the person's."""
+    words = KFORCE_LIKE.format(clause=clause)
+    assert _never_for_them(words, only=GATE_OWN) == JOB_NEWS, words
+    assert not pipeline._terms_gate({"text": "I Accept"}, {"headings": ["Privacy Agreement"]}, words)
+    assert not pipeline._terms_gate({"text": "I Accept"}, {"headings": ["Privacy Agreement"]}, words, words)
+    assert not pipeline._agreeable_notice(POLICY, POLICY_TEXT * 5 + words, False)[0]
+    assert not _attests("checkbox", f"{PRIVACY}. {words}")
+    assert not pipeline._terms_boxes(_box(f"{TERMS_BOX}. {words}"))
+
+
+@pytest.mark.parametrize("words", [KFORCE_LIKE.format(clause="processing your application"),
+                                   "We may contact you about your application or this position.",
+                                   "We will send you an email about your application for this job opportunity.",
+                                   "Recruiters may contact you about the job you applied for.",
+                                   # (a noun, never a verb that sends; the person's own applying: the review of run
+                                   # 147's fixes)
+                                   "We collect the text you enter when you apply for job opportunities with us.",
+                                   "We store the email you use to apply for employment opportunities.",
+                                   "We will send you a confirmation email each time you apply for job openings.",
+                                   "We will email you when the job openings you applied for are filled or closed.",
+                                   "We may text you about interview times for the job openings you applied to.",
+                                   "We may contact you regarding the job openings you applied for.",
+                                   # (the second review of run 147's fixes)
+                                   "We may contact you when you apply for job openings.",
+                                   "We will notify you of the status of your application for job openings.",
+                                   "We may contact you with opportunities to give feedback on our hiring process.",
+                                   "We will inform you of your rights and of equal employment opportunities under "
+                                   "the law.",
+                                   "We will contact you regarding your application for employment opportunities at "
+                                   "our company."])
+def test_the_applications_own_mail_is_still_no_job_opportunities_sent(words):
+    """What the application itself brings (an email about it, a recruiter's call about the job applied to) is no job
+    opportunities sent: a gate that says no more is still agreed to (settings.accept_notices)."""
+    assert _never_for_them(words, only={JOB_NEWS}) is None, words
+    assert pipeline._terms_gate({"text": "I Accept"}, {"headings": ["Privacy Agreement"]}, words)
+
+
+def test_a_consent_to_other_positions_is_given_only_when_it_sends_no_job_opportunities():
+    """Northrop's "Contact Consent" (the owner's call, Oct 10) is still given on its own words; with job opportunities
+    sent in them too it's the person's (CLAUDE.md: never when its words also sign the person up for job alerts)."""
+    assert pipeline._other_positions_consent({"kind": "checkbox", "label": OTHER_POSITIONS}) is True
+    assert pipeline._other_positions_consent({"kind": "checkbox", "label": OTHER_POSITIONS + ", in addition to the "
+                                              "role(s) to which I apply"}) is True
+    for more in ("and Example Corp may send me information about job opportunities",
+                 "and recruiters may contact me about other opportunities"):
+        assert pipeline._other_positions_consent({"kind": "checkbox", "label": f"{OTHER_POSITIONS}, {more}"}) is None
+
+
+@pytest.mark.parametrize("words", ["We may contact you regarding other job opportunities.",
+                                   "to contact you concerning future employment opportunities",
+                                   "We may contact you for future employment opportunities.",
+                                   "We may use your information to notify you of other job openings.",
+                                   "We will inform you of new career opportunities.",
+                                   "We'd like to let you know about future opportunities with us.",
+                                   # USAA's and Caesars' (captured live, runs 145 and 147)
+                                   "USAA Talent Acquisition will only send you information regarding employment "
+                                   "opportunities.",
+                                   "We may also use your information to contact you about other job opportunities "
+                                   "that may be of interest to you.",
+                                   # Aristocrat's (captured live, run 145), and "with" job openings
+                                   "Do you consent to Aristocrat retaining your application data and using it to "
+                                   "contact you regarding future job opportunities?",
+                                   "We may email you with relevant job openings.",
+                                   "We may contact you with new job openings."])
+def test_job_opportunities_sent_in_other_words(words):
+    """The review of run 147's fixes: job opportunities sent in other words than Kforce's are job alerts too."""
+    assert _never_for_them(words, only={JOB_NEWS}) == JOB_NEWS, words
+    assert not pipeline._terms_gate({"text": "I Accept"}, {"headings": ["Privacy Agreement"]}, words)
+
+
+def test_a_framed_gates_own_words_are_read_for_job_opportunities_never_the_careers_page_around_it():
+    """Charles Schwab's iCIMS gate (live, Oct 10) sits in a frame on a careers page whose own talent network widget
+    sends job opportunities: the gate's own words are read for those, never the page around it, which is still read
+    whole for a legal waiver."""
+    gate, page = {"text": "I Accept"}, {"headings": ["Privacy Agreement"]}
+    own = "Please read and accept our privacy agreement before you apply."
+    around = own + " Join our talent network and we will email you new job opportunities."
+    assert pipeline._terms_gate(gate, page, around, own)
+    assert not pipeline._terms_gate(gate, page, around)  # (its own words not read apart: the page's, whole)
+    assert not pipeline._terms_gate(gate, page, around + " You waive the right to a trial by jury.", own)
+    assert not pipeline._terms_gate(gate, page, around, KFORCE_LIKE.format(
+        clause="sending you further information about Example Staffing job opportunities"))
