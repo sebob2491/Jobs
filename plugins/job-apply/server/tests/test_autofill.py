@@ -2803,6 +2803,42 @@ def test_recurring_background_questions_are_answered_from_a_no_in_the_profile():
     assert export is None or export.rule != "government_employee", export
 
 
+def test_if_hired_plans_get_neither_from_the_profiles_two_nos_however_the_page_draws_them():
+    """The owner's note 45 (Oct 20): Workday's "If hired, do you intend to (select all that apply)" was asked, though
+    the profile said no to both outside work and a board seat. Its "Neither" (or "None of the above", "Not
+    applicable", "No, I do not intend to do either") is the answer however the page draws the question: a group of
+    boxes to tick (ticked, a list of one), Workday's prompt, a select or radios (picked), and with the choices
+    worded otherwise ("outside business activities", "a director of another company", a "Both"). Asked where the
+    profile says yes to either or nothing, where a choice is something else, or where a list asks what's so now."""
+    from job_apply.config import Profile
+
+    no = Profile({"background": {"outside_work": False, "board_member": False}})
+    job = {"company": "Example Fab"}
+    asked = "If hired, do you intend to (select all that apply):"
+    workday = ["Maintain any secondary non-company employment or engage in a non-company business activity?",
+               "Sit on the board of directors or similar governing body of a non-company entity?", "Neither"]
+
+    def answer(kind, options, prof=no, label=asked, **kw):
+        got = resolve_field(f(label, kind, options=options, **kw), prof, job)
+        return got.value if got else None
+
+    assert answer("combobox", workday, search=True) == "Neither"  # (Workday's prompt)
+    assert answer("listbox", ["Select One", *workday]) == "Neither"
+    assert answer("select", workday) == "Neither"
+    assert answer("radio_group", workday) == "Neither"
+    assert answer("checkbox_group", workday) == ["Neither"]
+    other = ["Engage in outside business activities or other employment", "Serve as a director of another company",
+             "Both", "No, I do not intend to do either"]
+    assert answer("checkbox_group", other) == ["No, I do not intend to do either"]
+    assert answer("combobox", ["Hold a second job", "Sit on a board", "Not applicable"]) == "Not applicable"
+    # theirs: a yes to either, nothing said, another choice among them, or a list about what's so now
+    for prof in (Profile({"background": {"outside_work": True, "board_member": False}}),
+                 Profile({"background": {"outside_work": False}}), Profile({})):
+        assert answer("combobox", workday, prof) is None and answer("checkbox_group", workday, prof) is None
+    assert answer("combobox", [*workday[:2], "Relocate to another state", "Neither"]) is None
+    assert answer("select", workday, label="Do you currently have any of the following?") is None
+
+
 def test_a_family_member_at_the_employer_or_on_its_board_is_a_relatives_question():
     """Kforce's Taleo questionnaire (live, Oct 2026): "Is any member of your immediate family currently
     employed at Kforce or a member of the Board of Directors? . Required" was taken for a question

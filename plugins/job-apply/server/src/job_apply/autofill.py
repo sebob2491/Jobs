@@ -57,7 +57,7 @@ _COUNTRY_ALIASES = [
 _PLACEHOLDER_VALUES = re.compile(
     r"^([-\u2013\u2014]+\s*)?((please )?(select|choose|pick)( one| an? (option|item|value|answer|response|state|"
     r"country|year|month))?( (state|country|year|month|from (the )?list|below))?( \.\.\.|\.\.\.|…)?|"
-    r"|make a selection|none selected|no selection)(\s*[-\u2013\u2014]+)?$|"
+    r"|(please )?make a selection|none selected|no selection)(\s*[-\u2013\u2014]+)?$|"
     r"^([-\u2013\u2014]+|mm/dd/yyyy|mm/yyyy)$",  # "No Selection": SuccessFactors' empty dropdowns
     re.I,
 )
@@ -1572,17 +1572,40 @@ def _us_service(prof: Profile, job: dict, label: str = "") -> Any:
     return "No" if (military is False if flag else _said_no(prof, "military")) else None
 
 
+# A plan "If hired, do you intend to" lists: another job or a business of the person's own, a seat on a board
+_PLAN_CHOICE = re.compile(r"secondary|outside|second job|other (employment|business|job|work)|business activit|"
+                          r"business of (your|my) own|own (a |your |my )?business|self employ|moonlight|freelanc|"
+                          r"board of (directors|advisors|trustees)|\bboard (member|seat)|\bon (a|the|any) board\b|"
+                          r"governing body|\b(director|officer) of\b")
+# ...its choice of none of them: "Neither", "None of the above", "Not applicable", "No, I do not intend to do either"
+_PLANS_NONE = re.compile(r"^(no )?(neither|none)( of (the|these)( above| options)?)?\b|^n a$|^not applicable\b|"
+                         r"^(no )?i (do not|don t|dont) (intend|plan) to (do )?(either|any|neither)\b")
+# ...and its choice of them all: "Both", "All of the above"
+_PLANS_ALL = re.compile(r"^(both|all)( of (the|these|them))?( above)?$")
+# A list's question that asks what the person will do once hired, not what they do now
+_ONCE_HIRED = re.compile(r"\b(intend|plan|plans|if hired|if (you are )?(offered|employed|selected)|upon (hire|hiring|"
+                       r"employment)|will you|would you)\b")
+
+
 def _plans_none(field: dict, prof: Profile) -> Any:
     """"If hired, do you intend to (select all that apply): keep another job or business / sit on
-    a board / Neither": its "Neither" where the profile says no to both."""
-    options = field.get("options") or []
-    plans = [o for o in options
-             if re.search(r"secondary|outside|second job|other (employment|business)|business activit|"
-                          r"moonlight|board of (directors|advisors)|governing body", norm(o))]
-    neither = [o for o in options if re.match(r"^(neither|none)( of (the|these)( above)?)?\b", norm(o))]
-    if not plans or len(neither) != 1 or len(plans) + 1 != len(options):
+    a board / Neither": its "Neither" where the profile says no to both (background.outside_work and
+    background.board_member, setup's background questions). Its choices tell the question, as it reads
+    them: one none of them, the rest plans (and their "Both"). A group of boxes to tick gets its "Neither"
+    ticked; a list (a Workday prompt, a select, radios: the owner's note 45, Oct 20, where the profile's two
+    no's were never given) gets it picked, where its question asks what they'll do once hired (not what they
+    do now). None where the profile doesn't say no to both (a yes, or nothing said), or a choice is any other."""
+    if field.get("kind") != "checkbox_group" and not _ONCE_HIRED.search(norm(clean_label(field.get("label") or ""))):
         return None
-    return [neither[0]] if _said_no(prof, "outside_work") and _said_no(prof, "board_member") else None
+    options = [o for o in field.get("options") or [] if not is_empty_value(o)]
+    neither = [o for o in options if _PLANS_NONE.search(norm(o))]
+    plans = [o for o in options if o not in neither and _PLAN_CHOICE.search(norm(o))]
+    both = [o for o in options if _PLANS_ALL.match(norm(o))]
+    if not plans or len(neither) != 1 or len(plans) + len(neither) + len(both) != len(options):
+        return None
+    if not (_said_no(prof, "outside_work") and _said_no(prof, "board_member")):
+        return None
+    return [neither[0]] if field.get("kind") == "checkbox_group" else neither[0]
 
 
 # A choice that says the person isn't one of the employer's staff, and nothing more: "I am not a current Desert
@@ -3710,7 +3733,7 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
         if not city:
             return None  # (never the state the rules below would give: the list is cities)
         ans = Answer(city, "personal.address.city")
-    if ans is None and kind == "checkbox_group" and (none := _plans_none(field, prof)):
+    if ans is None and kind in _CHOICE_KINDS - {"checkbox"} and (none := _plans_none(field, prof)):
         return Answer(none, "background.plans")  # (one of its own choices, as it reads)
     if ans is None and kind in _CHOICE_KINDS - {"checkbox"} and field.get("options") and not someone_else:
         # "Have you ever worked for any of these?" among them and a none (before the rule of working for this one)
@@ -4573,8 +4596,14 @@ def plan_autofill(fields: list[dict], prof: Profile, job: dict | None = None, ov
     _phone_of_another_kind(fields, to_fill, needs_input, prof, job, file_inputs)
     _declined_by_box(fields, to_fill, needs_input)
     needs_input.sort(key=lambda f: not f.get("required"))
+    # (and the boxes it leaves empty on purpose, neither filled nor asked: a current job's end date, a box that reads
+    # the resume beside the one that attaches it; the desk's check for required boxes left empty passes them by)
+    seen = {f.get("id") for f in to_fill + needs_input} | set(already)
+    skipped = [f["id"] for f in fields if f.get("id") not in seen and not f.get("disabled")
+               and not (f.get("readonly") and f.get("kind") not in _CHOICE_KINDS)]
     return {"to_fill": to_fill, "needs_input": needs_input, "already_filled": already,
-            **({"judged": judged} if judged else {}), **({"presets": presets} if presets else {})}
+            **({"judged": judged} if judged else {}), **({"presets": presets} if presets else {}),
+            **({"skipped": skipped} if skipped else {})}
 
 
 class _Planned(NamedTuple):
@@ -4724,8 +4753,9 @@ def _declined_by_box(fields: list[dict], to_fill: list[dict], needs_input: list[
 
 
 def _asked(f: dict) -> dict:
-    # (and a date's part's role: the desk's card asks one for its own box, "spinbutton")
-    return {k: f[k] for k in ("id", "kind", "label", "section", "sublabel", "required", "options", "role")
+    # (and a date's part's role: the desk's card asks one for its own box, "spinbutton"; a file box drawn nowhere,
+    # "unseen", that the desk never stops for)
+    return {k: f[k] for k in ("id", "kind", "label", "section", "sublabel", "required", "options", "role", "unseen")
             if k in f and f[k] not in (None, [])}
 
 

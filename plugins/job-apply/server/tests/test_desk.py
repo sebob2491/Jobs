@@ -2599,11 +2599,11 @@ def test_the_report_box_goes_back_when_the_report_cant_be_made_again(srv, job_ap
     build, failing, looked = report.build, set(), threading.Event()
     looked.set()
 
-    def flaky(job, run=None, profile=None, anonymous=False, hide=()):
+    def flaky(job, run=None, profile=None, anonymous=False, hide=(), employers=()):
         looked.wait(10)  # (until the page has been looked at while the report is made)
         if anonymous in failing:
             raise OSError("No space left on device")
-        return build(job, run, profile, anonymous, hide)
+        return build(job, run, profile, anonymous, hide, employers)
 
     monkeypatch.setattr(report, "build", flaky)
     desk = Desk(srv)
@@ -2674,10 +2674,10 @@ def test_a_report_that_cant_be_made_doesnt_bring_back_another_jobs(srv, job_appl
                     company="Example Litho")["job"]
     b = srv.add_job(url="https://example.com/jobs/b", title="Operator", company="Example Corp")["job"]
 
-    def failing(job, run=None, profile=None, anonymous=False, hide=()):
+    def failing(job, run=None, profile=None, anonymous=False, hide=(), employers=()):
         if job["id"] == b["id"]:
             raise OSError("No space left on device")
-        return build(job, run, profile, anonymous, hide)
+        return build(job, run, profile, anonymous, hide, employers)
 
     monkeypatch.setattr(report, "build", failing)
     for job in (a, b):

@@ -34,7 +34,7 @@ from urllib.parse import quote
 from . import config
 from .ats import ATS_NAMES, detect_ats, host_of, shared_system
 from .autofill import US_STATES, is_empty_value
-from .fixtures import REDACTED, _pattern, _spellings, _without_query, convert, personal_strings, redact
+from .fixtures import _HUMAN_ATTRS, REDACTED, _pattern, _spellings, _without_query, convert, personal_strings, redact
 from .history import HIDE_PREFIX
 from .mailbox import site_domain
 
@@ -359,17 +359,150 @@ def _as_written(form: str, company: str) -> bool:
 # Never inside an email address: one at a domain an employer's word is, or a person's whose first name is one
 # ("grant.lee@…" at Grant Thornton), is taken out whole after
 _NOT_IN_EMAIL = r"(?<![\w@])(?:{})(?!\w)(?![\w.+-]*@)"
+# What another employer than the job's is said as, in a report that doesn't say which job it was and in a note
+ANOTHER = "another employer"
+# An employer's short name a page says it by, where that's a brand of its own and never an everyday word or a person's
+# name (the review of fix-ready-check, round 2: a name's first word by rule took "Salt", "Light", "Grant", "Switch",
+# "Tokyo" out of a report's sentences): for a name that starts with the key. And the lists' aliases ("TEL", "AMAT")
+_SHORT_NAMES = {"northrop grumman": "Northrop", "honeywell": "Honeywell", "wynn": "Wynn", "caesars": "Caesars",
+                "charles schwab": "Schwab", "thermo fisher": "Thermo Fisher", "lam research": "Lam",
+                "jpmorgan": "JPMorgan", "mgm resorts": "MGM", "hitachi": "Hitachi", "booz allen": "Booz Allen",
+                "knight-swift": "Knight-Swift", "daifuku": "Daifuku", "nikon": "Nikon"}
+_THE_ANOTHER = re.compile(r"\b(?:[Tt]he|[Aa]n?) another employer\b")  # ("the Intel site": "another employer site")
+
+
+def _other_employers(job: dict[str, Any], run: Any, known: Iterable[Any] = ()) -> list[str]:
+    """Every employer the desk knows but the job's own, longest first: the person's companies file's and the plugin's
+    lists' (search.every_employer: each name and its short names) and the tracker's jobs' (`known`, from the caller).
+    What a report that doesn't say which job it was, and a note, never name (the owner's note 51, Oct 20: an anonymous
+    report's log named another employer, one waited on for the inbox meanwhile). Never one that's the job's own
+    employer said another way ("Example Fab" for "Example Fab, Inc.", "Example" for "Example Group"), nor a name under
+    three letters."""
+    names: set[str] = {str(k or "").strip() for k in known}
+    try:
+        from .search import every_employer  # (search reads this module's neighbours: imported when wanted)
+
+        for c in every_employer():
+            aliases = c.get("aliases")
+            names |= {str(n).strip() for n in [c.get("name"), *(aliases if isinstance(aliases, list) else [aliases])]
+                      if isinstance(n, str)}
+    except Exception:  # (a companies file written oddly: the tracker's names alone)
+        pass
+    own = [str(c or "") for c in (job.get("company"), getattr(run, "company", "")) if str(c or "").strip()]
+    mine = {_norm_name(f) for c in own for f in [c, *_employer_forms(c, [])]}
+
+    def ours(name: str) -> bool:
+        said = _norm_name(name)
+        return said in mine or any(said.startswith(f"{m} ") or m.startswith(f"{said} ") for m in mine if m)
+
+    places = {_norm_name(f) for f in _place_forms(job.get("location"))}  # (never the job's place: "Maricopa County")
+
+    def forms(name: str) -> set[str]:
+        # the name, without a part in brackets ("Google (Henderson data center)": "Google"), a bracket's own name
+        # where it's one ("Station Casinos (Red Rock Resorts)": "Red Rock Resorts", "Tokyo Electron (TEL)": "TEL"),
+        # each less its last words that aren't its name ("Tamarisk Fab Inc."), and a short name of the curated few
+        # (_SHORT_NAMES: "Northrop"). Never a first word by rule ("Salt" of "Salt River Project", "Banner" of "Banner
+        # Health": the review of fix-ready-check, round 2)
+        out: set[str] = set()
+        inner = [b.strip() for b in re.findall(r"\(([^)]*)\)", name)
+                 if b.strip() and all(w[:1].isupper() or not w[:1].isalpha() for w in b.split())]
+        for whole in [name, " ".join(re.sub(r"\([^)]*\)", " ", name).split()), *inner]:
+            words = whole.split()
+            if not words:
+                continue
+            out.add(whole)
+            low = _norm_name(whole)
+            out |= {short for key, short in _SHORT_NAMES.items() if low == key or low.startswith(f"{key} ")}
+            while len(words) > 1 and words[-1].strip(".,").lower() in _COMPANY_WORDS:
+                words.pop()
+                out.add(" ".join(words).rstrip(".,"))
+        return {f for f in out if _norm_name(f) not in places}
+    return sorted({f for n in names if not ours(n) for f in forms(n) if len(f) >= 3 and not ours(f)}, key=len,
+                  reverse=True)
+
+
+def _in_words(name: str, words: str) -> bool:
+    """Is another employer's name one a saved page shows, as words of their own (`words`: _saved_words), and one that
+    may be taken out of the page's whole HTML without breaking it: more than one word. A one-word name ("TEL",
+    "Switch", "Intel") would be taken out of its attributes too (type="tel", role="switch"): the pages lose it from
+    their words alone (_page_names, fixtures' `words`)."""
+    return " " in name.strip() and bool(
+        re.search(r"(?<!\w)" + r"\s+".join(map(re.escape, name.lower().split())) + r"(?!\w)", words.lower()))
+
+
+def _as_others(name: str) -> list[str]:
+    """How another employer's name is said: as written, and a one-word name in capitals too ("Intel", "INTEL"),
+    never in another case ("intel" of a sentence, "tel" of type="tel": the review of fix-ready-check, round 2)."""
+    name = name.strip()
+    return [name, *([name.upper()] if " " not in name and name.upper() != name else [])]
+
+
+def _page_names(others: Iterable[str], words: str) -> list[str]:
+    """The one-word names of other employers (_as_others) a saved page shows as words of their own, case and all: what
+    the pages lose from their words and their words for a person (fixtures' `words`), never from their markup."""
+    return sorted({form for o in others if " " not in o.strip() for form in _as_others(o)
+                   if re.search(r"(?<!\w)" + re.escape(form) + r"(?!\w)", words)}, key=len, reverse=True)
+
+
+def _outside(keep: Iterable[str]) -> Callable[[re.Pattern[str], str, str], str]:
+    """A re.sub that leaves alone what's inside any of `keep` where the text says it (the job's own title and place,
+    and a heading that says them: "Light Industrial Work Station Technician", "Tokyo, Japan")."""
+    spots = [re.compile(r"(?<!\w)" + r"\s+".join(map(re.escape, k.split())) + r"(?!\w)", re.I)
+             for k in {k.strip() for k in keep} if len(k) >= 3]
+
+    def sub(pattern: re.Pattern[str], repl: str, text: str) -> str:
+        kept = [m.span() for spot in spots for m in spot.finditer(text)]
+        return pattern.sub(lambda m: m.group(0) if any(a < m.end() and m.start() < b for a, b in kept) else repl, text)
+    return sub
+
+
+def _saved_words(snaps: Iterable[Path]) -> str:
+    """The saved pages' words as a person sees them (each frame's too: _page_words, never their tags and attributes),
+    their titles and their words for a person in attributes (fixtures' _HUMAN_ATTRS: alt, aria-label...): where another
+    employer is looked for to take it out of them (one in none of them is never looked for: a page is megabytes). The
+    review of fix-ready-check, round 3: a name in a page's <title> or an image's alt alone stayed in it."""
+    import html as html_lib
+
+    out = []
+    for snap in snaps:
+        for page in sorted(snap.glob("*.html")):
+            try:
+                raw = page.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            out.append(_page_words(raw))
+            out += [" ".join(html_lib.unescape(_TAG.sub(" ", t)).split()) for t in _TITLE_TEXT.findall(raw)]
+            out += [" ".join(html_lib.unescape(m.group(2) or m.group(3) or "").split())
+                    for m in _HUMAN_VALUE.finditer(raw)]
+    return "\n".join(out)
+
+
+_TITLE_TEXT = re.compile(r"(?is)<title\b[^>]*>(.*?)</title\s*>")
+_HUMAN_VALUE = re.compile(r"(?i)(?<![\w-])(" + "|".join(sorted(map(re.escape, _HUMAN_ATTRS), key=len, reverse=True))
+                          + r")\s*=\s*(?:\"([^\"]*)\"|'([^']*)')")
+
+
+def _norm_name(name: str) -> str:
+    """An employer's name as two spellings of it compare: lower case, words alone, its company words dropped from its
+    end ("Example Fab, Inc." and "example fab" are one)."""
+    words = re.sub(r"[^\w&]+", " ", name.lower()).split()
+    while len(words) > 1 and words[-1] in _COMPANY_WORDS | {"the"}:
+        words.pop()
+    return " ".join(words)
 
 
 def _anonymous(job: dict[str, Any], run: Any, urls: list[Any], secrets: list[str],
-               pages: list[dict[str, Any]] | None = None) -> tuple[Callable[[Any], str], list[str]]:
+               pages: list[dict[str, Any]] | None = None, others: list[str] | None = None,
+               page_words: str = "") -> tuple[Callable[[Any], str], list[str]]:
     """For a report that doesn't say which job it was: a scrubber for its text that also says every
     address by its job system alone, the employer as "the employer" and the job's title as "the
     job", and takes out its requisition number and its sites; and what its saved pages lose
     besides the person's details: those names, and the sites of the job's addresses (each host,
     and the employer's own domain beside it, never a job system's). The employer by its own domain's name
     too, and by any other name the run's page and the saved `pages` give it (_names_given: its parent group's,
-    issue #112, note 42); and the job's place as "the job's location"."""
+    issue #112, note 42); and the job's place as "the job's location". And every other employer the desk knows
+    (`others`: _other_employers) as "another employer", in the text and in the saved pages that name it
+    (`page_words`: theirs)."""
     said: dict[str, str] = {}
     for value, stand_in in ((job.get("external_id"), REDACTED), (job.get("title"), "the job"),
                             (getattr(run, "title", ""), "the job"), (job.get("company"), "the employer"),
@@ -400,11 +533,26 @@ def _anonymous(job: dict[str, Any], run: Any, urls: list[Any], secrets: list[str
                          *([label.replace("-", " ")] if "-" in label else [])}:
                 said.setdefault(form, "the employer")
                 exact |= {form} if " " not in form else set()
+    # every other employer the desk knows, after the job's own (a job waited on meanwhile, a tab gone on to another's
+    # site): as written where it's one word ("Intel", "SCREEN"), never its word in a sentence
+    for other in others or []:
+        for form in _as_others(other):
+            if form not in said:
+                said[form] = ANOTHER
+                exact |= {form} if " " not in form.strip() else set()  # ("Switch" as written: never "the switch")
+    outside = _outside([str(t or "") for t in (job.get("title"), getattr(run, "title", ""))]
+                       + _place_forms(job.get("location")))
 
     def unnamed(text: Any) -> str:
         text = _URL.sub(lambda m: _address_said(m.group(0)), str(text or ""))
+        low = text.lower()
         for name in sorted(said, key=len, reverse=True):
-            if said[name] == "the employer":
+            if said[name] == ANOTHER and name.split()[0].lower() not in low:
+                continue  # (most of the desk's employers aren't in a line at all: looked for only where they may be)
+            if said[name] == ANOTHER:  # (never inside the job's own title or place: "Light Industrial Technician")
+                text = outside(re.compile(_NOT_IN_EMAIL.format(_pattern(name)), 0 if name in exact else re.I), ANOTHER,
+                               text)
+            elif said[name] == "the employer":
                 text = re.sub(_NOT_IN_EMAIL.format(_pattern(name)), said[name], text,
                               flags=0 if name in exact or len(name) < 3 else re.I)
             # (as written, and never a longer word's start: "IL" of "Illinois")
@@ -413,7 +561,7 @@ def _anonymous(job: dict[str, Any], run: Any, urls: list[Any], secrets: list[str
             else:
                 text = re.sub(_pattern(name), said[name], text, flags=re.I if len(name) >= 3 else 0)
         text = _PLACE_TAIL.sub(r"\1", text)
-        return _THE_THE.sub(r"\1 \2", _EMPLOYER_TAIL.sub(r"\1", text))
+        return _THE_THE.sub(r"\1 \2", _EMPLOYER_TAIL.sub(r"\1", _THE_ANOTHER.sub(ANOTHER, text)))
 
     titles = [str(t) for t in [info.get("title"), *(p.get("title") for p in pages or [])] if t]
     texts = [str(t) for t in [*(info.get("headings") or []), *(info.get("actions") or []), getattr(run, "reason", ""),
@@ -435,7 +583,8 @@ def _anonymous(job: dict[str, Any], run: Any, urls: list[Any], secrets: list[str
         said.setdefault(form, "the job's location")
     # (a saved page loses a place's city alone, wherever it's written: "Springfield, IL" would leave "linois" of
     # "Springfield, Illinois")
-    kept = [name for name in [*said, *sites] if said.get(name) != "the job's location" or "," not in name]
+    kept = [name for name in [*said, *sites] if (said.get(name) != "the job's location" or "," not in name)
+            and (said.get(name) != ANOTHER or _in_words(name, page_words))]  # (another only where it is)
     secrets = sorted({*secrets, *(s for name in kept for s in _spellings(name) if len(s) >= 2)}, key=len, reverse=True)
     # (the text says a name found on a page only as written, so its scrubber never takes it in another case; the saved
     # pages lose it in any)
@@ -517,13 +666,17 @@ def _issue_url(title: str, text: str, rest: str = "the whole report is in report
 
 
 def build(job: dict[str, Any], run: Any = None, profile: config.Profile | None = None,
-          anonymous: bool = False, hide: Iterable[Any] = ()) -> dict[str, Any]:
+          anonymous: bool = False, hide: Iterable[Any] = (), employers: Iterable[Any] = ()) -> dict[str, Any]:
     """Write the report for a job and return what it holds: its folder, report.zip (the text
     and the scrubbed pages, kept on this computer), the text the person sees before anything
     is filed (`preview`), and the address of a new GitHub issue with that text (`issue_url`).
     `anonymous`: the job said by its job system alone ("a Workday employer"), as a note says it,
-    with no employer, job title, address or requisition number in the issue or the saved pages.
-    `hide`: what else its text takes out, the run's own (_hiding): never from the job's title, employer or address."""
+    with no employer, job title, address or requisition number in the issue or the saved pages, nor any other
+    employer the desk knows (_other_employers: its lists', the person's companies file's, and `employers`, the
+    tracker's jobs'). `hide`: what else its text takes out, the run's own (_hiding): never from the job's title,
+    employer or address. A run that isn't this job's is never its report's (it carries only its own job's log)."""
+    if run is not None and getattr(run, "job_id", job.get("id")) != job.get("id"):
+        run = None
     prof = profile or config.Profile.load()
     secrets = report_strings(prof)
     scrub = _scrubber(secrets)
@@ -533,12 +686,15 @@ def build(job: dict[str, Any], run: Any = None, profile: config.Profile | None =
             saved.append((snap, json.loads((snap / "snapshot.json").read_text(encoding="utf-8"))))
         except (OSError, ValueError):
             continue
+    words: list[str] = []  # (what the saved pages lose from their words alone: another employer's one-word name)
     if anonymous:
         urls = [job.get("url"), job.get("apply_url"), getattr(run, "url", ""),
                 (getattr(run, "page_info", None) or {}).get("url")]
         for _, meta in saved:
             urls += [meta.get("url"), *(f.get("url") for f in meta.get("frames") or [] if isinstance(f, dict))]
-        scrub, secrets = _anonymous(job, run, urls, secrets, [meta for _, meta in saved])
+        others, page_words = _other_employers(job, run, employers), _saved_words(snap for snap, _ in saved)
+        scrub, secrets = _anonymous(job, run, urls, secrets, [meta for _, meta in saved], others, page_words)
+        words = _page_names(others, page_words)
     said = _hiding(scrub, hide)  # (the text's but the job's own lines: the saved pages stay on this computer)
     out_dir = _folder(int(job["id"]))
     pages_dir = out_dir / "pages"
@@ -562,7 +718,7 @@ def build(job: dict[str, Any], run: Any = None, profile: config.Profile | None =
         lines += map(said, _paused_page(getattr(run, "page_info", None) or {}, getattr(run, "questions", None) or []))
     for snap, meta in saved:
         try:
-            convert(snap, snap.name, pages_dir, secrets=secrets)
+            convert(snap, snap.name, pages_dir, secrets=secrets, words=words)
         except (OSError, ValueError, KeyError, TypeError):
             pass  # its fields are still listed
         lines += ["", f"### Page saved {snap.name}: {said(meta.get('title'))}",
@@ -699,39 +855,52 @@ def _job_system(job: dict[str, Any], run: Any) -> tuple[str, str]:
 
 
 def _note_scrubber(job: dict[str, Any], run: Any, prof: config.Profile,
-                   hide: Iterable[Any] = ()) -> Callable[[Any], str]:
+                   hide: Iterable[Any] = (), employers: Iterable[Any] = ()) -> Callable[[Any], str]:
     """`_scrubber`, and also: every address said by its job system alone ("(a Workday address)":
-    its path names the job and a password reset's holds its token), and the employer applied to,
-    by its name or a short form of it, called "the employer"."""
+    its path names the job and a password reset's holds its token), the employer applied to,
+    by its name or a short form of it, called "the employer", and every other employer the desk knows
+    (_other_employers, with `employers`: the tracker's jobs') "another employer"."""
     scrub = _hiding(_scrubber(report_strings(prof)), hide)
     urls = [job.get("url"), job.get("apply_url"), getattr(run, "url", ""),
             (getattr(run, "page_info", None) or {}).get("url")]
     forms = {(f, _as_written(f, str(n or ""))) for n in (job.get("company"), getattr(run, "company", ""))
              for f in _employer_forms(str(n or ""), urls)}
     exact = {f for f, as_written in forms if as_written}
+    others = _other_employers(job, run, employers)
 
     def pattern(names: set[str], flags: int) -> re.Pattern[str] | None:
         spaced = [r"[\s.,]+".join(map(re.escape, f.split())) for f in sorted(names, key=len, reverse=True)]
         return re.compile(_NOT_IN_EMAIL.format("|".join(spaced)), flags) if spaced else None
     employer = [p for p in (pattern({f for f, _ in forms} - exact, re.I), pattern(exact, 0)) if p is not None]
+    # (another employer by any of its names: in any case where it's more than one word, as written (and in capitals)
+    # where it's one, "TEL", "Switch", never "the switch"; and never inside the job's own title or place)
+    another = [p for p in (pattern({o for o in others if " " in o.strip()}, re.I),
+                           pattern({f for o in others if " " not in o.strip() for f in _as_others(o)}, 0))
+               if p is not None]
+    outside = _outside([str(t or "") for t in (job.get("title"), getattr(run, "title", ""))]
+                       + _place_forms(job.get("location")))
 
     def unnamed(text: str) -> str:
         text = _URL.sub(lambda m: _address_said(m.group(0)), text)
         for p in employer:
             text = p.sub("the employer", text)
-        return _THE_THE.sub(r"\1 \2", _EMPLOYER_TAIL.sub(r"\1", text))
+        for p in another:
+            text = outside(p, ANOTHER, text)
+        return _THE_THE.sub(r"\1 \2", _EMPLOYER_TAIL.sub(r"\1", _THE_ANOTHER.sub(ANOTHER, text)))
 
     return lambda text: scrub(unnamed(str(text or "")))
 
 
-def note(job: dict[str, Any], run: Any, profile: config.Profile | None = None, hide: Iterable[Any] = ()) -> str:
+def note(job: dict[str, Any], run: Any, profile: config.Profile | None = None, hide: Iterable[Any] = (),
+         employers: Iterable[Any] = ()) -> str:
     """A note on one job's stop: what the desk said, its last steps, the page it stopped on and
     its questions, with why any answer didn't go in. Notes are filed together in one public
     issue, so on top of what `build` takes out, a note holds none of the person's answers, and
-    says the employer and every address by its job system only: the issue could otherwise list
-    every employer they applied to. `hide`: what else it takes out, as `build` (never from the job's title)."""
+    says the employer and every address by its job system only, and no other employer the desk knows (`employers`:
+    the tracker's jobs', _other_employers): the issue could otherwise list every employer they applied to. `hide`:
+    what else it takes out, as `build` (never from the job's title)."""
     prof = profile or config.Profile.load()
-    say = _note_scrubber(job, run, prof, hide)
+    say = _note_scrubber(job, run, prof, hide, employers)
     ats, employer = _job_system(job, run)
     stop, title = getattr(run, "need", "") or getattr(run, "status", ""), job.get("title") or getattr(run, "title", "")
     lines = [
@@ -750,7 +919,7 @@ def note(job: dict[str, Any], run: Any, profile: config.Profile | None = None, h
 
 
 def take_note(job: dict[str, Any], run: Any, profile: config.Profile | None = None,
-              hide: Iterable[Any] = ()) -> Path | None:
+              hide: Iterable[Any] = (), employers: Iterable[Any] = ()) -> Path | None:
     """Keep a note on a job's stop in ~/.job-apply/notes/, once for each job, stop and reason: a
     job that stops the same way again isn't noted twice, even after the notes are cleared. The
     newest NOTES are kept. Returns the note's file, or None when this stop was noted before."""
@@ -767,7 +936,7 @@ def take_note(job: dict[str, Any], run: Any, profile: config.Profile | None = No
     if key in seen:
         return None
     path = folder / f"{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}-{int(job['id']):04d}-{key}.md"
-    path.write_text(note(job, run, profile, hide), encoding="utf-8")
+    path.write_text(note(job, run, profile, hide, employers), encoding="utf-8")
     seen_file.write_text(json.dumps([*seen, key][-_SEEN:]), encoding="utf-8")
     for old in _note_files()[:-NOTES]:
         old.unlink(missing_ok=True)

@@ -278,12 +278,46 @@ EXTRACT_JS = r"""
     }
     return preceding(first);
   };
+  // A class that says its box is required ("required", "form-group required", "field--mandatory"); never "not-required",
+  // "optional", a word it's only part of ("requiredFieldsNote"), nor a framework's record of its validators: AngularJS
+  // puts "ng-valid-required" on every box with an ng-required, false or not, and on its ng-form (the review)
+  const REQUIRED_CLASS = /(?:^|[_-])(?:required|mandatory)(?:$|[_-])/i;
+  const NOT_REQUIRED_CLASS = /(?:not|non)[-_]?required|optional/i;
+  const requiredClass = (n) => {
+    const c = n && typeof n.className === 'string' ? n.className : '';
+    return !NOT_REQUIRED_CLASS.test(c) && c.split(/\s+/).some((t) => REQUIRED_CLASS.test(t)
+      && !/valid|^ng-|pristine|dirty|touched/i.test(t));
+  };
+  // The wrappers around a box (or a group's container) that hold no other question's box, nearest first, three at most:
+  // what they say of being required is the box's own
+  const ownWrappers = (el) => {
+    const out = [];
+    for (let n = el.parentElement, d = 0; n && d < 3 && n !== document.body; n = n.parentElement, d++) {
+      if ([...n.querySelectorAll(CHOICE)].some((x) => x !== el && !el.contains(x))) break;
+      out.push(n);
+    }
+    return out;
+  };
   const isRequired = (el, label) => {
     // (and SAP's Gigya screen sets: data-required, their star a label of its own beside the question's, Edwards
     // Vacuum's "Make my profile visible to:", run 61)
     if (el.required || el.getAttribute('aria-required') === 'true' || el.getAttribute('data-required') === 'true') return true;
-    // "First Name *", "* First Name", "Email * (work)"; not "* indicates a required field"
-    if ((/\*/.test(label || '') && !/indicates?|denotes?|required fields?/i.test(label)) || /\(required\)/i.test(label || '')) return true;
+    // "First Name *", "* First Name", "Email * (work)", Lever's "Full name ✱"; not "* indicates a required field"
+    if ((/[*✱＊∗]/.test(label || '') && !/indicates?|denotes?|required fields?/i.test(label))
+        || /\(required\)/i.test(label || '')) return true;
+    // the box's own label drawn required by its class (its star drawn by CSS: "<label class="required">")
+    const own = labelEl(el);
+    if (own && own !== el && requiredClass(own)) return true;
+    // a wrapper of the box's own that says so (the owner's note 48, Oct 20: "Ready to submit" with required boxes still
+    // empty): aria-required on the group or field around it, its class, or a marker in it beside the box ("<span
+    // class="required">*</span>" outside the label, an <abbr title="required">)
+    for (const n of ownWrappers(el)) {
+      if (n.getAttribute('aria-required') === 'true' || n.getAttribute('data-required') === 'true' || requiredClass(n)) return true;
+      if ([...n.querySelectorAll('abbr[title*="equired" i], [class*="required" i], [class*="mandatory" i]')]
+        .some((m) => visible(m) && (!m.contains(el) && requiredClass(m) && clean(m.textContent || '').length <= 12
+          && !/optional/i.test(m.textContent || '')
+          || m.matches('abbr[title*="equired" i]')))) return true;
+    }
     // Taleo's questionnaire: "1. Are you over the age of 18? . Required" (Kforce's, live, Oct 2026)
     if (/[?.:]\s*\.?\s*required\s*$/i.test(label || '')) return true;
     // Oracle: a required row's label says so only by a class (its star is drawn by CSS)
@@ -543,7 +577,16 @@ EXTRACT_JS = r"""
     else if (tagName === 'select') {
       kind = 'select';
       options = Array.from(el.options).map((o) => clean(o.text)).filter(Boolean);
-      value = Array.from(el.selectedOptions).filter((o) => o.value !== '').map((o) => clean(o.text)).join(', ');
+      // (nor its own first choice that only asks for one, "Select your state" with a value of its own, or a greyed one
+      // it opens on, "<option disabled selected>Gender</option>": nothing chosen, as for a jQuery UI menu's list)
+      // (only a prompt: a first choice whose words start by asking, "Select Gender", "Select Your Highest Level of
+      // Education", whatever its value; never an answer such as "Choose not to disclose" or "Select if you prefer not
+      // to say": the review, round 2)
+      const PROMPT = /^\s*(?:-+\s*)?(?:please )?(?:select|choose|pick)(?![\w-])/i;  // (never "Pick-up shifts")
+      const ANSWERS = /\b(?:not|decline[sd]?|prefer|don'?t|do not|wish)\b/i;
+      value = Array.from(el.selectedOptions).filter((o) => o.value !== '' && !o.disabled
+        && !(o.index === 0 && PROMPT.test(o.text) && !ANSWERS.test(o.text)))
+        .map((o) => clean(o.text)).join(', ');
     } else if (type === 'file') {
       kind = 'file';
       value = Array.from(el.files || []).map((f) => f.name).join(', ') || uploadedNear(el);
@@ -668,6 +711,26 @@ EXTRACT_JS = r"""
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') f.disabled = true;
     if (el.readOnly) f.readonly = true;
     if (el.getAttribute('aria-invalid') === 'true') f.invalid = true;
+    // the browser's own reading of a required box, read silently (its validity: never checkValidity() or
+    // reportValidity(), which tell the page): still empty ("missing"), or holding what its own rules refuse, in a form
+    // whose sending the browser checks ("bad": not one that turns the checks off, nor a box in no form)
+    const validity = (native || standIn || el).validity;
+    if (f.required && validity && !f.disabled && !f.readonly) {
+      // (only where the value read here agrees: an upload widget empties its box once the file is sent, its name shown
+      // beside it, and a search box's choice shows as a pill, the box itself empty: the review of the ready check)
+      // ("bad" only for a box that isn't empty but holds what its rules refuse: an emptied upload box is neither)
+      if (validity.valueMissing) { if (!f.value) f.missing = true; }
+      else if (!validity.valid && el.form instanceof HTMLFormElement && !el.form.noValidate) f.bad = true;
+    }
+    // a file box in a part of the page not drawn, one that holds its words too (a section folded shut or hidden, a step
+    // not on show): not one the page asks for now. Not one an upload widget hides alone, beside its own button
+    if (kind === 'file' && !visible(el)) {
+      let hidden = null;
+      for (let n = el.parentElement, d = 0; n && d < 6 && n !== document.body && !visible(n); n = n.parentElement, d++) {
+        hidden = n;
+      }
+      if (hidden && clean(hidden.textContent || '')) f.unseen = true;
+    }
     if (el.maxLength > 0 && el.maxLength < 100000) f.max_length = el.maxLength;
     fields.push(f);
     fieldEls.set(f, el);
@@ -728,6 +791,8 @@ EXTRACT_JS = r"""
       // one the page marks wrong while it's unticked, as a group so marked (BrassRing's "Employment At Will", Edward
       // Jones' run 89: "Required" beside it, naming nothing)
       if (first.getAttribute('aria-invalid') === 'true' && !single.value) single.invalid = true;
+      // (and the browser's own word that a required one is still unticked: its validity, read silently)
+      if (single.required && first.validity && first.validity.valueMissing && !first.disabled) single.missing = true;
       const row = titled && first.closest('tr');
       if (row) {
         const table = row.closest('table') || row.parentElement;
@@ -762,6 +827,9 @@ EXTRACT_JS = r"""
     // picked isn't about the group as it is now)
     const marked = g.members.filter((m) => m.getAttribute('aria-invalid') === 'true');
     if (marked.length && (!g.members.some(checkedOf) || marked.some(checkedOf))) group.invalid = true;
+    // (a required group with nothing chosen, by the browser's own validity, read silently)
+    if (group.required && !g.members.some(checkedOf) && g.members.some((m) => m.validity && m.validity.valueMissing
+        && !m.disabled)) group.missing = true;
     const section = sectionOf(g.container || first);
     if (section && section !== label) group.section = section;
     fields.push(group);
@@ -988,9 +1056,26 @@ EXTRACT_JS = r"""
   }
 
   const errors = [];
+  // A message that says a box is wanted or wrong ("This field is required", "Please select an option", "2 issues"),
+  // never a form's own note on what's required ("Fields marked * are required")
+  const SAYS_WANTED = /\b(?:required|must (?:be|have|enter|select|provide|choose|contain|match)|missing|invalid|is not valid|can(?:no|')?t be (?:blank|empty|left blank)|please (?:enter|select|fill|choose|provide|complete|correct|answer|upload|attach)|errors? found|\d+ (?:errors?|issues?|problems?))\b/i;
+  const A_NOTE = /\b(?:fields?|questions?|items?) (?:marked|with)\b|\b(?:indicat|denot)(?:es?|ed)\b/i;
+  const RULES = /\bpasswords?\b|\bmust contain\b|\bcharacters?\b/i;  // (a password's rules, on show from the start)
+  const wanted = [];
   // (Workday's own alert under a box, data-automation-id="inputAlert": Banner Health's text area, run 99, "Error: The field
   // … is required and must have a value." in no alert role or "error" class)
-  for (const el of document.querySelectorAll('[role="alert"], [aria-live="assertive"], [data-automation-id="errorMessage"], [data-automation-id="inputAlert"], [class*="error" i]:not(input):not(select):not(textarea)')) {
+  // (and, where they say a box is wanted, a polite live region's words and a box's message drawn by an "invalid" class,
+  // Bootstrap's invalid-feedback: the owner's note 50, Oct 20, a job called ready with the page's own "required" shown)
+  for (const el of document.querySelectorAll('[role="alert"], [aria-live="assertive"], [data-automation-id="errorMessage"], [data-automation-id="inputAlert"], [class*="error" i]:not(input):not(select):not(textarea), '
+      + '[aria-live="polite"], [class*="invalid" i]:not(input):not(select):not(textarea):not(button):not(td)')) {
+    const OWN = '[role="alert"], [aria-live="assertive"], [data-automation-id="errorMessage"], [data-automation-id="inputAlert"], [class*="error" i]';
+    // (one around a message read on its own, or around a box, is never read whole: its label would be said as an error;
+    // nor one inside a message read whole, nor a password's rules shown before anything is typed. Kept apart, as
+    // "wanted": only the desk's check of a page before it's called ready reads them, the rest reads errors as before)
+    const own = el.matches(OWN);
+    if (!own && (!SAYS_WANTED.test(txt(el)) || A_NOTE.test(txt(el)) || RULES.test(txt(el)) || el.querySelector(OWN)
+                 || el.querySelector('input, select, textarea')
+                 || (el.parentElement && el.parentElement.closest(OWN)))) continue;
     // without icon-font glyphs (Amkor's "\ue0b1 Invalid email address or password"; an alert
     // that's only an icon says nothing)
     // (never a button or a link marked aria-live, as BrassRing's "Let's get started" is: probe 81; one that marks itself
@@ -1003,6 +1088,10 @@ EXTRACT_JS = r"""
     if (r.width <= 1 || r.height <= 1) continue;  // screen-reader announcements ("… page is loaded")
     // (nor a site's word that it's on its way, EY's "Please wait..." in an alert, run 147: busy, never an error)
     if (/\bpage is loaded\b|^loading\b|^(?:please wait|redirecting(?: you)?)\b[\s,.!]*(?:\.\.\.|…)?$/i.test(t)) continue;
+    if (!own) {
+      if (t && t.length < 300 && visible(el) && !wanted.includes(t) && wanted.length < 10) wanted.push(t);
+      continue;
+    }
     if (t && t.length < 300 && visible(el) && !errors.includes(t)) errors.push(t);
     if (errors.length >= 10) break;
   }
@@ -1025,6 +1114,53 @@ EXTRACT_JS = r"""
       if (errors.length >= 10) break alerts;
       if (visible(el) && !errors.includes(t)) errors.push(t);
     }
+  }
+  // The page's own notices: its alerts, status and live regions, banners, messages and headings, never one inside a list of
+  // postings (a "Similar jobs" card's "You have already applied" is that job's, not this one's: the review of note 49).
+  // A card of its own, the page's main content in one (Bootstrap's), isn't a list: one beside others like it is
+  const BOX = 'article, [class*="card" i], [class*="tile" i], [class*="result" i]';
+  const listed = (el) => {
+    if (el.closest('li, [role="listitem"]')) return true;
+    for (let box = el.closest(BOX); box; box = box.parentElement && box.parentElement.closest(BOX)) {
+      const up = box.parentElement;
+      if (up && Array.from(up.children).some((o) => o !== box && o.tagName === box.tagName
+                                                 && o.className === box.className)) return true;
+    }
+    return false;
+  };
+  // Nor one after a heading over other postings ("Similar jobs", "You may also like"), unless the page's own alert or
+  // live region (a toast drawn at the page's end); and one in a card of its own goes with the jobs the card names (its
+  // links and headings: `card_notices`, this job's only where they're its title: the review of fix-ready-check, 3)
+  const HEAD = 'h1, h2, h3, h4, h5, h6, [role="heading"]';
+  const SIMILAR = /\b(?:similar|recommended|related|suggested|you (?:may|might) also like|other (?:jobs|openings|positions|roles|opportunities)|more (?:jobs|openings|positions|roles|opportunities))\b/i;
+  const heads = Array.from(document.querySelectorAll(HEAD));
+  const afterSimilar = (el) => {
+    let last = null;
+    for (const h of heads) {
+      if (h === el || h.contains(el) || !(h.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)) break;
+      last = h;
+    }
+    return !!last && SIMILAR.test(txt(last));
+  };
+  const notices = [];
+  const cardNotices = [];
+  for (const el of document.querySelectorAll('[role="alert"], [role="status"], [aria-live], [class*="alert" i], '
+      + '[class*="banner" i], [class*="notice" i], [class*="message" i], [class*="toast" i], [class*="flash" i], '
+      + 'h1, h2, h3, h4')) {
+    if (listed(el)) continue;
+    const t = txt(el);
+    if (!t || t.length >= 300 || !visible(el)) continue;
+    const live = el.closest('[role="alert"], [role="status"], [aria-live]');
+    if (!live && afterSimilar(el)) continue;
+    const box = el.closest(BOX);
+    if (box && !live) {
+      const names = Array.from(box.querySelectorAll('a[href], ' + HEAD))
+        .filter((n) => n !== el && !n.contains(el) && !el.contains(n)).map(txt).filter((n) => n && n.length < 120);
+      if (cardNotices.length < 10) cardNotices.push({ text: t, names });
+      continue;
+    }
+    if (!notices.includes(t)) notices.push(t);
+    if (notices.length >= 20) break;
   }
   const headings = [];
   for (const el of document.querySelectorAll('h1, h2, h3, [data-automation-id="progressBarActiveStep"], [role="heading"]')) {
@@ -1104,7 +1240,9 @@ EXTRACT_JS = r"""
   };
   const busy = [...document.querySelectorAll(LOADING)].some((el) => visible(el) && !faded(el)) || bones() || drawing()
     || empty || waiting();
-  return { fields, actions, errors, headings, dialogs, ...(busy ? { busy: true } : {}),
+  return { fields, actions, errors, ...(wanted.length ? { wanted } : {}), ...(notices.length ? { notices } : {}),
+           ...(cardNotices.length ? { card_notices: cardNotices } : {}),
+           headings, dialogs, ...(busy ? { busy: true } : {}),
            ...(empty ? { empty_frame: true } : {}) };
 }
 """.replace("/*SIGN_IN_FORM*/", SIGN_IN_FORM_JS).replace("/*OPEN_DIALOGS*/", OPEN_DIALOGS_JS)

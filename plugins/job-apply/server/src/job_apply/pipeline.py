@@ -39,6 +39,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 from . import config, history, mailbox, report
 from .search import every_employer
+from .tracker import city_key, title_key
 from .ats import ATS_NAMES, JOB_BOARDS, detect_ats, host_of, shared_system
 from .autofill import (_OTHER_DOCUMENT, clean_label, entry_list_unloaded, _CHOICE_KINDS, is_empty_value,
                        kept_documents, norm,
@@ -47,7 +48,7 @@ from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _ac
                       confirmations, declines_cookies, final_text, may_accept_cookies, questions_shown)
 from .never import (ANYWHERE, CALLS_OR_TEXTS, EMAILS, FUTURE_ROLES, GATE_OWN, GATE_PAGE, MAIL, NEVER,
                     PARAGRAPH_WORDS, PRECISE, _never_for_them)
-from .pipeline_accounts import AccountsMixin
+from .pipeline_accounts import AccountsMixin, account_known, note_account
 from .pipeline_filling import FillingMixin
 from .pipeline_letters import LettersMixin
 from .pipeline_mail import MailAsk, MailMixin
@@ -207,6 +208,8 @@ QUEUE_LOCK = "desk-queue.lock"
 QUEUE_STALE_DAYS = 7
 # said on the review card of a job whose Submit the person pressed before the desk restarted (never carried over)
 SUBMIT_UNSENT = "Your Submit from before the desk restarted wasn't sent: press Submit again to send it."
+# what a ready job's card says was checked on its review page before it was called ready (Applier._unready)
+READY_CHECKED = "Checked: no required box is left empty, and the page shows no error."
 # on the card of a job begun before the desk restarted (under way, or waiting on the person): it isn't queued again by
 # itself, as the person may have worked in its tab (sent it on the site, say). Resume fills it again, never sending it
 RESTART_BEGUN = ("The desk restarted before this application was finished. If you sent it yourself on the site, press "
@@ -381,10 +384,29 @@ _CLOSED_HOW = re.compile(r"\s*(?:on (?:a |an )?(?:rolling|ongoing|first)|for (?:
 # this job on <date>." over its View Application, an Eightfold application saying it was applied to already): a
 # sentence of its own that starts with it, never "If you are an internal candidate or you have already applied for
 # this position, sign in", "Already applied? Sign in", a limit on applications, or a question asking whether they have.
+# And the site's own word that names no job, or names it by its title (the owner's note 49, Oct 20: "You have already
+# applied.", "It looks like you have already applied", "You have already applied for <the job's title>"): one naming no
+# job only in the page's own notices (an alert, a banner, a heading) or as its whole message, never a card in a list of
+# other postings ("Similar jobs": the review); one naming a title only where it's this job's (_applied_before). Never
+# another position, a list of them ("for the following jobs:"), a number of jobs or "a position", nor where a limit
+# on applications follows (_APPLY_LIMIT)
 _APPLIED_BEFORE = re.compile(
     r"\byou applied (?:for|to) this (?:job|position|role|posting|requisition|opening|vacancy) on\b|"
-    r"\byou(?:'ve| have)? already (?:applied|submitted an application) (?:for|to) this "
-    r"(?:job|position|role|posting|requisition|opening|vacancy)\b(?!\s*(?:\?|before|within|in the))", re.I)
+    r"\b(?:it (?:looks|seems|appears) (?:like|that|as if|as though) )?you(?:'ve| have)? already "
+    r"(?:(?:applied|submitted an application) (?:for|to) this "
+    r"(?:job|position|role|posting|requisition|opening|vacancy)\b(?!\s*(?:\?|before|within|in the))|"
+    r"(?P<bare>applied)(?=\s*[.!]|\s*$)|"
+    r"applied (?:for|to) (?P<named>(?!this\b|(?:an)?other\b|a different\b|(?:the following|following|these|those|"
+    r"some|similar|all)\b|(?:a|an|any|one|more|several|multiple|too many|the (?:maximum|max|limit|same))\b|\d|"
+    r"(?:jobs|positions|roles|openings|requisitions)\b)(?:\b(?:Sr|Jr|Mgr|No)\.\s|[^.!?\n:]){1,150}?)"
+    # (a title's "Sr." isn't its sentence's end: the review of fix-ready-check, round 2)
+    r"(?<!\bSr)(?<!\bJr)(?<!\bMgr)(?<!\bNo)(?=\s*[.!]|\s*$))", re.I | re.M)
+# ...what says it's a limit on how many applications are taken, not this job's ("You have already applied. You may
+# apply to 3 jobs every 30 days.")
+_APPLY_LIMIT = re.compile(r"\b(?:may|can) (?:only )?(?:apply|submit)\b[^.!?]{0,60}?\b(?:\d+|one|two|three|once)\b|"
+                          r"\blimit\b|\bmaximum\b|\bevery \d+ (?:days?|weeks?|months?)\b|"
+                          r"\bper (?:day|week|month|year)\b|"
+                          r"\bwithin (?:the )?(?:last|past) \d+", re.I)
 _WRAPPED = re.compile(r"(?:,|\b(?:or|and|the|an?|to|for|of|if|that|who|you|have|whether|unless|when|once))\s*$", re.I)
 _BOT_TEXT = re.compile(r"verify (?:that )?you are (?:a )?human|are you a robot|"
                        r"checking (?:if the site connection is secure|"
@@ -580,9 +602,38 @@ _NEW_CANDIDATE = re.compile(r"^(?:yes,? )?i am (?:a |an )?(?:new|external) (?:ca
                             r"team member))?|^(?:yes,? )?i am not "
                             r"(?:a |an )?(?:current|existing) (?:employee|associate|team member)(?: of [\w&.' -]+)?",
                             re.I)
-_ACCOUNT_EXISTS = re.compile(r"\b(?:account|e-?mail(?: address)?|user ?name|"
-                             r"login)\b[^.?!]{0,40}\balready\b\s*(?:exists|"
-                             r"registered|in use|associated|taken|been (?:registered|used|taken))", re.I)
+_ACCOUNT_EXISTS = re.compile(r"\b(?:account|e-?mail(?: address)?|user(?: ?name)?|"
+                             r"login|profile)\b[^.?!]{0,40}\balready\b\s*(?:exists|"
+                             r"registered|in use|in our system|on file|associated|taken|used|created|"
+                             r"been (?:registered|used|taken|created))|"
+                             # (and the site's other words for it, now that a Create Account comes first where the desk
+                             # knows of none there: the owner's note 46 and its review. "There is already an account
+                             # associated with...", "It looks like you already have an account", "We found an existing
+                             # account", and a sentence of its own, "You already have an account."; never "Already have
+                             # an account? Sign in", nor "If you already have an account, sign in")
+                             r"\bthere(?: is|'s) already an? (?:account|profile)\b|"
+                             r"\b(?:it )?looks like you(?:'ve| have)? already (?:have |got |created )?an? "
+                             r"(?:account|profile)\b|\bwe found an? existing (?:account|profile)\b|"
+                             r"(?:^|[.!]\s+)you already have an? account(?: with (?:us|this e-?mail(?: address)?))?"
+                             r"\s*[.!]", re.I | re.M)
+# (never in a sign-in's own help, which says it of an account the person may have: "Sign in with the email address
+# you already used to apply", "If your profile was already created, sign in below", "Returning user? Sign in with the
+# account you already created": the review of fix-ready-check, round 2)
+_SIGN_IN_HELP = re.compile(r"^\W*(?:if|when|once|returning|already|with the|"
+                           r"(?:please |to )?(?:sign|log)(?: |-)?in|login)\b", re.I)
+
+
+def _says_account_exists(text: str) -> bool:
+    """Does the page say the email has an account there already (_ACCOUNT_EXISTS), in a sentence of its own words,
+    never in a sign-in's help on what to do with one (_SIGN_IN_HELP)?"""
+    for m in _ACCOUNT_EXISTS.finditer(text):
+        before = text[:m.start()]
+        cut = max(before.rfind(c) for c in ".!?:\n")  # ("Login failed: an account with this email already…")
+        if not _SIGN_IN_HELP.match(text[cut + 1:m.end()]):
+            return True
+    return False
+
+
 _FORGOT = re.compile(r"\b(?:forgot|reset|recover)\b[^.?!]{0,20}\bpassword|trouble (?:signing|logging) in|"
                      r"can'?t (?:sign|log) in", re.I)
 _RESET_PAGE = re.compile(r"forgot|reset|recover|new password|change (?:your )?password|"
@@ -1070,6 +1121,9 @@ class Run:
     # re-review of 0.3.209)
     in_their_hands: bool = False
     invalid_redone: bool = False  # the review page's invalid lists answered again from the profile (once a job)
+    # the step a fill last went over, and the boxes its plan left empty on purpose (a current job's end date):
+    # _form_lap's, never counted as left empty by the check before the job is called ready (_unready)
+    skipped_on: tuple[Any, ...] = ()
     # its wait ran out in RESET_MAIL_WAIT with no email it could use: none came (no account there, most likely, so one
     # is made), or only one whose link was opened already (reset_spent: said on a card)
     reset_no_mail: bool = False
@@ -1208,7 +1262,7 @@ class Run:
                                 "employer_mail", "others_mail", "went_in", "agreed", "draft_pages", "submit_pressed",
                                 "sending", "cut_short", "started", "pass_steps", "rounds", "resumes", "marked",
                                 "maybe_shown", "kept_replaced", "once_left", "opened_tabs", "letter_tried",
-                                "letter_text", "letter_wait", "asked_once")},
+                                "letter_text", "letter_wait", "asked_once", "skipped_on")},
                 # (the first cover letter's text, on its card alone)
                 "letter_text": self.letter_text if self.status == "needs_you" and self.need == "cover_letter" else "",
                 # (only for the cards that show it: a job queued or under way has none, and 30 of them made the
@@ -1302,6 +1356,8 @@ class _Pass:
     redone_pages: set[tuple[Any, ...]] = field(default_factory=set)
     # steps gone back to for the boxes their errors name (once a step)
     asked_back: set[tuple[Any, ...]] = field(default_factory=set)
+    # pages filled once more for required boxes still empty after their fill (once a page: _form_lap)
+    rechecked: set[tuple[Any, ...]] = field(default_factory=set)
     back_from: tuple[tuple[Any, ...], str] | None = None  # the step gone back to, and its stop as it would be said
     saved_waited: set[tuple[Any, ...]] = field(default_factory=set)  # steps waited on as still saving (once a step)
     # forms with no step button yet, waited on to be drawn (once a page)
@@ -1458,7 +1514,8 @@ _TAILOR_SAYS = ("Waiting for a resume written for this job. In Claude Code, say 
 _BOT_CHECK_SAYS = ("The site is checking that you're a person (a bot check or CAPTCHA). Pass it in the desk's browser "
                    "window: the desk then carries on with this job by itself, and the other jobs go on meanwhile (the "
                    "desk's Bot checks round takes you to each one waiting).")
-_ERROR_COUNT = re.compile(r"^\d+ errors? found\.?$", re.I)  # a section's count, not what's wrong
+# a section's count, not what's wrong: "1 error found", "(2) issues"
+_ERROR_COUNT = re.compile(r"^\(?\d+\)?\s+(?:errors?|issues?|problems?)(?:\s+found)?\.?$", re.I)
 
 
 def _count(n: int, noun: str) -> str:
@@ -2756,7 +2813,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         one job at a time is in such steps, one under way until it's into its application (or its pass ends), or one
         holding the queue for the person's sign-in or code. The inbox is one: a code meant for one job is never
         another's. Returns the seconds waited, 0 for none."""
-        began, waited, said = time.monotonic(), False, ""
+        began, waited, said, before = time.monotonic(), False, "", run.reason
         try:
             while run.status not in ("skipped", "submitted"):
                 other = self._inbox_holder(run) or self._hands_on(run)
@@ -2764,13 +2821,20 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                     break
                 why = f"{other.company or 'another job'} is signing in or waiting on an email"
                 if why != said:
+                    # (which job, on the card meanwhile; the job's log, which a report or a note on it carries, names
+                    # no other job's employer: the owner's note 51, Oct 20, an anonymous report named another one)
+                    if not said:
+                        self._log(run, "waiting: another job is signing in or waiting on an email; this one carries "
+                                  "on after that")
                     said = why
-                    self._log(run, f"waiting: {why}; this one carries on after that")
+                    run.reason = f"Waiting: {why}. This one carries on after that."
                 waited = True
                 self._waiting.add(run.job_id)
                 await asyncio.sleep(max(POLL_SECONDS / 3, 0.05))
         finally:
             self._waiting.discard(run.job_id)
+            if said and run.reason == f"Waiting: {said}. This one carries on after that.":
+                run.reason = before
         if not run.inbox:
             run.inbox = True
             self._inbox_gen += 1
@@ -2850,6 +2914,37 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         else:
             return False
         return True
+
+    def _stop_for_left_empty(self, run: Run, data: dict[str, Any], left: list[dict[str, Any]],
+                             filled: set[str]) -> None:
+        """Pause a page for its required boxes still empty once the desk has filled it twice (_left_empty): its Next
+        is never pressed past them, nor the job called ready. The boxes go on the questions card, each said for what
+        it is (one the desk filled that the page didn't keep, `filled`; one holding what the page's own rules refuse;
+        one nothing answered), and an answer given there goes in as any card's does. A file box is the person's to
+        attach in the browser window."""
+        site = _site(run, data)
+        files = [f for f in left if f.get("kind") == "file"]
+        boxes = [f for f in left if f.get("kind") != "file"]
+        # (a box to tick the profile's no left unticked wasn't lost: a required one is theirs to say, ticked or not)
+        lost = [f for f in boxes if str(f.get("id")) in filled and f.get("kind") != "checkbox"]
+        refused = [f for f in boxes if f.get("bad") and not is_empty_value(f.get("value")) and f not in lost]
+        questions = [{**{k: f[k] for k in ("id", "kind", "label", "section", "sublabel", "options", "role")
+                         if f.get(k) not in (None, [])}, "required": True,
+                      **({"error": "the page didn't keep what was filled in"} if f in lost
+                         else {"error": "the page doesn't take what's in it"} if f in refused else {})}
+                     for f in boxes]
+        them = "it" if len(boxes) == 1 else "them"
+        self._pause(run, "questions" if boxes else "stuck",
+                    f"Not ready yet: {site}'s page still has {_boxes_said(len(left))} empty ({_left_said(left)})."
+                    + (f" I filled {_left_said(lost)}, but the page didn't keep {'it' if len(lost) == 1 else 'them'}."
+                       if lost else "")
+                    + (f" The page doesn't take what's in {_left_said(refused)}." if refused else "")
+                    + (f" Attach the file {_left_said(files)} wants in the desk's browser window." if files else "")
+                    + (f" Answer {them} here and the desk fills {them} in, or fill {them} in in the desk's browser "
+                       "window and press Carry on." if boxes else " Then press Carry on."),
+                    questions,
+                    code="box_not_filled" if lost or files and not boxes else "box_refused_answer" if refused
+                    else "questions")
 
     def _hold_tools(self, job_id: int) -> tuple[Any, Any, Any]:
         """Take the browser tools for one of this job's steps: Claude's calls that act in the
@@ -3056,7 +3151,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         taking it, the job still pauses and the queue goes on."""
         try:
             job = self.srv.tracker().get(run.job_id, with_description=False) or {"id": run.job_id}
-            report.take_note(job, run, hide=self._report_hidden(run))  # (what's this run's alone, kept out)
+            # (what's this run's alone, kept out; and every employer the tracker's jobs name but this one's)
+            report.take_note(job, run, hide=self._report_hidden(run), employers=self.srv.tracker().companies())
         except Exception:
             logging.getLogger(__name__).warning("couldn't take a note on job %s's stop", run.job_id, exc_info=True)
 
@@ -3271,7 +3367,9 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                 run.reason = f"Submitted: {_site(run, data)} says \u201c{gone[0]}\u201d."
                 self._log(run, run.reason)
                 return
-            if applied := _applied_before(data, text):
+            known = srv.tracker().get(run.job_id, with_description=False) or {}
+            if applied := _applied_before(data, text, run.title or str(known.get("title") or ""),
+                                          str(known.get("location") or "")):
                 # applied to already (by hand, or before the tracker knew): never filled, or sent, again
                 srv.tracker().update(run.job_id, status="applied", note="the site says it was applied to already")
                 run.status, run.need, run.blocking, run.left = "submitted", "", False, False
@@ -3328,6 +3426,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                 run.went_in.account(run.account_made)
                 run.account_made = ""
                 run.account_in = True
+                note_account(str(data.get("url") or ""), "made")  # (one known there from now on: _sign_in_lap)
             lap = _Lap(data=data, text=text, kind=kind, view=view, finish=finish, entry_here=entry_here)
             then = await self._off_to_the_list(run, ps, lap)
             if then is _Then.STOP:
@@ -3601,6 +3700,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                 return _Then.AGAIN
         if lap.kind == "form" and lap.finish is None:
             run.resetting = False  # past the sign-in, however the password was set
+            if run.sign_in_tries:  # (the saved password signed in: an account of theirs is there, _sign_in_lap)
+                note_account(str(lap.data.get("url") or ""), "signed in")
             run.sign_in_tries = 0  # (and none of its sign-ins was refused)
             run.reset_set = run.reset_opened = run.reset_spent = run.reset_spent_said = False  # (a refusal after
             # this is the ordinary one)
@@ -3616,15 +3717,6 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                 return _Then.AGAIN
             if done_reset == "paused":
                 return _Then.STOP
-        said_exists = " ".join([*(lap.data.get("errors") or []), lap.text[:3000]])
-        if lap.kind == "sign_in" and lap.manage and ps.sign_ins.get("made") and _ACCOUNT_EXISTS.search(said_exists):
-            # the email has an account there already, and the saved password didn't sign in to it
-            asked = await self._ask_for_reset(run, lap.data, ps.sign_ins)
-            if asked == "paused":
-                return _Then.STOP
-            if asked == "no_account":
-                ps.sign_ins["submitted"] = ps.sign_ins["wants_account"] = 1
-                return _Then.AGAIN
         if (lap.kind == "sign_in" and lap.manage and not run.verifying
                 and _wants_verification(run, lap.data, lap.text, ps.sign_ins)):
             # the account just made says it emailed a link to verify it (Banner Health's Workday, live,
@@ -3640,6 +3732,18 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             # is tried once, which spends run.verifying
             await self._await_verify_email(run, lap.data, lap.text)
             return _Then.STOP
+        said_exists = "\n".join([*(lap.data.get("errors") or []), lap.text[:3000]])
+        if lap.kind == "sign_in" and lap.manage and ps.sign_ins.get("made") and _says_account_exists(said_exists):
+            # the email has an account there already, and the saved password didn't sign in to it (after the wait
+            # for the account's verification above: an account just made, its link not yet opened, gets that wait,
+            # never a reset: the review of fix-ready-check, round 2)
+            note_account(str(lap.data.get("url") or ""), "the site says it exists")
+            asked = await self._ask_for_reset(run, lap.data, ps.sign_ins)
+            if asked == "paused":
+                return _Then.STOP
+            if asked == "no_account":
+                ps.sign_ins["submitted"] = ps.sign_ins["wants_account"] = 1
+                return _Then.AGAIN
         return _Then.ON
 
     async def _sign_in_lap(self, run: Run, ps: _Pass, lap: _Lap) -> Literal[_Then.AGAIN, _Then.STOP]:
@@ -3647,8 +3751,16 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         a new account made where the desk may (settings.manage_accounts), and otherwise the person's, said for what it
         is. AGAIN or STOP, never ON: a sign-in page is as far as its lap goes."""
         # With the inbox watched, a refused password is reset before a new account is made (the
-        # owner's choice: an account there already is the likelier, on a second application)
+        # owner's choice: an account there already is the likelier, on a second application), where the desk knows of
+        # an account of theirs there (accounts.json: made, signed in to, a reset emailed, or the site said it exists).
+        # Where it knows of none, Create Account first, and a reset only once the site says the email has one (the
+        # owner's note 46, Oct 20: a site they'd never had an account at was asked for a reset)
+        # (and where the tracker has a job applied to at the same place: an account from before the desk kept any)
         reset_first = lap.manage and not run.reset_asked and self.mail_login() is not None
+        if reset_first and not run.account_known:
+            applied = self.srv.tracker().applied_urls()
+            reset_first = any(account_known(str(u or ""), applied)
+                              for u in [lap.data.get("url"), *(lap.data.get("frame_urls") or {}).values()])
         shown = lap.data  # (what the page said before it's filled in again)
         done = await self._sign_in(run, lap.data, ps.sign_ins, reset_first=reset_first)
         if done == "submitted":
@@ -3980,6 +4092,22 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         pending = await self._said_above(pending)
         if self._stop_for_what_is_left(run, gaps, pending, missing_files, gap_code):
             run.entries_told = short
+            return _Then.STOP
+        # the page's required boxes, read again as filled, before its Next is pressed or the job is called ready (the
+        # owner's notes 47, 48, 50 and 51, Oct 20: "Ready to submit", and a Save and Continue pressed on a step it had
+        # filled nothing on, with required boxes empty): one the fill went into that's empty again, one drawn or turned
+        # on since, or one it took for optional. The page filled once more (once a step); then the person's, on the
+        # card. Never one the profile's plan leaves empty on purpose (a current job's end date: autofill's "skipped")
+        skipped = {str(i) for i in result.get("skipped") or []}
+        run.skipped_on = (_step_page(lap.data), frozenset(skipped))
+        empty = [f for f in _left_empty(lap.data) if str(f.get("id")) not in skipped]
+        if empty and _step_page(lap.data) not in ps.rechecked:
+            ps.rechecked.add(_step_page(lap.data))
+            self._log(run, f"{_boxes_said(len(empty))} still empty after filling {_where(lap.data)} "
+                      f"({_left_said(empty)}), so I filled it again")
+            return _Then.AGAIN
+        if empty:
+            self._stop_for_left_empty(run, lap.data, empty, ps.filled_ids)
             return _Then.STOP
         if ps.back_from is not None:
             (back_page, stuck), ps.back_from = ps.back_from, None
@@ -5306,7 +5434,9 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                 pass
 
     async def _finish(self, run: Run, data: dict[str, Any], text: str) -> None:
-        """The review page (or a one-page form with its submit button) is reached."""
+        """The review page (or a one-page form with its submit button) is reached. Before anything says it's filled
+        (ready for Submit, Submit for me, a site whose Submit is the person's, a CAPTCHA's), the page is checked
+        (_unready): no required box left empty, and no error the page shows."""
         srv = self.srv
         if run.status in ("skipped", "submitted"):
             return
@@ -5315,20 +5445,9 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         except Exception:
             ats = detect_ats(data["url"])
         job = srv.tracker().get(run.job_id)
-        if ats in config.HUMAN_SUBMIT_ONLY:
-            srv._mark_ready(job, f"filled on {ATS_NAMES.get(ats, ats)} by the Job Desk")
-            return self._pause(run, "your_submit", f"Filled. {ATS_NAMES.get(ats, ats)} doesn't allow automated "
-                               "submitting: review it in the desk's browser window and click Submit yourself.",
-                               code="submit_not_allowed")
-        if _CAPTCHA.search(text):
-            srv._mark_ready(job, "filled by the Job Desk; has a CAPTCHA")
-            return self._pause(run, "captcha", "Filled. The form has a CAPTCHA: tick it in the desk's browser window, "
-                               "then press Submit here." + (f" {SUBMIT_UNSENT}" if run.submit_unsent else ""),
-                               code="captcha")
-        shown = "; ".join(e for e in _flagged(data) if not _ERROR_COUNT.match(e))[:300].rstrip(" .")
         invalid = [f["id"] for f in data.get("fields") or [] if f.get("invalid")
                    and f.get("kind") in ("select", "listbox", "combobox", "radio_group")]
-        if shown and invalid and not run.invalid_redone:
+        if any(not _ERROR_COUNT.match(e) for e in _flagged(data)) and invalid and not run.invalid_redone:
             # a list the page marks invalid, on a choice it made itself (Northrop's phone "Country code" on Mexico,
             # live run 13): the profile's answer, once a job (never again after the person has had the page), then
             # the page is read again
@@ -5340,25 +5459,31 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             if again:
                 self._log(run, f"filled again {len(again)} field(s) the page marked invalid")
                 data, text = await self._look()
-                shown = "; ".join(e for e in _flagged(data) if not _ERROR_COUNT.match(e))[:300].rstrip(" .")
+        if self._unready(run, data):
+            return
+        if ats in config.HUMAN_SUBMIT_ONLY:
+            srv._mark_ready(job, f"filled on {ATS_NAMES.get(ats, ats)} by the Job Desk")
+            return self._pause(run, "your_submit", f"Filled. {ATS_NAMES.get(ats, ats)} doesn't allow automated "
+                               "submitting: review it in the desk's browser window and click Submit yourself.",
+                               code="submit_not_allowed")
+        if _CAPTCHA.search(text):
+            srv._mark_ready(job, "filled by the Job Desk; has a CAPTCHA")
+            return self._pause(run, "captcha", "Filled. The form has a CAPTCHA: tick it in the desk's browser window, "
+                               "then press Submit here." + (f" {SUBMIT_UNSENT}" if run.submit_unsent else ""),
+                               code="captcha")
         sends = run.submit and self.auto_submit and not self.hold_submits
-        if shown and sends:  # Insight's review page lists what's still missing
-            return self._pause(run, "stuck", f"The review page shows errors: {shown}. Fix them in the desk's "
-                                             "browser window, then press Submit.", code="review_errors")
         # (jobs or schools left off, and a saved draft whose answers the desk changed to the profile's: the person's to
         # check, and to send: issue #112, note 38's review)
         if sends and not run.entries_short and not run.draft_changed:
             return await self._submit(run, by_person=False)
         srv._mark_ready(job, "filled by the Job Desk")
         run.status, run.need = "ready", ""
-        run.reason = "Filled and waiting on the review page. Check it in the desk's browser window, then press Submit."
-        if shown:
-            run.reason = (f"Filled, but the review page shows errors: {shown}. Fix those in the desk's browser "
-                          "window before you press Submit.")
+        run.reason = (f"Filled and waiting on the review page. {READY_CHECKED} Check it in the desk's browser window, "
+                      "then press Submit.")
         if run.pressed_before:
-            run.reason = ("Filled and waiting on the review page. Submit was pressed for this job before and no "
-                          "confirmation showed, so it may have gone through: check your email or the site before you "
-                          "press Submit." + (f" The review page also shows errors: {shown}." if shown else ""))
+            run.reason = (f"Filled and waiting on the review page. {READY_CHECKED} Submit was pressed for this job "
+                          "before and no confirmation showed, so it may have gone through: check your email or the "
+                          "site before you press Submit.")
         if run.entries_short:  # gone on with, on the person's Resume (note 32): said where Submit is
             names = " and ".join(_blocks(s, *n) for s, n in run.entries_short.items())
             run.reason += (f" Note: {_site(run, data)} shows only {names} (the Add button was covered): add the rest "
@@ -5371,7 +5496,36 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         # (the person's Submit from before a restart is never carried over: theirs to press again)
         if run.submit_unsent:
             run.reason += f" {SUBMIT_UNSENT}"
+        self._log(run, "checked the review page: no required box is left empty, and it shows no error")
         self._log(run, "reached the review page")
+
+    def _unready(self, run: Run, data: dict[str, Any]) -> bool:
+        """The check before a job is called filled, on its review page (or a one-page form at its Submit): the page as
+        read, every frame the form is in, for required boxes still empty (_left_empty) and for what the page itself
+        says is wrong or wanted (_page_says_wrong: its errors, Workday's "Errors Found", boxes it marks invalid).
+        Either, and the job is the person's, said for what it is, never "Ready to submit" (the owner's notes 47, 48, 50
+        and 51, Oct 20; Insight's review page listed "Error: Last Name cannot be left blank." and was called ready, with
+        its errors said). A review page that shows the answers as words (Workday's Review step: no boxes) passes where
+        it shows no error. True when it paused."""
+        # (never a box the fill of this very page left empty on purpose: a current job's end date, _form_lap's)
+        skipped = run.skipped_on[1] if run.skipped_on and run.skipped_on[0] == _step_page(data) else frozenset()
+        left = [f for f in _left_empty(data) if str(f.get("id")) not in skipped]
+        wrong = _page_says_wrong(data)
+        if not left and not wrong:
+            return False
+        said = "; ".join(wrong)[:300].rstrip(" .")
+        before = ("Submit was pressed for this job before and no confirmation showed, so it may have gone through: "
+                  "check your email or the site first. " if run.pressed_before else "")
+        self._pause(run, "stuck",
+                    before + "Not ready to submit: "
+                    + (f"the page still has {_boxes_said(len(left))} empty ({_left_said(left)})" if left else "")
+                    + ("; " if left and said else "")
+                    + (f"the page shows errors: {said}" if said else "")
+                    + ". Fix it in the desk's browser window, then press Carry on: the desk checks the page again.",
+                    [{**{k: f[k] for k in ("id", "kind", "label", "section", "sublabel", "options", "role")
+                         if f.get(k) not in (None, [])}, "required": True} for f in left if f.get("kind") != "file"],
+                    code="review_errors")
+        return True
 
     async def _submit(self, run: Run, by_person: bool = True) -> None:
         """Press the final button: the person pressed Submit for this job, or (by_person
@@ -5403,7 +5557,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         srv.browser.current_job_id = run.job_id
         if not by_person:
             data = await srv.inspect_form(include_dropdown_options=False)
-            empty = [f.get("label") or "a field" for f in _empty_required(data)]
+            empty = [f.get("label") or "a field" for f in _left_empty(data)]
             if empty:
                 return self._pause(run, "stuck",
                                    "Not submitted: required fields are still empty (" + ", ".join(empty[:5])
@@ -5460,7 +5614,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             job = srv.tracker().get(run.job_id, with_description=False) or {}
             moved = (_bare(data.get("url") or "")
                      not in {_bare(u) for u in (review, job.get("url"), job.get("apply_url")) if u})
-            if gone := _sent_already(data, text, moved):
+            if gone := _sent_already(data, text, moved, str(job.get("title") or run.title or ""),
+                                     str(job.get("location") or "")):
                 srv.tracker().update(run.job_id, status="applied", note="submitted on the site")
                 run.status, run.need, run.blocking, run.left = "submitted", "", False, False
                 run.marked = not run.pressed_before  # (sent by the person, unless the desk's own press may have)
@@ -5628,7 +5783,9 @@ def _pending(result: dict[str, Any], once_failed: dict[str, dict[str, Any]],
     asked = ({question_key(f.get("label") or "") for f in pending + (result.get("filled") or [])}
              | {placed_key(f) for f in pending})
     pending += [f for key, f in once_failed.items() if key not in asked and f.get("kind") != "file"]
-    missing_files = [f for f in result["needs_input"] if f.get("required") and f.get("kind") == "file"]
+    # (never a file box the page doesn't show, nor its wrappers: a section folded shut, a step not on show)
+    missing_files = [f for f in result["needs_input"] if f.get("required") and f.get("kind") == "file"
+                     and not f.get("unseen")]
     return pending, missing_files
 
 
@@ -6496,6 +6653,58 @@ def _empty_required(data: dict[str, Any]) -> list[dict[str, Any]]:
             and f.get("kind") != "password" and is_empty_value(f.get("value"))]
 
 
+def _left_empty(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """The application's required boxes a page still has empty, as the desk checks before a step's Next and before
+    it calls a job ready (the owner's notes 47, 48, 50 and 51, Oct 20: "Ready to submit", and a Save and Continue
+    pressed, with required boxes empty). Required as the form reader reads it (its attribute, aria-required on the box
+    or on its own group or wrapper, a star or "(required)" in its label or a class saying so, Workday's markers), or by
+    the browser's own validity (`missing`); empty as autofill reads it (a list on its placeholder, a group with nothing
+    chosen, a box to tick unticked, a file box with no file in it or named beside it); and one holding what the
+    browser's own rules for it refuse (`bad`). Never a box not drawn (the reader reads none: a hidden one, a section
+    folded shut), greyed, read-only (a text box), the page's own language list, a sign-up's beside the application
+    (_application_boxes), a password's, nor a file box drawn nowhere (`unseen`)."""
+    return [f for f in _application_boxes(data)
+            if (f.get("required") or f.get("missing")) and not f.get("aside") and not _page_chrome(f)
+            and f.get("kind") != "password" and not f.get("unseen")
+            and not (f.get("readonly") and f.get("kind") not in _CHOICE_KINDS)
+            and (f.get("missing") or f.get("bad") or is_empty_value(f.get("value")) or unset_choice(f))]
+
+
+def _page_says_wrong(data: dict[str, Any]) -> list[str]:
+    """What a page itself says is wrong or still wanted, as the desk checks before it calls a job ready: its error
+    messages (the form reader's: alerts, Workday's field alerts and "Errors Found", a live region's or an "invalid"
+    box's "This field is required"), Workday's "Error - <the box>" links, and the application's boxes it marks invalid
+    (one not required only beside a message: a box left marked from the start, an optional job alerts one, isn't
+    one, the review of 0.3.170). A count alone ("2 errors found") where the page says nothing more. Never a note to
+    look things over (_errorish)."""
+    # (and the form reader's "wanted": a live region's or an "invalid" message's word that a box is wanted, read by this
+    # check alone, as everything else reads `errors` as it was)
+    said = list(dict.fromkeys(" ".join(str(e).split()) for e in [*(data.get("errors") or []),
+                                                                  *(data.get("wanted") or [])]))
+    counts = [e for e in said if _ERROR_COUNT.match(e)]
+    errors = [e for e in said if _errorish(e) and e not in counts]
+    links = [f"“{_short(m.group(1))}” needs fixing" for a in data.get("actions") or []
+             if (m := re.match(r"^error\s*[-–:]\s*(.+)$", str(a if isinstance(a, str) else a.get("text") or "")
+                               .strip(), re.I))]
+    marked = [f"“{_short(f.get('label') or '')}” is marked invalid" for f in _application_boxes(data)
+              if f.get("invalid") and f.get("label") and not f.get("aside")
+              and (f.get("required") or errors or links or counts)]
+    return list(dict.fromkeys(errors + links + marked)) or counts
+
+
+def _boxes_said(n: int, what: str = "required") -> str:
+    """'1 required box', '3 required boxes'."""
+    return f"{n} {what} box{'' if n == 1 else 'es'}"
+
+
+def _left_said(boxes: list[dict[str, Any]]) -> str:
+    """Required boxes still empty, said by their labels: "“Phone” and “Start date”", "“A”, “B”, “C” and 2 more"."""
+    names = list(dict.fromkeys(f"“{_short(clean_label(f.get('label') or '') or 'a box')}”" for f in boxes))
+    if len(names) > 4:
+        return ", ".join(names[:3]) + f" and {len(names) - 3} more"
+    return ", ".join(names[:-1]) + (" and " if len(names) > 1 else "") + names[-1] if names else ""
+
+
 def _application_boxes(data: dict[str, Any]) -> list[dict[str, Any]]:
     """A page's boxes but a sign-up's for job alerts, a newsletter or a talent community: those whose
     own words say so, and the one or two name and email boxes of a page whose headings or buttons are
@@ -7084,12 +7293,12 @@ def _maintenance_page(data: dict[str, Any]) -> bool:
                              .rsplit("/", 1)[-1], re.I))
 
 
-def _sent_already(data: dict[str, Any], text: str, moved: bool) -> str:
+def _sent_already(data: dict[str, Any], text: str, moved: bool, title: str = "", place: str = "") -> str:
     """The page's own words that this application has gone (a confirmation, on a page the tab `moved` on to, not a
     step of the form that thanks the person; or the job's page saying it was applied to), or "" when it doesn't."""
     if moved and (gone := sorted(confirmations(text))) and not _mid_application(data, text):
         return gone[0]
-    return _applied_before(data, text)
+    return _applied_before(data, text, title, place)
 
 
 # ------------------------------- helpers: entry blocks, applied before, closed
@@ -7123,11 +7332,21 @@ def _blocks_by_delete(data: dict[str, Any], section: str) -> int:
     return len({m.group(1) for a in data.get("actions") or [] if (m := kind.match(final_text(a.get("text") or "")))})
 
 
-def _applied_before(data: dict[str, Any], text: str) -> str:
-    """The page's own words that this job was applied to already, or "" when it doesn't say so. A
-    question on the form that asks it ("Have you already applied for this position?") isn't that."""
+def _applied_before(data: dict[str, Any], text: str, title: str = "", place: str = "") -> str:
+    """The page's own words that this job was applied to already, or "" when it doesn't say so: the sentence that says
+    it. A question on the form that asks it ("Have you already applied for this position?") isn't that. Words that
+    name no job count only in the page's own notices (its errors and alerts, banners, headings: formjs' `notices`,
+    never a card in a list of postings) or as the page's whole message; words that name a job by its title only where
+    that's this job's (`title`, at its `place`). A notice in a card of its own counts only where the jobs the card
+    names (its links and headings) are this one (formjs' `card_notices`: the review of fix-ready-check, round 3)."""
     labels = " ".join(str(f.get("label") or "") for f in data.get("fields") or []).lower()
-    for said in list(data.get("errors") or []) + [text or ""]:
+    notices = [str(n) for n in [*(data.get("errors") or []), *(data.get("notices") or []),
+                                *(data.get("headings") or [])] if n]
+    notices += [str(c.get("text") or "") for c in data.get("card_notices") or []
+                if isinstance(c, dict) and c.get("text")
+                and all(_same_title(str(n), title, place) for n in c.get("names") or [])]
+    whole = len(" ".join((text or "").split())) < 300  # (a page whose words are its message alone)
+    for said, alone in [*((n, True) for n in notices), (text or "", whole)]:
         said = re.sub(r"[ \t\xa0]+", " ", said.replace("\u2019", "'"))
         for m in _APPLIED_BEFORE.finditer(said):
             begun = max(said.rfind(c, 0, m.start()) for c in ".!?")
@@ -7136,10 +7355,68 @@ def _applied_before(data: dict[str, Any], text: str) -> str:
                 begun = line  # a line of its own (under a heading), not one sentence wrapped onto the next
             if m.group(0).lower() in labels or not re.fullmatch(r"[\s\W]*", said[begun + 1:m.start()]):
                 continue  # a question on the form, or a sentence that only supposes it ("If you have already…")
-            start, end = said.rfind(".", 0, m.start()) + 1, said.find(".", m.end())
-            sentence = " ".join(said[start:end + 1 if end >= 0 else len(said)].split())[:200]
-            return sentence
+            if m.group("bare") and not alone and not _under_title(data, said, m.start(), title, place):
+                continue  # (naming no job, in a page's words that may be a list's: "Similar jobs" cards)
+            if m.group("named") is not None and not _same_title(m.group("named"), title, place):
+                continue  # (another job's: "You have already applied for Process Technician." on this one's page)
+            if _APPLY_LIMIT.search(" ".join([m.group(0), *re.split(r"(?<=[.!?])\s+", said[m.end():m.end() + 300],
+                                                                   maxsplit=2)[:2]])):
+                continue  # a limit on how many it takes ("You have already applied. You may apply to 3 jobs…")
+            # (that sentence alone, within its own line: never the rest of the page after it)
+            line_end = said.find("\n", m.end())
+            line_end = len(said) if line_end < 0 else line_end
+            start, end = max(said.rfind(".", 0, m.start()) + 1, line + 1), said.find(".", m.end(), line_end)
+            return " ".join(said[start:end + 1 if end >= 0 else line_end].split())[:200]
     return ""
+
+
+_ON_DATE = re.compile(r"\s+on\s+(?:\w+\.? \d{1,2},? \d{4}|\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2})\s*$", re.I)
+_PLACE_TAIL = re.compile(r"[A-Za-z][A-Za-z .'-]*,\s*[A-Za-z][A-Za-z .]*|remote|hybrid", re.I)
+_THE_POSITION = re.compile(r"^the\s+(.+?)(?:\s+(?:position|job|role|opening|posting|requisition|vacancy))?$", re.I)
+
+
+# A heading over other postings than the job's ("Similar jobs", "You may also like")
+_SIMILAR = re.compile(r"\b(?:similar|recommended|related|suggested|you (?:may|might) also like|other (?:jobs|openings|"
+                      r"positions|roles|opportunities)|more (?:jobs|openings|positions|roles|opportunities))\b", re.I)
+
+
+def _under_title(data: dict[str, Any], text: str, at: int, title: str, place: str = "") -> bool:
+    """Is a place in the page's words under the job's own title as its main heading, with no other heading between
+    ("Equipment Technician" then "You have already applied.")? Never under a heading over other postings ("Similar
+    jobs"), nor under another posting's heading that's the same title (a similar job's): the first heading that's the
+    job's title is the one (the reviews of fix-ready-check, rounds 2 and 3)."""
+    headings = {" ".join(str(h).split()) for h in data.get("headings") or [] if str(h or "").strip()}
+    lines = [" ".join(x.split()) for x in text[:at].split("\n")]
+    if any(len(line) < 60 and _SIMILAR.search(line) for line in lines):
+        return False
+    heads = [(i, line) for i, line in enumerate(lines) if line in headings]
+    if not heads:
+        return False
+    first = next((i for i, line in heads if _same_title(line, title, place)), None)
+    return first is not None and heads[-1][0] == first
+
+
+def _same_title(named: str, title: str, place: str = "") -> bool:
+    """Is a job a page names by its title this job ("Field Service Engineer (R1234)" for "Field Service Engineer"):
+    the same title as two sites agree on one (tracker.title_key), less any part in brackets, a date it was applied on
+    ("… on 10/12/2026"), "the … position" around it, and a place after a dash ("… - Chandler, AZ") where the tracker's
+    title has none, when it's the job's own `place` or the job gives none (the reviews of fix-ready-check, rounds 2
+    and 3: a Tempe job's isn't a Chandler one's)."""
+    def key(said: str) -> str:
+        return title_key(re.sub(r"\([^)]*\)", " ", said))
+    want = key(title)
+    if not want:
+        return False
+    said = _ON_DATE.sub("", named.strip())
+    for form in {said, (m.group(1) if (m := _THE_POSITION.match(said)) else said)}:
+        if key(form) == want:
+            return True
+        # (less a place after a dash, "City, ST" or "Remote", never another word of a title: "\u2026 - Senior")
+        parts = re.split(r"\s+[-\u2013\u2014|]\s+", form)
+        if (len(parts) > 1 and key(" - ".join(parts[:-1])) == want and _PLACE_TAIL.fullmatch(parts[-1].strip())
+                and (not place.strip() or (city := city_key(place)) is not None and city_key(parts[-1]) == city)):
+            return True
+    return False
 
 
 def _closed_notice(data: dict[str, Any], text: str) -> str:

@@ -948,8 +948,15 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
                 continue  # cross-origin frame that refused, or navigated mid-read
             if frame is not page.main_frame and not data.get("fields"):
                 data["errors"] = []  # nothing to fill: an embed (a player, a widget), whose errors aren't the form's
+                data.pop("wanted", None)
             for key in ("fields", "actions", "errors", "headings", "dialogs"):
                 result[key].extend(data.get(key, []))
+            if data.get("wanted"):  # (a page's own word that a box is wanted: pipeline._page_says_wrong's alone)
+                result.setdefault("wanted", []).extend(data["wanted"])
+            if data.get("notices"):  # (its alerts, banners and headings outside any list: pipeline._applied_before's)
+                result.setdefault("notices", []).extend(data["notices"])
+            if data.get("card_notices"):  # (and those in a card of its own, with the jobs the card names)
+                result.setdefault("card_notices", []).extend(data["card_notices"])
             if data.get("busy") and (frame is page.main_frame or data.get("fields")):
                 # a loading indicator on show (Workday's dots while a step loads); not an embed's with nothing to fill
                 # (a chat widget's spinner: the review of 0.3.147)

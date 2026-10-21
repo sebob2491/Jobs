@@ -7,9 +7,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import json
 import re
+import threading
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -19,6 +21,78 @@ from .browser import final_text
 
 if TYPE_CHECKING:
     from .pipeline import Run
+
+
+# ----------------------------------------------- the accounts the desk knows of
+# Where the desk knows the person has an account (~/.job-apply/accounts.json, theirs alone): a place it made one, signed
+# in to one with their saved password, had a reset email from, or was told one exists. Where it knows of none, a saved
+# password the site refuses goes on to Create Account first, never to a password reset (the owner's note 46, Oct 20:
+# the desk asked a site the person had never had an account at for a reset); a reset only once the site says the
+# account exists ("already exists", "already registered"), or for an account it knows of.
+ACCOUNTS_FILE = "accounts.json"
+_ACCOUNTS_LOCK = threading.Lock()  # (note_account's: the desk's jobs at once, and Claude's tools)
+# A job system many employers share at one host, and the part of its address that is the employer's: SuccessFactors'
+# ?company= (or its career_company), BrassRing's partnerid, UKG Pro's and Jobvite's first folder, and the folder after
+# Workday's "recruiting" on its shared myworkdaysite.com (wd1.myworkdaysite.com/recruiting/<tenant>/<site>)
+_TENANT_QUERY = ("company", "career_company", "companyid", "partnerid")
+_TENANT_FOLDER = ("recruiting.ultipro.com", "recruiting2.ultipro.com", "jobs.jobvite.com")
+
+
+def account_place(url: str) -> str:
+    """Where an account at this address is: its host (a Workday tenant's, an iCIMS site's, a Taleo career section's),
+    with the employer's part of the address on a host many employers share (_TENANT_QUERY, _TENANT_FOLDER). A page saved
+    on this computer, by its folder. "" for none."""
+    try:
+        parts = urlparse(url or "")
+    except ValueError:
+        return ""
+    if parts.scheme == "file":
+        return "file:" + parts.path.rsplit("/", 1)[0]
+    host = (parts.hostname or "").lower().removeprefix("www.")
+    if not host:
+        return ""
+    query = {k.lower(): v for k, v in (p.partition("=")[::2] for p in parts.query.split("&") if p)}
+    tenant = next((f"?{k}={query[k].lower()}" for k in _TENANT_QUERY if query.get(k)), "")
+    folders = [f.lower() for f in parts.path.split("/") if f]
+    if host in _TENANT_FOLDER and folders:
+        tenant = "/" + folders[0]
+    elif host.endswith(".myworkdaysite.com") and "recruiting" in folders[:-1]:
+        tenant = "/" + folders[folders.index("recruiting") + 1]
+    return host + tenant
+
+
+def _accounts() -> dict[str, Any]:
+    """The accounts.json record: {place: {"how": ..., "at": ...}}; empty where there's none or it doesn't read."""
+    try:
+        got = json.loads((config.home() / ACCOUNTS_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return got if isinstance(got, dict) else {}
+
+
+def account_known(url: str, applied: Iterable[str] = ()) -> bool:
+    """Does the desk know of an account of the person's at this address's place (account_place): one kept in
+    accounts.json, or a job applied to at that place (`applied`: the tracker's addresses for them, an account from
+    before the desk kept any, the review of note 46's fix)?"""
+    place = account_place(url)
+    return bool(place) and (place in _accounts() or any(account_place(u) == place for u in applied))
+
+
+def note_account(url: str, how: str) -> None:
+    """Keep that the person has an account at this address's place: `how` the desk knows ("made", "signed in",
+    "reset email", "the site says it exists"). Whatever goes wrong keeping it, the job goes on (it's asked again:
+    Create Account first, then the site's word)."""
+    place = account_place(url)
+    if not place:
+        return
+    # (read again and written under one lock: two jobs at once noting theirs never lose one, the review)
+    with _ACCOUNTS_LOCK, contextlib.suppress(OSError, ValueError):
+        known = _accounts()
+        if place in known:
+            return
+        known[place] = {"how": how, "at": round(time.time())}
+        config.ensure_home()
+        config.write_text_atomic(config.home() / ACCOUNTS_FILE, json.dumps(known, indent=1))
 
 
 class AccountsMixin:
@@ -936,6 +1010,7 @@ class AccountsMixin:
             return "paused"
         run.resetting = False
         run.reset_set = run.account_known = True
+        note_account(run.reset_from or run.url, "reset email")  # (an account of theirs there: _sign_in_lap)
         self._log(run, f"set your saved password as {site}'s new one")
         return "set"
 

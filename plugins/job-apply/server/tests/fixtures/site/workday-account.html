@@ -26,6 +26,8 @@
      said to have sent a new email); once the link was opened, the password is checked as usual. &slow (with
      ?verify=stale or ?verify=late): the refusal is drawn five seconds after the press (as Workday's comes a moment
      after it, live: the desk's next look saw the form alone).
+     &help (with ?verify): Sign In's help says "Returning user? Sign in with the account you already created."
+     &made (with ?verify): its word that the email was sent starts "Your account has already been created."
      ?cover: Sign In's button drawn as KLA's was (live, Oct 2026): a form's "Sign In" button, hidden
      (aria-hidden, tabindex -2), under a div of the site's own (role="button", data-automation-id="click_filter",
      named "Submit") that takes the click. The hidden button does nothing, and nothing is said. -->
@@ -41,7 +43,8 @@
   if (q.has('exists') && got('account', null) === null) put('account', q.get('exists'));
   const step = document.getElementById('step');
   const $ = (id) => document.getElementById(id);
-  const VERIFY = 'An email has been sent to you. Please verify your account';
+  const VERIFY = (q.has('made') ? 'Your account has already been created. ' : '')
+    + 'An email has been sent to you. Please verify your account';
   const VERIFY_FIRST = 'Verify your account before you sign in or request a verification email.';
   const verified = () => {
     try { return got('verified', false) || localStorage.getItem('wd.verified') === 'yes'; } catch (e) { return got('verified', false); }
@@ -59,6 +62,7 @@
 
   function signIn() {
     step.innerHTML = '<h2>Sign In</h2>'
+      + (q.has('help') ? '<p>Returning user? Sign in with the account you already created.</p>' : '')
       + '<label for="em">Email Address</label><input id="em" type="text">'
       + '<label for="pw">Password</label><input id="pw" type="password">'
       + (q.has('cover')
