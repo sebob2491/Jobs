@@ -246,6 +246,8 @@ def test_the_banner_names_the_job_waited_on_and_the_profile_gaps_are_in_words(sr
                                        reason="Sign in on Workday in the desk's browser window.")
     monkeypatch.setattr(config.Profile, "missing_required",
                         lambda self: ["documents.resume", "work_authorization.requires_sponsorship"])
+    # (and the U.S. service setup asks with the background questions: the owner's call, Oct 21)
+    monkeypatch.setattr(config.Profile, "profile_gaps", lambda self: ["history: us_government_employee, us_military"])
 
     async def go():
         await desk.start(port=0, open_browser=False)
@@ -263,6 +265,9 @@ def test_the_banner_names_the_job_waited_on_and_the_profile_gaps_are_in_words(sr
                 notice = await page.inner_text("#notices .notice")
                 assert "still needs: your resume file and whether you need visa sponsorship." in notice, notice
                 assert "documents.resume" not in notice
+                notices = await page.inner_text("#notices")
+                assert "worked for the U.S. federal government or served in the U.S. military" in notices, notices
+                assert "us_government_employee" not in notices, notices
                 await browser.close()
         finally:
             await desk.stop()

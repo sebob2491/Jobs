@@ -588,6 +588,7 @@ REPLAY_PROFILE: dict[str, Any] = {
     "education": {"highest_degree": "Bachelor's Degree",
                   "degrees_earned": [{"level": "high_school"},
                                      {"level": "bachelor", "field": "Electrical Engineering"}]},
+    "history": {"us_government_employee": False, "us_military": False},
     "settings": {"submit_mode": "dry_run", "browser_channel": "chromium", "headless": True, "accept_cookies": True},
 }
 

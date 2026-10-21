@@ -184,6 +184,17 @@ soon, with the least answered that it needs:
      to the person on the desk, since its dates or details differ. `setup_status`'s
      `background: <keys>` lists the ones not answered yet: ask those all at once with
      AskUserQuestion.
+   - U.S. service, in the same AskUserQuestion as the background questions
+     (`setup_status`'s `history: <keys>` lists the ones not answered yet): ever worked for the
+     U.S. federal government as a civilian (`history.us_government_employee`: any agency or
+     branch, any capacity, an internship or a Special Government Employee or IPA assignment
+     too; not a state or local government, not a federal contractor), and ever served in the
+     U.S. military (`history.us_military`: any branch, active duty, the Reserves or the
+     National Guard). Write `true` or `false`. Unlike the background's, each answers both
+     ways: "Have you ever worked for the U.S. Government ... or served in the U.S. Military?"
+     (federal contractors such as NNSS ask it) is Yes where either is true and No where both
+     are false. A `true` for the military is `background.military: true` too; after a `false`,
+     `background.military` still asks about any other country's armed forces.
    - An employer the user has worked for and may apply to again: their ID there, for
      `history.employee_ids` (`{Employer: "ID"}`; only that employer's forms get it).
    - Recurring screening questions in the `answers:` list: cleanroom work, lifting

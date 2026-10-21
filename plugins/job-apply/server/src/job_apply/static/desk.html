@@ -554,6 +554,8 @@ const profileField = (k) => {
   if (/^background: /.test(k)) return `your answers to the yes/no questions most employers ask (government, military or `
     + `Defense work, relatives at the company, a non-compete, patents, another job or a board seat): ask Claude to "ask me `
     + `the Job Desk's background questions"`;
+  if (/^history: /.test(k)) return `whether you've ever worked for the U.S. federal government or served in the U.S. `
+    + `military: ask Claude to "ask me the Job Desk's background questions"`;
   return PROFILE_FIELDS[k] || k;
 };
 const inWords = (xs) => xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;

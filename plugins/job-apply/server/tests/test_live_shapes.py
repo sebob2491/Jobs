@@ -150,6 +150,27 @@ def test_live_smoke_applies_with_the_awkward_profile(tmp_path):
     assert written["work_history"] == lp.FAKE_PROFILE["work_history"]
 
 
+def test_the_live_checks_applicant_never_worked_for_the_us_government_nor_served(tmp_path):
+    """The live check's applicant says its U.S. service as setup asks it (history.us_government_employee and
+    us_military, both false: the owner's call, Oct 21), so NNSS's question 4 is No, in either shape and for each role
+    (a role's background leaves it as it is), and its profile has no such gap."""
+    service = {"us_government_employee": False, "us_military": False}
+    q4 = {"id": "q4", "kind": "radio_group", "options": ["Yes", "No"],
+          "label": "4. Have you ever worked for the U.S. Government executive, judicial, or legislative "
+                   "agencies/branches or served in the U.S. Military in any capacity (including as Special Government "
+                   "Employee, an Intergovernmental Personnel Act employ, or similar capacity)?"}
+    job = {"company": "Mission Support and Test Services (NNSS)"}
+    for profile in (lp.FAKE_PROFILE, lp.awkward()):
+        assert profile["history"] == service
+        assert autofill.resolve_field(q4, Profile(profile), job).value == "No"
+        assert not [g for g in Profile(profile).profile_gaps() if g.startswith("history")]
+    code, said = _smoke(tmp_path, "--pipeline", "--role", "it", "--companies", "no-such-employer")
+    assert code == 0, said
+    (home,) = [h for h in tmp_path.glob("job-apply-live-*") if (h / "profile.yaml").exists()]
+    written = yaml.safe_load((home / "profile.yaml").read_text(encoding="utf-8"))
+    assert written["history"] == service and written["work_history"][0]["company"] == "Example Data Center"
+
+
 # --- the values audit with a GED ----------------------------------------------------------------------------------
 
 def test_a_ged_holders_review_page_showing_the_ged_is_no_overstated_degree():
