@@ -1162,6 +1162,7 @@ class Run:
     # clears, never another (a restart asks again, the card worked out anew as it goes)
     maybe_shown: list[int] = field(default_factory=list)
     page: Any = None  # its browser tab
+    opened_tabs: list[Any] = field(default_factory=list)  # the tabs _open gave it, still open (Skip's)
     updated: float = field(default_factory=time.time)
 
     def public(self) -> dict[str, Any]:
@@ -1174,7 +1175,7 @@ class Run:
                                 "mail_last", "entries_short", "entries_told", "entries_ok", "account_answers",
                                 "employer_mail", "others_mail", "went_in", "agreed", "draft_pages", "submit_pressed",
                                 "sending", "cut_short", "started", "pass_steps", "rounds", "resumes", "marked",
-                                "maybe_shown", "kept_replaced", "once_left")},
+                                "maybe_shown", "kept_replaced", "once_left", "opened_tabs")},
                 # (only for the cards that show it: a job queued or under way has none, and 30 of them made the
                 # page's state megabytes, every poll)
                 "went_in": None if self.status in ("queued", "running") else self.went_in.public(),
@@ -1881,14 +1882,26 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         if was not in ("", "skipped") and job_id not in self._slots:
             self._note_history(run, "skipped")
         self._save_queue()
-        for tab in self.srv.browser.lineage(run.page):  # its application tab, and the tab that opened it
-            if not tab.is_closed():
-                try:
-                    await tab.close()
-                except Exception:
-                    pass
+        await self._close_job_tabs(run)
         # run.page stays, closed: put back by Undo, the job opens again in a new tab, and says why it starts over
         return run
+
+    async def _close_job_tabs(self, run: Run) -> None:
+        """Close a skipped job's tabs: its application tab, the tab that opened it, and any tab either opened (a
+        sign-in window, a policy page). Never a tab another job still has."""
+        browser = self.srv.browser
+        # (a list: a tab is never hashed here, as a stand-in's can't be)
+        others = [r.page for r in self.runs.values() if r.job_id != run.job_id and r.page is not None]
+        tabs = browser.job_tabs(run.job_id, run.page, others)
+        # and a tab the desk opened for it before that still shows the job's own place: its posting tab from before it
+        # was opened again in a new tab (its tab closed, or gone on to another page). That tab alone, and only the
+        # desk's own: one it gave up that went on elsewhere (the person's mail), what such a tab opened, and a tab
+        # Claude opened for the job (it may have gone on to another posting on the same site) stay
+        tabs += [t for t in run.opened_tabs if t not in tabs and t not in others and not t.is_closed()
+                 and browser.tab_jobs.get(t, run.job_id) == run.job_id and self._own_place(run, t.url)]
+        for tab in tabs:
+            with contextlib.suppress(Exception):
+                await tab.close()
 
     async def unskip(self, job_id: int) -> Run | None:
         """The person's Undo on a skipped job. The tracker gets back the status the job had before
@@ -2485,6 +2498,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
                         run.submit_pressed = False  # (the person's Submit has had its go)
                     run.updated = time.time()
             with contextlib.suppress(Exception):  # (a tab that won't close: never the job's surprise)
+                if run.status == "skipped":  # skipped as its step went: a tab the step opened after the Skip
+                    await self._close_job_tabs(run)
                 await self._close_done_tabs()
         except asyncio.CancelledError:
             cancelled = True
@@ -3025,6 +3040,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         srv.forget_presets(run.job_id)  # (a fresh form: the country lists it presets are the site's again)
         opened = await srv.open_application(job_id=run.job_id)
         run.page = srv.browser.current_tab or run.page
+        # (the desk's own tabs for it: an old one left at its own place when it's opened again is Skip's to close)
+        run.opened_tabs = [t for t in run.opened_tabs if not t.is_closed() and t is not run.page] + [run.page]
         if "error" in opened or opened.get("navigation_error"):
             run.status = "failed"
             run.reason = f"Couldn't open the page: {opened.get('error') or opened.get('navigation_error')}"

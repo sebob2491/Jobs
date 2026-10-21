@@ -9199,6 +9199,160 @@ def test_skip_closes_the_jobs_tabs_both_the_posting_and_the_application(srv, mon
     assert all(t.is_closed() for t in tabs) and r.status == "skipped"
 
 
+def test_skip_closes_every_tab_of_the_job_and_no_other_jobs(srv, monkeypatch):
+    """The owner's ask (Oct 21): a skipped job's tabs all close. Skip closed only its application tab and the tab
+    that opened it: a window that tab opened (a policy page, a sign-in window) stayed open. Another job's tab opened
+    from it, a tab Claude opened from it for another job, a window either of those opened, and a tab the person
+    opened themselves stay."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/popup-posting.html"), title="Sr. Field Application Engineering",
+                      company="Example Litho")["job"]
+    other = srv.add_job(url=fixture_url("site/posting.html"), title="FSE", company="Example Fab")["job"]
+    third = srv.add_job(url="https://example.com/jobs/3", title="Tech", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def opened_by(tab):
+        async with tab.expect_popup() as info:
+            await tab.evaluate("window.open('about:blank', '_blank')")
+        return await info.value
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you", timeout=90)
+            mine = srv.browser.lineage(r.page)
+            window = await opened_by(r.page)  # (its sign-in page's own window)
+            theirs = await srv.browser.new_tab()  # (one the person opened)
+            others = Run(other["id"], "FSE", "Example Fab", status="needs_you", need="sign_in")
+            others.page = await opened_by(r.page)  # (another job's, opened from this one's tab)
+            applier.runs[other["id"]] = others
+            others_window = await opened_by(others.page)
+            for_another = await opened_by(r.page)  # (one Claude opened from it for a third job)
+            srv.browser.tab_jobs[for_another] = third["id"]
+            another_window = await opened_by(for_another)
+            await applier.skip(job["id"])
+            return [*mine, window], [theirs, others.page, others_window, for_another, another_window]
+        finally:
+            await applier.stop()
+
+    closed, kept = run(go())
+    assert len(closed) == 3 and all(t.is_closed() for t in closed)
+    assert not any(t.is_closed() for t in kept)
+
+
+def test_a_tab_a_skipped_jobs_step_opens_after_the_skip_is_closed_at_its_end(srv, monkeypatch):
+    """Skip pressed while the job's step was under way: a tab the step opened after it (its Apply's new tab) stayed
+    open. The step's end closes the skipped job's tabs again: never another job's, nor, at another job's step's end, a
+    tab Claude opened for the skipped job after the Skip (the review: that one closed under Claude)."""
+    first = srv.add_job(url="https://example.com/jobs/1", title="FSE", company="Example Fab")["job"]["id"]
+    second = srv.add_job(url="https://example.com/jobs/2", title="Tech", company="Example Fab")["job"]["id"]
+    applier = Applier(srv)
+    tabs = {}
+
+    async def drive(r):  # (no site: the tabs a step opens are what matters here)
+        if r.job_id == first:
+            r.page = await srv.browser.new_tab()
+            await applier.skip(first)  # pressed meanwhile
+            r.page = tabs["late"] = await srv.browser.new_tab()  # (its step goes on to its Apply's new tab)
+        else:
+            # Claude opens the skipped job after the Skip
+            tabs["claude"] = await at(srv.browser, "https://example.com/jobs/1")
+            srv.browser.tab_jobs[tabs["claude"]] = first
+            r.page = tabs["second"] = await srv.browser.new_tab()
+            r.status, r.need, r.reason = "needs_you", "sign_in", "Sign in."
+
+    monkeypatch.setattr(applier, "_drive", drive)
+
+    async def go():
+        applier.start()
+        try:
+            applier.enqueue(first)
+            await until(lambda: applier.runs[first].status == "skipped" and first not in applier._slots, timeout=30)
+            applier.enqueue(second)
+            await until(lambda: second in applier.runs and applier.runs[second].status == "needs_you"
+                        and second not in applier._slots, timeout=30)
+        finally:
+            await applier.stop()
+
+    run(go())
+    assert tabs["late"].is_closed()
+    assert not tabs["claude"].is_closed() and not tabs["second"].is_closed()
+
+
+async def at(browser, address):
+    """A new tab of `browser` showing `address`, answered here (no network)."""
+    tab = await browser.new_tab()
+
+    async def page(route):
+        await route.fulfill(body="<p>A page</p>", content_type="text/html")
+
+    await tab.route("**/*", page)
+    await tab.goto(address)
+    return tab
+
+
+def test_skip_closes_the_old_posting_tab_a_job_opened_again_left(srv, monkeypatch):
+    """The person closes a paused job's application tab; the desk opens the job again in a new tab ("its tab was closed,
+    so I opened the job again in a new tab"), and its old posting tab stays open, out of the new tab's lineage. Skip
+    closes it too (the fourth review: it was the tools' current tab by then, and was kept for that)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/popup-posting.html"), title="Sr. Field Application Engineering",
+                      company="Example Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you" and job["id"] not in applier._slots, timeout=90)
+            application, posting = srv.browser.lineage(r.page)
+            await application.close()  # the person closes the application tab
+            await until(lambda: any("opened the job again" in line for line in r.log), timeout=60)
+            await until(lambda: r.status == "needs_you" and job["id"] not in applier._slots, timeout=90)
+            new = srv.browser.lineage(r.page)
+            await applier.skip(job["id"])
+            return posting, new
+        finally:
+            await applier.stop()
+
+    posting, new = run(go())
+    assert posting.is_closed() and all(t.is_closed() for t in new)
+
+
+def test_skip_closes_the_jobs_old_posting_tab_but_never_one_gone_elsewhere(srv):
+    """The second review: a job opened again in a new tab (its tab closed, or gone on to another page) left its old
+    posting tab open, out of its new tab's lineage, and Skip left it open. Skip closes a tab the desk opened for the
+    job before (Run.opened_tabs) while it still shows the job's own place. One of those that went on to another site
+    (the person's mail) stays, as does one that's another job's tab now; and a tab Claude opened for the job
+    (tab_jobs), which may have gone on to another posting on the same site (the third review: LinkedIn), stays."""
+    url = "https://careers.examplefab.example/jobs/1"
+    job = srv.add_job(url=url, title="FSE", company="Example Fab")["job"]
+    other = srv.add_job(url="https://careers.examplefab.example/jobs/2", title="Tech", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        r = Run(job["id"], "FSE", "Example Fab", url=url, status="needs_you", need="sign_in")
+        applier.runs[job["id"]] = r
+        old = await at(srv.browser, url)  # (its posting tab, from before it was opened again)
+        elsewhere = await at(srv.browser, "https://mail.example.org/inbox")  # (one the person went on to mail in)
+        others = Run(other["id"], "Tech", "Example Fab", status="needs_you", need="sign_in")
+        others.page = await at(srv.browser, url)  # (another job's tab now)
+        applier.runs[other["id"]] = others
+        claudes = await at(srv.browser, "https://careers.examplefab.example/jobs/3")  # (Claude's, opened for it)
+        srv.browser.tab_jobs[claudes] = job["id"]
+        reused = await at(srv.browser, "https://careers.examplefab.example/jobs/4")  # (one of its, Claude's since for
+        srv.browser.tab_jobs[reused] = other["id"]  # another job: the fifth review)
+        r.page = await at(srv.browser, url + "/apply")  # (the new one)
+        r.opened_tabs = [old, elsewhere, others.page, reused, r.page]
+        await applier.skip(job["id"])
+        return old, r.page, [elsewhere, others.page, claudes, reused]
+
+    old, new, kept = run(go())
+    assert old.is_closed() and new.is_closed()
+    assert not any(t.is_closed() for t in kept)
+
+
 def test_a_job_skipped_while_its_paused_tab_is_looked_at_isnt_started_again(srv, monkeypatch):
     """Skip pressed while the desk was checking a job paused for a sign-in: the tab Skip closed
     read as "they got past it", and the skipped job was queued again. The test above failed
