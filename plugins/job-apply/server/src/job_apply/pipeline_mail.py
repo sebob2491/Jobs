@@ -41,15 +41,33 @@ class MailAsk:
     want: str = "code"  # "code" or "link"
     senders: list[str] = field(default_factory=list)  # who may have sent it (MailMixin._mail_senders)
     after: float = 0.0  # mail from then on (its look's `since` less its look-back)
-    before: float | None = None  # and before then, when another job waiting on the same senders began after it
+    before: float | None = None  # and before then: another job's mail may come after (a later wait, or its step)
     answered: float = 0.0  # when Claude last handed back nothing usable
     looks: int = 0  # how many times it has (each a little further apart: due)
     mails: list[mailbox.Mail] | None = None  # handed back, for the job's next look
     said: tuple[bool, str] | None = None  # what became of them: used, and in plain words (never the code)
+    # the query as last given to Claude: its `before`, and when (a look that may be the window's last is one made with
+    # the whole window before it in the past)
+    given_before: float | None = None
+    given_at: float = 0.0
+    # its window ends at another job's step on the same senders (MailMixin._others_step_since), was looked at whole,
+    # and nothing in it could be used: what comes after can't be told from that job's, so it's the person's to enter
+    closed: bool = False
+    told: bool = False  # (said in the job's log, once)
 
     def spent(self) -> bool:
-        """Claude has looked as many times as one wait asks (GMAIL_LOOKS_MOST): the person's to enter now."""
-        return self.looks >= pipeline.GMAIL_LOOKS_MOST
+        """Nothing more to ask Claude for this wait: it has looked as many times as one wait asks (GMAIL_LOOKS_MOST),
+        or its window is closed. The person's to enter now."""
+        return self.closed or self.looks >= pipeline.GMAIL_LOOKS_MOST
+
+    def spent_said(self) -> str:
+        """Why it's the person's to enter now, for the job's log and its card."""
+        if self.closed:
+            return (f"Claude can't tell this job's {self.want} from another job's in your Gmail (one sender emails "
+                    f"both, and the other began its own email step after this one paused), so it's yours to enter in "
+                    "the desk's browser window")
+        return (f"Claude looked in your Gmail {self.looks} times and none came that it could use, so the {self.want} "
+                "is yours to enter in the desk's browser window")
 
     def due(self, now: float) -> bool:
         """For Claude to look for now: nothing handed back on, not spent, and MAIL_POLL_SECONDS after its last look came
@@ -58,7 +76,9 @@ class MailAsk:
         return self.mails is None and not self.spent() and (self.looks == 0 or now - self.answered >= wait)
 
     def query(self) -> str:
-        """The Gmail search for it: those senders, in its window (Gmail leaves out Spam and Trash by itself)."""
+        """The Gmail search for it: those senders, in its window (Gmail leaves out Spam and Trash by itself). Kept as
+        given: what Claude hands back was found with it."""
+        self.given_before, self.given_at = self.before, time.time()
         q = f"from:({' OR '.join(sorted(self.senders))}) after:{math.floor(self.after)}"
         return q + (f" before:{math.ceil(self.before)}" if self.before is not None else "")
 
@@ -179,9 +199,10 @@ class MailMixin:
             await self._look_in_mail(run, handed)
         finally:
             if handed is not None and handed.mails is None:  # (read: due again a little later, unless used)
-                handed.said = handed.said or (False, run.mail_last)
                 handed.answered = time.time()
                 handed.looks += 1
+                self._tell_spent(run, handed)
+                handed.said = handed.said or (False, run.mail_last)
             if run.mail_done:
                 self.mail_asks.pop(run.job_id, None)
 
@@ -271,6 +292,17 @@ class MailMixin:
                                                           run.employer_mail or frozenset())
             before = min(later) if later else None
             others_mail = run.others_mail if want == "code" else None
+            bound = None
+            if login is None:
+                # Gmail's: only what came before another job on the same senders began a step that may email the
+                # person, since this one paused (less a margin for this computer's clock against Gmail's): what came
+                # after may be that job's. The inbox's own look is refused while one began meanwhile; Claude's
+                # messages say when each came, so the rest are read, never refused whole (which left a job the queue
+                # went on without with no code at all while it went on: the review of 0.3.228). In the request's
+                # query too, so Claude's newest few are from its window
+                if (stepped := self._others_step_since(run, senders)) is not None:
+                    bound = stepped - pipeline.STEP_CLOCK_SKEW
+                    before = bound if before is None else min(before, bound)
             if login is not None:
                 found = await asyncio.to_thread(mailbox.search, *login, asked, senders, want, own_link, before,
                                                 look_back, others=others_mail)
@@ -279,14 +311,13 @@ class MailMixin:
                 return
             else:  # the messages Claude read in Gmail for it, by the inbox's own checks (off the event loop, as those)
                 mails, handed.mails = handed.mails or [], None
-                # (and only what came before another job on the same senders began a step that may email the person,
-                # since this one paused: what came after may be that job's. The inbox's own look is refused while one
-                # began meanwhile; Claude's messages say when each came, so the rest are read, never refused whole,
-                # which left a job the queue went on without with no code at all while it went on: the review)
-                if (stepped := self._others_step_since(run, senders)) is not None:
-                    before = stepped if before is None else min(before, stepped)
                 found = await asyncio.to_thread(mailbox.pick, mails, asked, senders, want, own_link, before, look_back,
                                                 others=others_mail)
+                # (the window, closed by that step, looked at whole by a search that ended there, a minute after it
+                # ended: nothing more can come in it, so asking again would only be Claude's turns for nothing)
+                if (found is None and bound is not None and handed.given_before is not None
+                        and abs(handed.given_before - bound) <= 1 and handed.given_at > bound + pipeline.MAIL_SETTLE):
+                    handed.closed = True
         except mailbox.MailboxError as e:
             if login is not None and "app password" in str(e):  # (only the inbox's own sign-in says so)
                 self._mail_refused = login[1]  # not tried again until a new one is saved
@@ -409,10 +440,14 @@ class MailMixin:
             self._wake.set()
         self.mail_watched_at = time.time()
 
-    def _reads_gmail(self, run: Run) -> bool:
-        """Is Claude reading this job's emailed code or link from the person's Gmail (settings.email_codes, Claude
-        watching; never a password reset's)? The caller has found no email app password that works."""
-        return not run.resetting and self.claude_watching() and self._email_codes_on()
+    def _tell_spent(self, run: Run, ask: MailAsk) -> None:
+        """A request that's spent (MailAsk.spent): said once in the job's log, and as its last word on the inbox."""
+        if not ask.spent() or self.mail_asks.get(run.job_id) is not ask:
+            return
+        run.mail_last = ask.spent_said()
+        if not ask.told:
+            ask.told = True
+            self._log(run, ask.spent_said())
 
     def _others_step_since(self, run: Run, senders: set[str]) -> float | None:
         """When another job whose mail may come from these senders first began a step that may email the person (took
@@ -454,9 +489,8 @@ class MailMixin:
             ask = self.mail_asks[run.job_id] = MailAsk(run.job_id, run.paused_at)
         ask.employer, ask.want, ask.senders = run.company or "", want, sorted(senders)
         ask.after, ask.before = after, before
-        run.mail_last = (f"Claude looked in your Gmail {ask.looks} times for the {want}, and none came that it could "
-                         "use: it's yours to enter" if ask.spent()
-                         else f"asked Claude to look in your Gmail for the {want}")
+        run.mail_last = f"asked Claude to look in your Gmail for the {want}"
+        self._tell_spent(run, ask)
 
     def open_mail_asks(self) -> list[MailAsk]:
         """The requests of Claude whose jobs still wait on their email."""
@@ -473,6 +507,12 @@ class MailMixin:
         the job's card."""
         ask = self._live_ask(job_id)
         return ask.want if ask is not None and not ask.spent() and self.claude_watching() else None
+
+    def gmail_note(self, job_id: int) -> str | None:
+        """Why Claude no longer looks in the person's Gmail for this job's code or link (MailAsk.spent_said), while
+        the job still waits on it: for its card."""
+        ask = self._live_ask(job_id)
+        return ask.spent_said() + "." if ask is not None and ask.spent() else None
 
     def mail_watch_unwanted(self, queue: bool = True) -> str | None:
         """Why there's nothing for Claude's watch to wait for (its command needn't run again), or None while there is:
@@ -530,9 +570,16 @@ class MailMixin:
         if not mails:
             ask.answered = time.time()
             ask.looks += 1
+            run = self.runs.get(job_id)
+            if run is not None:
+                self._tell_spent(run, ask)
+            ahead = any(mailbox.dated_ahead(d) for d in messages if isinstance(d, dict))
+            why = (" (their dates are ahead of this computer's clock by more than a few minutes: its clock may be "
+                   "behind, so the desk can't tell when they came)." if ahead else
+                   " (none of those messages had a sender and a date it could read)." if messages else ".")
             return False, ("Nothing yet: the request stays, and comes up again a little later" if not ask.spent() else
                            "Nothing yet, and that was the last look for this wait: the code is the person's to enter"
-                           ) + (" (none of those messages had a sender and a date it could read)." if messages else ".")
+                           ) + why
         ask.mails, ask.said = mails, None
         self._wake.set()  # (looked at as soon as the desk is back to that job: at once while it holds the queue)
         end = time.monotonic() + pipeline.GIVE_MAIL_WAIT

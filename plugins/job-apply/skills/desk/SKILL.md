@@ -351,7 +351,15 @@ Stop, and tell the user once in a sentence, when the watch command fails to run 
 find `uv`, or exits with an error other than "nothing to watch"): the desk then asks you
 for nothing, and the codes are theirs to type. Do the same when Gmail refuses you (its
 sign-in has lapsed, or it turns the search down): say they can reconnect the Gmail
-connector and ask you to watch again.
+connector and ask you to watch again. And when `account` isn't one of the Gmail accounts
+the connector has linked (its `list_accounts`, or a search that says so): say once that
+the connector doesn't reach the address the desk applies with, so the codes are theirs
+to type, and stop. Never search another account instead.
+
+When a request's job can't be told apart from another job's (one sender emails both, and
+the other began its own email step after this one paused), the desk stops asking for it
+after one look at the time before that step, and its card says the code is the user's to
+enter: nothing for you to do.
 
 Never send, delete, archive, label or mark any message, and never read mail no request
 names. Whichever comes first goes in: the user can still type the code in the desk's

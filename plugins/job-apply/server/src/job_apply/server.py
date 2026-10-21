@@ -1383,7 +1383,7 @@ async def mail_requests() -> dict[str, Any]:  # async: it reads the desk's runs 
     a.claude_seen()  # (at work on them: watching still)
     asks = [ask.public() for ask in a.due_mail_asks()]
     why = a.mail_watch_unwanted()
-    waiting = len(a.open_mail_asks()) - len(asks)
+    waiting = len([ask for ask in a.open_mail_asks() if not ask.spent()]) - len(asks)  # (spent ones are the person's)
     try:  # (the person's own address: the Gmail account to search, where the connector has several)
         account = mailbox.login_address(str(config.Profile.load().get("personal.email") or "")) or None
     except Exception:

@@ -1267,7 +1267,9 @@ function renderSide() {
     const [said, cls] = needPill(r);
     const mark = ` <span class="pill ${cls}">${esc(said)}</span>`;
     // (its emailed code or link, asked of Claude in the chat: read through the Gmail connector, typed in by the desk)
-    const gmail = r.gmail ? `<p class="small" data-gmail="${esc(r.gmail)}">Claude is looking in your Gmail for ${GMAIL_FOR[r.gmail] || "the email"}. You can still enter it yourself: whichever comes first goes in.</p>` : "";
+    // (or why Claude no longer looks: a code it can't tell from another job's, or its looks for this wait used up)
+    const gmail = r.gmail ? `<p class="small" data-gmail="${esc(r.gmail)}">Claude is looking in your Gmail for ${GMAIL_FOR[r.gmail] || "the email"}. You can still enter it yourself: whichever comes first goes in.</p>`
+      : r.gmail_note ? `<p class="small" data-gmail="spent">${esc(r.gmail_note)}</p>` : "";
     const head = `<h3>${esc(r.title)} <span class="small">· ${esc(r.company)}</span>${mark}</h3><p>${esc(r.reason)}</p>${gmail}`;
     let body;
     const qs = r.questions || [];

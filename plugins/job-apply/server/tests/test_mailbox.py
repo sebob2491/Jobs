@@ -672,3 +672,13 @@ def test_a_gmail_message_reads_by_gmails_own_date_and_its_senders_own_address():
     began = time.perf_counter()
     assert mailbox.found_in("code", "", [crawl], [], lambda url: False) == "123456"
     assert time.perf_counter() - began < 3
+
+
+def test_a_message_dated_ahead_of_this_computers_clock_is_told_from_one_with_no_date():
+    """The review's second round: with this computer's clock more than a few minutes slow, every Gmail date reads as
+    from the future and is refused. That's said as a clock behind, not as a message with no date."""
+    later = time.time() + 3600
+    assert mailbox.dated_ahead({"date": later}) and mailbox.dated_ahead({"internalDate": str(int(later * 1000))})
+    assert mailbox.dated_ahead({"date": "Tue, 20 Oct 2099 08:00:00 -0700"})
+    for fine in ({"date": time.time()}, {"date": "yesterday"}, {"date": ""}, {}, {"date": float("inf")}):
+        assert not mailbox.dated_ahead(fine), fine

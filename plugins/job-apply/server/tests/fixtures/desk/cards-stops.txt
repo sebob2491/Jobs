@@ -45,9 +45,9 @@ Day shift
 Travel ≤ 25%
 Entry level
 Not senior
-Any 13
+Any 14
 Bot checks 1
-Questions and sign-ins 7
+Questions and sign-ins 8
 Stuck 2
 Ready 3
 Add
@@ -74,6 +74,11 @@ title matches
 Sign in
 72
 Equipment Technician
+Example Code · Phoenix, AZ · YYYY-MM-DD · pay not listed
+title matches
+Emailed code
+72
+Process Technician
 Example Code · Phoenix, AZ · YYYY-MM-DD · pay not listed
 title matches
 Emailed code
@@ -133,7 +138,7 @@ Cover letter to check
 
 ## needs-h
 Needs you
-13
+14
 Equipment Technician · Example Sign In Sign in
 Sign in on Example Sign In's site in the desk's browser window, then press Carry on.
 Show me
@@ -163,6 +168,14 @@ Report a problem
 Equipment Technician · Example Code Emailed code
 The site emailed a code: type it in the desk's browser window, then press Carry on.
 Claude is looking in your Gmail for the code. You can still enter it yourself: whichever comes first goes in.
+Show me
+Carry on
+Skip job
+I submitted it myself
+Report a problem
+Process Technician · Example Code Emailed code
+The site emailed a code: type it in the desk's browser window, then press Carry on.
+Claude can't tell this job's code from another job's in your Gmail (one sender emails both, and the other began its own email step after this one paused), so it's yours to enter in the desk's browser window.
 Show me
 Carry on
 Skip job

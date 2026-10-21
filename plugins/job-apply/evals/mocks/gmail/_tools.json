@@ -12,6 +12,10 @@
      },
      "max_results": {
       "type": "integer"
+     },
+     "account": {
+      "type": "string",
+      "description": "Which linked Gmail account (its address), where several are linked"
      }
     },
     "required": [
@@ -27,6 +31,20 @@
     "properties": {
      "thread_id": {
       "type": "string"
+     },
+     "messageFormat": {
+      "type": "string",
+      "enum": [
+       "FULL_CONTENT",
+       "PLAIN_TEXT",
+       "MINIMAL",
+       "METADATA_ONLY"
+      ],
+      "description": "Which parts of each message to return; PLAIN_TEXT is the plain-text body"
+     },
+     "account": {
+      "type": "string",
+      "description": "Which linked Gmail account (its address), where several are linked"
      }
     },
     "required": [

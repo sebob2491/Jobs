@@ -536,6 +536,17 @@ def received_at(said: Any, now: float | None = None) -> float | None:
     return float(round(when))  # (whole seconds: the same message handed in another spelling is the same message)
 
 
+def dated_ahead(message: dict[str, Any]) -> bool:
+    """Is a message's date (internalDate or date) one that reads, but further ahead of this computer's clock than
+    FUTURE_SKEW: this clock behind, most likely?"""
+    for said in (message.get("internalDate"), message.get("date")):
+        if said not in (None, "") and received_at(said) is None:
+            when = received_at(said, math.inf)  # (read, whatever the clock says)
+            if when is not None and when > time.time() + FUTURE_SKEW:
+                return True
+    return False
+
+
 def connector_mail(message: dict[str, Any]) -> Mail | None:
     """A message as the Gmail connector gives it (and Claude hands it on), read as the inbox's are: its sender (`from`,
     or the connector's `sender`: an address, or {name, email}, its address alone), its date (`internalDate` when it's

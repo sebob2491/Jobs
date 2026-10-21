@@ -1168,6 +1168,7 @@ class Desk:
         runs = {jid: r.public() for jid, r in self.applier.runs.items()}
         for waiting, shown in runs.items():  # (a job whose emailed code Claude is looking for in the person's Gmail)
             shown["gmail"] = self.applier.gmail_looking(waiting)
+            shown["gmail_note"] = self.applier.gmail_note(waiting)  # (and why Claude no longer does, when it doesn't)
         rows, seen = [], set()
         handled = config.handled_employers()  # (where the desk goes all the way, in the live check)
         tracked_at = [t.find_by_url(item["url"]) for item in self.listings]

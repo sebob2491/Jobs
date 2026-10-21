@@ -6122,6 +6122,11 @@ def test_claudes_watch_for_mail_requests_is_a_long_wait_on_the_desk_behind_its_k
                 ask = a.mail_asks[r.job_id]
                 ask.answered, ask.looks = time.time(), 1
                 out["cmd quiet"] = await asyncio.to_thread(mailwatch.watch, path, 1)
+                ask.looks = pipeline.GMAIL_LOOKS_MOST  # (its looks used up: the card says it's the person's)
+                shown = desk.state()
+                out["spent card"] = next((o["run"]["gmail"], o["run"]["gmail_note"])
+                                         for o in shown["listings"] + shown["others"]
+                                         if o.get("job_id") == r.job_id and o.get("run"))
         finally:
             await desk.stop()
         out["gone"] = not path.exists()
@@ -6141,6 +6146,7 @@ def test_claudes_watch_for_mail_requests_is_a_long_wait_on_the_desk_behind_its_k
     assert out["held"] and out["watching"]
     assert out["due"] == {"due": True, "watch": True} and out["woke in"] < 5  # (only whether: nothing of the job)
     assert out["card"] == "code"
+    assert out["spent card"][0] is None and "yours to enter" in out["spent card"][1], out["spent card"]
     assert out["cmd due"][0] == 0 and "call mail_requests()" in out["cmd due"][1], out["cmd due"]
     assert out["cmd quiet"][0] == 0 and out["cmd quiet"][1].startswith("Nothing yet"), out["cmd quiet"]
     assert out["gone"] and out["cmd closed"][0] == 1 and "isn't open" in out["cmd closed"][1]
@@ -6194,3 +6200,27 @@ def test_claude_hands_the_desk_its_gmail_messages_and_hears_what_became_of_them_
     assert "482913" not in json.dumps(given) and "482913" not in json.dumps(again), given
     assert again["requests"] == [], again
     assert run(srv.give_mail(r.job_id, []))["used"] is False  # (none open now: nothing used)
+
+
+def test_mail_requests_counts_only_the_requests_claude_will_be_asked_again_and_says_a_slow_clock(
+        srv, monkeypatch, job_apply_home):
+    """The review's second round: mail_requests()'s "more looked at lately" counts the requests Claude will be asked
+    for again, never one spent (the person's to enter now). And messages all dated ahead of this computer's clock are
+    said to be so (its clock may be behind), not to have no date."""
+    from job_apply import desk as desk_module
+
+    _set_profile_settings(job_apply_home, email_codes=True)
+    d = Desk(srv)
+    monkeypatch.setattr(desk_module, "_desk", d)
+    a = d.applier
+    runs = [_waiting_on_mail(srv, a) for _ in range(3)]
+    for r in runs:
+        a._ask_claude(r, "code", {"acme-fab.example"}, r.paused_at - 120, None)
+    a.mail_asks[runs[1].job_id].looks, a.mail_asks[runs[1].job_id].answered = 1, time.time()  # (looked at just now)
+    a.mail_asks[runs[2].job_id].looks = pipeline.GMAIL_LOOKS_MOST  # (spent)
+    asked = run(srv.mail_requests())
+    ahead = run(srv.give_mail(runs[0].job_id, [{"sender": "no-reply@careers.acme-fab.example",
+                                                 "date": time.time() + 3600, "plaintext_body": "code 482913"}]))
+    assert [x["job_id"] for x in asked["requests"]] == [runs[0].job_id], asked
+    assert "1 more looked at lately" in asked["note"], asked["note"]
+    assert not ahead["used"] and "clock may be behind" in ahead["said"], ahead

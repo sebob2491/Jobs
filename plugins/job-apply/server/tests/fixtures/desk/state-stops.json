@@ -287,6 +287,62 @@
    "not_interested": null
   },
   {
+   "url": "https://careers.example.com/code/2-14",
+   "title": "Process Technician",
+   "company": "Example Code",
+   "location": "Phoenix, AZ",
+   "posted": "2026-10-10",
+   "posted_days": 8,
+   "pay": null,
+   "ats": "workday",
+   "fit": {
+    "score": 72,
+    "reasons": [
+     "title matches"
+    ],
+    "concerns": [],
+    "blocked": false,
+    "recommended": true,
+    "parts": [
+     {
+      "why": "start",
+      "points": 50
+     },
+     {
+      "why": "title matches",
+      "points": 22
+     }
+    ]
+   },
+   "notes": [],
+   "job_id": 14,
+   "status": "saved",
+   "run": {
+    "job_id": 14,
+    "title": "Process Technician",
+    "company": "Example Code",
+    "status": "needs_you",
+    "need": "email_code",
+    "reason": "The site emailed a code: type it in the desk's browser window, then press Carry on.",
+    "code": "email_code",
+    "gmail": null,
+    "blocking": false,
+    "paused_at": 1002.0,
+    "captcha": false,
+    "left_at_restart": false,
+    "questions": [],
+    "log": [],
+    "log_at": [],
+    "went_in": null,
+    "gmail_note": "Claude can't tell this job's code from another job's in your Gmail (one sender emails both, and the other began its own email step after this one paused), so it's yours to enter in the desk's browser window."
+   },
+   "handled": false,
+   "also_on": [],
+   "saved_at": null,
+   "new": false,
+   "not_interested": null
+  },
+  {
    "url": "https://careers.example.com/bot/3",
    "title": "Equipment Technician",
    "company": "Example Bot",

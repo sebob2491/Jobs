@@ -119,6 +119,11 @@ GIVE_MAIL_WAIT = 30  # seconds give_mail waits for the desk to use what Claude h
 GMAIL_WAIT_MOST = 240
 GMAIL_LOOKS_MOST = 8
 INBOX_TAKES_KEPT = 500  # when the newest jobs began steps that may email the person (Applier._inbox_takes)
+# Mail Claude reads in Gmail for a job is read only from before another job on its senders began a step that may email
+# the person: this much before, for this computer's clock against Gmail's (as RESET_CLOCK_SKEW). And a window that ended
+# this long before Claude's search was all there for it to find (Gmail's search a moment behind its mail)
+STEP_CLOCK_SKEW = 30
+MAIL_SETTLE = 60
 # seconds with nothing done in a tab holding the queue before the person's press on another job lets that one go
 RELEASE_IDLE = 60
 DESK_SETTLE = 30  # seconds a paused tab may go on changing after the desk typed its emailed code or opened its link
@@ -1772,7 +1777,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             waits = other.need == "email_code" and not other.mail_done and _mail_waited(other) < MAIL_WINDOW
             inbox = waits and self.mail_login() is not None
             # (or Claude reading it from the person's Gmail: settings.email_codes, the review of 0.3.228)
-            gmail = waits and not inbox and self._reads_gmail(other)
+            gmail = waits and not inbox and self.gmail_looking(other.job_id) is not None
             reading = inbox or gmail
             # (a tab still a minute is looked at every SLOW_POLL_SECONDS: work begun in it since may not be seen yet)
             if reading or time.time() - other.active_at < RELEASE_IDLE + SLOW_POLL_SECONDS:
