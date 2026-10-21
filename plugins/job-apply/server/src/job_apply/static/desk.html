@@ -1146,17 +1146,35 @@ function question(jobId, q, i, repeated = false, company = "") {
   // (and, for an account form's security questions, that the answers go nowhere else)
   // (and, for an optional box asking their ID at this employer, that it's optional and asked once: on a questions card
   // (`company` given), left empty with Remember ticked and Fill these in pressed, not at this employer again either, and
-  // how that's undone. Any answer to their ID here is remembered for this employer alone)
-  const here = company ? ` Left empty with Remember ticked and Fill these in, it isn't asked at ${esc(company)} again `
-    + `either (to be asked there again, ask Claude to clear it from answers.yaml, or put your ID in your profile's `
-    + `history.employee_ids).` : "";
+  // how that's undone. Any answer to their ID here is remembered for this employer alone; one whose words may name
+  // another organization's ID, "id_unsure", is for this application only, with no Remember)
+  const here = company && q.own_id ? ` Left empty with Remember ticked and Fill these in, it isn't asked at `
+    + `${esc(company)} again either (to be asked there again, ask Claude to clear it from answers.yaml, or put your ID `
+    + `in your profile's history.employee_ids).` : "";
+  const once = q.id_unsure ? " For this application only." : "";
   const about = q.about ? `<span class="small">“${esc(q.about)}”</span>`
     : q.account ? `<span class="small">For this account only: never remembered.</span>`
-    : q.employer_id ? `<span class="small">Optional: left empty, it isn't asked again for this job.${here}</span>` : "";
+    : q.employer_id ? `<span class="small">Optional: left empty, it isn't asked again for this job.${here}${once}</span>`
+    : q.id_unsure ? `<span class="small">${once.trim()}</span>` : "";
   const keep = q.own_id || q.employer_id ? "Remember for this employer only" : "Remember for later applications";
+  // (an optional ID's Remember starts unticked: left empty for good at this employer only where it's ticked, by the
+  // person; typing their ID ticks it, unless they've ticked or unticked it themselves)
+  const ticked = !(consent || forced || q.employer_id);
   return `<label class="q"${q.employer_id ? ` data-optional-id="1"` : ""}><span>${where}${q.error ? ` <span class="small">(${esc(q.error)})</span>` : ""}</span>${about}${input}
-    ${repeated ? "" : `<span class="remember"><input type="checkbox" data-remember="${esc(q.label)}" ${consent || forced ? "" : "checked"}> ${keep}</span>`}</label>`;
+    ${repeated || q.id_unsure ? "" : `<span class="remember"><input type="checkbox" data-remember="${esc(q.label)}" ${ticked ? "checked" : ""}> ${keep}</span>`}</label>`;
 }
+
+// An optional ID's Remember follows what's typed into its box (ticked with an ID, unticked empty) until the person
+// ticks or unticks it themselves
+document.addEventListener("input", (e) => {
+  const box = e.target.closest?.("[data-optional-id]");
+  if (!box || !e.target.dataset.q) return;
+  const keep = box.querySelector("[data-remember]");
+  if (keep && !keep.dataset.touched) keep.checked = !!e.target.value;
+});
+document.addEventListener("change", (e) => {
+  if (e.target.dataset?.remember !== undefined && e.target.closest?.("[data-optional-id]")) e.target.dataset.touched = "1";
+});
 
 function jobButtons(r, which) {
   const b = (act, text, cls = "", tip = "") => `<button class="${cls}" data-job="${r.job_id}" data-job-act="${act}"${tip

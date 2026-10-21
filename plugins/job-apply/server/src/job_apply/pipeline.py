@@ -7640,7 +7640,10 @@ def _went_left(run: Run, result: dict[str, Any], *pages: dict[str, Any]) -> None
         theirs = bool(q.get("employer_id")) and _asked_before(run.asked_once, q) or bool(q.get("left_here"))
         if q.get("employer_id") and not theirs:
             continue  # (asked on its card: theirs to answer, not left)
-        why = ("you left it empty" if theirs
+        # (left empty at this employer on an earlier job's card: said with how it's undone, the third review's LOW 1)
+        why = (f"you left it empty at {run.company or 'this employer'} before (to be asked again, ask Claude to clear "
+               "it from answers.yaml, or set history.employee_ids)" if q.get("left_here")
+               else "you left it empty" if theirs
                else f"your profile's answer “{q['unmatched']}” isn't one of its choices" if q.get("unmatched")
                else "it wouldn't take your profile's answer" if q.get("error") else "your profile doesn't answer it")
         _, why = _went_value({}, why, "")

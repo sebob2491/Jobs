@@ -1977,7 +1977,49 @@ def employer_id_box(field: dict, job: dict | None, prof: Profile | None = None) 
     return not _names_another(text, label, job, prof)
 
 
-_UNFINISHED = re.compile(r"^(none|n ?a|no|not applicable)$|\b(no degree|not (completed|finished)|incomplete|"
+# The words a label may write in capitals around an ID's and still name no organization: instructions, the kinds of
+# employee, the ID's own words (id_names_this_employer). Any other word in capitals may be an organization's name
+_PLAIN_ID_WORDS = frozenset(
+    "please kindly enter provide type give list write fill include share tell add select choose input confirm verify "
+    "specify what whats is are was were be been being have has had do does did will would should must can could may "
+    "might your you yours my our ours us we the a an n if applicable optional required mandatory any all only for of "
+    "at with from in on by to into through and or nor not no yes as this that these those here there who whom which "
+    "when where how it its their them they one ones current currently former formerly previous previously prior past "
+    "present existing old new internal external rehire rehires rehired re hire hires hired returning return retiree "
+    "retirees retired alumni alumnus ex applicant applicants candidate candidates employee employees employed "
+    "employment worker workers work worked working staff associate associates personnel team member members intern "
+    "interns internship contractor contractors contract contingent temporary temp seasonal permanent full part time "
+    "personal security site building clearance badge badges number numbers num id ids identification wwid worldwide "
+    "world wide global corporate company companies employer organization organisation unique official assigned last "
+    "most recent active inactive legacy primary original valid digit digits two three four five six seven eight nine "
+    "ten separation date before again below above field box question answer note know known else otherwise also e g "
+    "eg example s".split())
+# ...and an organization's or a government's word just before the ID, in any case ("federal employee ID")
+_ORG_BEFORE_ID = re.compile(rf"\b(federal|state|county|city|government|agency|university|school|district|doe|dod|"
+                            rf"military)(?: \w+){{0,2}} (?:{_ID_WORDS})")
+
+
+def id_names_this_employer(field: dict, job: dict | None) -> bool:
+    """Does an ID box's label name this employer's own ID positively, so the desk may fill it by itself (from the
+    profile's employee_ids, an ID kept for this employer, an "N/A" written for every one) and remember an answer to it
+    for this employer? Its words in capitals are all plain ones (_PLAIN_ID_WORDS: "Employee ID (for former employees)",
+    "What's your employee ID?", "Security Badge Number") or this employer's own names, initials and short names ("TI
+    Employee ID" at Texas Instruments, "Intel Corporation's WWID" at Intel); and no organization's or government's word
+    comes just before the ID ("federal employee ID"). Never where another name, a short name in capitals that isn't
+    this one's, or such a word may make it another organization's ID ("Microchip Employee ID", "TI badge number" or
+    "Employee ID at Intel Federal" on Intel's form, "DOE BADGE NUMBER", "State employee ID"): the review of the ID's
+    change, round 3: asking is harmless, filling another organization's box is not. employer_id_box says whether it's
+    asked at all."""
+    job = job or {}
+    text = _id_label(field.get("label"))
+    own = {w for n in _this_employers_names(job) for w in n.split()} | _LEGAL_ENDINGS
+    if any(m[1] not in own for m in _ORG_BEFORE_ID.finditer(norm(text))):
+        return False
+    return all(not word[0].isupper() or word.lower() in _PLAIN_ID_WORDS or word.lower() in own
+               for word in re.findall(r"[A-Za-z][A-Za-z0-9]*", text))
+
+
+_UNFINISHED =re.compile(r"^(none|n ?a|no|not applicable)$|\b(no degree|not (completed|finished)|incomplete|"
                          r"unfinished|did not (complete|finish|graduate)|in progress|some|coursework|attended|"
                          r"expected|anticipated|graduating|candidate|pending)\b")
 
@@ -3014,6 +3056,8 @@ def _answer_bank(prof: Profile, label: str, job: dict | None = None, common: boo
         employer = at or str(item.get("from") or "").strip()
         if box[0] is None:
             return not _kept_id(item)
+        if box[0] and not id_names_this_employer(field or {"label": label}, job):
+            return False  # (one whose words may name another organization's ID: asked, never filled by itself)
         if box[0] and employer:
             return same_employer_as(employer, (job or {}).get("company"))
         if not employer:
@@ -3567,11 +3611,13 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
 
     ans = _answer_bank(prof, raw_label, job, field=field)
     if kind in ("text", "textarea") and _asks_an_id(asked):
-        # a box asking an ID: the person's at this employer (employer_id_box) takes their answer kept for it
-        # (_answer_bank) or the profile's employee_ids for it; another employer's (a past job's block, another named),
+        # a box asking an ID: the person's at this employer whose words name it so (employer_id_box,
+        # id_names_this_employer) takes their answer kept for it (_answer_bank) or the profile's employee_ids for it;
+        # one whose words may name another organization's, another employer's (a past job's block, another named),
         # someone else's (a reference's, a friend's) only an answer to it that's no ID kept for an employer. Never
         # another rule's: a Yes or No for its "if previously employed by the company", a number of the profile's
-        if ans is None and employer_id_box(field, job, prof) is True and (kept := _employee_id(prof, job)):
+        if ans is None and employer_id_box(field, job, prof) is True and id_names_this_employer(field, job) \
+                and (kept := _employee_id(prof, job)):
             ans = Answer(kept, "employee_id")
         return ans
     if ans is None and _NEVER_GUESS.search(label):
@@ -4556,20 +4602,24 @@ def _plan_field(f: dict, fields: list[dict], prof: Profile, job: dict | None, ov
 
 
 def _id_flags(f: dict, prof: Profile, job: dict | None, defaulted: bool) -> dict[str, bool]:
-    """A question the profile doesn't answer that asks the person's ID at this employer (employer_id_box): "own_id" (an
-    answer to it is remembered for this employer alone); and, where it's optional, "employer_id" (it's theirs to give,
-    so it's asked: the owner's call, Oct 21, "If something asks for your WWID I'd like it to ask") unless the profile
-    says they never worked here and has no employer that may be this one (a question's "or any of its subsidiaries"
-    alone is no reason to ask), or "left_here" where they left it empty at this employer before (_left_at_employer)."""
+    """A question the profile doesn't answer that asks the person's ID at this employer (employer_id_box): "own_id"
+    where its words name this employer's own ID (id_names_this_employer: an answer to it is remembered for this employer
+    alone), else "id_unsure" (they may name another organization's: an answer is for this application only); and,
+    where it's optional, "employer_id" (it's theirs to give, so it's asked: the owner's call, Oct 21, "If something
+    asks for your WWID I'd like it to ask") unless the profile says they never worked here and has no employer that
+    may be this one (a question's "or any of its subsidiaries" alone is no reason to ask), or "left_here" where they
+    left it empty at this employer before (_left_at_employer)."""
     if employer_id_box(f, job, prof) is not True:
         return {}
+    sure = id_names_this_employer(f, job)
+    flags = {"own_id": True} if sure else {"id_unsure": True}
     if f.get("required") or defaulted:
-        return {"own_id": True}
-    if _left_at_employer(prof, f, job):
-        return {"own_id": True, "left_here": True}
+        return flags
+    if sure and _left_at_employer(prof, f, job):
+        return {**flags, "left_here": True}
     if _worked_here(prof, job or {}) == "No":
-        return {"own_id": True}
-    return {"own_id": True, "employer_id": True}
+        return flags
+    return {**flags, "employer_id": True}
 
 
 def _phone_of_another_kind(fields: list[dict], to_fill: list[dict], needs_input: list[dict], prof: Profile,

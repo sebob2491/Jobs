@@ -1144,8 +1144,14 @@ class Desk:
                 # isn't the answer at another employer's
                 employer = {"company": run.company}
                 card_box = on_card.get(question_key(label)) or {"label": label}
-                own_id = autofill.employer_id_box(card_box, employer, prof) is True
-                mistaken = not own_id and card_box.get("kind", "text") in ("text", "textarea") \
+                id_box = autofill.employer_id_box(card_box, employer, prof) is True
+                own_id = id_box and autofill.id_names_this_employer(card_box, employer)
+                if id_box and not own_id:
+                    # (its words may name another organization's ID, "Microchip Employee ID": asked, and its answer
+                    # for this application only, as its card says)
+                    run.once[question_key(label)] = value
+                    continue
+                mistaken = not id_box and card_box.get("kind", "text") in ("text", "textarea") \
                     and autofill.employer_id_box({"label": label}, employer, prof) is True
                 if own_id:
                     kept = value if autofill.norm(run.company) else None
@@ -1189,7 +1195,9 @@ class Desk:
         history.employee_ids. Returns a note if that couldn't be kept."""
         asked = next((q for q in run.questions
                       if question_key(label) in (placed_key(q), question_key(q.get("label") or ""))), None)
-        if asked is None or not asked.get("employer_id") or " | " in label or not autofill.norm(run.company):
+        # (and only one whose words name this employer's own ID, "own_id": one that may be another's is this job's)
+        if asked is None or not asked.get("employer_id") or not asked.get("own_id") or " | " in label \
+                or not autofill.norm(run.company):
             return None
         try:
             config.save_answer(label, None, run.company, at=run.company)

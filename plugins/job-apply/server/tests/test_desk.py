@@ -910,6 +910,20 @@ def test_an_id_left_empty_with_remember_ticked_isnt_asked_at_that_employer_again
     seventh = card("g", [listed])
     assert desk.answer(seventh, [{"label": listed["label"], "value": "Yes", "remember": True}]) is None
     assert [(a["answer"], a.get("at")) for a in config.saved_answers()] == [("Yes", None)]
+    # (the third review's) one whose words may name another organization's ID: its answer for this application only,
+    # and left empty, for this job alone
+    config.answers_path().unlink()
+    unsure = {"id": "u", "kind": "text", "label": "Microchip Employee ID", "required": False, "id_unsure": True,
+              "employer_id": True}
+    eighth = card("h", [unsure, asked[1]])
+    assert desk.answer(eighth, [{"label": "Microchip Employee ID", "value": "87654321", "remember": True},
+                                {"label": "Years in a cleanroom", "value": "3", "remember": False}]) is None
+    assert config.saved_answers() == []
+    assert desk.applier.runs[eighth].once[question_key("Microchip Employee ID")] == "87654321"
+    ninth = card("i", [unsure, asked[1]])
+    desk.answer(ninth, [{"label": "Microchip Employee ID", "value": "", "remember": True},
+                        {"label": "Years in a cleanroom", "value": "3", "remember": False}])
+    assert config.saved_answers() == [] and desk.applier.runs[ninth].asked_once
 
 
 def test_a_remembered_answer_replaces_one_given_for_this_application_only(srv, job_apply_home):

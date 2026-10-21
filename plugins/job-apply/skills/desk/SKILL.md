@@ -61,7 +61,8 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     profile says they never worked there; left empty, it isn't asked again for that job (nor at that
     employer, when left empty with "remember" ticked and Fill these in: clearing that entry from
     answers.yaml, or setting history.employee_ids, undoes it), and an ID given is remembered for that
-    employer alone. A box the page wouldn't let the desk fill (it timed out) isn't a question: the
+    employer alone; one whose words may name another organization's ID ("Microchip Employee ID" on
+    Intel's form) is never filled by itself, only asked, its answer for that application only. A box the page wouldn't let the desk fill (it timed out) isn't a question: the
     card says "I couldn't fill …";
   - a dialog open over a form, which the user answers in the desk's browser window before pressing
     Carry on (the boxes behind it are filled after that). With `settings.accept_notices` (on

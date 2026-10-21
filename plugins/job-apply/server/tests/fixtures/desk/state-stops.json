@@ -166,6 +166,13 @@
       "kind": "text",
       "required": true,
       "own_id": true
+     },
+     {
+      "id": "13",
+      "label": "Northwind Employee ID",
+      "kind": "text",
+      "required": true,
+      "id_unsure": true
      }
     ],
     "log": [],

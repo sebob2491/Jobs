@@ -9858,8 +9858,10 @@ def test_an_optional_id_question_is_put_to_the_person_once():
     assert pipeline._pending({**result, "needs_input": [before]}, {}, {})[0] == []
     fresh = Run(2, "FSE", "Example Fab")
     pipeline._went_left(fresh, {**result, "needs_input": [before]}, {**page, "fields": [before]})
+    # (said with how it's undone: the third review's LOW 1)
     assert [(e["label"], e["why"]) for e in fresh.went_in.public()["left"]] == [
-        (pipeline._short(WWID), "you left it empty")]
+        (pipeline._short(WWID), "you left it empty at Example Fab before (to be asked again, ask Claude to clear it "
+                                "from answers.yaml, or set history.employee_ids)")]
 
 
 def test_an_answer_that_doesnt_stick_the_first_time_is_filled_again_not_asked_again(srv, monkeypatch):

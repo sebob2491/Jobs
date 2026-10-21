@@ -164,6 +164,8 @@ Optional: left empty, it isn't asked again for this job. Left empty with Remembe
 Remember for this employer only
 WWID
 Remember for this employer only
+Northwind Employee ID
+For this application only.
 Show me
 Fill these in
 Carry on

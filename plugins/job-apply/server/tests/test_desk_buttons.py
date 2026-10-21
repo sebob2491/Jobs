@@ -321,36 +321,48 @@ def test_what_and_where_opens_on_the_profiles_titles_and_places_and_cancel_saves
 def test_an_optional_id_left_empty_on_its_card_goes_with_its_remember(srv, job_apply_home):
     """The review of the ID's change (LOW 1): an optional box for the person's ID at this employer, left empty on its
     questions card, is sent with its Remember with the card's other answers on Fill these in (ticked: left empty at
-    this employer from then on). Carry on sends nothing of it (the second review's MEDIUM 1): left empty for that job
-    alone."""
+    this employer from then on). Its Remember starts unticked (the third review's LOW 2: leaving it empty for good is
+    the person's own choice), and typing an ID ticks it. Carry on sends nothing of it (the second review's MEDIUM 1):
+    left empty for that job alone."""
     from job_apply import config
 
-    wwid = "If you have previously worked for Example Fab in any capacity, please provide your WWID"
+    wwid = "WWID (if previously employed)"
     optional = {"id": "w", "kind": "text", "label": wwid, "required": False, "own_id": True, "employer_id": True}
     needed = {"id": "y", "kind": "text", "label": "Years in a cleanroom", "required": True}
     desk, jobs = _stopped_desk(srv, {"Example Fab": dict(status="needs_you", need="questions",
                                                          questions=[optional, needed]),
                                      "Example Litho": dict(status="needs_you", need="questions",
-                                                           questions=[optional])})
-    fab, litho = jobs["Example Fab"], jobs["Example Litho"]
+                                                           questions=[optional]),
+                                     "Example Ops": dict(status="needs_you", need="questions",
+                                                         questions=[optional])})
+    fab, litho, ops = jobs["Example Fab"], jobs["Example Litho"], jobs["Example Ops"]
     said: list[str] = []
 
     async def go():
         async with _desk_page(desk, said) as (page, calls):
             card = page.locator(f'form[data-answer="{fab}"]')
+            keep = card.locator(f'[data-remember="{wwid}"]')
+            unticked = not await keep.is_checked()
+            await keep.check()  # (the person's own choice: left empty at Example Fab)
             await card.locator('input[data-q="Years in a cleanroom"]').fill("3")
             await page.click(f"#needs [data-job='{fab}'][data-job-act=fill]")
             await _until(lambda: len(calls) == 1, lambda: calls)
-            await page.click(f"#needs [data-job='{litho}'][data-job-act=resume]")
+            await page.locator(f'form[data-answer="{litho}"] input[data-q="{wwid}"]').fill("12345678")
+            await page.click(f"#needs [data-job='{litho}'][data-job-act=fill]")
             await _until(lambda: len(calls) == 2, lambda: calls)
-            return calls
+            await page.click(f"#needs [data-job='{ops}'][data-job-act=resume]")
+            await _until(lambda: len(calls) == 3, lambda: calls)
+            return calls, unticked
 
-    calls = run(go())
+    calls, unticked = run(go())
+    assert unticked
     assert calls == [("POST", "/api/answer", {"job_id": fab, "answers": [
                          {"label": wwid, "value": "", "remember": True},
                          {"label": "Years in a cleanroom", "value": "3", "remember": True}]}),
-                     ("POST", f"/api/job/{litho}/resume", {})], calls
+                     ("POST", "/api/answer", {"job_id": litho, "answers": [
+                         {"label": wwid, "value": "12345678", "remember": True}]}),
+                     ("POST", f"/api/job/{ops}/resume", {})], calls
     assert said == []
     assert [(a["question"], a["answer"], a["at"]) for a in config.saved_answers() if a["question"] == wwid] == [
-        (wwid, None, "Example Fab")]
-    assert desk.applier.runs[litho].asked_once  # (Carry on: for that job alone)
+        (wwid, "12345678", "Example Litho"), (wwid, None, "Example Fab")]
+    assert desk.applier.runs[ops].asked_once  # (Carry on: for that job alone)

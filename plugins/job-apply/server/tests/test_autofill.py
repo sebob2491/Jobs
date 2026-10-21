@@ -2458,13 +2458,74 @@ def test_an_id_kept_for_this_employer_goes_only_into_its_own_id_box(box):
 def test_whose_id_a_box_asks_is_told_by_its_words(label, company, whose):
     """employer_id_box: the person's own ID at the employer applied to (True) unless its words say otherwise: another
     employer's (False: said so, or an organization named that isn't this one), or no such box (None: someone else's, a
-    tax ID). Where it's this one's, the profile's ID for it fills it; anywhere else nothing does."""
-    from job_apply.autofill import employer_id_box
+    tax ID). Where its words name this one's own ID (id_names_this_employer), the profile's ID for it fills it; where
+    they may name another organization's ("Microchip Employee ID", "DOE BADGE NUMBER": the third review's), it's asked,
+    never filled; anywhere else nothing does."""
+    from job_apply.autofill import employer_id_box, id_names_this_employer
 
     assert employer_id_box({"label": label, "kind": "text"}, {"company": company}) is whose, label
+    sure = whose is True and label not in ("Microchip Employee ID", "DOE BADGE NUMBER")
+    assert not whose or id_names_this_employer({"label": label}, {"company": company}) is sure, label
     keeps = Profile({"history": {"employee_ids": {company: "12345678"}}})
     got = resolve_field(f(label), keeps, {"company": company})
-    assert (got and got.value) == ("12345678" if whose else None), label
+    assert (got and got.value) == ("12345678" if sure else None), label
+
+
+@pytest.mark.parametrize("company,label,other", [
+    ("Intel", "Microchip Employee ID", "Microchip Technology"), ("Intel", "Microchip WWID", "Microchip Technology"),
+    ("Intel", "Your employee ID at Microchip", "Microchip Technology"), ("Intel", "Lam employee ID", "Lam Research"),
+    ("Intel", "Amkor employee ID", "Amkor Technology"), ("Intel", "AMD Employee ID", "Advanced Micro Devices"),
+    ("Intel", "TI badge number", "Texas Instruments"), ("Intel", "Mobileye employee ID", None),
+    ("Intel", "Federal employee ID", None),
+    ("Intel", "If you are a current or former federal employee, enter your federal employee ID", None),
+    ("Intel", "DOE BADGE NUMBER", None), ("Intel", "State employee ID", None),
+    ("Intel", "Employee ID at Intel Federal", None), ("Intel", "Employee ID (Intel Federal employees)", None),
+    ("Raytheon", "Northrop badge number", "Northrop Grumman"), ("Texas Instruments", "Texas A&M Employee ID", None),
+    ("Microchip Technology", "Former Atmel employee number", None)])
+def test_this_employers_id_never_goes_into_a_box_that_may_be_another_organizations(job_apply_home, company, label,
+                                                                                   other):
+    """The third review's MEDIUM: on Intel's form, with `employee_ids: {Intel: ...}`, the ID went into "Microchip
+    Employee ID", "Lam employee ID", "TI badge number", "Federal employee ID", "DOE BADGE NUMBER", "Employee ID at Intel
+    Federal" (and "Northrop badge number" on Raytheon's, "Texas A&M Employee ID" on Texas Instruments'): a short name,
+    an acronym or a government's word may make it another organization's ID. Asking is harmless, filling another's box
+    is not: nothing fills it by itself (the profile's employee_ids, an ID kept for this employer, an "N/A" written for
+    every employer), and an optional one is asked as before where the person worked here (or the profile can't say);
+    its answer is for this application only."""
+    history = [{"company": company, "title": "Technician", "start": "2019-01", "end": "2020-01"}]
+    if other:
+        history.append({"company": other, "title": "Technician", "start": "2020-02", "end": "2022-01"})
+    kept = [{"match": "x", "question": label, "answer": "12345678", "from": company, "at": company},
+            {"match": "employee id|badge number|wwid", "answer": "N/A"}]
+    person = Profile({"work_history": history, "history": {"employee_ids": {company: "12345678"}}, "answers": kept})
+    assert resolve_field(f(label), person, {"company": company}) is None, label
+    needs, filled = _id_plan(label, person, company)
+    assert filled == {} and needs[label].get("employer_id") and needs[label].get("id_unsure"), (label, needs)
+    assert not needs[label].get("own_id"), label
+    needs, _ = _id_plan(label, person, company, required=True)  # (required: asked, as any required box)
+    assert needs[label]["required"] and not needs[label].get("own_id"), label
+
+
+def test_an_id_box_naming_this_employers_own_id_is_filled_from_the_profile():
+    """The third review's: the round-2 wordings that name this employer's own ID, by their plain words, "us", or its own
+    name, short name or initials, are filled from the profile's employee_ids by themselves, as before."""
+    from job_apply.autofill import id_names_this_employer
+
+    labels = ["Employee ID", "WWID (if applicable)", "Employee ID (for former employees)", "What's your employee ID?",
+              "If you are a former company employee, enter your employee ID", "Employee ID (if you worked with us)",
+              "Employee ID For Previously Employed Applicants", "Ex-Employee ID", "Retiree Employee ID",
+              "Personal Employee Number", "Employee ID For Re-Hire", "Former employees should enter their employee ID",
+              "Applicant's Employee ID (if a current employee)", "Previously Employed Employee ID",
+              "Intel Corporation's WWID", "Security Badge Number", "Intel employee ID",
+              "If you have previously worked for Intel Corporation in any capacity (including through an agency), "
+              "please provide your WWID"]
+    person = Profile({"work_history": [{"company": "Intel", "title": "T", "start": "2019-01", "end": "2022-05"}],
+                      "history": {"employee_ids": {"Intel": "12345678"}}})
+    for label in labels:
+        assert id_names_this_employer({"label": label}, {"company": "Intel"}), label
+        assert resolve_field(f(label), person, {"company": "Intel"}).value == "12345678", label
+    for label, company in (("TI badge number", "Texas Instruments"), ("State employee ID", "State of Arizona"),
+                           ("AMD Employee ID", "Advanced Micro Devices")):
+        assert id_names_this_employer({"label": label}, {"company": company}), label
 
 
 def test_an_id_box_naming_one_of_the_persons_other_employers_is_that_employers():
