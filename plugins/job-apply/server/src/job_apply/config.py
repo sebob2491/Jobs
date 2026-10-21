@@ -281,7 +281,7 @@ def _cover_letter_model(raw: Any) -> tuple[str, str]:
     said = str(raw).strip()
     if isinstance(raw, str) and _MODEL_NAME.match(said):
         return said, ""
-    return "", (f"settings.cover_letter_model should be a model's name, such as claude-sonnet-5-5, not {raw!r}; "
+    return "", (f"settings.cover_letter_model should be a model's name, such as claude-opus-5-5, not {raw!r}; "
                 "using the usual one.")
 
 

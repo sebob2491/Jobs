@@ -208,5 +208,6 @@ settings:
   # Cover letters: with the desk's "Write a cover letter for each job" on, Claude writes one for each
   # job you apply to, through your own Claude Code sign-in (your Claude plan; no key needed), from your
   # resume, this profile and the job's posting, using only what they say. The model it writes them with:
-  # empty for the usual one (claude-sonnet-5-5), or another model's name, e.g. claude-opus-5-5.
+  # empty for the usual one (claude-opus-5-5), or another model's name, e.g. claude-sonnet-5-5 (lighter on
+  # your plan's usage).
   cover_letter_model: ~

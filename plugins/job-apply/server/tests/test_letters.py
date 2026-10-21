@@ -293,7 +293,7 @@ def test_claude_code_writes_it_with_no_tools_no_mcp_servers_and_none_of_the_desk
     assert after(argv, "--setting-sources") == "" and after(argv, "--permission-mode") == "dontAsk"
     assert {"--disable-slash-commands", "--no-session-persistence"} <= set(argv)
     assert (after(argv, "--input-format"), after(argv, "--output-format")) == ("stream-json", "stream-json")
-    assert after(argv, "--model") == "claude-sonnet-5-5" and after(argv, "--effort") == "low"
+    assert after(argv, "--model") == "claude-opus-5-5" and after(argv, "--effort") == "medium"
     assert child["system"] == letters.system_prompt()
     assert not any(a.startswith(("--allowedTools", "--add-dir", "--dangerously", "--plugin")) for a in argv), argv
     message = json.loads(child["stdin"])
@@ -328,14 +328,14 @@ def test_claude_code_writes_it_with_no_tools_no_mcp_servers_and_none_of_the_desk
     # the model the profile names (settings.cover_letter_model) is the one it's run with
     path = job_apply_home / "profile.yaml"
     path.write_text(path.read_text(encoding="utf-8").replace("settings:\n", "settings:\n  cover_letter_model: "
-                                                             "claude-opus-5-5\n", 1), encoding="utf-8")
+                                                             "claude-sonnet-5-5\n", 1), encoding="utf-8")
     run(letters.write_letter(JOB, config.Profile.load(), POSTING))
-    assert after(runs_of(record)[-1]["argv"], "--model") == "claude-opus-5-5"
+    assert after(runs_of(record)[-1]["argv"], "--model") == "claude-sonnet-5-5"
 
 
 @pytest.mark.parametrize("mode,said", [("old", letters.TOO_OLD), ("login", letters.NOT_SIGNED_IN),
                                        ("limit", letters.AT_LIMIT), ("tools", letters.TOOLS_ON),
-                                       ("mcp", letters.TOOLS_ON), ("model", letters.no_model("claude-sonnet-5-5")),
+                                       ("mcp", letters.TOOLS_ON), ("model", letters.no_model("claude-opus-5-5")),
                                        ("offline", letters.OFFLINE), ("plugins", letters.TOOLS_ON)],
                          ids=["old", "login", "limit", "tools", "mcp", "model", "offline", "plugins"])
 def test_what_stops_every_letter_is_said_in_the_persons_words(tmp_path, monkeypatch, loop, mode, said):
@@ -509,7 +509,7 @@ def test_the_model_setting_is_read_and_a_wrong_one_is_said():
     assert config.Settings.from_dict({"cover_letter_model": None}).cover_letter_model == ""
     wrong = config.Settings.from_dict({"cover_letter_model": ["sonnet"]})
     assert wrong.cover_letter_model == "" and "cover_letter_model" in wrong.warnings[0]
-    assert letters.model_of(config.Profile({})) == letters.DEFAULT_MODEL == "claude-sonnet-5-5"
+    assert letters.model_of(config.Profile({})) == letters.DEFAULT_MODEL == "claude-opus-5-5"
 
 
 # ------------------------------------------------------------------ the desk's queue

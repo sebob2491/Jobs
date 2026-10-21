@@ -292,7 +292,7 @@ uploaded wherever its application has a cover letter box:
   off**. Each job's log says when its letter was written, and its card's **Cover letter**
   opens it. The letter is saved in the job's folder, and a job tried again keeps it.
 - `settings.cover_letter_model` in your profile picks the model (the usual one is
-  `claude-sonnet-5-5`).
+  `claude-opus-5-5`, at medium effort; `claude-sonnet-5-5` is lighter on your plan's usage).
 
 Each employer has its own account on its job site. In the desk's **Site passwords**
 card, save one password for a job system: Workday (15 of the semiconductor employers and 27 of the
