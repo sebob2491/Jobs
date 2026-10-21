@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, NamedTuple
 
 from . import config
+from .ats import ATS_NAMES
 from .config import Profile, expand, question_core
 from .never import JOB_NEWS, _never_for_them
 
@@ -1919,13 +1920,15 @@ def _names_another(text: str, label: str, job: dict, prof: Profile | None) -> bo
         return True
     named = [m[0] for m in _ORG_OF.finditer(text)]
     for m in _WORKED_FOR.finditer(text):
-        # (the employer worked for: "a" one, or a name, never this one's: "us", "our sites", "the company")
+        # (the employer worked for: "a" one, or a name, never this one's: "us", "our sites", "the company"; the name
+        # ends at a plain word, as a label in capitals writes it on: "Worked For Intel Corporation In Any Capacity",
+        # "Employed By Intel Or Its Subsidiaries", the fourth review's)
         words = re.split(r"[^\w\s&'’.-]", text[m.end():], maxsplit=1)[0].split() + [""]
         if words[0].lower() == "the":
             words = words[1:]
-        name = []
+        name: list[str] = []
         for word in words[1:] if words[0].lower() in ("a", "an") else words:
-            if not word[:1].isupper() or norm(word) in _THIS_ONE_WORDS:
+            if not word[:1].isupper() or norm(word) in _THIS_ONE_WORDS or name and norm(word) in _PLAIN_ID_WORDS:
                 break
             name.append(re.sub(r"['’]s$", "", word))
         if words[0].lower() in ("a", "an"):
@@ -1977,49 +1980,109 @@ def employer_id_box(field: dict, job: dict | None, prof: Profile | None = None) 
     return not _names_another(text, label, job, prof)
 
 
-# The words a label may write in capitals around an ID's and still name no organization: instructions, the kinds of
-# employee, the ID's own words (id_names_this_employer). Any other word in capitals may be an organization's name
+# The words that name no organization around an ID's in a label (id_names_this_employer), in any case: instructions,
+# the words of a sentence, and an employee's kind or time with the employer ("Former", "Retiree", "Previously
+# Employed", "Security", "If So", "(Leave Blank If Not Applicable)", "(Check Your Paystub)")
 _PLAIN_ID_WORDS = frozenset(
-    "please kindly enter provide type give list write fill include share tell add select choose input confirm verify "
-    "specify what whats is are was were be been being have has had do does did will would should must can could may "
-    "might your you yours my our ours us we the a an n if applicable optional required mandatory any all only for of "
-    "at with from in on by to into through and or nor not no yes as this that these those here there who whom which "
-    "when where how it its their them they one ones current currently former formerly previous previously prior past "
-    "present existing old new internal external rehire rehires rehired re hire hires hired returning return retiree "
-    "retirees retired alumni alumnus ex applicant applicants candidate candidates employee employees employed "
-    "employment worker workers work worked working staff associate associates personnel team member members intern "
-    "interns internship contractor contractors contract contingent temporary temp seasonal permanent full part time "
-    "personal security site building clearance badge badges number numbers num id ids identification wwid worldwide "
-    "world wide global corporate company companies employer organization organisation unique official assigned last "
-    "most recent active inactive legacy primary original valid digit digits two three four five six seven eight nine "
-    "ten separation date before again below above field box question answer note know known else otherwise also e g "
-    "eg example s".split())
-# ...and an organization's or a government's word just before the ID, in any case ("federal employee ID")
+    "please kindly enter provide type give list write fill include including share tell add select choose input "
+    "confirm verify specify check leave blank use what whats is are was were be been being have has had do does did "
+    "will would should must can could may might shall your you yours my our ours us we the a an n if so applicable "
+    "optional required mandatory any all only for of at with from in on by to into through and or nor not no yes never "
+    "as this that these those here there who whom which when where how it its their them they one ones than then also "
+    "else otherwise e g eg ex example ie etc current currently former formerly previous previously prior past present "
+    "existing old new internal external rehire rehires rehired re hire hires hired returning return retiree retirees "
+    "retired alumni alumnus applicant applicants candidate candidates employee employees employed employment worked "
+    "working personal security site building clearance badge badges number numbers num id ids identification wwid "
+    "digit digits two three four five six seven eight nine ten date separation before again below above field box "
+    "question answer note know known paystub pay stub other capacity subsidiary subsidiaries affiliate affiliates "
+    "locate records record sites s".split())
+# ...and, in small letters only, the words an organization's name may hold too ("global personnel", "staff", "work",
+# "contract", "corporate"): in capitals together they may be a staffing firm's name ("Global Personnel", "Staff One",
+# "The Work Number": the fourth review's)
+_PLAIN_LOWER_WORDS = _PLAIN_ID_WORDS | frozenset(
+    "global worldwide world wide corporate company companies employer organization organisation staff associate "
+    "associates personnel team member members worker workers work contract contractor contractors contingent "
+    "temporary temp seasonal permanent full part time intern interns internship unique official assigned last most "
+    "recent active inactive legacy primary original valid group payroll agency".split())
+# ...and an organization's or a government's word just before the ID, in any case ("federal employee ID"); never the
+# verb "state" ("Please state your employee ID")
 _ORG_BEFORE_ID = re.compile(rf"\b(federal|state|county|city|government|agency|university|school|district|doe|dod|"
                             rf"military)(?: \w+){{0,2}} (?:{_ID_WORDS})")
+_STATE_THE_VERB = re.compile(r"(?i)\b(please|kindly|you|we|must|should)\s+state\b")
+# the job systems' names, which a note in brackets may give ("Employee ID (Workday)"); never one that's a big
+# employer's or a job board's name as well ("(Oracle)", "(SAP)", "(Indeed)" may be where the ID is from)
+_SYSTEM_WORDS = frozenset(w for name in ATS_NAMES.values() for w in norm(name).split()) - {
+    "oracle", "sap", "linkedin", "indeed"}
+
+
+def _own_name_pattern(job: dict) -> re.Pattern[str] | None:
+    """This employer's own names, as a label may write them (in any case, with a legal word and a possessive after
+    them: "Intel Corporation's"): its name whole, with and without its legal words, its list entry's short names, its
+    initials and a short name in brackets (_this_employers_names), and its first word where that's its own alone
+    (_distinctive_first_word); never every word of its name ("Texas", "Arizona", "General")."""
+    company = str(job.get("company") or "")
+    if not norm(company):
+        return None
+    lead = _employer_names(job)[:1]
+    names = (_this_employers_names(job) - set(lead)) | set(_distinctive_first_word(job))
+    names = {n for n in names if n}
+    if not names:
+        return None
+    alternatives = "|".join(r"\W+".join(re.escape(w) for w in n.split()) for n in sorted(names, key=len, reverse=True))
+    legal = "|".join(sorted(_LEGAL_ENDINGS, key=len, reverse=True))
+    return re.compile(rf"(?i)(?<![A-Za-z0-9])(?:the\s+)?(?:{alternatives})(?:[\s,]+(?:{legal})\b\.?)*(?:['’]s)?"
+                      r"(?![A-Za-z0-9])")
+
+
+def _distinctive_first_word(job: dict) -> list[str]:
+    """This employer's first word, where it names this one alone: no plain or everyday word (_PLAIN_LOWER_WORDS,
+    _EVERYDAY_NAMES), no place's or common first word (_COMMON_FIRST: "Texas", "Arizona", "General"), and no other
+    employer's first word on the lists ("Grand" of Grand Canyon Education and Grand Canyon University). "Intel", "Lam"
+    (Lam Research)."""
+    lead = _employer_names(job)[:1]
+    if not lead or " " in lead[0] or len(lead[0]) < 3 \
+            or lead[0] in _PLAIN_LOWER_WORDS | _EVERYDAY_NAMES | _COMMON_FIRST:
+        return []
+    try:
+        _, written = _alias_table()
+    except Exception:  # (a companies file written oddly: the lists can't say it's another's too)
+        written = {}
+    company = str(job.get("company") or "")
+    others = [name for name in written.values() if not _same_employer(name, company)]
+    if any((_employer_names({"company": name})[:1] or [""])[0] == lead[0] for name in others):
+        return []
+    return lead
 
 
 def id_names_this_employer(field: dict, job: dict | None) -> bool:
     """Does an ID box's label name this employer's own ID positively, so the desk may fill it by itself (from the
     profile's employee_ids, an ID kept for this employer, an "N/A" written for every one) and remember an answer to it
-    for this employer? Its words in capitals are all plain ones (_PLAIN_ID_WORDS: "Employee ID (for former employees)",
-    "What's your employee ID?", "Security Badge Number") or this employer's own names, initials and short names ("TI
-    Employee ID" at Texas Instruments, "Intel Corporation's WWID" at Intel); and no organization's or government's word
-    comes just before the ID ("federal employee ID"). Never where another name, a short name in capitals that isn't
-    this one's, or such a word may make it another organization's ID ("Microchip Employee ID", "TI badge number" or
-    "Employee ID at Intel Federal" on Intel's form, "DOE BADGE NUMBER", "State employee ID"): the review of the ID's
-    change, round 3: asking is harmless, filling another organization's box is not. employer_id_box says whether it's
-    asked at all."""
+    for this employer? Once its ID's own words, this employer's own names (_own_name_pattern: "TI" at Texas
+    Instruments, "Intel Corporation's" at Intel) and its notes in brackets of plain words or a job system's name
+    ("(Leave Blank If Not Applicable)", "(Workday)") are set aside, its other words are all plain ones
+    (_PLAIN_ID_WORDS; in small letters, _PLAIN_LOWER_WORDS too), and no organization's or government's word comes
+    just before the ID ("federal employee ID"). Never where another name, in capitals or small letters, a short name
+    that isn't this one's, or such a word may make it another organization's ID ("Microchip Employee ID", "your
+    microchip employee id", "TI badge number" or "Employee ID at Intel Federal" on Intel's form, "Global Personnel
+    Employee ID", "Texas Employee ID" at Texas Instruments, "DOE BADGE NUMBER"): the reviews of the ID's change, rounds
+    3 and 4: asking is harmless, filling another organization's box is not. employer_id_box says whether it's asked at
+    all."""
     job = job or {}
-    text = _id_label(field.get("label"))
-    own = {w for n in _this_employers_names(job) for w in n.split()} | _LEGAL_ENDINGS
-    if any(m[1] not in own for m in _ORG_BEFORE_ID.finditer(norm(text))):
+    text = _STATE_THE_VERB.sub(r"\1 tell", _id_label(field.get("label")))
+    own = _own_name_pattern(job)
+    if own is not None:
+        text = own.sub(" ", text)
+    if _ORG_BEFORE_ID.search(norm(text)):
         return False
-    return all(not word[0].isupper() or word.lower() in _PLAIN_ID_WORDS or word.lower() in own
+    text = _ID_IN_WORDS.sub(" ", text)
+    text = re.sub(r"\(([^()]*)\)", lambda m: " " if all(
+        norm(w) in _PLAIN_ID_WORDS | _SYSTEM_WORDS for w in re.findall(r"[A-Za-z][A-Za-z0-9]*", m[1])) else m[0],
+        text)
+    return all(word.lower() in (_PLAIN_ID_WORDS if word[0].isupper() else _PLAIN_LOWER_WORDS)
                for word in re.findall(r"[A-Za-z][A-Za-z0-9]*", text))
 
 
-_UNFINISHED =re.compile(r"^(none|n ?a|no|not applicable)$|\b(no degree|not (completed|finished)|incomplete|"
+_UNFINISHED = re.compile(r"^(none|n ?a|no|not applicable)$|\b(no degree|not (completed|finished)|incomplete|"
                          r"unfinished|did not (complete|finish|graduate)|in progress|some|coursework|attended|"
                          r"expected|anticipated|graduating|candidate|pending)\b")
 

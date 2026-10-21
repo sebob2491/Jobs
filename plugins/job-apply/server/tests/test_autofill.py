@@ -2523,9 +2523,66 @@ def test_an_id_box_naming_this_employers_own_id_is_filled_from_the_profile():
     for label in labels:
         assert id_names_this_employer({"label": label}, {"company": "Intel"}), label
         assert resolve_field(f(label), person, {"company": "Intel"}).value == "12345678", label
-    for label, company in (("TI badge number", "Texas Instruments"), ("State employee ID", "State of Arizona"),
-                           ("AMD Employee ID", "Advanced Micro Devices")):
+    for label, company in (("TI badge number", "Texas Instruments"), ("AMD Employee ID", "Advanced Micro Devices"),
+                           ("State of Arizona employee ID", "State of Arizona"), ("Lam Employee ID", "Lam Research"),
+                           ("UCT Badge Number", "Ultra Clean Holdings (UCT)")):
         assert id_names_this_employer({"label": label}, {"company": company}), label
+
+
+@pytest.mark.parametrize("label", [
+    # (the fourth review's MEDIUM: the owner's own question, in capitals)
+    "If You Have Previously Worked For Intel Corporation In Any Capacity, Please Provide Your WWID",
+    "If You Were Employed By Intel Or Its Subsidiaries, Enter Your WWID", "If You Worked For Intel Before, Employee ID",
+    # (its LOW 3: the verb "state", and instructions in capitals, a note in brackets of plain words or a job system's)
+    "Please state your employee ID", "Please State Your WWID", "Employee ID (Leave Blank If Not Applicable)",
+    "Have You Worked Here Before? If So, Employee ID", "Employee ID (If Never Employed, Leave Blank)",
+    "Employee ID (Check Your Paystub)", "Employee ID (Internal Use)", "Employee ID (Workday)",
+    "Employee ID (US Only)", "Employee ID (8 Digits)", "INTEL EMPLOYEE ID",
+    "If you have previously worked for Intel Corporation in any capacity, including as an intern, a contractor or "
+    "through an agency, please provide your WWID so that we can locate your records"])
+def test_an_id_box_in_capitals_or_with_instructions_is_this_employers_own(label):
+    """The fourth review's: a label in Title Case, "Worked For Intel Corporation In Any Capacity", read "In", "Any"
+    and "Capacity" as part of another organization's name, so its box was neither asked nor filled; and "Please state
+    your employee ID" or "(Leave Blank If Not Applicable)" made it unsure. A name ends at a plain word; the verb "state"
+    is no government's; a note in brackets of plain words, or a job system's name, says nothing of whose ID it is."""
+    from job_apply.autofill import employer_id_box, id_names_this_employer
+
+    person = Profile({"work_history": [{"company": "Intel", "title": "T", "start": "2019-01", "end": "2022-05"}],
+                      "history": {"employee_ids": {"Intel": "12345678"}}})
+    assert employer_id_box(f(label), {"company": "Intel"}, person) is True, label
+    assert id_names_this_employer(f(label), {"company": "Intel"}), label
+    assert resolve_field(f(label), person, {"company": "Intel"}).value == "12345678", label
+
+
+@pytest.mark.parametrize("company,label", [
+    # (the fourth review's LOW 1: another organization's name in small letters)
+    ("Intel", "If you worked for microchip, enter your employee ID"), ("Intel", "your microchip employee id"),
+    ("Intel", "mobileye employee ID"), ("Intel", "former atmel employee number"),
+    ("Intel", "employee ID at intel federal"),
+    # (its LOW 2: plain words in capitals together, a staffing firm's name; a word of this employer's name that isn't
+    # its own alone: a state's, a common one, a later one)
+    ("Intel", "Global Personnel Employee ID"), ("Intel", "Staff One Employee ID"), ("Intel", "Temp Staff Badge Number"),
+    ("Intel", "Contract Personnel Employee ID"), ("Intel", "The Work Number Employee ID"),
+    ("Intel", "Corporate Staff Badge Number"), ("Texas Instruments", "Texas Employee ID"),
+    ("Arizona State University", "Arizona Employee ID"), ("Arizona State University", "Arizona State Employee ID"),
+    ("General Dynamics", "General Employee ID"), ("Honeywell Aerospace", "Aerospace Employee ID"),
+    # (a note in brackets naming an organization, a job system's name that's an employer's too among them)
+    ("Intel", "Employee ID (Oracle)"), ("Intel", "Employee ID (SAP)"), ("Intel", "Employee ID (Microchip)")])
+def test_an_id_box_whose_words_may_name_another_organization_is_asked_never_filled(company, label):
+    """The fourth review's LOWs 1 and 2: on Intel's form, "your microchip employee id" or "Global Personnel Employee
+    ID", and "Texas Employee ID" at Texas Instruments, got the profile's ID. Words in small letters that name no one
+    plain, two plain words in capitals that may be a firm's name, and a word of this employer's name that isn't its own
+    alone (only its first word, where it's distinctive and no other employer's on the lists, its whole name, initials
+    and short names are) make the box unsure: asked, never filled."""
+    from job_apply.autofill import employer_id_box, id_names_this_employer
+
+    person = Profile({"work_history": [{"company": company, "title": "T", "start": "2019-01", "end": "2022-05"}],
+                      "history": {"employee_ids": {company: "12345678"}}})
+    assert employer_id_box(f(label), {"company": company}, person) is True, label
+    assert not id_names_this_employer(f(label), {"company": company}), label
+    assert resolve_field(f(label), person, {"company": company}) is None, label
+    needs, filled = _id_plan(label, person, company)
+    assert filled == {} and needs[label].get("employer_id") and needs[label].get("id_unsure"), label
 
 
 def test_an_id_box_naming_one_of_the_persons_other_employers_is_that_employers():
