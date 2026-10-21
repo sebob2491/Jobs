@@ -224,6 +224,15 @@ soon, with the least answered that it needs:
    - Submit mode: `review` (default, they approve each submit) or `auto` for chosen
      job systems such as `[workday, greenhouse, lever]`. LinkedIn and Indeed always need
      them to click Submit themselves.
+   - Cover letters: tell them the Job Desk can write a cover letter for each job by itself:
+     one page from their resume, their profile and the job's posting, using only what those
+     say (never a degree, certification or skill they don't state), written through their own
+     Claude Code sign-in, so it uses their Claude plan and needs no key. The first one waits on
+     its job's card for their **Use it**; after that they go in without asking. Ask whether
+     they'd like it; if so, they tick **Write a cover letter for each job** under Openings
+     (`settings.cover_letter_model` picks another model; leave it empty for the usual one). If
+     the desk then says it can't find `claude` or it isn't signed in, they run `claude` in a
+     terminal and sign in.
    - Jobs at once: tell them the Job Desk fills two applications at the same time, each in its
      own tab of its browser window (`settings.jobs_at_once`, 1 to 3, default 2), which takes a
      long queue in about half the time. Never two at one employer's site; one at a time signs

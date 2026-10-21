@@ -372,9 +372,35 @@ EXTRACT_JS = r"""
   // file's own buttons ("Replace", "Delete file resume.pdf", "Preview file: resume.pdf") under
   // "File upload completed successfully". So an empty box isn't one still to fill: its value is
   // the file's name, where the page gives it. Looks only in the box's own field: stops at the
-  // first wrapper holding another form control.
+  // first wrapper holding another form control, or another upload box, shown or not (Workday's
+  // My Experience: the Cover Letter's box, emptied of a file kept from before, read the
+  // Resume/CV list's file as its own, and the cover letter written for the job never went in).
+  // A second file input within the box's own field (the wrapper around it and its own label), with
+  // no label of its own or the same ones, and hidden or beside it in its own wrapper, is the same
+  // upload's (a drop zone's hidden twin). A box's labels are all its aria-labelledby names:
+  // "docs-legend rl" and "docs-legend cl" are a group's two boxes (its legend, then each one's own),
+  // never one upload; and a shown box of its own row, unlabelled or named only by the section's
+  // heading, is another upload (the review's third round: the Cover letter box read the resume's file).
   const FILE_BUTTON = /^(?:delete|remove|preview|download|view|open) file:?\s+(.+)$/i;
   const UPLOADED = /\bfile upload completed\b|\bupload(?:ed)? (?:completed? )?successfully\b|\bsuccessfully uploaded\b/i;
+  const fileLabels = (el) => {
+    const named = (el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)
+      .map((id) => document.getElementById(id)).filter(Boolean);
+    if (named.length) return named;
+    const label = (el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`) : null) || el.closest('label');
+    return label ? [label] : [];
+  };
+  const sameUpload = (el, x) => {
+    const mine = fileLabels(el);
+    if (!mine.length) return false;
+    const own = mine[mine.length - 1];  // (the field's own label: a group's legend comes first)
+    let field = el.parentElement;
+    while (field && !field.contains(own)) field = field.parentElement;
+    const theirs = fileLabels(x);
+    return !!field && field.contains(x)
+      && (!theirs.length || theirs.length === mine.length && theirs.every((l, i) => l === mine[i]))
+      && (x.getClientRects().length === 0 || x.parentElement === el.parentElement);
+  };
   const uploadedNear = (el) => {
     // iCIMS keeps a file sent with its form in a hidden box named after its own ("<name>_FileName"), shown nowhere once
     // its page is back (Valley Health's, run 144: read as empty, the resume went up again, and the page with it)
@@ -382,7 +408,7 @@ EXTRACT_JS = r"""
     if (kept && kept.type === 'hidden' && clean(kept.value)) return clean(kept.value);
     for (let n = el.parentElement, d = 0; n && d < 6; n = n.parentElement, d++) {
       if (Array.from(n.querySelectorAll('input, select, textarea')).some((x) => x !== el && x.type !== 'hidden'
-          && x.type !== 'file' && x.getClientRects().length > 0)) break;
+          && (x.type === 'file' ? !sameUpload(el, x) : x.getClientRects().length > 0))) break;
       const items = Array.from(n.querySelectorAll('[data-automation-id="file-upload-item-name"], '
         + '[data-automation-id*="fileName" i], [class*="file-name" i], [class*="filename" i]')).map(txt).filter(Boolean);
       const buttons = Array.from(n.querySelectorAll('button, [role="button"], a')).filter((b) => b.getClientRects().length > 0)

@@ -31,10 +31,10 @@ from typing import Any
 import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, Response
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
-from . import autofill, config, employment, history, pay, places, report, workplace
+from . import autofill, config, employment, history, letters, pay, places, report, workplace
 from .browser import _cookie_setting
 from .pipeline import (DESK_PASSWORDS, QUEUE_NO_LOCK, Applier, _may_accept_notices, _may_manage_accounts,
                        _test_identity, placed_key, question_key)
@@ -212,6 +212,8 @@ class Desk:
             self.last_seen, self.seen_since = _seconds(saved.get("last_seen")), _seconds(saved.get("seen_since"))
             self.applier.auto_submit = saved.get("auto_submit") is True
             self.applier.tailor = saved.get("tailor_resumes") is True
+            self.applier.letters = saved.get("cover_letters") is True
+            self.applier.letters_approved = saved.get("cover_letters_approved") is True
             self.handled_only = saved.get("handled_only") is True
             self.min_pay = _min_pay(saved.get("min_pay"))
             self.posted_within = saved.get("posted_within") if saved.get("posted_within") in POSTED_WITHIN else None
@@ -237,6 +239,8 @@ class Desk:
         config.ensure_home()
         config.write_text_atomic(_settings_path(), json.dumps({"auto_submit": self.applier.auto_submit,
                                                 "tailor_resumes": self.applier.tailor,
+                                                "cover_letters": self.applier.letters,
+                                                "cover_letters_approved": self.applier.letters_approved,
                                                 "handled_only": self.handled_only,
                                                 "min_pay": self.min_pay, "posted_within": self.posted_within,
                                                 "within_miles": self.within_miles, **self.chips,
@@ -288,6 +292,7 @@ class Desk:
             r("/api/apply", self.apply_view, methods=["POST"]),
             r("/api/preflight", self.preflight_view, methods=["POST"]),
             r("/api/answer", self.answer_view, methods=["POST"]),
+            r("/api/job/{job_id:int}/letter", self.letter_view, methods=["GET"]),
             r("/api/job/{job_id:int}/{action}", self.job_view, methods=["POST"]),
             r("/api/notes/{action}", self.notes_view, methods=["POST"]),
             r("/api/queue/{action}", self.queue_view, methods=["POST"]),
@@ -546,6 +551,13 @@ class Desk:
                 a.end_round()
             elif action == "usual_resume":
                 a.use_usual_resume(job_id)
+            elif action in ("letter_ok", "letters_off"):
+                # Use it, on the first cover letter's card (the rest go in without asking), or Turn cover letters off:
+                # kept in desk.json whatever comes after (the job queued again may be refused: marked Not interested)
+                try:
+                    (a.approve_letter if action == "letter_ok" else a.letters_off_for)(job_id)
+                finally:
+                    self._save_settings()
             elif action == "apply_anyway":  # a job that may be one begun or applied to on another site: it isn't
                 a.apply_anyway(job_id)
             elif action == "applied":
@@ -566,6 +578,19 @@ class Desk:
         except (KeyError, ValueError) as e:
             return self._bad(e)
         return JSONResponse({"ok": True})
+
+    async def letter_view(self, request: Request) -> Response:
+        """The cover letter the desk wrote for a job (its card's Cover letter), from the job's folder: a PDF there
+        alone, behind the page's key like the rest."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        job_id = request.path_params["job_id"]
+        job = self.srv.tracker().get(job_id, with_description=False) if job_id < 2 ** 63 else None
+        found = autofill.tailored_document(job, "cover_letter") if job else None
+        if (job is None or found is None or Path(found).suffix.lower() != ".pdf"
+                or Path(found).parent != Path(job["folder"])):
+            return JSONResponse({"error": "No cover letter is in this job's folder."}, status_code=404)
+        return FileResponse(found, media_type="application/pdf", headers={"Cache-Control": "no-store"})
 
     async def queue_view(self, request: Request) -> Response:
         """Pause queue / Resume queue: the job under way finishes its pass, and no other starts while paused."""
@@ -636,6 +661,8 @@ class Desk:
             self.applier.auto_submit = body["auto_submit"] is True  # not "false", which bool() calls true
         if "tailor_resumes" in body:
             self.applier.set_tailor(body["tailor_resumes"] is True)
+        if "cover_letters" in body:
+            self.applier.set_letters(body["cover_letters"] is True)
         # the two employer switches are one or the other: either turned on turns the other off
         if "handled_only" in body:
             self.handled_only = body["handled_only"] is True
@@ -650,10 +677,12 @@ class Desk:
                 # cleared, for Find jobs to search again, so none is applied to by mistake
                 self._forget_openings()
         self.applier.hold_submits = self.troubleshoot
-        if any(k in body for k in ("auto_submit", "tailor_resumes", "handled_only", "troubleshoot", "auto_search",
-                                   "jobs_at_once", "min_pay", "posted_within", "within_miles", *CHIP_FILTERS)):
+        if any(k in body for k in ("auto_submit", "tailor_resumes", "cover_letters", "handled_only", "troubleshoot",
+                                   "auto_search", "jobs_at_once", "min_pay", "posted_within", "within_miles",
+                                   *CHIP_FILTERS)):
             self._save_settings()
         return JSONResponse({"auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor,
+                             "cover_letters": self.applier.letters,
                              "handled_only": self.handled_only, "troubleshoot": self.troubleshoot,
                              "min_pay": self.min_pay, "posted_within": self.posted_within,
                              "within_miles": self.within_miles, **self.chips,
@@ -1158,12 +1187,16 @@ class Desk:
                          "manage_accounts": settings.may_manage_accounts,
                          "manage_accounts_chosen": settings.manage_accounts_chosen,
                          "auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor,
+                         "cover_letters": self.applier.letters,
+                         "cover_letters_approved": self.applier.letters_approved,
                          "handled_only": self.handled_only, "troubleshoot": self.troubleshoot,
                          "min_pay": self.min_pay, "posted_within": self.posted_within,
                          "within_miles": self.within_miles, **self.chips,
                          "auto_search": self.auto_search, "jobs_at_once": self.applier.at_once(),
                          "follow_up_days": settings.follow_up_days},
             "tailoring": len(self.applier.tailoring()),
+            # why no cover letter is being written (the switch on), said once at the top of the page
+            "letters_problem": self.applier.letters_problem if self.applier.letters else None,
             # saved or not, never the value
             "passwords": {name.removesuffix("_password"): saved for name, saved in
                           _saved([f"{ats}_password" for ats in SITE_PASSWORDS] + ["email_password"]).items()},
@@ -1392,6 +1425,22 @@ class Desk:
                     "Nothing is sent while your profile can't be read." if unread else "The desk applies for real.")
         line("troubleshoot", "Troubleshooting", "on" if a.hold_submits else "off", said,
              "The Troubleshooting box under Openings, More")
+        letters_box = "The Write a cover letter for each job box under Openings (kept in desk.json)"
+        if a.letters:
+            line("cover_letters", "Cover letters", "on" if a.letters_approved else "on (the first waits for your OK)",
+                 "Claude writes a cover letter for each job you apply to, through your own Claude Code sign-in (your "
+                 "Claude plan; no key needed), from your resume, your profile and the job's posting, using only what "
+                 "they say: never a degree, certification, clearance, years or skill they don't state. It runs with no "
+                 "tools and none of your MCP servers, and the posting is only its data. The letter goes into the job's "
+                 "folder and into a cover letter box"
+                 + (". " if a.letters_approved else
+                    "; the first one waits on its job's card for your Use it, and the rest go in without asking. ")
+                 + "Where one can't be written, the job goes on with your usual cover letter, if you have one.",
+                 letters_box + f", and {profile} cover_letter_model for the model")
+        else:
+            line("cover_letters", "Cover letters", "off",
+                 "No cover letter is written for you: your usual one (documents.cover_letter in profile.yaml), if you "
+                 "have one, goes with every application that asks.", letters_box)
         line("bot_checks", "Bot checks and CAPTCHAs", "always yours",
              "The desk never gets around a bot check and never solves a CAPTCHA: it pauses the job and brings its tab "
              "up for you.", "Not a setting: always so")
@@ -1741,6 +1790,21 @@ def troubleshoot_query(query: str) -> str:
 
 
 _desk: Desk | None = None
+
+
+def first_letter_waits(job: dict[str, Any]) -> bool:
+    """Does this job's first cover letter wait for the person's say on its card (its draft in its folder, their OK not
+    given: the running desk's, or desk.json's while none runs)? Then render_document puts a letter for it in the draft,
+    never in the folder as one to upload."""
+    if _desk is not None:
+        return _desk.applier.letter_waits(job)
+    draft = Path(job["folder"]) / letters.DRAFT if job.get("folder") else None
+    if draft is None or not draft.is_file():
+        return False
+    try:
+        return json.loads(_settings_path().read_text(encoding="utf-8")).get("cover_letters_approved") is not True
+    except (OSError, ValueError, AttributeError):
+        return True
 
 
 def listed_openings() -> list[dict[str, Any]]:

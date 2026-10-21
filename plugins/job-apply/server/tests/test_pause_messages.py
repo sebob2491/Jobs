@@ -158,7 +158,7 @@ def _stops() -> tuple[list[tuple[int, list[str] | None]], ast.Module]:
 def test_every_stop_says_what_the_person_can_do():
     stops, tree = _stops()
     pauses = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "_pause"]
-    assert len(pauses) == 94  # (a new stop: count it here, with its message)
+    assert len(pauses) == 95  # (a new stop: count it here, with its message)
     unread = [line for line, said in stops if said is None]
     assert not unread, unread  # (every reason is read, a variable's at each of its assignments: T9)
     # (an emailed code's wait is the desk's own: it watches the inbox, and the queue goes on)
@@ -296,7 +296,7 @@ def test_every_stop_has_a_code_in_stop_codes():
     functions = {f.name: f for f in ast.walk(tree) if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))}
     where = {id(n): f.name for f in functions.values() for n in ast.walk(f)}  # (the innermost: walked last)
     pauses = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "_pause"]
-    assert len(pauses) == 94  # (a new stop: count it here, with its code)
+    assert len(pauses) == 95  # (a new stop: count it here, with its code)
     used: set[str] = set()
     unread = []
     for call in pauses:

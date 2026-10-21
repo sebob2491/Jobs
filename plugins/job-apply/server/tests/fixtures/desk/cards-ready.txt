@@ -61,6 +61,8 @@ Jobs at once
 3
 Tailor my resume for each job
 Off: your usual resume goes with every application.
+Write a cover letter for each job
+On: Claude writes one for each job, with your Claude login.
 72
 Field Service Engineer
 Example Ready · Phoenix, AZ · YYYY-MM-DD · pay not listed
@@ -138,6 +140,7 @@ Show me
 Submit
 Skip job
 I submitted it myself
+Cover letter
 Report a problem
 Technician · Example Failed Didn't finish
 The page didn't load: TimeoutError.

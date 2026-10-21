@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import sqlite3
+import tempfile
 import threading
 import time
 from datetime import datetime
@@ -25,7 +26,7 @@ from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from playwright.async_api import Error as PlaywrightError
 
-from . import config, pay
+from . import config, letters, pay
 from . import employment
 from . import places as towns
 from . import workplace as wplace
@@ -825,18 +826,43 @@ async def render_document(kind: str, markdown: str, job_id: int | None = None, d
     Resume layout: `# Full Name`, a contact line, `## Section` headings,
     `### Job Title — Company, City *Mar 2021 – Present*` (the *italic* dates sit on the
     right) and bullet lists. Cover letter: `# Full Name`, a contact line, then paragraphs.
-    Only reorder, trim and rephrase what the user's real resume says."""
+    Only reorder, trim and rephrase what the user's real resume says. For a job whose first
+    cover letter waits on the desk's card (its draft is cover_letter_draft.md in the job's
+    folder), a cover letter goes into that draft instead (`draft` in the answer), if it fits on
+    one page: the card shows it, and only the user's Use it puts it in."""
+    from . import desk
+
     if kind not in KINDS:
         raise ValueError(f"kind must be one of {KINDS}")
     job = None if default else _job(job_id)  # (the current job, when none is named)
     job_id = job["id"] if job else None
-    folder = config.ensure_home() if job is None else Path(job["folder"])
     prof = config.Profile.load()
     # (a name as a file's name: words joined by "_", never a character a file system refuses or reads as a folder,
     # "Ana/Luisa" or "O'Brien: Jr", the review of Oct 15; accented letters kept)
     stem = "_".join(part for p in [prof.get("personal.first_name"), prof.get("personal.last_name")] if p
                     for part in [re.sub(r"[^\w-]+", "_", str(p)).strip("_")] if part)
     name = f"{stem}_{'Resume' if kind == 'resume' else 'Cover_Letter'}" if stem else kind
+    if kind == "cover_letter" and job is not None and desk.first_letter_waits(job):
+        # (never a letter to upload before the person's say: a PDF here was uploaded, and sent by Submit for me, after
+        # their Turn cover letters off, or a restart, the review of the cover letters). Laid out once first: one longer
+        # than a page is refused here, with its count, never put on the card for a Use it that would then find it too
+        # long and leave the job without it (the review's second round)
+        with tempfile.TemporaryDirectory(prefix="job-apply-draft-", ignore_cleanup_errors=True) as tmp:
+            try:
+                pages = await render_pdf(to_html(markdown, kind, title=name.replace("_", " ")), Path(tmp) / "draft.pdf")
+            except BrowserUnavailable as e:
+                return {"error": str(e)}
+        if pages > 1:
+            return {"error": f"This cover letter is {pages} pages long: at most 1 fits. Tighten the text and render "
+                    "again (the letter on the Job Desk's card stays as it was).", "pages": pages}
+        draft = Path(job["folder"]) / letters.DRAFT
+        config.write_text_atomic(draft, markdown)
+        if desk._desk is not None:
+            desk._desk.applier.letter_rewritten(job["id"], markdown)
+        return {"draft": str(draft), "pages": pages, "note": "This job's first cover letter waits on the Job Desk's "
+                "card for the user's say: this letter replaced it there. Their Use it puts it in (and lets every later "
+                "letter go in without asking); their Turn cover letters off drops it."}
+    folder = config.ensure_home() if job is None else Path(job["folder"])
     source = folder / f"{name}.md"
     folder.mkdir(parents=True, exist_ok=True)
     if job_id is not None:
@@ -855,8 +881,6 @@ async def render_document(kind: str, markdown: str, job_id: int | None = None, d
             too_long.touch()
     else:
         too_long.unlink(missing_ok=True)
-        from . import desk
-
         if job_id is not None and desk._desk is not None:  # the job it was written for carries on now
             desk._desk.applier.wake()
     return out

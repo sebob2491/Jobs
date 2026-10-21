@@ -886,7 +886,8 @@ def test_the_tailoring_switch_is_kept_and_its_waiting_jobs_listed(srv, job_apply
             async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{desk.port}", timeout=20, trust_env=False) as c:
                 r = await c.post("/api/settings", headers=h, json={"tailor_resumes": True})
                 assert (r.json()
-                        == {"auto_submit": False, "tailor_resumes": True, "handled_only": False, "troubleshoot": False,
+                        == {"auto_submit": False, "tailor_resumes": True, "cover_letters": False, "handled_only": False,
+                            "troubleshoot": False,
                             "min_pay": None, "posted_within": None, "within_miles": None, "requirements": [],
                             "workplace": [], "job_types": [], "systems": [],
                             "auto_search": False, "jobs_at_once": 1})  # (the tests' profile: one at a time)

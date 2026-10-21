@@ -45,9 +45,9 @@ Day shift
 Travel ≤ 25%
 Entry level
 Not senior
-Any 12
+Any 13
 Bot checks 1
-Questions and sign-ins 6
+Questions and sign-ins 7
 Stuck 2
 Ready 3
 Add
@@ -60,6 +60,8 @@ Jobs at once
 3
 Tailor my resume for each job
 Off: your usual resume goes with every application.
+Write a cover letter for each job
+On: Claude writes one for each job, with your Claude login; the first waits for your OK.
 72
 Equipment Technician
 Example Questions · Phoenix, AZ · YYYY-MM-DD · pay not listed
@@ -120,13 +122,18 @@ Equipment Technician
 Example Restart · Phoenix, AZ · YYYY-MM-DD · pay not listed
 title matches
 Restarted
+72
+Equipment Technician
+Example Letter · Phoenix, AZ · YYYY-MM-DD · pay not listed
+title matches
+Cover letter to check
 
 ## idle-h
 (hidden)
 
 ## needs-h
 Needs you
-12
+13
 Equipment Technician · Example Sign In Sign in
 Sign in on Example Sign In's site in the desk's browser window, then press Carry on.
 Show me
@@ -215,6 +222,18 @@ Begun before the desk restarted.
 Carry on
 Skip job
 I submitted it myself
+Report a problem
+Equipment Technician · Example Letter Cover letter to check
+This is the first cover letter the desk wrote for you (with your Claude login), and this job waits for your say. If it's right, press Use it: from then on each job's letter goes in without asking. To change how they're written, tell Claude in the chat what to change, or press Turn cover letters off.
+# Sam Rivera
+sam.rivera@example.com · 480-555-0123 · Chandler, AZ
+Dear Hiring Team,
+I am applying for the Equipment Technician position at Example Letter. <b>Made-up</b> letter text.
+Sincerely,
+Sam Rivera
+Use it
+Turn cover letters off
+Skip job
 Report a problem
 
 ## work-h

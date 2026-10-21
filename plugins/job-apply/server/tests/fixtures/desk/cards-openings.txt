@@ -64,6 +64,8 @@ Jobs at once
 3
 Tailor my resume for each job
 Off: your usual resume goes with every application.
+Write a cover letter for each job
+Off: your usual cover letter, if you have one, goes in.
 88
 Field Service Engineer
 Example Fab · Phoenix, AZ; Chandler, AZ; Austin, TX and 1 more · YYYY-MM-DD · $71k–$107k/yr · Remote · Full-time

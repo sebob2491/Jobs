@@ -21,7 +21,9 @@
   "posted_within": null,
   "auto_search": false,
   "jobs_at_once": 1,
-  "follow_up_days": 10
+  "follow_up_days": 10,
+  "cover_letters": true,
+  "cover_letters_approved": true
  },
  "tailoring": 0,
  "passwords": {
@@ -171,7 +173,8 @@
       }
      ],
      "full": false
-    }
+    },
+    "letter": "Sam_Rivera_Cover_Letter.pdf"
    },
    "handled": false,
    "also_on": [],
