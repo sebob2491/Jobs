@@ -43,6 +43,9 @@ FAKE_PROFILE: dict[str, Any] = {
     "education": {"highest_degree": "Bachelor's Degree",
                   "degrees_earned": [{"level": "high_school"},
                                      {"level": "bachelor", "field": "Electrical Engineering"}]},
+    # (U.S. service, as setup asks it: never in the federal government or the military, for each role alike, so
+    # "Have you ever worked for the U.S. Government ... or served in the U.S. Military?" is No: NNSS's, run 148)
+    "history": {"us_government_employee": False, "us_military": False},
     # (accept_cookies, as a person may set it: a banner with no way to decline, Texas Instruments' Oracle one, is
     # accepted, so the check sees past it; one that can be declined still is: the owner asked, Oct 13)
     "settings": {"submit_mode": "dry_run", "browser_channel": "chromium", "headless": True, "accept_cookies": True},
