@@ -47,6 +47,7 @@ RULES = (
     "LinkedIn and Indeed applications are always submitted by the person",
     "Answers come only from the profile or the person",
     "Never overstate education or experience: coursework is not a degree",
+    "Claude reads through the Gmail connector only the messages a desk request names",
 )
 RULE_LEAD = "Rule (CLAUDE.md, Rules the product keeps): "
 

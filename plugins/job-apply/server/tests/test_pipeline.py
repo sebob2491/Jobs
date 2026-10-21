@@ -5,6 +5,7 @@ review -> submit)."""
 import asyncio
 import contextlib
 import json
+import threading
 import time
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse
@@ -10963,34 +10964,309 @@ def test_a_mail_request_is_made_only_with_email_codes_on_no_app_password_and_cla
     assert said[4] == (1, 0, [], {})
 
 
-def test_mail_from_gmail_read_while_another_job_took_the_inbox_isnt_used_and_the_next_look_is(
+async def _hand(applier, r, messages):
+    """Claude hands back what it read, and the desk's next look at the job reads it."""
+    handing = asyncio.ensure_future(applier.hand_mail(r.job_id, messages))
+    await asyncio.sleep(0.1)
+    await applier._check_mail(r)
+    return await handing
+
+
+def test_mail_from_gmail_after_another_job_on_its_senders_began_an_email_step_isnt_its_own(
         srv, monkeypatch, job_apply_home):
-    """As with the inbox's own looks: a job that began an email step of its own (a sign-in, an account) after the
-    request was made may have had a code sent that Claude's look found, so what Claude hands back then isn't used. The
-    look after it (Claude's next search, begun after that) is used."""
+    """The review of 0.3.228: the inbox's own look is refused whole when another job began a step that may email the
+    person (a sign-in, an account) meanwhile, and so was Gmail's, again and again while the queue went on: a job the
+    queue went on without never got its code. Claude's messages say when each came, so only what came after another
+    job on the same senders began such a step since this one paused is passed over (it may be that job's); what came
+    before is used, and a job on other senders changes nothing. Read off the event loop, as the inbox's are, and a
+    look that worked clears an earlier look's trouble."""
     monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
     _email_codes(job_apply_home)
     applier = Applier(srv)
+    now = float(round(time.time()))
+    on_loop = []
+    for name in ("connector_mail", "pick"):
+        real = getattr(pipeline.mailbox, name)
 
-    async def hand(r):
-        handing = asyncio.ensure_future(applier.hand_mail(r.job_id, [_gmail_message()]))
-        await asyncio.sleep(0.1)
+        def spy(*a, _real=real, **k):
+            on_loop.append(threading.current_thread() is threading.main_thread())
+            return _real(*a, **k)
+
+        monkeypatch.setattr(pipeline.mailbox, name, spy)
+
+    async def go():
+        await _serve(srv, _GMAIL_PAGES, [])
+        r = await _gmail_job(srv, applier, paused_at=now - 60)
+        for url, company in (("https://careers.acme-fab.example/apply?job=b", "Acme Fab"),
+                             ("https://jobs.other-litho.example/apply", "Other Litho")):
+            job = srv.add_job(url=url, title="ET", company=company)["job"]
+            applier.runs[job["id"]] = Run(job["id"], "ET", company, status="running", url=url)
+        same, other = [j for j in applier.runs if j != r.job_id]
+        applier.claude_seen()
         await applier._check_mail(r)
-        return await handing
+        applier._inbox_takes.extend([(now - 40, other), (now - 20, same)])  # (_take_inbox, in their passes)
+        applier._inbox_gen += 2
+        applier.mail_problem = "The desk couldn't read your email (IndexError). It tries again shortly."
+        used, said = await _hand(applier, r, [_gmail_message(code="333333", at=now - 10),  # after the same senders'
+                                              _gmail_message(code="222222", at=now - 30)])  # before it: its own
+        return r, used, said, await r.page.input_value("#code"), applier.mail_problem
+
+    r, used, said, typed, problem = run(go())
+    assert used and typed == "222222" and r.mail_done, (said, r.mail_last)
+    assert problem is None
+    assert on_loop and not any(on_loop), on_loop
+
+
+def test_a_job_the_queue_went_on_without_gets_its_gmail_code_while_the_queue_goes_on(
+        srv, monkeypatch, job_apply_home):
+    """The review of 0.3.228 (its probe): a job left waiting on its emailed code, and other jobs going on in the queue,
+    each taking the inbox in its pass (on sites of their own). The code Claude hands back is used at the job's first
+    look between them, as the inbox's is, not once the queue has run dry."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0.5)
+    monkeypatch.setattr(pipeline.mailbox, "search", lambda *a, **k: pytest.fail("the inbox was read"))
+    _email_codes(job_apply_home)
+    passes: list = []
+
+    async def fake_pass(self, kind, r):
+        try:
+            r.status = "running"
+            await self._take_inbox(r)  # (a Workday sign-in, say: the inbox is this job's)
+            passes.append(time.monotonic())
+            await asyncio.sleep(1.5)
+            r.status, r.need = "ready", ""
+        finally:
+            r.inbox = False
+            if self._slots.get(r.job_id) is asyncio.current_task():
+                del self._slots[r.job_id]
+            self._wake.set()
+
+    monkeypatch.setattr(Applier, "_run_task", fake_pass)
+    applier = Applier(srv)
+    sent_at = float(round(time.time()))
+
+    async def claude():  # its watch, then its Gmail read, handed back, again and again
+        while True:
+            if await applier.wait_for_mail_ask(30):
+                for ask in applier.due_mail_asks():
+                    await applier.hand_mail(ask.job_id, [_gmail_message(at=sent_at)])
+
+    async def go():
+        await _serve(srv, _GMAIL_PAGES, [])
+        job = srv.add_job(url=f"{_GMAIL_VERIFY}?job=a", title="FSE", company="Acme Fab")["job"]
+        tab = await srv.browser.new_tab()
+        await tab.goto(_GMAIL_VERIFY)
+        a = Run(job["id"], "FSE", "Acme Fab", status="needs_you", need="email_code", page=tab, url=_GMAIL_VERIFY,
+                paused_at=sent_at - 1, paused_host="careers.acme-fab.example", left=True)
+        applier.runs[a.job_id] = a
+        others = [srv.add_job(url=f"https://jobs.other-{i}.example/apply", title="Tech", company=f"Other {i}")["job"]
+                  for i in range(4)]
+        watcher = asyncio.ensure_future(claude())
+        applier.start()
+        for j in others:
+            applier.enqueue(j["id"])
+        try:
+            await until(lambda: a.mail_done, timeout=40, about=lambda: (a.mail_last, len(passes)))
+            return len(passes), await tab.input_value("#code")
+        finally:
+            watcher.cancel()
+            await applier.stop()
+
+    took, typed = run(go())
+    assert typed == "482913" and took < 4, took  # (before the queue ran dry)
+
+
+def test_a_job_whose_code_claude_reads_from_gmail_holds_the_queue_as_the_inboxs_does(srv, monkeypatch, job_apply_home):
+    """The review of 0.3.228: the person's Resume on another job leaves a job holding the queue for its emailed code
+    to be watched between jobs, unless the desk is reading that code itself (a code only looked for between jobs could
+    run out meanwhile). Claude reading it from Gmail is the same: the other job waits, and says why."""
+    _email_codes(job_apply_home)
+    applier = Applier(srv)
+    jobs = [srv.add_job(url=f"https://careers.acme-fab.example/verify?job={i}", title="FSE", company="Acme Fab")["job"]
+            for i in range(2)]
+    waiting = Run(jobs[0]["id"], "FSE", "Acme Fab", status="needs_you", need="email_code", blocking=True,
+                  paused_at=time.time(), url=_GMAIL_VERIFY)
+    pressed = Run(jobs[1]["id"], "FSE", "Acme Fab", status="needs_you", need="questions", url=_GMAIL_VERIFY)
+    applier.runs.update({waiting.job_id: waiting, pressed.job_id: pressed})
+    applier.claude_seen()
+    applier.go_on_for(pressed)
+    held = (waiting.blocking, waiting.left, pressed.reason)
+    applier.mail_watched_at = 0.0  # (no Claude watching: the queue goes on, as before)
+    applier.go_on_for(pressed)
+    assert held[:2] == (True, False) and "which Claude is reading from your Gmail" in held[2], held
+    assert waiting.left and not waiting.blocking
+
+
+@pytest.mark.parametrize("page", ["code", "link"])
+def test_a_password_resets_email_is_never_asked_of_claude(srv, monkeypatch, job_apply_home, page):
+    """The owner's call on the review of 0.3.228: a password reset's email (its link sets the saved password; a code
+    the site emails for it as well) stays with the email app password. A job waiting on one is never asked of Claude,
+    a request from before the reset began goes, and what Claude hands back for it is never used."""
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setattr(pipeline.mailbox, "search", lambda *a, **k: pytest.fail("the inbox was read"))
+    _email_codes(job_apply_home)
+    applier = Applier(srv)
+
+    async def go():
+        await _serve(srv, _GMAIL_PAGES, [])
+        r = await _gmail_job(srv, applier, url=_GMAIL_VERIFY if page == "code" else _GMAIL_VERIFY + "/link")
+        applier.claude_seen()
+        await applier._check_mail(r)  # (asked, as it waits on a code or link)
+        before = len(applier.open_mail_asks())
+        r.resetting, r.reset_waited, r.reset_at, r.code = True, True, time.time(), "reset_pending"
+        dropped = applier.open_mail_asks()
+        await applier._check_mail(r)
+        given = await _hand(applier, r, [_gmail_message(
+            plaintext_body="Reset your password: https://careers.acme-fab.example/passwordReset?token=abc "
+                           "Your verification code is 482913.")])
+        return r, before, dropped, applier.mail_asks, given, await r.page.content()
+
+    r, before, dropped, asks, given, content = run(go())
+    assert before == 1 and dropped == [] and asks == {}, (dropped, asks)
+    assert not given[0] and "No mail request is open" in given[1], given
+    assert not r.mail_done and not r.reset_opened and "passwordReset" not in r.page.url and "482913" not in content
+
+
+def test_the_desk_asks_claude_less_often_as_nothing_comes_and_then_leaves_it_to_the_person(
+        srv, monkeypatch, job_apply_home):
+    """The review of 0.3.228: each request is a turn of Claude's (its Gmail searched and read). After each look that
+    came back with nothing, the next comes twice as long after (MAIL_POLL_SECONDS, then twice, four times...), at most
+    GMAIL_WAIT_MOST apart, and after GMAIL_LOOKS_MOST looks the code is the person's to enter: no more requests, and
+    the card no longer says Claude is looking."""
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 20)
+    monkeypatch.setattr(pipeline, "GMAIL_WAIT_MOST", 60)
+    monkeypatch.setattr(pipeline, "GMAIL_LOOKS_MOST", 5)
+    _email_codes(job_apply_home)
+    applier = Applier(srv)
 
     async def go():
         await _serve(srv, _GMAIL_PAGES, [])
         r = await _gmail_job(srv, applier)
         applier.claude_seen()
         await applier._check_mail(r)
-        applier._inbox_gen += 1  # (another job took the inbox: _take_inbox)
-        first = await hand(r)
-        second = await hand(r)
-        return r, first, second
+        ask = applier.mail_asks[r.job_id]
+        waits, said = [], ""
+        for _ in range(pipeline.GMAIL_LOOKS_MOST):  # (each look Claude makes, whenever it's due)
+            used, said = await applier.hand_mail(r.job_id, [])
+            # (how long until it's due again: the first moment, in whole seconds, it is)
+            waits.append(next((s for s in range(0, 400) if ask.due(ask.answered + s)), None))
+        r.mail_checked = 0.0  # (its next look, the poll's wait later)
+        await applier._check_mail(r)  # (renewed: still open, never due)
+        return r, ask, waits, said, applier.gmail_looking(r.job_id), applier.due_mail_asks()
 
-    r, first, second = run(go())
-    assert not first[0] and "another job began signing in" in first[1], first
-    assert second[0] and r.mail_done and "entered the code" in second[1], second
+    r, ask, waits, said, looking, due = run(go())
+    assert waits == [20, 40, 60, 60, None], waits
+    assert ask.looks == 5 and due == [] and looking is None
+    assert "last look" in said and "yours to enter" in r.mail_last, (said, r.mail_last)
+
+
+def test_gmail_mail_meets_the_shared_sender_split_between_jobs_waiting_on_one_sender(srv, monkeypatch, job_apply_home):
+    """The review of 0.3.228: Workday mails every employer's codes from one address. Three jobs wait on codes from one
+    sender, paused one after another: the middle one's look on Claude's messages keeps to its own share, as its inbox
+    look does. Not the later job's newer code (its `before`), not a mail whose subject names another employer
+    (`others`), and not one from the earlier job's resend just before its own pause (the shorter look back while an
+    earlier job waits): only its own."""
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    _email_codes(job_apply_home)
+    applier = Applier(srv)
+    now = float(round(time.time()))
+
+    async def go():
+        await _serve(srv, _GMAIL_PAGES, [])
+        earlier = await _gmail_job(srv, applier, paused_at=now - 300)
+        r = await _gmail_job(srv, applier, paused_at=now - 100)
+        later = await _gmail_job(srv, applier, paused_at=now)
+        r.others_mail = lambda domain, subject: "Other Litho" in subject  # (_another_employers_mail's answer)
+        applier.claude_seen()
+        await applier._check_mail(r)
+        first = await _hand(applier, r, [
+            _gmail_message(code="111111", at=now - 160),  # the earlier job's, a minute before this one paused
+            _gmail_message(code="333333", at=now + 5),  # the later job's, after it paused
+            {**_gmail_message(code="444444", at=now - 70), "subject": "Other Litho: confirm your identity"}])
+        second = await _hand(applier, r, [_gmail_message(code="222222", at=now - 80)])  # its own
+        return (earlier, later), r, first, second, await r.page.input_value("#code")
+
+    (earlier, later), r, first, second, typed = run(go())
+    assert not first[0] and ": none" in first[1], first
+    assert second[0] and typed == "222222", (second, r.mail_last)
+    assert not (earlier.mail_done or later.mail_done)
+
+
+def test_a_request_from_an_earlier_pause_is_never_looked_for_nor_used(srv, monkeypatch, job_apply_home):
+    """A request is its pause's: once the job pauses again (a new code step), the old one is gone at once, never due
+    with its old window, and what Claude hands back for it isn't used."""
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    _email_codes(job_apply_home)
+    applier = Applier(srv)
+
+    async def go():
+        await _serve(srv, _GMAIL_PAGES, [])
+        r = await _gmail_job(srv, applier, paused_at=time.time() - 600)
+        applier.claude_seen()
+        await applier._check_mail(r)
+        due_before = len(applier.due_mail_asks())
+        r.paused_at = time.time()  # (it paused again)
+        due_after = applier.due_mail_asks()
+        stale = await applier.hand_mail(r.job_id, [_gmail_message()])
+        await applier._check_mail(r)  # (asked again, for this pause)
+        handing = asyncio.ensure_future(applier.hand_mail(r.job_id, [_gmail_message()]))
+        await asyncio.sleep(0.1)
+        r.paused_at = time.time() + 1  # (and again, before the desk read what was handed)
+        await applier._check_mail(r)
+        return r, due_before, due_after, stale, await handing
+
+    r, due_before, due_after, stale, handed = run(go())
+    assert due_before == 1 and due_after == [], due_after
+    assert not stale[0] and "No mail request is open" in stale[1], stale
+    assert not handed[0] and "no longer waits on that email" in handed[1] and not r.mail_done, handed
+
+
+def test_an_inbox_look_after_gmail_mail_was_handed_is_the_inboxs_own(srv, monkeypatch, job_apply_home):
+    """The review of 0.3.228 (its probe): Claude handed mail back, and before the desk read it the person saved an
+    email app password that works. The desk's look is then its inbox's own, as before the change: its turn is now's
+    (not the request's), and it isn't said to be Gmail's."""
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    _email_codes(job_apply_home)
+    applier = Applier(srv)
+    sent_at = float(round(time.time()))
+
+    async def go():
+        await _serve(srv, _GMAIL_PAGES, [])
+        r = await _gmail_job(srv, applier)
+        applier.claude_seen()
+        await applier._check_mail(r)  # asked of Claude
+        applier._inbox_gen += 1  # another job's pass took the inbox, and is done with it
+        handing = asyncio.ensure_future(applier.hand_mail(r.job_id, [_gmail_message(at=sent_at)]))
+        await asyncio.sleep(0.1)
+        monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+        monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+        monkeypatch.setattr(pipeline.mailbox, "search", lambda *a, **k: pipeline.mailbox.Found(
+            "code", "482913", "careers.acme-fab.example", sent_at))
+        await applier._check_mail(r)
+        return r, await handing
+
+    r, (used, said) = run(go())
+    assert r.mail_done and "Gmail" not in r.mail_last, r.mail_last
+    assert not used and "reads your inbox itself" in said, said
+
+
+def test_no_request_is_made_without_a_sender_to_look_for(srv, monkeypatch, job_apply_home):
+    """A job whose emailed code's sender the desk can't tell (no site it knows) asks Claude nothing: a query with no
+    sender in it would be all the person's mail."""
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    _email_codes(job_apply_home)
+    applier = Applier(srv)
+    monkeypatch.setattr(applier, "_mail_senders", lambda r: set())
+
+    async def go():
+        await _serve(srv, _GMAIL_PAGES, [])
+        r = await _gmail_job(srv, applier)
+        applier.claude_seen()
+        await applier._check_mail(r)
+        return r, applier.mail_asks
+
+    r, asks = run(go())
+    assert asks == {} and "can't tell who would send it" in r.mail_last, r.mail_last
 
 
 @pytest.mark.parametrize("given", ["nothing", "another sender", "a link elsewhere", "taken", "too early"])
@@ -11002,7 +11278,7 @@ def test_mail_from_gmail_the_inbox_would_pass_over_is_never_used_and_the_request
     monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0.5)
     _email_codes(job_apply_home)
     applier = Applier(srv)
-    now = time.time()
+    now = float(round(time.time()))  # (whole seconds, as a message's date is read)
     messages = {
         "nothing": [],
         "another sender": [_gmail_message(sender="Deals <deals@shop.example.com>")],

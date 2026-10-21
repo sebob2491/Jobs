@@ -6111,7 +6111,7 @@ def test_claudes_watch_for_mail_requests_is_a_long_wait_on_the_desk_behind_its_k
                 await asyncio.sleep(1.5)
                 out["held"], out["watching"] = not waiting.done(), a.claude_watching()
                 began = time.monotonic()
-                a._ask_claude(r, a._inbox_gen, "code", {"acme-fab.example"}, time.time() - 120, None)
+                a._ask_claude(r, "code", {"acme-fab.example"}, time.time() - 120, None)
                 out["due"] = (await waiting).json()
                 out["woke in"] = time.monotonic() - began
                 shown = desk.state()  # (its row: among the openings, or the others)
@@ -6119,7 +6119,8 @@ def test_claudes_watch_for_mail_requests_is_a_long_wait_on_the_desk_behind_its_k
                                    if o.get("job_id") == r.job_id and o.get("run"))
                 # the command, as Claude runs it: woken by the request; then, answered with nothing, a wait with none
                 out["cmd due"] = await asyncio.to_thread(mailwatch.watch, path, 5)
-                a.mail_asks[r.job_id].answered = time.time()
+                ask = a.mail_asks[r.job_id]
+                ask.answered, ask.looks = time.time(), 1
                 out["cmd quiet"] = await asyncio.to_thread(mailwatch.watch, path, 1)
         finally:
             await desk.stop()
@@ -6187,7 +6188,8 @@ def test_claude_hands_the_desk_its_gmail_messages_and_hears_what_became_of_them_
     [ask] = asked["requests"]
     assert (ask["job_id"], ask["want"], ask["senders"]) == (r.job_id, "code", ["acme-fab.example"]), ask
     assert ask["query"].startswith("from:(acme-fab.example) after:") and asked["watch"], asked
-    assert set(asked) == {"requests", "watch", "why", "watch_command", "note"}
+    assert set(asked) == {"requests", "watch", "why", "account", "watch_command", "note"}
+    assert asked["account"] == "sam.rivera@example.com"  # (the profile's address: the Gmail account to search)
     assert typed == "482913" and given["used"], given
     assert "482913" not in json.dumps(given) and "482913" not in json.dumps(again), given
     assert again["requests"] == [], again

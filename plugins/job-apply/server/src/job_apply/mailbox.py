@@ -22,11 +22,12 @@ import email.utils
 import functools
 import html
 import imaplib
+import math
 import re
 import ssl
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Callable
 from urllib.parse import urlparse
 
@@ -185,7 +186,9 @@ def _find_code(text: str) -> tuple[str | None, bool]:
                 if pattern is _DIGITS and len(value) == 4 and value.startswith(("19", "20")) \
                         and not _JOINING.match(before):
                     continue  # a year, unless it follows the words straight away
-                if _NAMED_NUMBER.search(text[:m.end() + c.start()]):
+                # (its last few words alone: the pattern ends where the number begins, and the whole text before
+                # each number made a long email's read take seconds, the review of 0.3.228)
+                if _NAMED_NUMBER.search(text[max(0, m.end() + c.start() - 80):m.end() + c.start()]):
                     continue  # "(Job 2617841)": the job's number, not the code
                 found.append((c.start(), value))
         found.sort()  # nearest first, digits or not: "K7Q2ZP. It expires in 1440 minutes"
@@ -484,45 +487,68 @@ def pick(mails: list[Mail], since: float, allowed: set[str], want: str,
     return None
 
 
-MAIL_TEXT_MAX = 200_000  # characters of a handed message's text (and of its HTML) read
+# Characters of a handed message's text (and of its HTML, should it come with one) read: a sign-up email's plain text is
+# a few thousand, and the code and its link come early in it (the review of 0.3.228: all read off the event loop, and no
+# 200k-character body for the slower patterns to crawl)
+MAIL_TEXT_MAX = 20_000
+FUTURE_SKEW = 300  # seconds a message's date may run ahead of this computer's clock (one further ahead is no date)
+# A date as a person reads it (Gmail's own page: "Tue, Oct 20, 2026, 8:01 AM"), in this computer's time
+_HUMAN_DATES = ("%a, %b %d, %Y, %I:%M %p", "%a, %b %d, %Y, %I:%M:%S %p", "%b %d, %Y, %I:%M %p", "%b %d, %Y %I:%M %p",
+                "%b %d, %Y, %I:%M:%S %p", "%B %d, %Y, %I:%M %p", "%B %d, %Y %I:%M %p", "%m/%d/%Y, %I:%M %p",
+                "%m/%d/%Y %I:%M %p", "%m/%d/%Y %H:%M", "%Y/%m/%d %H:%M", "%Y/%m/%d %H:%M:%S")
 
 
-def received_at(said: Any) -> float | None:
-    """When a message arrived, as a mail service says it: epoch seconds (or Gmail's internalDate, milliseconds), as a
-    number or digits, an RFC 2822 date ("Tue, 20 Oct 2026 08:01:02 -0700"), or ISO 8601 ("2026-10-20T08:01:02-07:00",
-    with its offset; none read as UTC). None for anything else."""
+def received_at(said: Any, now: float | None = None) -> float | None:
+    """When a message arrived, as a mail service says it, in whole seconds: epoch seconds (or Gmail's internalDate,
+    milliseconds), as a number or digits, an RFC 2822 date ("Tue, 20 Oct 2026 08:01:02 -0700"), ISO 8601
+    ("2026-10-20T08:01:02-07:00"), or a date as Gmail's page shows it ("Oct 20, 2026, 8:01 AM"). One that names no
+    zone is this computer's time. None for anything else, and for a date more than FUTURE_SKEW ahead of now (one that
+    would outrank every real message, and never age out of the codes kept as used)."""
+    now = time.time() if now is None else now
+    when: float | None = None
     if isinstance(said, bool):
         return None
     if isinstance(said, (int, float)) or isinstance(said, str) and re.fullmatch(r"\s*\d{9,14}(\.\d+)?\s*", said):
         value = float(said)
-        return value / 1000 if value > 1e11 else value  # (milliseconds: Gmail's internalDate)
-    if not isinstance(said, str) or not said.strip():
+        when = value / 1000 if value > 1e11 else value  # (milliseconds: Gmail's internalDate)
+    elif isinstance(said, str) and said.strip():
+        text = " ".join(said.replace("\u202f", " ").replace("\xa0", " ").split())
+        moment: datetime | None = None
+        for pattern in _HUMAN_DATES:  # (before RFC 2822's reader, which takes "8:01 PM" for 8:01 in the morning)
+            try:
+                moment = datetime.strptime(text, pattern)
+                break
+            except ValueError:
+                continue
+        if moment is None and not re.search(r"\b[AP]M\b", text, re.I):
+            try:
+                moment = email.utils.parsedate_to_datetime(text)
+            except (TypeError, ValueError, IndexError):
+                moment = None
+        if moment is None:
+            try:
+                moment = datetime.fromisoformat(text.replace("Z", "+00:00").replace("z", "+00:00"))
+            except ValueError:
+                return None
+        when = moment.timestamp()  # (naive: this computer's time, as the person reads it)
+    if when is None or not math.isfinite(when) or when <= 0 or when > now + FUTURE_SKEW:
         return None
-    text = said.strip()
-    try:
-        when = email.utils.parsedate_to_datetime(text)
-    except (TypeError, ValueError, IndexError):
-        when = None
-    if when is None:
-        try:
-            when = datetime.fromisoformat(text.replace("Z", "+00:00").replace("z", "+00:00"))
-        except ValueError:
-            return None
-    if when.tzinfo is None:
-        when = when.replace(tzinfo=timezone.utc)
-    return when.timestamp()
+    return float(round(when))  # (whole seconds: the same message handed in another spelling is the same message)
 
 
 def connector_mail(message: dict[str, Any]) -> Mail | None:
     """A message as the Gmail connector gives it (and Claude hands it on), read as the inbox's are: its sender (`from`,
-    or the connector's `sender`: an address, or {name, email}), its date (`date`, or `internalDate`: received_at), its
-    `subject`, its words (`text`, `plaintext_body` or `body`, then `html` or `html_body`'s words) and its links (its
-    HTML's, and any given as `links`). None without a sender or a date that reads (its window can't be checked)."""
+    or the connector's `sender`: an address, or {name, email}, its address alone), its date (`internalDate` when it's
+    there, Gmail's own; else `date`: received_at), its `subject`, its words (`text`, `plaintext_body` or `body`, then
+    `html` or `html_body`'s words, should one come) and its links (in its words, its HTML's, and any given as `links`),
+    each MAIL_TEXT_MAX characters at most. None without a sender or a date that reads (its window can't be checked)."""
     who = message.get("from", message.get("sender"))
-    if isinstance(who, dict):
-        address = str(who.get("email") or who.get("address") or "")
-        who = f"{who.get('name') or ''} <{address}>".strip() if address else ""
-    when = received_at(message.get("date", message.get("internalDate")))
+    if isinstance(who, dict):  # (its address alone: a name may hold another address)
+        who = str(who.get("email") or who.get("address") or "")
+    given_at = message.get("internalDate")
+    when = received_at(given_at) if given_at not in (None, "") else None
+    if when is None:
+        when = received_at(message.get("date"))
     if not isinstance(who, str) or not who.strip() or when is None:
         return None
     plain = next((v for k in ("text", "plaintext_body", "body") if isinstance(v := message.get(k), str) and v), "")

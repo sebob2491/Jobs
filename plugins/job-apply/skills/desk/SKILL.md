@@ -305,7 +305,8 @@ Use the desk's own words when you talk about it, and keep to them when you chang
 Sites email a sign-up code or a link to confirm the address while the desk applies. The
 desk reads them itself with an email app password saved on its page, and needs no Claude
 for that. Without one, you can read them for it through the Gmail connector, while this
-chat is open. `open_job_desk()` returns `emailed_codes`: `email_codes` (the setting),
+chat is open. Password reset emails are never read this way: they stay with the app
+password. `open_job_desk()` returns `emailed_codes`: `email_codes` (the setting),
 `app_password` (`saved`, `saved, but the desk can't use it`, or `not saved`), `watch`
 (true when the setting is on and no app password works) and `watch_command`.
 
@@ -313,7 +314,9 @@ chat is open. `open_job_desk()` returns `emailed_codes`: `email_codes` (the sett
   is true**: start the watch. Run `watch_command` exactly as given with your Bash tool in
   the background (`run_in_background`): it waits on the desk (about 19 minutes at most)
   and ends when a job needs its code, which wakes you. Say in one sentence that you'll
-  read the codes career sites email for the desk's jobs while this chat is open.
+  read the codes career sites email for the desk's jobs while this chat is open, and that
+  if a permission prompt shows for the command, they can choose not to be asked again for
+  that one command.
 - **Gmail tools here, `email_codes` off and `app_password` not `saved`**: ask once whether
   you may read, through Gmail, the sign-up codes and links career sites email them for the
   desk's jobs (only those messages, never other mail). On a yes, write
@@ -324,21 +327,31 @@ chat is open. `open_job_desk()` returns `emailed_codes`: `email_codes` (the sett
 Each time the watch ends (and whatever it printed):
 
 1. Call `mail_requests()`. Each request has the job, the employer, what it waits for
-   (`want`: `code`, `link` or `reset`) and a Gmail `query`.
+   (`want`: `code` or `link`), `after_time` and a Gmail `query`; `account` is the
+   person's address.
 2. For each request, call `search_threads` with its `query` exactly as given. Never widen
-   it, add words or `in:anywhere`, or search for anything else. Read only the newest one or
-   two matching threads with `get_thread`, and only their messages dated after the
-   request's `after_time`.
-3. Call `give_mail(job_id, messages)` with those messages as `get_thread` gave them
-   (`sender`, `date`, `subject`, `plaintext_body`, and `html_body` when there is one), at
-   most 10. Call it with `messages=[]` when the search found nothing. The desk checks them
-   as it does its own inbox's (only that job's senders, since its wait began; a link only
-   back to that job's site), types the code into the job's own tab itself or opens the
-   link there, and says what happened in `said`. Never type a code or open a link
-   yourself, and never repeat a code in the chat.
-4. If `watch` is still true, run `watch_command` again in the background. When it's false
+   it, add words, pass `includeTrash`, or search spam, trash or `in:anywhere`, and search
+   for nothing else. When the connector has several accounts, pass `account` as given.
+3. Read the newest one or two matching threads with `get_thread` and
+   `messageFormat: "PLAIN_TEXT"` (never the full content: its HTML is long, and its links
+   come through in the plain text). Keep only the newest one to three messages dated after
+   the request's `after_time`.
+4. Call `give_mail(job_id, messages)` with each kept message's `sender`, `date`, `subject`
+   and `plaintext_body` as `get_thread` gave them. Call it with `messages=[]` when nothing
+   came. The desk checks them as it does its own inbox's (only that job's senders, since
+   its wait began; a link only back to that job's site), types the code into the job's own
+   tab itself or opens the link there, and says what happened in `said`. Never type a code
+   or open a link yourself, and never repeat a code in the chat. The desk asks again less
+   often each time nothing came, and stops asking after a few looks.
+5. If `watch` is still true, run `watch_command` again in the background. When it's false
    (no job queued or waiting, the setting off, or an app password that works now), stop,
    and say so in one line. Stop too when the user asks.
+
+Stop, and tell the user once in a sentence, when the watch command fails to run (it can't
+find `uv`, or exits with an error other than "nothing to watch"): the desk then asks you
+for nothing, and the codes are theirs to type. Do the same when Gmail refuses you (its
+sign-in has lapsed, or it turns the search down): say they can reconnect the Gmail
+connector and ask you to watch again.
 
 Never send, delete, archive, label or mark any message, and never read mail no request
 names. Whichever comes first goes in: the user can still type the code in the desk's

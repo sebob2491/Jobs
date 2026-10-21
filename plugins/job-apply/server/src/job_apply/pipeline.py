@@ -114,6 +114,11 @@ CLAUDE_WATCH_GRACE = 180
 # background command's own limit
 MAIL_WATCH_MAX = 19 * 60
 GIVE_MAIL_WAIT = 30  # seconds give_mail waits for the desk to use what Claude handed it (between jobs, as the inbox's)
+# A wait's requests of Claude come further apart each time nothing usable came back (MAIL_POLL_SECONDS, twice that, four
+# times...), this far apart at most, and this many at most: each one is a turn of Claude's, its Gmail searched and read
+GMAIL_WAIT_MOST = 240
+GMAIL_LOOKS_MOST = 8
+INBOX_TAKES_KEPT = 500  # when the newest jobs began steps that may email the person (Applier._inbox_takes)
 # seconds with nothing done in a tab holding the queue before the person's press on another job lets that one go
 RELEASE_IDLE = 60
 DESK_SETTLE = 30  # seconds a paused tab may go on changing after the desk typed its emailed code or opened its link
@@ -1603,6 +1608,9 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         self.mail_asks: dict[int, MailAsk] = {}
         self.mail_watchers = 0
         self.mail_watched_at = 0.0
+        # when each job began a step that may email the person (_take_inbox), oldest first: mail Claude hands back for a
+        # job waiting on its own is read only from before another job on the same senders began one (_others_step_since)
+        self._inbox_takes: deque[tuple[float, int]] = deque(maxlen=INBOX_TAKES_KEPT)
         # where each skipped job was, for Undo: its run's status ("" with no run yet) and its place in the queue
         self._before_skip: dict[int, tuple[str, int | None]] = {}
 
@@ -1761,12 +1769,16 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         itself (a code only looked for between jobs could run out meanwhile). Then this one waits, and says why (the
         reviews of Oct 15 and 0.3.189)."""
         for other in [r for r in self.runs.values() if r.blocking and r.job_id != run.job_id]:
-            reading = (other.need == "email_code" and not other.mail_done and self.mail_login() is not None
-                       and _mail_waited(other) < MAIL_WINDOW)
+            waits = other.need == "email_code" and not other.mail_done and _mail_waited(other) < MAIL_WINDOW
+            inbox = waits and self.mail_login() is not None
+            # (or Claude reading it from the person's Gmail: settings.email_codes, the review of 0.3.228)
+            gmail = waits and not inbox and self._reads_gmail(other)
+            reading = inbox or gmail
             # (a tab still a minute is looked at every SLOW_POLL_SECONDS: work begun in it since may not be seen yet)
             if reading or time.time() - other.active_at < RELEASE_IDLE + SLOW_POLL_SECONDS:
-                what = "its emailed code, which the desk is reading from your inbox" if reading else \
-                    "you, at work in its tab"
+                what = ("its emailed code, which the desk is reading from your inbox" if inbox else
+                        "its emailed code, which Claude is reading from your Gmail" if gmail else
+                        "you, at work in its tab")
                 run.reason = (f"Waiting: {other.company or 'another job'} holds the queue for {what}. This one goes "
                               "as soon as that's done.")
                 continue
@@ -2739,6 +2751,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         if not run.inbox:
             run.inbox = True
             self._inbox_gen += 1
+            self._inbox_takes.append((time.time(), run.job_id))
         if step and not run.inbox_since:
             # (a step that may email: its code is sent from here on, the job's own mail. Never as a pass begins on a
             # system that emails (step False): mail from before its step then is no more its own than on its own: the

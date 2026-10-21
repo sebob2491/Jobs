@@ -284,7 +284,8 @@ this file says otherwise, it wins.
   - with `settings.email_codes` on (and no app password the desk can use), Claude reads through the Gmail
     connector only the messages a desk request names (that job's own senders, since its wait began: the
     request's query, never wider, never `in:anywhere`), and the desk applies the same checks to them as to
-    the inbox's (`mailbox.pick`) and types the code itself; Claude never sends, deletes, labels or marks mail;
+    the inbox's (`mailbox.pick`) and types the code itself; Claude never sends, deletes, labels or marks mail,
+    and a password reset's email is never asked of it (resets stay with the app password: the owner's call, Oct 21);
   - never ask for a password in chat (the desk page holds them).
 - **Answers come only from the profile or the person.** Never overstate education or
   experience: coursework is not a degree. Where the profile supports the answer, the desk

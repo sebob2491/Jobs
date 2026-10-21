@@ -1367,12 +1367,14 @@ async def open_job_desk(open_browser: bool = True) -> dict[str, Any]:
 async def mail_requests() -> dict[str, Any]:  # async: it reads the desk's runs on the desk's own loop
     """The Job Desk's jobs waiting on an emailed code or link for Claude to read through the
     Gmail connector (settings.email_codes on, and no email app password the desk can use: the
-    desk skill's "Emailed codes through Gmail"). For each request: search_threads with its
-    `query` exactly as given (never wider), read only the newest few matching messages with
-    get_thread, and hand them to give_mail(job_id, messages); the desk checks them and types
-    the code itself. Then, while `watch` is true, run `watch_command` again in the background;
-    when it's false, stop watching."""
-    from . import desk, pipeline
+    desk skill's "Emailed codes through Gmail"); never a password reset's. For each request:
+    search_threads with its `query` exactly as given (never wider, never spam or trash; with
+    several Gmail accounts, `account` as given), read the newest matching thread or two with
+    get_thread in messageFormat PLAIN_TEXT, and hand the newest one to three messages after its
+    `after_time` to give_mail(job_id, messages); the desk checks them and types the code
+    itself. Then, while `watch` is true, run `watch_command` again in the background; when
+    it's false, stop watching."""
+    from . import desk, mailbox, pipeline
 
     d = desk._desk
     if d is None:
@@ -1382,25 +1384,29 @@ async def mail_requests() -> dict[str, Any]:  # async: it reads the desk's runs 
     asks = [ask.public() for ask in a.due_mail_asks()]
     why = a.mail_watch_unwanted()
     waiting = len(a.open_mail_asks()) - len(asks)
-    return {"requests": asks, "watch": why is None or bool(asks), "why": why,
+    try:  # (the person's own address: the Gmail account to search, where the connector has several)
+        account = mailbox.login_address(str(config.Profile.load().get("personal.email") or "")) or None
+    except Exception:
+        account = None
+    return {"requests": asks, "watch": why is None or bool(asks), "why": why, "account": account,
             "watch_command": d.watch_command(),
             "note": ("Read only what each request's query finds (that job's own senders, since its wait began), and "
                      "never send, delete, label or mark anything."
-                     + (f" {waiting} more looked at in the last {pipeline.MAIL_POLL_SECONDS} seconds: due again soon."
-                        if waiting else ""))}
+                     + (f" {waiting} more looked at lately (each comes up again less often, "
+                        f"{pipeline.MAIL_POLL_SECONDS} seconds and more apart)." if waiting else ""))}
 
 
 @tool()
 async def give_mail(job_id: int, messages: list[dict[str, Any]]) -> dict[str, Any]:
     """Hand the Job Desk the Gmail messages read for one of mail_requests()'s requests: the
-    newest few (at most 10) that its query found, each as get_thread gives it: its sender
-    (`from` or `sender`), its `date`, its `subject`, its body (`text` or `plaintext_body`, and
-    `html` or `html_body` where there is one) and any `links`. The desk reads them with the
-    checks it makes of its own inbox (only that job's senders, since its wait began; a link only
-    when it goes back to that job's site; a code another job used is never used again), then
-    types the code into that job's own tab itself or opens the link there, and says what
-    happened in `said`, never the code. Never type the code yourself. An empty list means none
-    has come yet: the request stays, and is due again shortly."""
+    newest one to three (at most 10) its query found after the request's `after_time`, each as
+    get_thread gives it in messageFormat PLAIN_TEXT: its `sender`, its `date`, its `subject`
+    and its `plaintext_body` (no HTML needed: the links in the plain text do). The desk reads
+    them with the checks it makes of its own inbox (only that job's senders, since its wait
+    began; a link only when it goes back to that job's site; a code another job used is never
+    used again), then types the code into that job's own tab itself or opens the link there,
+    and says what happened in `said`, never the code. Never type the code yourself. An empty
+    list means none has come yet: the request stays, and comes up again a little later."""
     from . import desk
 
     d = desk._desk

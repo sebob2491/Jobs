@@ -1458,7 +1458,7 @@ class Desk:
                  "chat is open and no email app password of yours works here (the desk asks Claude for a job's own "
                  "mail since its wait began, checks it as it does your inbox's, and puts the code in itself). Only the "
                  "newest message from that job's site or its job system, a link only when it goes back to that site, "
-                 "and no other mail.", where)
+                 "and no other mail. Never a password reset's email: that's the email app password's alone.", where)
         else:
             line("email_codes", "Emailed codes (Claude)", fix if unread else "off",
                  "When you apply with Claude in the chat, Claude asks you for a code or link a career site emails you; "
