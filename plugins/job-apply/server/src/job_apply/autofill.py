@@ -847,14 +847,21 @@ def _citizenship_proof(prof: Profile, job: dict, label: str = "") -> Any:
     return said if asked == "us" or said == "Yes" else None
 
 
+_IF_HIRED = r"(?: (?:upon|if|once|when) (?:you are )?(?:hired|hire))?"
+
+
 def _work_proof(prof: Profile, job: dict, label: str = "") -> Any:
     """The I-9's "Can you provide proof of eligibility to work?": the profile's authorized_to_work. Where it asks for
     proof of citizenship and the authorization ("...proof of U.S. citizenship and authorization to work?"), a citizen's
     Yes only (a permanent resident is authorized, but no citizen: the review of 0.3.227); "...citizenship or
-    eligibility to work?" stays the authorization's."""
+    eligibility to work?", the authorization itself its other choice, stays the authorization's (never "...citizenship
+    or permanent residency and authorization to work?": the second review's)."""
     asked = norm(label)
-    if re.search(r"\bcitizenship\b", asked) and not re.search(r"\bcitizenship or\b|\bor (?:\w+ ){0,3}citizenship\b",
-                                                                asked):
+    either = (r"(?:(?:your |the )?(?:eligibility|authori[sz]ation|right) to (?:legally |lawfully )?work|(?:your |the )?"
+              r"(?:employment|work) (?:eligibility|authori[sz]ation))")
+    if re.search(r"\bcitizenship\b", asked) \
+            and not re.search(rf"\bcitizenship or {either}(?: in the (?:u s|us|united states))?{_IF_HIRED}$|\b{either} "
+                              rf"or (?:(?:u s|us|united states) )?citizenship{_IF_HIRED}$", asked):
         return "Yes" if _us_citizen(prof, job) == "Yes" else None
     return _yn("work_authorization.authorized_to_work")(prof, job)
 
@@ -902,7 +909,7 @@ _DOD_NAMED = re.compile(r"\b(?:dod|department of defense|defense department|army
                         r"space force|dcsa|dss|disa)\b")
 _DOE_NAMED = re.compile(r"\b(?:doe|department of energy|energy department|nnsa)\b")
 _OTHER_AGENCY = re.compile(r"\b(?:dhs|homeland security|department of state|state department|doj|department of justice|"
-                           r"fbi|cia|odni|nasa|nrc|nuclear regulatory|treasury|opm|faa|tsa|hhs)\b")
+                           r"fbi|cia|odni|nasa|nrc|nuclear regulatory|treasury|opm|faa|tsa|hhs|coast guard|uscg)\b")
 # ...and a clearance that isn't the U.S. Government's at all
 _FOREIGN_CLEARANCE = re.compile(r"\b(?:foreign|nato|canad\w*|british|u k|australian?|german|french|israeli|european|"
                                 r"five eyes)\b")
@@ -912,9 +919,12 @@ def _clearance_not_now(said: str) -> bool:
     """Whether a clearance the profile writes out (norm()'s) may not be one the U.S. Government granted the person and
     they hold now: one it says isn't (_CLEARANCE_NOT_NOW: "Secret (expired 2021)", "Interim Secret", "Eligible for
     Secret"), one with a date and nothing saying it's active or current ("Secret (2012-2016)", "Secret 2016", "Secret
-    (DoD), last investigated 2015"), another country's or NATO's ("Canadian Secret (active)", "Secret (UK)")."""
+    (DoD), last investigated 2015"), or the years it ran, active or not ("Secret (active 2012-2016)", "Top Secret,
+    active 2015-2019": the second review of 0.3.227), another country's or NATO's ("Canadian Secret (active)", "Secret
+    (UK)")."""
     return bool(_CLEARANCE_NOT_NOW.search(said)
                 or re.search(r"\b(?:19|20)\d\d\b", said) and not re.search(r"\b(?:active|current)\b", said)
+                or re.search(r"\b(?:19|20)\d\d (?:to |through |thru |until )?(?:19|20)\d\d\b", said)
                 or _FOREIGN_CLEARANCE.search(said) or _OTHER_COUNTRIES.search(said))
 
 
@@ -924,8 +934,9 @@ def _clearance_held(prof: Profile, job: dict, label: str = "") -> Any:
     else the person's. A question naming a level ("Do you hold an active Secret clearance or higher?", "...TS/SCI?") is
     Yes only for one the profile names that meets it (Top Secret meets Secret, Q meets L, and TS/SCI needs SCI named;
     "Secret and Q" both), never from a bare true: the person's. So is one naming the agency (the DoD's, the DOE's): a
-    bare true doesn't say whose, and another agency's is none of its (a Q is the DOE's; a Secret named with no agency
-    is taken for the DoD's, never the DOE's)."""
+    bare true doesn't say whose, and another agency's is none of its (a Q is the DOE's; a Secret is taken for the
+    DoD's only where the profile names no agency at all, never the DOE's: "Secret (active), DOE" is none of the
+    DoD's, the second review of 0.3.227)."""
     held = prof.get("work_authorization.security_clearance")
     asked_by = norm(label)
     asked = _clearance_levels(asked_by, asked=True)
@@ -949,7 +960,8 @@ def _clearance_held(prof: Profile, job: dict, label: str = "") -> Any:
             return None  # (a lower one, another scale's, a Top Secret without its SCI named, one of two asked)
     if agencies:
         theirs = {"doe"} if _DOE_NAMED.search(said) or any(h[0] == "doe" for h in has) else set()
-        if _DOD_NAMED.search(said) or any(h[0] == "nsi" for h in has) and not _OTHER_AGENCY.search(said):
+        if _DOD_NAMED.search(said) or not theirs and any(h[0] == "nsi" for h in has) \
+                and not _OTHER_AGENCY.search(said):
             theirs.add("dod")
         if not agencies & theirs:
             return None  # (another agency's, or one whose agency the profile doesn't say)
@@ -1330,14 +1342,33 @@ def _government(prof: Profile, job: dict, label: str = "") -> Any:
     """A government employee now or lately (federal, state or local; the military counted in
     some): "No" only where the profile says neither. Never where the profile's history says the person worked for the
     federal government (history.us_government_employee), or served in the U.S. military where the question counts it:
-    the background's "no" is for the last 5 years, and its "ever" isn't it (the review of 0.3.227)."""
+    the background's "no" is for the last 5 years, and its "ever" isn't it (the review of 0.3.227); a question about
+    now or lately ("Are you currently a state or local government employee?", "...in the last 5 years?") is still
+    the background's (the second review's)."""
     asked = norm(label)
     if re.search(r"\b(military|armed forces|uniformed)\b", asked) \
             and (not _said_no(prof, "military") or _served_us_military(prof)):
         return None
-    if _fact(prof, "history.us_government_employee"):
+    if _fact(prof, "history.us_government_employee") and not _NOW_OR_LATELY.search(asked):
         return None
     return "No" if _said_no(prof, "government_employee") else None
+
+
+# A question about now or lately, not "ever" or "former" ("current or former" is ever)
+_NOW_OR_LATELY = re.compile(r"\b(?:currently|presently|now)\b|\bcurrent\b(?! or former)|\b(?:last|past|within)"
+                            r"(?: \w+){0,2} (?:years?|months?)\b")
+_DOD_SAID = _background("defense_department")
+
+
+def _dod_employee(prof: Profile, job: dict, label: str = "") -> Any:
+    """The background's Department of Defense employment ("no" answers any wording of it), but where the question
+    counts military service in it ("...(military or civilian)?", "...including military service?", "...uniformed
+    service members?"), only for someone the profile says never served (_served_us_military: the second review of
+    0.3.227 found a veteran's No)."""
+    if re.search(r"\b(?:military|uniformed|service members?|armed forces|servicemembers?)\b", norm(label)) \
+            and _served_us_military(prof) is not False:
+        return None
+    return _DOD_SAID(prof, job, label)  # type: ignore[call-arg]
 
 
 _MILITARY_SAID = _background("military", unless=r"\b(spouse|family|parent|relative)\b")
@@ -1535,21 +1566,28 @@ def _not_staff_choice(field: dict, prof: Profile, job: dict) -> str | None:
 # "Have you ever worked for any of the following companies?" among those companies and one choice that says none
 # (NNSS's question 7, run 148: "...worked for the NNSS, NNSA, Mission Support and Test Services, LLC or its parent
 # companies or predecessors (e.g. Honeywell International Inc., ...) ...?" among Amentum, HII Nuclear, ..., N/A)
-# (worked for or at them, or employed by them: never "worked with" them, which is tools, chemicals or customers: the
-# review of 0.3.227)
+# (worked for or at them, or employed by them: never "worked with" them, which is tools, chemicals or customers, nor
+# as a contractor or an intern, which the profile's employers don't say: the reviews of 0.3.227)
 _WORKED_FOR_ASKED = re.compile(r"\bhave you (?:ever )?(?:previously |formerly )?(?:worked (?:for|at)|been "
-                               r"(?:employed|hired|contracted) (?:by|at|with)|been an? (?:employee|contractor|intern) "
-                               r"(?:of|at|with|for))\b")
+                               r"(?:employed|hired) (?:by|at|with)|been an? employee (?:of|at|with|for))\b")
 # ...the organizations below, by a word that says they're organizations (never "any of the following" alone: equipment,
 # software, sites), or by naming them where it asks who the person worked for or was employed by (never "worked at"
 # places it names)
 _LISTED_BELOW = re.compile(r"\b(?:(?:any|one|either) of )?(?:the following|these|those|the below) (?:companies|"
                            r"employers|organi[sz]ations|entities|firms|agencies|contractors)\b")
-_WORKED_FOR_NAMED = re.compile(r"\bhave you (?:ever )?(?:previously |formerly )?(?:worked for|been (?:employed|hired|"
-                               r"contracted) by|been an? (?:employee|contractor|intern) (?:of|for))\b")
+_WORKED_FOR_NAMED = re.compile(r"\bhave you (?:ever )?(?:previously |formerly )?(?:worked for|been (?:employed|hired) "
+                               r"by|been an? employee (?:of|for))\b")
+# ...and around them nothing but these words: never a time ("in the past 2 years", "since 2020") nor a role ("as a
+# contractor", "on a government contract"), which the profile's employers don't say (the second review of 0.3.227)
+_LIST_WORDS = frozenset(
+    "the a an or and any of its their these those following below companies company employers employer organizations "
+    "organisations organization organisation entities entity firms firm agencies agency contractors parent parents "
+    "predecessor predecessors successor successors affiliate affiliates affiliated subsidiary subsidiaries sister "
+    "related e g eg etc such as including others other select all that apply check one please inc llc corp "
+    "corporation co ltd group which".split())
 _NONE_OF_THEM = re.compile(r"n a|na|none|not applicable|neither|none of (?:the above|these|them|the following)(?: "
-                           r"(?:companies|employers|organi[sz]ations|entities))?|i have not worked for any of "
-                           r"(?:these|them|the above)(?: (?:companies|employers|organi[sz]ations|entities))?")
+                           r"(?:companies|employers|organi[sz]ations|entities|agencies))?|i have not worked for any of "
+                           r"(?:these|them|the above)(?: (?:companies|employers|organi[sz]ations|entities|agencies))?")
 # a choice that is no organization's name: a yes or no, "Other", a sentence about working there
 _NOT_A_NAME = re.compile(r"\b(?:yes|no|not|never|other|currently|previously|formerly|employed|worked|work|employee|"
                          r"contractor|intern)\b")
@@ -1557,11 +1595,39 @@ _NOT_A_NAME = re.compile(r"\b(?:yes|no|not|never|other|currently|previously|form
 # ("...or any of their affiliates or subsidiaries", "its parent companies or predecessors": Bechtel Nevada ran the
 # Nevada Test Site before NNSS's contractors, and AECOM's government arm is now Amentum), and examples ("e.g. ...",
 # "such as", "etc.")
-# One word of six letters or fewer, or in capitals: a short name, maybe an employer's initials
-_SHORT_NAME = re.compile(r"[A-Za-z0-9&.-]{1,6}|[A-Z0-9&.-]+")
 _AMONG_OTHERS = re.compile(r"\b(?:affiliat\w*|subsidiar\w*|predecessors?|successors?|parents?|sister|related "
                            r"(?:compan\w*|entit\w*|organi[sz]ations?)|e g|eg|etc|such as|including|among others|"
                            r"or others|and others)\b")
+# One word of six letters or fewer, or in capitals: a short name, maybe an employer's initials
+_SHORT_NAME = re.compile(r"[A-Za-z0-9&.-]{1,6}|[A-Z0-9&.-]+")
+# A government agency's name, or a list of them ("...any of the following agencies?": a VA hospital, the IRS, an Air
+# Force base the profile names may be one of them by another name)
+_AGENCY = re.compile(r"\b(?:agencies|departments?|dept|agency|bureau|administration|commission|office of|army|navy|"
+                     r"air force|marine corps|coast guard|space force|national guard|federal)\b")
+
+
+def _short_named(option: str) -> bool:
+    """A choice written as a short name ("BWXT", "NSTec LLC", "RTX Corporation", "BWXT Pantex"): one word of six letters
+    or fewer, or in capitals, as written or without its legal words; or a first word in capitals ("GDIT LLC")."""
+    key = _employer_key(option)
+    first = (option.split() or [""])[0].strip(",.")
+    return bool(_SHORT_NAME.fullmatch(option.strip()) or " " not in key and _SHORT_NAME.fullmatch(key)
+                or re.fullmatch(r"[A-Z0-9&]{2,}|[A-Z]{2,}[a-z]+", first))
+
+
+def _says_only_the_list(label: str, asked: re.Match[str], orgs: list[str], job: dict) -> bool:
+    """Whether the question (norm()'s) says no more than who the person worked for among its choices: before it only
+    its numbering, and after it only the choices' names (and the employer applied to's), the organizations' words and
+    their families' (_LIST_WORDS); never a time or a role."""
+    if not re.fullmatch(r"(?:q?\d+[a-z]? )?", label[:asked.start()]):
+        return False
+    company = str(job.get("company") or "")
+    names = {norm(o) for o in orgs} | {_employer_key(o) for o in orgs} | {
+        norm(re.sub(r"\([^)]*\)", " ", company)), *employer_aliases(company)}
+    rest = f" {label[asked.end():]} "
+    for name in sorted((n for n in names if n), key=len, reverse=True):
+        rest = re.sub(rf"(?<= ){re.escape(name)}(?= )", " ", rest)
+    return all(word in _LIST_WORDS for word in rest.split())
 
 
 def _worked_for_listed(field: dict, prof: Profile, job: dict) -> tuple[bool, Any]:
@@ -1572,11 +1638,14 @@ def _worked_for_listed(field: dict, prof: Profile, job: dict) -> tuple[bool, Any
     the employer applied to (_may_be_employer: a may-be is the person's, never a No). Never the none where the question
     reaches past the names its choices give (_AMONG_OTHERS: an affiliate, a predecessor, an example's others), which
     the profile can't say none of its employers is; nor a choice of one where another of theirs may be one of those,
-    or may be a choice written as a short name (_SHORT_NAME). (True, the choice) where it is this question, (True,
-    None) where it's the person's; (False, None) where the question is another."""
+    or may be a choice written as a short name (_short_named), or an agency of a list of them where the profile says
+    the person worked for the federal government or served. Nor anything where the question asks more than who
+    (_says_only_the_list: "...in the past 2 years?", "...as a contractor?"). (True, the choice) where it is this
+    question, (True, None) where it's the person's; (False, None) where the question is another."""
     label = norm(clean_label(_without_notes(field.get("label") or "")))
     options = [o for o in field.get("options") or [] if o and not _PLACEHOLDER_VALUES.match(o.strip())]
-    if not _WORKED_FOR_ASKED.search(label):
+    asked = _WORKED_FOR_ASKED.search(label)
+    if not asked:
         return False, None
     nones = [o for o in options if _NONE_OF_THEM.fullmatch(norm(o))]
     orgs = [o for o in options if o not in nones]
@@ -1586,6 +1655,8 @@ def _worked_for_listed(field: dict, prof: Profile, job: dict) -> tuple[bool, Any
     if not (_LISTED_BELOW.search(label)
             or _WORKED_FOR_NAMED.search(label) and any(within_words(_employer_key(o), label) for o in orgs)):
         return False, None
+    if not _says_only_the_list(label, asked, orgs, job):
+        return True, None
     employers = [norm(c) for c in _listed(prof.get("history.previous_employers"))]
     employers += [norm(e.get("company")) for e in _listed(prof.get("work_history")) if isinstance(e, dict)]
     employers += _current_employers(prof)
@@ -1610,10 +1681,15 @@ def _worked_for_listed(field: dict, prof: Profile, job: dict) -> tuple[bool, Any
     picked = list(dict.fromkeys(picked))
     if len(picked) > 1:
         return True, None  # (several: theirs to give, as the list takes them)
-    if unrelated and any(_SHORT_NAME.fullmatch(o.strip()) and o not in picked for o in orgs):
+    if unrelated and any(_short_named(o) and o not in picked for o in orgs):
         # a choice by a short name ("BWXT", "NSTec", "LMCO") may be an employer the profile writes out in full
         # (BWX Technologies, National Security Technologies, Lockheed Martin), which no rule here can tell: the
         # person's (the review of 0.3.227)
+        return True, None
+    if unrelated and (_AGENCY.search(label) or any(_AGENCY.search(norm(o)) for o in orgs)) \
+            and not (_fact(prof, "history.us_government_employee") is False and _served_us_military(prof) is False):
+        # an agency the profile names by another name (a VA hospital, the IRS, an Air Force base): the none only where
+        # it says the person never worked for the federal government nor served (the second review of 0.3.227)
         return True, None
     choice = picked[0] if picked else nones[0]
     return True, [choice] if field.get("kind") == "checkbox_group" else choice
@@ -2275,7 +2351,7 @@ def _reads_question(getter: Getter) -> bool:
 _READS_QUESTION = {_relatives, _government, _travel, _previously_employed, _no_sponsorship, _sponsorship, _UNDER_18,
                    _OVER_18, _phone, _masked_phone,
                    _local_or_relocate, _lives_in, _veteran, _has_degree, _citizenship_proof, _clearance_held,
-                   _clearance_said, _us_service, _military, _work_proof}
+                   _clearance_said, _us_service, _military, _work_proof, _dod_employee}
 
 HOW_HEARD = (r"(how|where) did you (first )?(hear|find|learn (about|of|that))|"
              r"source of (application|referral)|^source$")
@@ -2559,8 +2635,7 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
      None, _YES_NO_KINDS),
     # background: recurring yes/no questions setup asks once (a "no" answers any wording of them)
     ("dod_employee", r"\b(department of defense|dod)\b.{0,80}\b(employee|employed|employment)|\b(employee|employed) "
-     r"(of|by|with) (the )?(u s |us )?(department of defense|dod)\b", _background("defense_department"), None,
-     _YES_NO_KINDS),
+     r"(of|by|with) (the )?(u s |us )?(department of defense|dod)\b", _dod_employee, None, _YES_NO_KINDS),
     ("government_employee",
      r"\b(are|were|have) you\b.{0,80}\b(government|federal|state or local|public sector)\b.{0,60}"
      r"\b(employee|employed|official|worker)|\b(employ\w*|work\w*) (by|for) (a |the |any )?(u s |us |federal |state |"

@@ -4969,7 +4969,17 @@ def test_nnss_answers_the_person_gives_are_used_again_at_its_next_job(job_apply_
     (True, None, None),
     (False, "No", "No"),
     ("None", "No", "No"),
-    ("Top Secret / Q (active)", "Yes", "Yes"),
+    ("Top Secret / Q (active)", None, "Yes"),  # (a Secret is the DoD's only where no agency is named)
+    ("Q (active), DoD Secret (active)", "Yes", "Yes"),
+    # (the second review of 0.3.227: the DOE named beside a Secret is no DoD clearance)
+    ("Secret (active), DOE", None, "Yes"),
+    ("DOE Secret (active)", None, "Yes"),
+    ("Secret/L (active)", None, "Yes"),
+    ("Secret (active), NNSA", None, "Yes"),
+    ("Secret (active) - DOE L", None, "Yes"),
+    ("L (active) / Secret", None, "Yes"),
+    ("Secret (active), USCG", None, None),
+    ("Secret (active) - Coast Guard", None, None),
 ])
 def test_a_clearance_question_naming_an_agency_is_answered_only_for_that_agencys(held, dod, doe):
     """A question naming the agency ("...an active DoD clearance?", "...granted by the Department of Energy?"): a bare
@@ -5109,3 +5119,119 @@ def test_the_background_never_contradicts_the_us_service_the_history_says():
              "background": {"government_employee": False, "military": False}}
     assert _nnss("Are you a former federal employee?", never) == "No"
     assert _nnss("Do you have any prior U.S. military experience?", never) == "No"
+
+
+# --- the second review of 0.3.227 ----------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("label", [
+    "Have you worked for any of the following companies in the past 2 years?",
+    "Have you been employed by any of the following companies within the last 12 months?",
+    "Have you previously worked for any of the following companies since 2020?",
+    "Have you ever worked for any of the following companies as a contractor?",
+    "Have you ever worked for any of the following companies on a government contract?",
+    "In the last 5 years, have you worked for any of the following companies?",
+    "Have you worked for Honeywell International or Jacobs Engineering Group in the last 5 years?",
+    "Have you ever been an intern at any of the following companies?",
+    "Have you ever been a contractor at any of the following companies?",
+])
+def test_a_list_question_with_a_time_or_a_role_is_the_persons(label):
+    """The second review of 0.3.227: the list rule answered a question with a time or a role in it as if it asked only
+    who the person ever worked for: a job at Jacobs in 2010-2012 was picked for "...in the past 2 years?", and a
+    staffing agency's contractor was "None of the above" to "...a contractor at any of the following companies?". The
+    profile's employers say neither: the person's."""
+    options = ["Jacobs Engineering Group Inc.", "Honeywell International, Inc.", "None of the above"]
+    for profile in (_worked_at("Jacobs Engineering Group"), _worked_at("Kelly Services")):
+        for kind in ("combobox", "checkbox_group"):
+            a = resolve_field(f(label, kind, options=options), profile, {"company": "Example Fab"})
+            assert a is None, (label, kind, a)
+    # (and with nothing but the list around it, as before)
+    a = resolve_field(f("Have you ever worked for any of the following companies? (select all that apply)",
+                        "checkbox_group", options=options), _worked_at("Jacobs Engineering Group"),
+                      {"company": "Example Fab"})
+    assert a is not None and a.value == ["Jacobs Engineering Group Inc."]
+
+
+@pytest.mark.parametrize("employer", ["Phoenix VA Health Care System", "Internal Revenue Service", "U.S. Army",
+                                      "Luke Air Force Base", "Intel"])
+def test_a_list_of_agencies_is_none_only_where_the_profile_says_no_federal_service(employer):
+    """The second review of 0.3.227: "Have you ever worked for any of the following agencies?" was "None of the above"
+    for someone at a VA hospital, the IRS, the Army or an Air Force base, whose names aren't the agencies'. Its none
+    only where the profile's history says the person never worked for the federal government nor served."""
+    options = ["Department of Veterans Affairs", "Department of Defense", "Department of the Treasury",
+               "None of the above"]
+    label = "Have you ever worked for any of the following agencies?"
+    federal = Profile({"work_history": [{"company": employer, "start": "2018-01", "end": "2020-01"}],
+                       "history": {"us_government_employee": True}})
+    assert resolve_field(f(label, "combobox", options=options), federal, {"company": "Example Fab"}) is None
+    never = Profile({"work_history": [{"company": "Intel", "start": "2018-01", "end": "2020-01"}],
+                     "history": {"us_government_employee": False, "us_military": False}})
+    assert resolve_field(f(label, "combobox", options=options), never, {"company": "Example Fab"}).value == \
+        "None of the above"
+
+
+@pytest.mark.parametrize("employer, option", [
+    ("National Security Technologies", "NSTec LLC"), ("Raytheon Technologies", "RTX Corporation"),
+    ("BWX Technologies", "BWXT Pantex"), ("General Dynamics Information Technology", "GDIT LLC"),
+])
+def test_a_short_name_with_more_words_is_still_a_short_name(employer, option):
+    """The second review of 0.3.227: "NSTec LLC", "RTX Corporation", "BWXT Pantex" passed for full names, so someone at
+    National Security Technologies got N/A. A short name with its legal words, or first, is still one."""
+    options = [option, "Bechtel Corporation", "N/A"]
+    a = resolve_field(f("Have you ever worked for any of the following companies?", "combobox", options=options),
+                      _worked_at(employer), {"company": "Example Fab"})
+    assert a is None, (employer, option, a)
+    a = resolve_field(f("Have you ever worked for any of the following companies?", "combobox",
+                        options=["Honeywell International", "Bechtel Corporation", "N/A"]), _worked_at("Intel"),
+                      {"company": "Example Fab"})
+    assert a is not None and a.value == "N/A"
+
+
+@pytest.mark.parametrize("label", [
+    "Are you a current or former Department of Defense employee (military or civilian)?",
+    "Have you ever been employed by the Department of Defense, including military service?",
+    "Are you a former DoD employee, including uniformed service members?",
+])
+def test_a_dod_question_counting_military_service_is_never_a_veterans_no(label):
+    """The second review of 0.3.227: the background's "never employed by the DoD" answered No for a veteran where the
+    question counts military service in it. The person's, unless the profile says they never served."""
+    veteran = {"history": {"us_government_employee": False, "us_military": True},
+               "background": {"defense_department": False, "military": True, "government_employee": False}}
+    assert _nnss(label, veteran) is None
+    never = {"history": {"us_government_employee": False, "us_military": False},
+             "background": {"defense_department": False, "military": False}}
+    assert _nnss(label, never) == "No"
+    assert _nnss("Have you ever been employed by the Department of Defense?", veteran) == "No"
+
+
+@pytest.mark.parametrize("held", ["Secret (active 2012-2016)", "Top Secret, active 2015-2019",
+                                  "Secret (active) 2010 to 2014"])
+def test_a_clearance_with_the_years_it_ran_is_not_held_now_even_active(held):
+    """The second review of 0.3.227: "active" beside the years a clearance ran skipped the date check."""
+    data = {"work_authorization": {"security_clearance": held}}
+    assert _nnss(NNSS_CLEARANCE, data) is None
+    assert _nnss("Do you hold an active DoD security clearance?", data) is None
+
+
+def test_proof_of_citizenship_or_residency_and_authorization_is_never_the_authorizations():
+    """The second review of 0.3.227: "...proof of citizenship or permanent residency and authorization to work?" took
+    the "or" for the I-9's, and an H-1B holder's authorization answered Yes. Only where the other choice is the
+    authorization itself."""
+    h1b = {"work_authorization": {"us_citizen": False, "authorized_to_work": True, "requires_sponsorship": True}}
+    resident = {"work_authorization": {"us_citizen": False, "us_person": True, "authorized_to_work": True}}
+    citizen = {"work_authorization": {"us_citizen": True, "authorized_to_work": True}}
+    label = "Can you provide proof of citizenship or permanent residency and authorization to work?"
+    assert (_nnss(label, h1b), _nnss(label, resident), _nnss(label, citizen)) == (None, None, "Yes")
+    label = "Can you provide proof of U.S. citizenship or lawful permanent residence and authorization to work?"
+    assert (_nnss(label, h1b), _nnss(label, resident)) == (None, None)
+    label = "Can you provide proof of U.S. citizenship or eligibility to work in the United States upon hire?"
+    assert (_nnss(label, h1b), _nnss(label, resident)) == ("Yes", "Yes")
+
+
+def test_the_background_still_answers_now_or_lately_beside_federal_history():
+    """The second review of 0.3.227: once the history said the person worked for the federal government, the
+    background's government rule stood aside for every question, and "Are you currently a state or local government
+    employee?" lost its No. It stands aside only for "ever" and "former"."""
+    data = {"history": {"us_government_employee": True}, "background": {"government_employee": False}}
+    assert _nnss("Are you currently a state or local government employee?", data) == "No"
+    assert _nnss("Have you been a government employee in the last 5 years?", data) == "No"
+    assert _nnss("Are you a former federal employee?", data) is None
