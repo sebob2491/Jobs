@@ -111,10 +111,10 @@ soon, with the least answered that it needs:
      Create Account for them to finish).
    - Notices and attestations (default: on): tell them the desk agrees, in their name, to an
      employer's notice about AI screening of their application (Eightfold's employers show
-     one as the resume goes up) and to its privacy notice and terms of use (Kforce's privacy
-     agreement, Schwab's "I Acknowledge the Privacy Notice", a terms box), and picks an
-     application's attestation that its information is true and complete (or their consent
-     to the background check that comes with applying), noting each in the job's log. Never
+     one as the resume goes up) and to its privacy notice and terms of use (Schwab's "I
+     Acknowledge the Privacy Notice", a terms box), and picks an application's attestation
+     that its information is true and complete (a Taleo "Statement of Truth", say), or their consent
+     to the background check that comes with applying, noting each in the job's log. Never
      a newsletter, job alerts or a talent community, texts or automated calls, a legal
      waiver, or the terms of their employment (an at-will acknowledgement is asked of them).
      It's true because every answer comes from their profile or from them. Any other dialog
