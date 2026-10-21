@@ -1267,28 +1267,37 @@ def _worked_here(prof: Profile, job: dict, asked: str = "") -> str | None:
 # Each employer's short names (employer_aliases), by norm() of its name, kept while its files stay as they were (their
 # paths and times): read again only when one changes, as Profile.load does (every list reread on each question took
 # 175 ms: the second review of run 147's fixes)
-_ALIASES: dict[tuple[tuple[str, int], ...], dict[str, list[str]]] = {}
+_ALIASES: dict[tuple[tuple[str, int], ...], tuple[dict[str, list[str]], dict[str, str]]] = {}
+
+
+def _alias_table() -> tuple[dict[str, list[str]], dict[str, str]]:
+    """The employers of the person's own companies file and the plugin's lists (search.every_employer), by norm() of
+    each name: their short names (employer_aliases), and the name as written. Raises where a file can't be read."""
+    from .search import employer_lists, every_employer, own_companies_path  # (search reads this module)
+
+    files = [own_companies_path(), *employer_lists().values()]
+    key = tuple((str(p), p.stat().st_mtime_ns if p.exists() else 0) for p in files)
+    got = _ALIASES.get(key)
+    if got is None:
+        table: dict[str, list[str]] = {}
+        written: dict[str, str] = {}
+        for c in every_employer():
+            named = c.get("aliases")
+            written.setdefault(norm(c.get("name") or ""), str(c.get("name") or ""))
+            table.setdefault(norm(c.get("name") or ""), []).extend(
+                norm(a) for a in (named if isinstance(named, list) else [named])
+                if isinstance(a, str) and len(re.sub(r"[^a-z0-9]", "", norm(a))) >= 3)
+        _ALIASES.clear()
+        _ALIASES[key] = got = (table, written)
+    return got
 
 
 def employer_aliases(company: str) -> list[str]:
     """The short names an employer's entry gives it (`aliases: [UCT]`), in the person's own companies file or any of
     the plugin's lists (search.every_employer: the first entry of that name holds), as norm() writes them: only those
     of 3 letters or more. None ([]) for an employer with no entry, or where the files can't be read."""
-    from .search import employer_lists, every_employer, own_companies_path  # (search reads this module)
-
     try:
-        files = [own_companies_path(), *employer_lists().values()]
-        key = tuple((str(p), p.stat().st_mtime_ns if p.exists() else 0) for p in files)
-        table = _ALIASES.get(key)
-        if table is None:
-            table = {}
-            for c in every_employer():
-                named = c.get("aliases")
-                table.setdefault(norm(c.get("name") or ""), []).extend(
-                    norm(a) for a in (named if isinstance(named, list) else [named])
-                    if isinstance(a, str) and len(re.sub(r"[^a-z0-9]", "", norm(a))) >= 3)
-            _ALIASES.clear()
-            _ALIASES[key] = table
+        table = _alias_table()[0]
     except Exception:  # (a companies file written oddly: no short names, as before)
         return []
     return list(dict.fromkeys(table.get(norm(company), []))) if norm(company) else []
@@ -1758,42 +1767,45 @@ _ID_WORDS = (r"(?:employee|worker|personnel|associate|staff|badge|team member) ?
              r"no(?! longer))\b|wwid\b|world ?wide (?:employee )?(?:id|identification|number)\b")
 _EMPLOYER_ID = re.compile(rf"\b(?:{_ID_WORDS})")  # (in norm()'s words)
 _ID_IN_WORDS = re.compile(rf"(?i)\b(?:{_ID_WORDS})")  # (in the label's own, its capitals kept)
-ID_LABEL_MAX = 160  # (norm()'s characters: a longer label is a notice that mentions an ID, not one box's question)
+# (norm()'s characters: a longer label is a notice, whose question is its clause or sentence that asks: _id_question)
+ID_LABEL_MAX = 160
+_ASKS_FOR = re.compile(r"(?i)\b(?:provide|enter|give|type|list|include|write|share|fill in|tell us)\b")
 # ...never a tax ID ("Employer Identification Number", an "EIN")
 _TAX_ID = re.compile(r"\b(?:ein|fein|tin|tax)\b|\bemployer identification\b")
-# ...nor someone else's: "their", a person's own ("Friend's employee ID": _POSSESSOR), an agency's or a recruiter's just
-# before it (never "(including through an agency)" elsewhere in the label, which says nothing of whose the ID is)
-_THEIRS = re.compile(rf"\b(?:their|his|her)(?: \w+){{0,2}} (?:{_ID_WORDS})|"
-                     rf"\b(?:recruiter|agency|agent|interviewer)s?(?: \w+){{0,2}} (?:{_ID_WORDS})")
-_POSSESSOR = re.compile(rf"\b(\w+) s (?:\w+ )?(?:{_ID_WORDS})")
-# ...in a block about a past job, a school or a reference: that employer's ID there, or someone else's
+# Whose ID a box asks: the person's own at this employer unless its words or its place say otherwise (employer_id_box).
+# Someone else's: an agency's or a recruiter's just before it (never "(including through an agency)" elsewhere in the
+# label, which says nothing of whose the ID is); a person's ("Friend's employee ID": never "What's your WWID?", nor the
+# applicant's, nor this employer's own, "Intel Corporation's WWID")
+_NEAR_AGENCY = re.compile(rf"\b(?:recruiter|agency|agent|interviewer)s?(?: \w+){{0,2}} (?:{_ID_WORDS})")
+_POSSESSIVE = re.compile(rf"(?i)((?:[\w&.-]+ ){{0,3}}[\w&.-]+)['’]s (?:\w+ )?(?:{_ID_WORDS})")
+_CONTRACTIONS = frozenset({"what", "that", "it", "who", "there", "here", "where", "how", "he", "she", "let"})
+_APPLICANT_WORDS = frozenset({"applicant", "candidate", "employee", "associate", "worker", "hire", "rehire", "intern",
+                              "your", "own", "my"})
+# Another employer's: in a block about a past job, a school or a reference...
 _ANOTHER_BLOCK = re.compile(r"\b(?:work|employment|job) (?:experience|history)\b|\b(?:previous|prior|past|former|most "
                             r"recent|last) (?:employment|employers?|jobs?|positions?)\b|\b(?:experience|employment|"
                             r"employer|job|position)s? \d+\b|\beducation\b|\bschools?\b|\breferences?\b")
-# ...or another employer's, said so ("Previous Employer Employee ID", "Employee ID (previous company)")
-_ANOTHER_EMPLOYER = re.compile(r"\b(?:current|present|previous|prior|former|past|last|old|other|another|different|"
-                               r"most recent|your) (?:employer|company|companies|organi[sz]ation|firm|job)s?\b")
-# ...or saying whose it is: an employer worked for or employed by ("worked for Intel Corporation", "employed by us", "an
-# employee of Example Fab": the first group), or one the ID is at, for or of ("Employee ID at Intel Federal")
-_WHOSE = re.compile(r"(?i)\b(?:(employee|employed|employment|worked|work|working|intern|contractor|hired)s? "
-                    r"(?:(?!(?:id|identification|number|no)\b)\w+ )?(?:of|by|for|at|with)|"
-                    r"(?:id|identification|number|no|wwid) (?:at|for|of|with|from)) ")
-# ...this one, in so many words ("us", "this company", "any of its subsidiaries", "one of our sites")
-_THIS_ONE = re.compile(r"(?i)(?:the )?(?:us|our|this|here|any|one of|company|organi[sz]ation|firm|business|"
-                       r"employer)\b")
-# ...or an organization's word right before the ID ("federal employee ID")
-_OWNER_WORDS = frozenset({"federal", "government", "military", "agency", "school", "student", "university", "college",
-                          "union", "state", "county", "city"})
-# Words in capitals around an ID's that name no one: a name of an employer is any other ("Microchip Employee ID",
-# "Former Atmel employee number", "Employee ID at Intel Federal"), told from this one's (_names_this_one)
-_PLAIN_WORDS = frozenset(
-    "please enter provide type list add give fill write your my the a an if applicable optional required former "
-    "previous prior past current present existing old new internal external rehire rehires rehired returning retired "
-    "alumni alumnus applicant applicants candidate candidates employee employees worker workers staff associate "
-    "associates personnel team member members intern interns contractor contractors contract contingent temporary temp "
-    "seasonal permanent full part time company corporate global worldwide world wide unique official assigned last "
-    "most recent active inactive legacy primary secondary original valid verified payroll only all any those who for "
-    "of at with from and or yes no id number badge wwid us our this here one question answer field note s".split())
+# ...or said so ("Previous Employer Employee ID", "Employee ID (previous company)"); never "a former company employee",
+# one of this one's ("company employees"), nor "any other company in our group"
+_ANOTHER_EMPLOYER = re.compile(r"\b(?:current|present|previous|prior|former|past|last|other|another|different|"
+                               r"most recent|your) (?:employers?\b|(?:company|companies)\b(?! employees?\b)"
+                               r"(?! (?:in|of|within) our\b))")
+# ...or an organization named that isn't this one (_names_another): one worked for that the person's profile or the
+# lists name; "a" one ("If you have worked for a government contractor"); or a name with an organization's word ("City
+# of Phoenix", "Arizona Department of Corrections", "Banner Bank")
+_WORKED_FOR = re.compile(r"(?i)\b(?:(?:employed|worked|work|working|hired|intern\w*|contract\w*) (?:by|for|at|with)|"
+                         r"employees? of) ")
+# (an employer worked for named so is this one: "worked for us", "worked at one of our sites", "Previously Employed With
+# Us", "worked for this company")
+_THIS_ONE_WORDS = frozenset("us our this here any one company organization organisation firm business employer".split())
+_ORG_OF = re.compile(r"\b(?:City|County|State|Town|University|College|Department|District|Commonwealth) of (?:the )?"
+                     r"[A-Z][\w&.'-]*(?: [A-Z][\w&.'-]*)*")
+_NAMED_ORG = re.compile(r"((?:[A-Z][\w&.'’-]* ){1,4})(Inc|Incorporated|Corp|Corporation|LLC|Ltd|Limited|Company|Co|"
+                        r"Group|Holdings|PLC|University|College|Bank|Hospital|District|Department|Agency)\b")
+# (words in capitals before an organization's word that name none: "Former Company Employee", "Your Previous Company")
+_NO_NAME = frozenset("former current previous prior past our your the this any other parent same a an if for at with "
+                     "of from in by id number employee employees badge wwid worker staff team member personnel "
+                     "associate no".split())
 
 
 def _id_label(label: Any) -> str:
@@ -1801,11 +1813,24 @@ def _id_label(label: Any) -> str:
     return re.sub(r"\s*#", " number", clean_label(_without_notes(str(label or ""))))
 
 
+def _id_question(label: Any) -> str:
+    """The words of a label that ask (_id_label's): the whole of one as long as a box's question (ID_LABEL_MAX); of a
+    longer one, its clause that asks for an ID ("..., please provide your WWID so that we can locate your records"),
+    else its last sentence, where that's as short as a question. "" for a notice that asks for none."""
+    text = _id_label(label)
+    if len(norm(text)) <= ID_LABEL_MAX:
+        return text
+    asks = [c for c in re.split(r"(?<=[.?!])\s+|[,;:]\s*", text) if _ASKS_FOR.search(c) and _ID_IN_WORDS.search(c)]
+    if asks:
+        return asks[-1]
+    last = ([s for s in re.split(r"(?<=[.?!])\s+", text) if s.strip()] or [""])[-1]
+    return last if len(norm(last)) <= ID_LABEL_MAX else ""
+
+
 def _asks_an_id(label: Any) -> bool:
-    """Do a label's words ask for an ID of the kind a person has at an employer (_EMPLOYER_ID), as one box's question
-    (ID_LABEL_MAX)? Whose ID it is, employer_id_box says."""
-    said = norm(_id_label(label))
-    return len(said) <= ID_LABEL_MAX and bool(_EMPLOYER_ID.search(said)) and not _TAX_ID.search(said)
+    """Does a label ask for an ID of the kind a person has at an employer (_EMPLOYER_ID), never a tax ID: its words, or
+    a long one's that ask (_id_question)? Whose ID it is, employer_id_box says."""
+    return bool(_EMPLOYER_ID.search(norm(_id_question(label)))) and not _TAX_ID.search(norm(_id_label(label)))
 
 
 def _this_employers_names(job: dict) -> set[str]:
@@ -1827,82 +1852,129 @@ def _names_this_one(name: str, job: dict) -> bool:
     return bool(key) and (key in _this_employers_names(job) or _same_employer(key, str(job.get("company") or "")))
 
 
-def _name_in(words: list[str]) -> str:
-    """The name the words start with: their first words in capitals, up to one that names no one (_PLAIN_WORDS)."""
-    name = []
-    for word in words:
-        bare = re.sub(r"['’]s$", "", word.strip(".'’"))
-        if not bare or not bare[0].isupper() or norm(bare) in _PLAIN_WORDS:
-            break
-        name.append(bare)
-    return " ".join(name)
+# The names a label may give employers (_names_another), by the employer applied to and the person's employers: a
+# pattern of them all, longest first, and whose each is. Kept while the lists stay as they were
+_NAMED: dict[tuple, tuple[re.Pattern[str], dict[str, int]]] = {}
+_THIS, _OTHER, _THIS_LEAD = 0, 1, 2  # (whose a name is: this employer's, another's, this one's first word)
 
 
-def _whose(rest: str, employment: bool, job: dict) -> bool | None:
-    """Whose ID the words after "worked for", "an employee of" (`employment`) or "Employee ID at" say it is: this
-    employer's (True: "us", "this company", its name), another's (False: another name, "Intel Federal" on Intel's form;
-    and after an employer worked for, "a" anything but this one, "a government contractor"), or neither said (None:
-    "for former employees", "for rehires only", "of former employee": no name follows)."""
-    if _THIS_ONE.match(rest):
+def _employer_names_in_labels(job: dict, prof: Profile | None) -> tuple[re.Pattern[str], dict[str, int]]:
+    """The names of employers a label may give, as norm() writes them, each with whose it is: this employer's own
+    (_this_employers_names, but its first word alone); another's, never this one: the person's other employers in the
+    profile (compared whole: _same_employer, so "City of Phoenix" isn't "City of Mesa") and the lists' employers that
+    can't be this one (_may_be_employer: not "Intel" for Intel Federal), with their short names; and this one's first
+    word, where it's no other's whole name ("Intel" on Intel Federal's form, for someone who worked at Intel, is
+    Intel's)."""
+    company = str(job.get("company") or "")
+    mine: list[str] = []
+    if prof is not None:
+        mine = [str(c) for c in _listed(prof.get("history.previous_employers"))]
+        mine += [str(e.get("company") or "") for e in _listed(prof.get("work_history")) if isinstance(e, dict)]
+        mine += [str(prof.get("experience.current_company") or "")]
+    try:
+        table, written = _alias_table()
+    except Exception:  # (a companies file written oddly: the profile's employers alone)
+        table, written = {}, {}
+    key = (norm(company), tuple(sorted({norm(c) for c in mine if norm(c)})), id(table))
+    if key in _NAMED:
+        return _NAMED[key]
+    whose: dict[str, int] = {}
+    lead = _employer_names(job)[:1]
+    own = _this_employers_names(job) - set(lead)
+
+    def put(names: Any, kind: int) -> None:
+        for n in names:
+            if n and len(n.replace(" ", "")) >= 3 and (whose.get(n, _THIS_LEAD) == _THIS_LEAD or kind == _THIS):
+                whose[n] = kind
+    put(lead, _THIS_LEAD)
+    for name in mine:
+        if norm(name) and not _same_employer(name, company):
+            bare = re.sub(r"\([^)]*\)", " ", name)
+            put({norm(name), norm(bare), _employer_key(name), _employer_key(bare)}, _OTHER)
+    for listed, aliases in table.items():
+        name = written.get(listed, listed)
+        if not _may_be_employer(name, company) and not _same_employer(name, company):
+            bare = re.sub(r"\([^)]*\)", " ", name)
+            put({listed, norm(bare), _employer_key(bare), *aliases,
+                 *(norm(b) for b in re.findall(r"\(([^)]*)\)", name))}, _OTHER)
+    put(own, _THIS)
+    names = sorted(whose, key=len, reverse=True)
+    pattern = re.compile(r"(?<![a-z0-9])(?:" + "|".join(re.escape(n) for n in names) + r")(?![a-z0-9])") if names \
+        else re.compile(r"(?!x)x")
+    if len(_NAMED) > 64:
+        _NAMED.clear()
+    _NAMED[key] = (pattern, whose)
+    return pattern, whose
+
+
+def _names_another(text: str, label: str, job: dict, prof: Profile | None) -> bool:
+    """Does a label (`text` as _id_label gives it, `label` as norm() writes it) name an organization that isn't the
+    employer applied to: an employer the profile or the lists name, at its longest ("Example Fab Services" where this
+    is Example Fab); the employer worked for, named ("If you have worked for Example Fab, ..." on another's form) or "a"
+    anything but this one ("a government contractor"); or a name in capitals with an organization's word ("City of
+    Phoenix", "Arizona Department of Corrections", "Banner Bank")? Words in capitals alone name no one: "Global Employee
+    ID", "Security Badge Number", "Microchip Employee ID"."""
+    pattern, whose = _employer_names_in_labels(job, prof)
+    if any(whose.get(m[0]) == _OTHER for m in pattern.finditer(label)):
         return True
-    words = rest.split()
-    if words and words[0].lower() == "the":
-        words = words[1:]
-    if words and words[0].lower() in ("a", "an"):
-        name = _name_in(words[1:])
-        if name and _names_this_one(name, job):
+    named = [m[0] for m in _ORG_OF.finditer(text)]
+    for m in _WORKED_FOR.finditer(text):
+        # (the employer worked for: "a" one, or a name, never this one's: "us", "our sites", "the company")
+        words = re.split(r"[^\w\s&'’.-]", text[m.end():], maxsplit=1)[0].split() + [""]
+        if words[0].lower() == "the":
+            words = words[1:]
+        name = []
+        for word in words[1:] if words[0].lower() in ("a", "an") else words:
+            if not word[:1].isupper() or norm(word) in _THIS_ONE_WORDS:
+                break
+            name.append(re.sub(r"['’]s$", "", word))
+        if words[0].lower() in ("a", "an"):
+            named.append(" ".join(name) or "an organization")  # ("a government contractor": any but this one)
+        elif name:
+            named.append(" ".join(name))
+    for m in _NAMED_ORG.finditer(text):
+        words = m[1].split()
+        words = words[max((i + 1 for i, w in enumerate(words) if norm(w) in _NO_NAME), default=0):]
+        if words:
+            named.append(f"{' '.join(words)} {m[2]}")
+    return any(not _names_this_one(n, job) for n in named)
+
+
+def _someone_elses(text: str, label: str, job: dict) -> bool:
+    """Is the ID a box asks someone else's: a referrer's, a manager's, a reference's (_SOMEONE_ELSE), an agency's or a
+    recruiter's (_NEAR_AGENCY), a person's ("Friend's employee ID", "Sponsor's"; never "What's your WWID?", the
+    applicant's or this employer's own), or "their" where the label speaks to the person as "you" ("If an employee told
+    you about this job, enter their employee number"; never "Former employees should enter their employee ID")?"""
+    if _SOMEONE_ELSE.search(label) or _NEAR_AGENCY.search(label):
+        return True
+    if re.search(r"\b(?:their|his|her)\b", label) and re.search(r"\b(?:you|your)\b", label):
+        return True
+    for m in _POSSESSIVE.finditer(text):
+        words = m[1].split()
+        if norm(words[-1]) in _CONTRACTIONS or norm(words[-1]) in _APPLICANT_WORDS:
+            continue
+        if not any(_names_this_one(" ".join(words[i:]), job) for i in range(len(words))):
             return True
-        return False if employment else None
-    name = _name_in(words)
-    if name:
-        return _names_this_one(name, job)
-    low = norm(" ".join(words))
-    return True if any(re.match(rf"{re.escape(n)}\b", low) for n in _employer_names(job)) else None
+    return False
 
 
-def _names_before_id(text: str) -> list[str]:
-    """The names written in capitals right before an ID's words ("Microchip Employee ID", "Former Atmel employee
-    number", "DOE Badge Number"), back to a word that names no one (_PLAIN_WORDS) or a stop."""
-    out = []
-    for m in _ID_IN_WORDS.finditer(text):
-        before = re.split(r"[^\w\s&'’.-]", text[:m.start()])[-1].split()
-        name = _name_in(list(reversed(before)))
-        if name:
-            out.append(" ".join(reversed(name.split())))
-    return out
-
-
-def employer_id_box(field: dict, job: dict | None) -> bool | None:
-    """Is this box for the person's own ID at an employer (_EMPLOYER_ID), and is that employer the one applied to?
-    True where it is: a bare "Employee ID", "Former Employee ID", "Employee ID (for former employees)", "Badge number
-    (if previously employed)", "TI Employee ID" at Texas Instruments, "If you have previously worked for Intel
-    Corporation in any capacity (including through an agency), please provide your WWID" on Intel's form, one "with
-    us". False where it's their ID at another: in a block about a past job, a school or a reference (_ANOTHER_BLOCK);
-    another employer's said so ("Previous Employer Employee ID", "Employee ID (previous company)"); or naming another
-    organization ("Employee ID at Intel Federal" on Intel's form, "Microchip Employee ID", "If you worked for Example
-    Fab, your employee number" on another's form, "If you have worked for a government contractor, provide your
-    employee ID", "Federal employee ID", "DOE badge number"). None where it's no such box: no ID asked, a tax ID,
-    someone else's (a referrer's, a manager's, a recruiter's, a friend's, "their"), a list, or a label too long to be
-    one box's."""
+def employer_id_box(field: dict, job: dict | None, prof: Profile | None = None) -> bool | None:
+    """Is this text box for the person's own ID at an employer (_asks_an_id), and is that employer the one applied to?
+    The person's own here (True) unless its place or its words say otherwise: another employer's (False) where it's in
+    a block about a past job, a school or a reference (_ANOTHER_BLOCK), where it says another employer ("Previous
+    Employer Employee ID", "Employee ID (previous company)": _ANOTHER_EMPLOYER), or where it names an organization that
+    isn't this one (_names_another: one of the person's other employers, `prof`'s, or the lists'). None where it's no
+    such box: no ID asked, a tax ID, someone else's (_someone_elses), or not a text box (a list, a tick box)."""
     if field.get("kind", "text") not in ("text", "textarea") or not _asks_an_id(field.get("label")):
         return None
     text = _id_label(field.get("label"))
     label = norm(text)
     job = job or {}
-    names = _this_employers_names(job)
-    if _SOMEONE_ELSE.search(label) or _THEIRS.search(label) or any(
-            not any(re.search(rf"(?:^| ){re.escape(n)}$", label[:m.end(1)]) for n in names)
-            for m in _POSSESSOR.finditer(label)):
-        return None  # (someone else's; "Intel's employee ID" on Intel's form is the person's own there)
+    if _someone_elses(text, label, job):
+        return None
     if _ANOTHER_BLOCK.search(norm(field.get("section"))) or _ANOTHER_EMPLOYER.search(label):
         return False
-    words = re.sub(r"[^\w&'’.]+", " ", text)
-    if any(_whose(words[m.end():], bool(m[1]), job) is False for m in _WHOSE.finditer(words)):
-        return False
-    own = set(norm(job.get("company")).split())
-    if any(w in _OWNER_WORDS and w not in own for w in re.findall(rf"\b(\w+) (?:{_ID_WORDS})", label)):
-        return False
-    return not any(not _names_this_one(name, job) for name in _names_before_id(text))
+    return not _names_another(text, label, job, prof)
 
 
 _UNFINISHED = re.compile(r"^(none|n ?a|no|not applicable)$|\b(no degree|not (completed|finished)|incomplete|"
@@ -2921,11 +2993,12 @@ def _answer_bank(prof: Profile, label: str, job: dict | None = None, common: boo
                  field: dict | None = None) -> Answer | None:
     """The person's own answers (answers.yaml, profile.yaml's answers:) to this question; with `common`, only the
     common questions' (the question bank's), which resolve_field tries last. An answer kept for one employer alone
-    (`at`: an ID there) is used only on that employer's forms (same_employer_as). A box asking an ID (_asks_an_id) is
-    told by the whole of it, `field` (its section and kind too: employer_id_box): the person's ID at this employer takes
-    only an answer kept for this one (`at`, or the employer it was given for: `from`), or one written for every employer
-    that says there's none ("N/A"); another employer's takes no ID kept for an employer (_kept_id) and no number
-    written for every employer; someone else's (a referrer's), or a list's, no ID kept for an employer."""
+    (`at`: an ID there) is used only on that employer's forms (same_employer_as). A text box asking an ID (_asks_an_id)
+    is told by the whole of it, `field` (its section too: employer_id_box): the person's ID at this employer takes only
+    an answer kept for this one (`at`, or the employer it was given for: `from`), or one written for every employer that
+    says there's none ("N/A") where the profile has no ID for it; another employer's takes no ID kept for an employer
+    (_kept_id) and no number written for every employer; someone else's (a referrer's) no ID kept for an employer. A
+    list or a tick box whose words mention an ID is answered as any other question."""
     company = norm((job or {}).get("company"))
     box: list[bool | None] = []  # (employer_id_box of the box asked: read once, where an entry fits a box asking an ID)
 
@@ -2933,17 +3006,19 @@ def _answer_bank(prof: Profile, label: str, job: dict | None = None, common: boo
         at = str(item.get("at") or "").strip()
         if at and not same_employer_as(at, (job or {}).get("company")):
             return False
-        if not _asks_an_id(label):
+        # (a text box asking an ID alone: a list or a tick box whose words mention one is answered as any other)
+        if (field or {}).get("kind", "text") not in ("text", "textarea") or not _asks_an_id(label):
             return True
         if not box:
-            box.append(employer_id_box(field or {"label": label}, job))
+            box.append(employer_id_box(field or {"label": label}, job, prof))
         employer = at or str(item.get("from") or "").strip()
         if box[0] is None:
             return not _kept_id(item)
         if box[0] and employer:
             return same_employer_as(employer, (job or {}).get("company"))
         if not employer:
-            return _says_none(item.get("answer"))
+            # (one that says there's none, where the profile has no ID for this employer: employee_ids comes first)
+            return _says_none(item.get("answer")) and not (box[0] and _employee_id(prof, job or {}))
         return not _kept_id(item)  # (another employer's ID box: never one kept for an employer)
     for item in _listed(prof.get("answers")):
         if not isinstance(item, dict) or not item.get("match") or item.get("answer") in (None, ""):
@@ -3015,11 +3090,19 @@ def _left_at_employer(prof: Profile, field: dict, job: dict | None) -> bool:
 
 
 def remembered_ids(prof: Profile) -> list[str]:
-    """The IDs among the person's remembered answers (answers.yaml's, profile.yaml's): each answer to a question asking
-    an ID (_asks_an_id) that says more than none, for the scrubbers to take out with the profile's employee_ids."""
-    return [str(item["answer"]).strip() for item in _listed(prof.get("answers"))
-            if isinstance(item, dict) and item.get("answer") not in (None, "") and not _says_none(item.get("answer"))
-            and _asks_an_id(item.get("question") or re.sub(r"[^\w#]+", " ", str(item.get("match") or "")))]
+    """The IDs among the person's remembered answers (answers.yaml's, profile.yaml's), for the scrubbers to take out
+    with the profile's employee_ids: each kept for an employer alone (`at`: a text box's ID there), and each other
+    answer to a question asking an ID (its words, or a pattern written by hand: "employee\\s*id") that is one, a word
+    with a figure in it: never a list's choice ("Yes", "Unknown") nor one that says there's none."""
+    out = []
+    for item in _listed(prof.get("answers")):
+        said = str(item.get("answer") or "").strip() if isinstance(item, dict) else ""
+        if not said or _says_none(said) or polarity(said) is not None:
+            continue
+        pattern = re.sub(r"\\[sSwWdDbB][*+?]?|[^\w#]+", " ", str(item.get("match") or ""))
+        if str(item.get("at") or "").strip() or _asks_an_id(item.get("question") or pattern) and re.search(r"\d", said):
+            out.append(said)
+    return out
 
 
 def tailored_document(job: dict, kind: str) -> str | None:
@@ -3488,7 +3571,7 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
         # (_answer_bank) or the profile's employee_ids for it; another employer's (a past job's block, another named),
         # someone else's (a reference's, a friend's) only an answer to it that's no ID kept for an employer. Never
         # another rule's: a Yes or No for its "if previously employed by the company", a number of the profile's
-        if ans is None and employer_id_box(field, job) is True and (kept := _employee_id(prof, job)):
+        if ans is None and employer_id_box(field, job, prof) is True and (kept := _employee_id(prof, job)):
             ans = Answer(kept, "employee_id")
         return ans
     if ans is None and _NEVER_GUESS.search(label):
@@ -4478,7 +4561,7 @@ def _id_flags(f: dict, prof: Profile, job: dict | None, defaulted: bool) -> dict
     so it's asked: the owner's call, Oct 21, "If something asks for your WWID I'd like it to ask") unless the profile
     says they never worked here and has no employer that may be this one (a question's "or any of its subsidiaries"
     alone is no reason to ask), or "left_here" where they left it empty at this employer before (_left_at_employer)."""
-    if employer_id_box(f, job) is not True:
+    if employer_id_box(f, job, prof) is not True:
         return {}
     if f.get("required") or defaulted:
         return {"own_id": True}

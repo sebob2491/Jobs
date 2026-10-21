@@ -1144,13 +1144,15 @@ function question(jobId, q, i, repeated = false, company = "") {
   const where = `${q.section ? `${esc(q.section)}: ` : ""}${esc(q.label)}${q.sublabel ? ` (${esc(q.sublabel)})` : ""}`;
   // and, for one whose words say little, the site's words above it (what it agrees to or certifies)
   // (and, for an account form's security questions, that the answers go nowhere else)
-  // (and, for an optional box asking their ID at this employer, that it's optional and asked once: left empty with
-  // Remember ticked, not at this employer again either. Any answer to their ID here is remembered for this employer
-  // alone)
-  const here = company ? ` nor at ${esc(company)} while Remember is ticked` : "";
+  // (and, for an optional box asking their ID at this employer, that it's optional and asked once: on a questions card
+  // (`company` given), left empty with Remember ticked and Fill these in pressed, not at this employer again either, and
+  // how that's undone. Any answer to their ID here is remembered for this employer alone)
+  const here = company ? ` Left empty with Remember ticked and Fill these in, it isn't asked at ${esc(company)} again `
+    + `either (to be asked there again, ask Claude to clear it from answers.yaml, or put your ID in your profile's `
+    + `history.employee_ids).` : "";
   const about = q.about ? `<span class="small">“${esc(q.about)}”</span>`
     : q.account ? `<span class="small">For this account only: never remembered.</span>`
-    : q.employer_id ? `<span class="small">Optional: left empty, it isn't asked again for this job,${here}.</span>` : "";
+    : q.employer_id ? `<span class="small">Optional: left empty, it isn't asked again for this job.${here}</span>` : "";
   const keep = q.own_id || q.employer_id ? "Remember for this employer only" : "Remember for later applications";
   return `<label class="q"${q.employer_id ? ` data-optional-id="1"` : ""}><span>${where}${q.error ? ` <span class="small">(${esc(q.error)})</span>` : ""}</span>${about}${input}
     ${repeated ? "" : `<span class="remember"><input type="checkbox" data-remember="${esc(q.label)}" ${consent || forced ? "" : "checked"}> ${keep}</span>`}</label>`;
@@ -1280,7 +1282,7 @@ function renderSide() {
     let body;
     const qs = r.questions || [];
     const repeated = new Set(qs.map((q) => q.label).filter((l, i, all) => all.indexOf(l) !== i));
-    const form = qs.length ? `<form data-answer="${r.job_id}">${qs.map((q, i) => question(r.job_id, q, i, repeated.has(q.label), r.company)).join("")}</form>` : "";
+    const form = qs.length ? `<form data-answer="${r.job_id}">${qs.map((q, i) => question(r.job_id, q, i, repeated.has(q.label), r.need === "questions" ? r.company : "")).join("")}</form>` : "";
     // questions (with Carry on, for answers typed into the page itself), or a missing file plus questions
     // (and Later on a sign-in holding the queue: an account form's security questions, put on its card)
     // left by a restart of the desk, with no tab to show: Carry on fills it again up to its review page (never sending
@@ -2143,19 +2145,12 @@ document.addEventListener("click", (e) => {
       remember: form.querySelector(`[data-remember="${CSS.escape(el.dataset.q)}"]`)?.checked ?? !el.dataset.q.includes(" | "),
       optional: !!el.closest("[data-optional-id]"),
     }));
-    // (an optional ID left empty goes too, with its Remember: left empty at this employer from then on; and a card
-    // that asks only such questions may go on with them all empty)
+    // (an optional ID left empty goes too, with its Remember: on a questions card, left empty at this employer from
+    // then on where it's ticked; and a card that asks only such questions may go on with them all empty. Carry on
+    // leaves one empty for this job alone)
     if (!all.some((x) => x.value) && !all.every((x) => x.optional)) { alert("Answer at least one question first."); return; }
     const answers = all.filter((x) => x.value || x.optional).map(({optional, ...x}) => x);
     act(async () => { const out = await api("/api/answer", {job_id: Number(job), answers}); if (out.note) alert(out.note); });
-  } else if (jobAct === "resume") {
-    // (Carry on, with what its card leaves empty of an optional ID and its Remember: left empty at this employer from
-    // then on where it's ticked)
-    const form = document.querySelector(`form[data-answer="${job}"]`);
-    const left = form ? [...form.querySelectorAll("[data-optional-id] [data-q]")].filter((el) => !el.value).map((el) => ({
-      label: el.dataset.q, remember: !!form.querySelector(`[data-remember="${CSS.escape(el.dataset.q)}"]`)?.checked,
-    })) : [];
-    act(() => api(`/api/job/${job}/resume`, left.length ? {left} : {}));
   } else if (jobAct === "report") {
     makeReport(job);
   } else if (jobAct === "unskip") {  // back where it was: queued again, or in the list unticked

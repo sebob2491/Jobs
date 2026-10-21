@@ -320,8 +320,9 @@ def test_what_and_where_opens_on_the_profiles_titles_and_places_and_cancel_saves
 
 def test_an_optional_id_left_empty_on_its_card_goes_with_its_remember(srv, job_apply_home):
     """The review of the ID's change (LOW 1): an optional box for the person's ID at this employer, left empty on its
-    card, is sent with its Remember (ticked: left empty at this employer from then on): with the card's other answers
-    on Fill these in, and on Carry on where the card asks nothing else."""
+    questions card, is sent with its Remember with the card's other answers on Fill these in (ticked: left empty at
+    this employer from then on). Carry on sends nothing of it (the second review's MEDIUM 1): left empty for that job
+    alone."""
     from job_apply import config
 
     wwid = "If you have previously worked for Example Fab in any capacity, please provide your WWID"
@@ -348,7 +349,8 @@ def test_an_optional_id_left_empty_on_its_card_goes_with_its_remember(srv, job_a
     assert calls == [("POST", "/api/answer", {"job_id": fab, "answers": [
                          {"label": wwid, "value": "", "remember": True},
                          {"label": "Years in a cleanroom", "value": "3", "remember": True}]}),
-                     ("POST", f"/api/job/{litho}/resume", {"left": [{"label": wwid, "remember": True}]})], calls
+                     ("POST", f"/api/job/{litho}/resume", {})], calls
     assert said == []
     assert [(a["question"], a["answer"], a["at"]) for a in config.saved_answers() if a["question"] == wwid] == [
-        (wwid, None, "Example Litho"), (wwid, None, "Example Fab")]  # (the latest first)
+        (wwid, None, "Example Fab")]
+    assert desk.applier.runs[litho].asked_once  # (Carry on: for that job alone)

@@ -2270,9 +2270,8 @@ def test_an_optional_id_box_at_the_employer_is_the_persons_to_give():
         needs, filled = _id_plan(label, there)
         assert needs[label].get("employer_id") and filled == {}, label
     # never another employer's ID, someone else's, or one in a past job's block: left empty, never filled
-    for label, box in (("Employee ID at your previous employer", {}), ("Federal employee ID", {}),
-                       ("DOE badge number", {}), ("Referring Employee ID", {}), ("Your manager's employee number", {}),
-                       ("Employee ID", {"section": "Work Experience 1"})):
+    for label, box in (("Employee ID at your previous employer", {}), ("Referring Employee ID", {}),
+                       ("Your manager's employee number", {}), ("Employee ID", {"section": "Work Experience 1"})):
         needs, filled = _id_plan(label, there, **box)
         assert not needs[label].get("employer_id") and filled == {}, label
     needs, filled = _id_plan(_WWID, _person(work_history=[{"company": "Other Fab", "title": "Technician",
@@ -2400,7 +2399,7 @@ def test_an_id_kept_for_this_employer_goes_only_into_its_own_id_box(box):
 
 
 @pytest.mark.parametrize("label,company,whose", [
-    # (the review's M3: "for", "of" or "at" with no name after it says nothing of another employer)
+    # (the review's M3: "for", "of" or "at" with no organization named says nothing of another employer)
     ("Employee ID (for former employees)", "Example Fab", True),
     ("Employee ID for former employees", "Example Fab", True),
     ("Employee Number (for rehires only)", "Example Fab", True),
@@ -2411,7 +2410,7 @@ def test_an_id_kept_for_this_employer_goes_only_into_its_own_id_box(box):
     ("Employee ID If Previously Employed With Us", "Example Fab", True),
     ("Employee ID at Example Fab", "Example Fab", True),
     ("If you were employed by an Example Fab subsidiary, provide your employee ID", "Example Fab", True),
-    # (this employer's short names in capitals: its initials, a short name its list entry or its own name gives)
+    # (this employer's short names: its initials, a short name its list entry or its own name gives)
     ("TI Employee ID (if applicable)", "Texas Instruments", True),
     ("Former TI employee? Your TI employee ID", "Texas Instruments", True),
     ("ASU Employee ID (if applicable)", "Arizona State University", True),
@@ -2423,11 +2422,31 @@ def test_an_id_kept_for_this_employer_goes_only_into_its_own_id_box(box):
     ("Team member ID", "Example Fab", True),
     ("If you have previously worked for Example Fab in any capacity (including through an agency), please provide "
      "your WWID", "Example Fab", True),
-    # another employer's (the review's M2 and LOW 2)
-    ("Microchip Employee ID", "Example Fab", False), ("Former Atmel employee number", "Microchip Technology", False),
-    ("Example Fab employee number", "Other Fab", False), ("Employee ID at Example Fab Services", "Example Fab", False),
+    # (the second review's: words in capitals alone name no one; a contraction is no possessive; the applicant's,
+    # "their" where the label never says "you", and this employer's own are the person's)
+    ("What's your employee ID?", "Example Fab", True), ("What's your WWID?", "Example Fab", True),
+    ("Former employees should enter their employee ID", "Example Fab", True),
+    ("Applicant's Employee ID (if a current employee)", "Example Fab", True),
+    ("Example Fab Corporation's WWID", "Example Fab", True), ("Ex-Employee ID", "Example Fab", True),
+    ("Retiree Employee ID", "Example Fab", True), ("Personal Employee Number", "Example Fab", True),
+    ("Previously Employed Employee ID", "Example Fab", True), ("Employee ID For Re-Hire", "Example Fab", True),
+    ("Employee ID For Previously Employed Applicants", "Example Fab", True),
+    ("Security Badge Number", "Example Fab", True), ("Microchip Employee ID", "Example Fab", True),
+    ("DOE BADGE NUMBER", "Example Fab", True),
+    ("If you are a former company employee, enter your employee ID", "Example Fab", True),
+    ("Current company employees: badge number", "Example Fab", True),
+    ("Employee ID (if you worked for us at any other company in our group)", "Example Fab", True),
+    # another employer's: said so (the review's M2), or an organization named that isn't this one: on the lists (Intel,
+    # onsemi, the City of Phoenix), "a" one worked for, or a name with an organization's word
+    ("Employee ID At Your Previous Employer", "Example Fab", False),
+    ("Current Employer Employee ID", "Example Fab", False), ("Employee ID (previous company)", "Example Fab", False),
+    ("If you worked for intel, provide your WWID", "Microchip Technology", False),
+    ("former onsemi employee number", "Microchip Technology", False),
+    ("If you worked for the City of Phoenix, provide your employee number", "City of Mesa", False),
+    ("Employee ID at University of Phoenix", "University of Arizona", False),
+    ("Arizona Department of Corrections Employee ID", "Arizona State University", False),
+    ("Banner Bank Employee ID", "Banner Health", False),
     ("If you have worked for a government contractor, provide your employee ID", "Example Fab", False),
-    ("Employee ID At Your Previous Employer", "Example Fab", False), ("DOE BADGE NUMBER", "Example Fab", False),
     # someone else's, or no employee's ID at all (the review's LOW 2)
     ("Friend's employee ID", "Example Fab", None), ("Sponsor's employee ID", "Example Fab", None),
     ("If you were referred, give their WWID", "Example Fab", None),
@@ -2437,17 +2456,42 @@ def test_an_id_kept_for_this_employer_goes_only_into_its_own_id_box(box):
     ("Agency badge number", "Example Fab", None), ("Recruiter employee ID", "Example Fab", None),
 ])
 def test_whose_id_a_box_asks_is_told_by_its_words(label, company, whose):
-    """employer_id_box: the person's own ID at the employer applied to (True), at another (False), or no such box
-    (None: someone else's, a tax ID). A name after "for", "of" or "at" names an employer only when it's written as one
-    (capitals that aren't "Former" or "Internal"); one in capitals before the ID is another's unless it's this one's
-    name, short name or initials; "a" anything after an employer worked for is another; "their", or a person's, is
-    someone else's. Where it's this one's, the profile's ID for it fills it."""
+    """employer_id_box: the person's own ID at the employer applied to (True) unless its words say otherwise: another
+    employer's (False: said so, or an organization named that isn't this one), or no such box (None: someone else's, a
+    tax ID). Where it's this one's, the profile's ID for it fills it; anywhere else nothing does."""
     from job_apply.autofill import employer_id_box
 
     assert employer_id_box({"label": label, "kind": "text"}, {"company": company}) is whose, label
     keeps = Profile({"history": {"employee_ids": {company: "12345678"}}})
     got = resolve_field(f(label), keeps, {"company": company})
     assert (got and got.value) == ("12345678" if whose else None), label
+
+
+def test_an_id_box_naming_one_of_the_persons_other_employers_is_that_employers():
+    """The second review's (d): an ID box that names one of the person's own other employers (the profile's, compared
+    whole: "City of Phoenix" isn't "City of Mesa", "Example Fab Services" isn't Example Fab) is that employer's, not
+    this one's: neither filled nor asked. Without it in the profile, words alone ("Example Fab Services") name no
+    one."""
+    from job_apply.autofill import employer_id_box
+
+    person = Profile({"work_history": [
+        {"company": "Example Fab Services", "title": "Technician", "start": "2016-01", "end": "2018-12"},
+        {"company": "Northwind Litho", "title": "Technician", "start": "2019-01", "end": "2022-05"},
+        {"company": "City of Phoenix", "title": "Technician", "start": "2022-06", "end": "present"}],
+        "history": {"employee_ids": {"Example Fab": "12345678", "City of Mesa": "87654321"}}})
+    for label, company in (("Employee ID at Example Fab Services", "Example Fab"),
+                           ("northwind litho employee number", "Example Fab"),
+                           ("If you worked for the City of Phoenix, your employee number", "City of Mesa")):
+        assert employer_id_box({"label": label, "kind": "text"}, {"company": company}, person) is False, label
+        assert resolve_field(f(label), person, {"company": company}) is None, label
+        needs, _ = _id_plan(label, person, company)
+        assert not needs[label].get("employer_id"), label
+    assert employer_id_box({"label": "Employee ID at Example Fab Services", "kind": "text"},
+                           {"company": "Example Fab"}) is True
+    # (this employer's own name, the longest, beside another's that it holds: Example Fab Services' form)
+    worked = Profile({"work_history": [{"company": "Example Fab", "title": "T", "start": "2016-01", "end": "2018-12"}]})
+    assert employer_id_box({"label": "Employee ID at Example Fab Services", "kind": "text"},
+                           {"company": "Example Fab Services"}, worked) is True
 
 
 def test_a_long_notice_that_mentions_an_id_is_no_id_box():
@@ -2510,20 +2554,82 @@ def test_an_answer_written_for_every_employer_fills_an_id_box_only_where_it_says
         for company in ("Example Fab", "Other Fab"):
             got = resolve_field(f("Employee ID", required=True), person, {"company": company})
             assert (got and got.value) == (answer if used else None), (answer, company)
+    # (the second review's LOW 3: the profile's ID for this employer comes before an "N/A" written for every one)
+    person = Profile({"answers": [{"match": "employee id", "answer": "N/A"}],
+                      "history": {"employee_ids": {"Example Fab": "12345678"}}})
+    assert resolve_field(f("Employee ID", required=True), person, {"company": "Example Fab"}).value == "12345678"
+    assert resolve_field(f("Employee ID", required=True), person, {"company": "Other Fab"}).value == "N/A"
+
+
+def test_an_id_kept_for_an_employer_never_goes_into_someone_elses_box_nor_a_reference():
+    """The second review's R09 and R10 (mutations its tests let past): an ID kept for Example Fab by a pattern
+    (answers.yaml's `at`) never goes into a box for someone else's ID there, and one given on its card before IDs were
+    kept with `at` (its `from` alone) never goes into an "Employee ID" under References."""
+    kept = Profile({"answers": [{"match": "employee id", "answer": "12345678", "at": "Example Fab"}]})
+    for label in ("Referring Employee ID", "Friend's employee ID"):
+        assert resolve_field(f(label), kept, {"company": "Example Fab"}) is None, label
+    before = Profile({"answers": [{"match": r"^Employee\W+ID$", "question": "Employee ID", "answer": "12345678",
+                                   "from": "Example Fab"}]})
+    assert resolve_field(f("Employee ID", section="References"), before, {"company": "Example Fab"}) is None
+    assert resolve_field(f("Employee ID"), before, {"company": "Example Fab"}).value == "12345678"
+
+
+def test_a_long_label_asking_an_id_is_read_by_its_question_never_answered_yes_or_no():
+    """The second review's MEDIUM 3: a text box's label over ID_LABEL_MAX characters, "If you have previously worked for
+    Intel Corporation in any capacity, including as an intern, a contractor or through an agency, please provide your
+    WWID so that we can locate your records", got "Yes, previously". Its clause that asks (or its last sentence) asks an
+    ID, so it's an ID box whatever its length: the profile's ID for the employer, or asked, never a Yes or No."""
+    from job_apply.autofill import ID_LABEL_MAX, employer_id_box, norm
+
+    label = ("If you have previously worked for Example Fab in any capacity, including as an intern, a contractor or "
+             "through an agency, please provide your WWID so that we can locate your records")
+    assert len(norm(label)) > ID_LABEL_MAX
+    worked = {"work_history": [{"company": "Example Fab", "title": "Technician", "start": "2019-01", "end": "2022-05"}]}
+    assert employer_id_box({"label": label, "kind": "text"}, {"company": "Example Fab"}, Profile(worked)) is True
+    assert resolve_field(f(label), Profile(worked), {"company": "Example Fab"}) is None
+    needs, filled = _id_plan(label, Profile(worked))
+    assert needs[label].get("employer_id") and filled == {}
+    keeps = Profile({**worked, "history": {"employee_ids": {"Example Fab": "12345678"}}})
+    assert resolve_field(f(label), keeps, {"company": "Example Fab"}).value == "12345678"
+    # (its last sentence, where no clause says "provide" or "enter")
+    told = ("Example Fab keeps the records of everyone who has worked for it, in any capacity and at any of its sites, "
+            "for as long as the law requires, and its recruiters look at them for each application. Your WWID?")
+    assert len(norm(told)) > ID_LABEL_MAX and employer_id_box({"label": told}, {"company": "Example Fab"}) is True
+
+
+@pytest.mark.parametrize("kind,label,answer", [
+    ("radio_group", "Have you worked here before? If yes, enter your employee ID below", "Yes"),
+    ("select", "Have you worked here before? If yes, enter your employee ID below", "Yes"),
+    ("checkbox", "I am a current employee and will enter my employee ID", True)])
+def test_a_list_or_a_tick_box_mentioning_an_id_is_answered_as_main_answers_it(kind, label, answer):
+    """The second review's MEDIUM 4: a list, a radio group or a tick box whose words mention an employee ID is no ID
+    box: its remembered answer (one given on the desk before, its `from` this employer) fills it, as on main."""
+    from job_apply.autofill import employer_id_box
+
+    person = Profile({"answers": [{"match": "q", "question": label, "answer": "Yes", "from": "Example Fab"}]})
+    box = {**f(label, kind), **({"options": ["Yes", "No"]} if kind != "checkbox" else {"value": False})}
+    assert employer_id_box(box, {"company": "Example Fab"}) is None
+    assert resolve_field(box, person, {"company": "Example Fab"}).value == answer
 
 
 def test_remembered_ids_are_the_answers_that_are_ids():
     """The review's LOW 5: the IDs the person gave the desk live in answers.yaml, so the scrubbers take them out with
-    the profile's employee_ids: each answer to a question asking an ID, never one that says none, nor another answer."""
+    the profile's employee_ids: each kept for an employer (`at`), and each other answer to a question asking an ID (or a
+    pattern written by hand, a regular expression too) that is one, with a figure in it: never one that says none, a
+    list's choice ("Yes", "Unknown": the second review's LOW 1), nor another answer."""
     from job_apply.autofill import remembered_ids
 
     person = Profile({"answers": [
         {"match": "x", "question": "Employee ID", "answer": "12345678", "at": "Example Fab"},
         {"match": "wwid", "question": "WWID", "answer": "EF-2468", "from": "Example Fab"},
-        {"match": "badge number", "answer": "B-1357"}, {"match": "employee id", "answer": "N/A"},
+        {"match": "badge number", "answer": "B-1357"}, {"match": r"employee\s*id", "answer": "HAND-5555"},
+        {"match": "employee id", "answer": "N/A"},
         {"match": "y", "question": "Employee ID", "answer": None, "at": "Other Fab"},
+        {"match": "z", "question": "Are you a current employee? If yes, enter your employee ID below", "answer": "Yes",
+         "from": "Example Fab"},
+        {"match": "w", "question": "Do you know your WWID?", "answer": "Unknown", "from": "Example Fab"},
         {"match": "tool color", "answer": "Blue"}]})
-    assert remembered_ids(person) == ["12345678", "EF-2468", "B-1357"]
+    assert remembered_ids(person) == ["12345678", "EF-2468", "B-1357", "HAND-5555"]
 
 
 def test_recurring_background_questions_are_answered_from_a_no_in_the_profile():
