@@ -25,7 +25,9 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   - `search.py`: employer job searches;
   - `recommend.py`: ranking;
   - `places.py`: miles from the person's home town (the desk's "Within N miles"), from `data/places.yaml`;
-  - `mailbox.py`: emailed codes, and the confirmation and password-reset links;
+  - `mailbox.py`: emailed codes, and the confirmation and password-reset links (one message's checks, `pick`, shared
+    with the messages Claude reads in Gmail for the desk's mail requests: `pipeline_mail.MailAsk`, `mail_requests`,
+    `give_mail`, and `mailwatch.py`, the `job-apply-wait-mail` watch Claude runs in the background);
   - `tracker.py`: the SQLite tracker;
   - `report.py`: problem reports;
   - `history.py`: the desk's run history (`runs.jsonl`, the This week window);
@@ -279,6 +281,10 @@ this file says otherwise, it wins.
   - a saved password goes only onto its own system's sites;
   - the inbox app password only reads sign-up codes (and, with `manage_accounts`, the reset
     email a site was just asked for, from that site);
+  - with `settings.email_codes` on (and no app password the desk can use), Claude reads through the Gmail
+    connector only the messages a desk request names (that job's own senders, since its wait began: the
+    request's query, never wider, never `in:anywhere`), and the desk applies the same checks to them as to
+    the inbox's (`mailbox.pick`) and types the code itself; Claude never sends, deletes, labels or marks mail;
   - never ask for a password in chat (the desk page holds them).
 - **Answers come only from the profile or the person.** Never overstate education or
   experience: coursework is not a degree. Where the profile supports the answer, the desk

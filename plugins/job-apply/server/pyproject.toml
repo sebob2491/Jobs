@@ -19,6 +19,7 @@ dev = ["pytest>=8", "pytest-xdist>=3.5", "pytest-cov>=6", "ruff>=0.16", "mypy>=2
 job-apply-mcp = "job_apply.server:main"
 job-apply-desk = "job_apply.desk:main"
 job-apply-doctor = "job_apply.doctor:main"
+job-apply-wait-mail = "job_apply.mailwatch:main"
 
 [build-system]
 requires = ["hatchling"]

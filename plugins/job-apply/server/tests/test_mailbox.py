@@ -545,3 +545,78 @@ def test_another_kind_of_code_is_never_taken_for_the_sign_up_code():
     assert find_code("Enter ZIP code 85201 to see jobs near you.") is None
     assert find_code("Your promo code SAVE20 expires soon") is None
     assert find_code("Your code: 218335") == "218335"
+
+
+# ------------------------------------------------- the same checks on the messages Claude reads in Gmail
+_SITE = "acme-fab.example"  # (made up: the repo is public)
+_OWN = lambda url: url.startswith("https://careers.acme-fab.example/")  # noqa: E731
+_MAILS = {
+    # the job's site's code, after its wait began: used
+    "own code": ([(30, "Acme Fab Careers <no-reply@careers.acme-fab.example>", "Verify your email",
+                   "Your verification code is 482913. It expires in 10 minutes.", False)], "code", "482913"),
+    # another sender's code, in the window: never
+    "another sender": ([(30, "Deals <deals@shop.example.com>", "Your code", "Your verification code is 222222",
+                         False)], "code", None),
+    # the job's site's, from well before the wait began: an earlier one's
+    "before the window": ([(-3600, "no-reply@careers.acme-fab.example", "Your code",
+                            "Your verification code is 333333", False)], "code", None),
+    # the newest of the job's site's two, past another sender's newer one
+    "newest own": ([(10, "no-reply@careers.acme-fab.example", "Your code", "Your verification code is 111111", False),
+                    (40, "no-reply@careers.acme-fab.example", "Your code", "Your verification code is 444444", False),
+                    (50, "deals@shop.example.com", "Your code", "Your verification code is 555555", False)],
+                   "code", "444444"),
+    # a link to another site, from the job's own sender: refused
+    "link elsewhere": ([(30, "no-reply@careers.acme-fab.example", "Confirm your email",
+                         '<p>Confirm your email: <a href="https://evil.example.net/verify?t=1">Verify</a></p>', True)],
+                       "link", None),
+    # its own site's link: opened
+    "own link": ([(30, "no-reply@careers.acme-fab.example", "Confirm your email",
+                   '<p>Confirm your email: <a href="https://careers.acme-fab.example/verify?t=1">Verify</a></p>',
+                   True)], "link", "https://careers.acme-fab.example/verify?t=1"),
+    # another job's mail, by its subject (_another_employers_mail): passed over
+    "another job's": ([(30, "no-reply@careers.acme-fab.example", "Other Litho: confirm your identity",
+                        "Your verification code is 666666", False)], "code", None),
+}
+
+
+@pytest.mark.parametrize("case", list(_MAILS))
+def test_a_message_read_in_gmail_gets_the_inbox_s_own_checks(imap, case):
+    """The owner (Oct 21): without an app password, Claude reads a job's emailed code through the Gmail connector and
+    hands the messages to the desk (give_mail). They go through the very checks the inbox's do (mailbox.pick, over
+    in_window and found_in): the same answer from both, for each of these made-up mails."""
+    mails, want, expected = _MAILS[case]
+    since = time.time()
+
+    def others(domain, subject):
+        return "Other Litho" in subject
+
+    imap.messages = [(since + at, _message(sender, subject, body, html=markup))
+                     for at, sender, subject, body, markup in mails]
+    found = mailbox.search("sam@example.com", "app-password", since, {_SITE}, want, _OWN, others=others)
+    given = [mailbox.connector_mail({"sender": sender, "date": since + at, "subject": subject,
+                                     ("html_body" if markup else "plaintext_body"): body})
+             for at, sender, subject, body, markup in mails]
+    picked = mailbox.pick([m for m in given if m is not None], since, {_SITE}, want, _OWN, others=others)
+    assert (found and found.value) == (picked and picked.value) == expected, (found, picked)
+    if picked is not None:
+        assert (picked.kind, picked.sender) == (found.kind, found.sender)
+
+
+def test_a_message_from_gmail_reads_as_the_connector_gives_it():
+    """What get_thread gives (sender as an address or {name, email}, date as Gmail's milliseconds, epoch seconds, RFC
+    2822 or ISO 8601, a plain or HTML body) reads as the inbox's would; one without a sender or a date that reads isn't
+    a message the window can be checked against, so it's left out."""
+    when = 1792540800.0  # (made up)
+    assert mailbox.received_at(when) == mailbox.received_at(str(int(when))) == when
+    assert mailbox.received_at(int(when * 1000)) == when  # Gmail's internalDate
+    assert mailbox.received_at("Fri, 20 Oct 2026 08:00:00 +0000") == mailbox.received_at("2026-10-20T08:00:00Z")
+    assert mailbox.received_at("2026-10-20T01:00:00-07:00") == mailbox.received_at("2026-10-20T08:00:00+00:00")
+    for junk in (None, "", "yesterday", True, [when]):
+        assert mailbox.received_at(junk) is None, junk
+    m = mailbox.connector_mail({"sender": {"name": "Acme Fab", "email": "no-reply@careers.acme-fab.example"},
+                                "internalDate": str(int(when * 1000)), "subject": "Verify",
+                                "html_body": "<p>Your code is <b>48</b><b>2913</b></p>"})
+    assert m is not None and m.received == when and mailbox.sender_allowed(m.sender, {_SITE})
+    assert mailbox.pick([m], when - 10, {_SITE}, "code").value == "482913"  # (its markup's split code, read whole)
+    assert mailbox.connector_mail({"subject": "Verify", "date": when, "text": "Your code is 482913"}) is None
+    assert mailbox.connector_mail({"from": "no-reply@careers.acme-fab.example", "text": "Your code is 482913"}) is None

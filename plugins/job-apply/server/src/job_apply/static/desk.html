@@ -351,7 +351,9 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
         <p>Your email: with an app password for the address in your profile (for Gmail, make one at
           <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a>;
           it needs 2-Step Verification), a job waiting on an emailed code or link gets it from your inbox: only mail from
-          that job's site that arrived after it began waiting, read without marking anything read.</p>
+          that job's site that arrived after it began waiting, read without marking anything read. Without one, with
+          <code>email_codes: true</code> in your profile and the Gmail connector in Claude, Claude reads it through Gmail
+          while the desk's chat is open (only that job's own mail), and the desk puts it in.</p>
         </details>
       </form>
     </section>
@@ -1254,6 +1256,8 @@ function allRuns() {
   return [...once.values()].map((r) => ({...r.run, job_id: r.job_id, title: r.title || r.run.title, company: r.company || r.run.company}));
 }
 
+const GMAIL_FOR = {code: "the code", link: "the link", reset: "the password reset email"};
+
 function renderSide() {
   const runs = allRuns();
   const needs = runs.filter((r) => r.status === "needs_you").sort((a, b) => b.blocking - a.blocking);
@@ -1262,7 +1266,9 @@ function renderSide() {
   const needEntries = needs.map((r) => {
     const [said, cls] = needPill(r);
     const mark = ` <span class="pill ${cls}">${esc(said)}</span>`;
-    const head = `<h3>${esc(r.title)} <span class="small">· ${esc(r.company)}</span>${mark}</h3><p>${esc(r.reason)}</p>`;
+    // (its emailed code or link, asked of Claude in the chat: read through the Gmail connector, typed in by the desk)
+    const gmail = r.gmail ? `<p class="small" data-gmail="${esc(r.gmail)}">Claude is looking in your Gmail for ${GMAIL_FOR[r.gmail] || "the email"}. You can still enter it yourself: whichever comes first goes in.</p>` : "";
+    const head = `<h3>${esc(r.title)} <span class="small">· ${esc(r.company)}</span>${mark}</h3><p>${esc(r.reason)}</p>${gmail}`;
     let body;
     const qs = r.questions || [];
     const repeated = new Set(qs.map((q) => q.label).filter((l, i, all) => all.indexOf(l) !== i));

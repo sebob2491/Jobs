@@ -170,6 +170,8 @@ settings:
   browser_channel: chrome     # chrome, msedge, or chromium (Playwright's bundled browser)
   headless: false
   # Email (needs the Gmail connector in Claude). Both are off until you turn them on.
+  # email_codes covers applying in the chat, and the Job Desk while its chat is open (without
+  # an email app password saved on the desk: Claude reads the code, the desk puts it in).
   email_codes: false          # Claude may read sign-in / verification codes that career sites email you
   email_tracking: false       # Claude may scan your email for replies to your applications
   # Cookie banners: the desk declines them. One with no way to decline (TI's "Agree and

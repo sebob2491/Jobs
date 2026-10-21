@@ -270,6 +270,7 @@
     "need": "email_code",
     "reason": "The site emailed a code: type it in the desk's browser window, then press Carry on.",
     "code": "email_code",
+    "gmail": "code",
     "blocking": false,
     "paused_at": 1002.0,
     "captcha": false,

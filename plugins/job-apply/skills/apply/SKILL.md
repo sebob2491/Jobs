@@ -49,7 +49,9 @@ below.
   `open_application(job_id=<this job>, url=<the link>)`: without the job_id the tools
   lose track of the job, and its tailored resume isn't the one uploaded next.
   If no email arrives within a minute or two, or the setting is off, ask the user for
-  the code. Never read other mail, and never send or delete anything.
+  the code. Never read other mail, and never send or delete anything. The same setting
+  lets you read the Job Desk's codes for it while its chat is open (the desk skill's
+  "Emailed codes through Gmail": there the desk types the code, never you).
 - Check `list_jobs` before starting so you never apply to the same posting twice. A job with
   `not_interested: true` is one the user hid on the Job Desk: ask before applying to it.
 

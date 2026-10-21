@@ -364,6 +364,32 @@
    }
   },
   {
+   "name": "give_mail",
+   "description": "Hand the Job Desk the Gmail messages read for one of mail_requests()'s requests: the\n    newest few (at most 10) that its query found, each as get_thread gives it: its sender\n    (`from` or `sender`), its `date`, its `subject`, its body (`text` or `plaintext_body`, and\n    `html` or `html_body` where there is one) and any `links`. The desk reads them with the\n    checks it makes of its own inbox (only that job's senders, since its wait began; a link only\n    when it goes back to that job's site; a code another job used is never used again), then\n    types the code into that job's own tab itself or opens the link there, and says what\n    happened in `said`, never the code. Never type the code yourself. An empty list means none\n    has come yet: the request stays, and is due again shortly.",
+   "inputSchema": {
+    "properties": {
+     "job_id": {
+      "title": "Job Id",
+      "type": "integer"
+     },
+     "messages": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "title": "Messages",
+      "type": "array"
+     }
+    },
+    "required": [
+     "job_id",
+     "messages"
+    ],
+    "type": "object",
+    "title": "give_mailArguments"
+   }
+  },
+  {
    "name": "ingest_job",
    "description": "Fetch a job posting (LinkedIn, Indeed, Workday, Greenhouse, Lever, any careers page),\n    parse title/company/location/description/ATS, and save it to the tracker.\n\n    Plain HTTP is tried first. LinkedIn and Indeed usually refuse that; pass\n    use_browser=true to read the page through the user's signed-in browser instead.\n    Returns the job record including its full description.",
    "inputSchema": {
@@ -508,6 +534,15 @@
     },
     "type": "object",
     "title": "logged_emailsArguments"
+   }
+  },
+  {
+   "name": "mail_requests",
+   "description": "The Job Desk's jobs waiting on an emailed code or link for Claude to read through the\n    Gmail connector (settings.email_codes on, and no email app password the desk can use: the\n    desk skill's \"Emailed codes through Gmail\"). For each request: search_threads with its\n    `query` exactly as given (never wider), read only the newest few matching messages with\n    get_thread, and hand them to give_mail(job_id, messages); the desk checks them and types\n    the code itself. Then, while `watch` is true, run `watch_command` again in the background;\n    when it's false, stop watching.",
+   "inputSchema": {
+    "properties": {},
+    "type": "object",
+    "title": "mail_requestsArguments"
    }
   },
   {
@@ -664,7 +699,7 @@
   },
   {
    "name": "search_area",
-   "description": "What and where Find jobs (and search_company_jobs) looks: the job titles the person wants (`titles`; the first\n    `searched_titles` are searched, and all of them count toward an opening's fit; none, `default_titles`), the places\n    they want work in (`places`, each a city and state: [\"Phoenix, AZ\", \"Las Vegas, NV\"]; their states are searched)\n    and the plugin's employer lists to search (`lists`; `choices` names them all, with what each covers and how many\n    employers). The Job Desk's What and where to search window changes the same. With no arguments it only says\n    what they are now.\n\n    titles: the job titles, replacing the ones there (kept in profile.yaml's preferences.titles), one title each.\n    places: the places, replacing the ones there (kept in profile.yaml's preferences.locations).\n    lists: the lists' names, replacing the ones there (kept in ~/.job-apply/companies.yaml's `lists:`, which is made\n    when the person has none; their own employers in it stay). Only what the person asked for.",
+   "description": "What and where Find jobs (and search_company_jobs) looks: the job titles the person wants (`titles`; the first\n    `searched_titles` are searched, and all of them count toward an opening's fit; none, `default_titles`), the words\n    or titles they leave out (`avoid_titles`), the places they want work in (`places`, each a city and state:\n    [\"Phoenix, AZ\", \"Las Vegas, NV\"]; their states are searched) and the plugin's employer lists to search (`lists`;\n    `choices` names them all, with what each covers and how many employers). The Job Desk's What and where to search\n    window changes the same. With no arguments it only says what they are now.\n\n    titles: the job titles, replacing the ones there (kept in profile.yaml's preferences.titles), one title each.\n    avoid_titles: words or titles to leave out (\"Senior\", \"Call Center\"), replacing the ones there (kept in\n    profile.yaml's preferences.avoid_titles): an opening whose title has one as whole words is shown on the Job Desk's\n    All tab but never recommended.\n    places: the places, replacing the ones there (kept in profile.yaml's preferences.locations).\n    lists: the lists' names, replacing the ones there (kept in ~/.job-apply/companies.yaml's `lists:`, which is made\n    when the person has none; their own employers in it stay). Only what the person asked for.",
    "inputSchema": {
     "properties": {
      "places": {
@@ -711,6 +746,21 @@
       ],
       "default": null,
       "title": "Titles"
+     },
+     "avoid_titles": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Avoid Titles"
      }
     },
     "type": "object",
@@ -719,7 +769,7 @@
   },
   {
    "name": "search_company_jobs",
-   "description": "Search employers' own careers sites for openings through their applicant tracking\n    system's public search: Workday, Greenhouse, Lever, Eightfold, SmartRecruiters, Oracle,\n    ApplicantStack, Taleo, Talemetry, iCIMS Jibe, Jobvite, Cornerstone, Phenom, amazon.jobs and Phoenix\n    Children's own site. ASML's site, iCIMS portals, Paycom and UKG Pro boards and SuccessFactors'\n    newer search (Edwards) and older career sites (Amkor) and Infor CloudSuite boards (Benchmark)\n    are read in a background browser tab.\n\n    query: keywords; separate alternatives with \"|\", e.g. \"field service | equipment engineer\".\n    companies: names from the plugin's companies list (default: all of them).\n    location: state code/name or city alternatives (\"AZ\", \"Phoenix|Chandler\"); null for anywhere.\n    Results already in the tracker carry `tracked`. Companies in `browser_only` have no\n    search the plugin can use, and some turn automated browsers away: give the user their\n    careers_url to search in their own browser.\n    every_list: every plugin list's employers too, not only the person's (the desk's troubleshooting).\n    min_pay: dollars a year (hourly pay counts 2,080 hours): leaves out an opening whose pay is listed (by its\n    site's list, or its job in the tracker) on its pay line or in its own data, and the most it pays is below this\n    (pay only read from a posting's other words never leaves one out). Most lists don't give pay: those openings\n    stay, with no `pay` (read the posting, or ingest_job, for it). Results with pay carry `pay`.\n    posted_within_days: leaves out openings posted longer ago (7, 14, 30...); one whose site gives no date stays\n    (ApplicantStack, Talemetry, Jobvite, Avature and a few others never do). `below_min_pay` counts what min_pay left\n    out.\n    workplace: \"remote\", \"hybrid\" or \"onsite\", or several (\"remote, hybrid\"): leaves out an opening its site says\n    (its own field, or its location's words: \"Remote - US\") is done another way. Most don't say: those stay. Results\n    that say carry `workplace` and `workplace_source` (structured, location); `other_workplace` counts what it left\n    out.\n    employment_type: \"full_time\", \"part_time\", \"contract\", \"temporary\", \"internship\" or \"per_diem\", or several\n    (\"full_time, contract\"): leaves out an opening its site (or its job in the tracker) says is only of other types.\n    Most lists don't say: those stay. Results that say carry `employment_type` (the site's words) and\n    `employment_types` (these names); `other_employment_type` counts what it left out.",
+   "description": "Search employers' own careers sites for openings through their applicant tracking\n    system's public search: Workday, Greenhouse, Lever, Eightfold, SmartRecruiters, Oracle,\n    ApplicantStack, Taleo, Talemetry, iCIMS Jibe, Jobvite, Cornerstone, Phenom, amazon.jobs and Phoenix\n    Children's own site. ASML's site, iCIMS portals, Paycom and UKG Pro boards and SuccessFactors'\n    newer search (Edwards) and older career sites (Amkor) and Infor CloudSuite boards (Benchmark)\n    are read in a background browser tab.\n\n    query: keywords; separate alternatives with \"|\", e.g. \"field service | equipment engineer\".\n    companies: names from the plugin's companies list (default: all of them).\n    location: state code/name or city alternatives (\"AZ\", \"Phoenix|Chandler\"); null for anywhere.\n    Results already in the tracker carry `tracked`. Companies in `browser_only` have no\n    search the plugin can use, and some turn automated browsers away: give the user their\n    careers_url to search in their own browser.\n    every_list: every plugin list's employers too, not only the person's (the desk's troubleshooting).\n    min_pay: dollars a year (hourly pay counts 2,080 hours): leaves out an opening whose pay is listed (by its\n    site's list, or its job in the tracker) on its pay line or in its own data, and the most it pays is below this\n    (pay only read from a posting's other words never leaves one out). Most lists don't give pay: those openings\n    stay, with no `pay` (read the posting, or ingest_job, for it). Results with pay carry `pay`.\n    posted_within_days: leaves out openings posted longer ago (7, 14, 30...); one whose site gives no date stays\n    (ApplicantStack, Talemetry, Jobvite, Avature and a few others never do). `below_min_pay` counts what min_pay left\n    out.\n    workplace: \"remote\", \"hybrid\" or \"onsite\", or several (\"remote, hybrid\"): leaves out an opening its site says\n    (its own field, or its location's words: \"Remote - US\") is done another way. Most don't say: those stay. Results\n    that say carry `workplace` and `workplace_source` (structured, location); `other_workplace` counts what it left\n    out.\n    employment_type: \"full_time\", \"part_time\", \"contract\", \"temporary\", \"internship\" or \"per_diem\", or several\n    (\"full_time, contract\"): leaves out an opening its site (or its job in the tracker) says is only of other types.\n    Most lists don't say: those stay. Results that say carry `employment_type` (the site's words) and\n    `employment_types` (these names); `other_employment_type` counts what it left out.\n    exclude: words or titles to leave out ([\"Senior\", \"Call Center\"]): an opening whose title has one as whole words,\n    any case, is left out (\"Senior\" leaves out a Senior Technician, never a Seniority Clerk); `excluded_titles` counts\n    them (say how many). Pass the profile's preferences.avoid_titles (`search_area`'s `avoid_titles`) by default,\n    unless the person asks to see those too; the Job Desk shows them under All, never recommended.\n    within_miles: leaves out an opening every place of which is farther than this from the person's home town\n    (personal.address.city and state in the profile), in a straight line between town centres; the plugin knows the\n    towns of Arizona and the Las Vegas and Reno areas (data/places.yaml), and nothing is looked up online. An opening\n    whose place it doesn't know (\"2 Locations\", a town elsewhere), that names places it can't place, or that is\n    remote always stays; a hybrid one is judged by its place. Results whose place it knows carry `miles` (whole\n    miles to the nearest town it names, `miles_to`) and `miles_sure` (true only when those are all its places, so\n    none can be nearer; otherwise say \"N miles to the nearest place it names; another may be nearer\");\n    `farther_away` counts what it\n    left out. Refused, in words to pass on, when the profile has no home town it knows.",
    "inputSchema": {
     "properties": {
      "query": {
@@ -810,6 +860,33 @@
       ],
       "default": null,
       "title": "Employment Type"
+     },
+     "exclude": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Exclude"
+     },
+     "within_miles": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Within Miles"
      }
     },
     "required": [

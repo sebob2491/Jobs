@@ -83,7 +83,10 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     from the inbox itself. It reads only mail from that job's site or its job system,
     sent after the wait began (or in the two minutes before), read-only (the inbox, and its
     Spam folder when the inbox has none), and never presses a button labelled Submit. Never
-    ask for that password in the chat either: it goes into the desk page.
+    ask for that password in the chat either: it goes into the desk page. Without one, with
+    `settings.email_codes` on and the Gmail connector here, you read it for the desk through
+    Gmail while this chat is open (see **Emailed codes through Gmail** below), and the job's
+    card says "Claude is looking in your Gmail for the code".
   - **Alert me** (in the header) turns on desktop notifications for jobs that come to
     need the user or are ready to submit, so the desk can be left in the background.
 - **Notes (N)** (in the header, once there are any) collects the notes the desk takes by
@@ -281,7 +284,9 @@ Use the desk's own words when you talk about it, and keep to them when you chang
    address. The address carries a private key, so don't post it anywhere.
 3. In two or three sentences, tell the user what to press: **Find jobs**, tick the
    openings they want (or **Select recommended**), then **Apply to selected**. Say
-   that it stops at each review page unless they turn on **Submit for me**.
+   that it stops at each review page unless they turn on **Submit for me**. Then see
+   **Emailed codes through Gmail** below: with the Gmail connector here, start its watch
+   (or ask its one question) before you finish your reply.
 4. Jobs from Indeed or LinkedIn (via the `find-jobs` skill) that are saved with
    `add_job` or `ingest_job` appear in the desk's list too, ranked the same way. The
    user can also paste job links into the box above the list. The desk reads each
@@ -294,6 +299,50 @@ Use the desk's own words when you talk about it, and keep to them when you chang
    skill), then call `whats_new()`: the openings first saved since its last call (or
    `since="2026-10-17"`, `"12h"`), best score first, with a `summary` to show as it is. It
    never searches by itself. With the user's go-ahead, this can be a scheduled task.
+
+## Emailed codes through Gmail
+
+Sites email a sign-up code or a link to confirm the address while the desk applies. The
+desk reads them itself with an email app password saved on its page, and needs no Claude
+for that. Without one, you can read them for it through the Gmail connector, while this
+chat is open. `open_job_desk()` returns `emailed_codes`: `email_codes` (the setting),
+`app_password` (`saved`, `saved, but the desk can't use it`, or `not saved`), `watch`
+(true when the setting is on and no app password works) and `watch_command`.
+
+- **Gmail tools here** (`search_threads` and `get_thread` among your tools) **and `watch`
+  is true**: start the watch. Run `watch_command` exactly as given with your Bash tool in
+  the background (`run_in_background`): it waits on the desk (about 19 minutes at most)
+  and ends when a job needs its code, which wakes you. Say in one sentence that you'll
+  read the codes career sites email for the desk's jobs while this chat is open.
+- **Gmail tools here, `email_codes` off and `app_password` not `saved`**: ask once whether
+  you may read, through Gmail, the sign-up codes and links career sites email them for the
+  desk's jobs (only those messages, never other mail). On a yes, write
+  `settings.email_codes: true` in `~/.job-apply/profile.yaml` (keeping its comments), and
+  start the watch. On a no, leave it: they type the codes themselves.
+- **No Gmail tools**, or an app password that works: nothing to do here.
+
+Each time the watch ends (and whatever it printed):
+
+1. Call `mail_requests()`. Each request has the job, the employer, what it waits for
+   (`want`: `code`, `link` or `reset`) and a Gmail `query`.
+2. For each request, call `search_threads` with its `query` exactly as given. Never widen
+   it, add words or `in:anywhere`, or search for anything else. Read only the newest one or
+   two matching threads with `get_thread`, and only their messages dated after the
+   request's `after_time`.
+3. Call `give_mail(job_id, messages)` with those messages as `get_thread` gave them
+   (`sender`, `date`, `subject`, `plaintext_body`, and `html_body` when there is one), at
+   most 10. Call it with `messages=[]` when the search found nothing. The desk checks them
+   as it does its own inbox's (only that job's senders, since its wait began; a link only
+   back to that job's site), types the code into the job's own tab itself or opens the
+   link there, and says what happened in `said`. Never type a code or open a link
+   yourself, and never repeat a code in the chat.
+4. If `watch` is still true, run `watch_command` again in the background. When it's false
+   (no job queued or waiting, the setting off, or an app password that works now), stop,
+   and say so in one line. Stop too when the user asks.
+
+Never send, delete, archive, label or mark any message, and never read mail no request
+names. Whichever comes first goes in: the user can still type the code in the desk's
+browser window themselves.
 
 ## Tailoring resumes
 

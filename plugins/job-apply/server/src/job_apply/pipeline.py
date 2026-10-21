@@ -50,7 +50,7 @@ from .never import (ANYWHERE, CALLS_OR_TEXTS, EMAILS, FUTURE_ROLES, GATE_OWN, GA
 from .pipeline_accounts import AccountsMixin
 from .pipeline_filling import FillingMixin
 from .pipeline_letters import LettersMixin
-from .pipeline_mail import MailMixin
+from .pipeline_mail import MailAsk, MailMixin
 
 
 # ---------------------------------------------------------- timings and limits
@@ -107,6 +107,13 @@ STILL_SECONDS = 60
 # looked at this often, for this long after it began waiting
 MAIL_POLL_SECONDS = 20
 MAIL_WINDOW = 15 * 60
+# Without one, with settings.email_codes on, Claude reads it through the Gmail connector (pipeline_mail.MailAsk): it
+# counts as watching while its watch (Desk's /api/mail/wait) is open, and this long after its last wait or call ends
+CLAUDE_WATCH_GRACE = 180
+# A watch's longest wait for a request (seconds): under Claude Code's half hour for a quiet MCP server, and the
+# background command's own limit
+MAIL_WATCH_MAX = 19 * 60
+GIVE_MAIL_WAIT = 30  # seconds give_mail waits for the desk to use what Claude handed it (between jobs, as the inbox's)
 # seconds with nothing done in a tab holding the queue before the person's press on another job lets that one go
 RELEASE_IDLE = 60
 DESK_SETTLE = 30  # seconds a paused tab may go on changing after the desk typed its emailed code or opened its link
@@ -1591,6 +1598,11 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         self._worker_task: asyncio.Task | None = None
         self.mail_problem: str | None = None  # why the inbox couldn't be read, for the desk page
         self._mail_refused: str | None = None  # the app password the mail service turned down
+        # the jobs' emailed codes and links asked of Claude, by job (settings.email_codes, no app password: MailAsk),
+        # and Claude's watch for them: how many waits are open, and when the last one (or a call) ended
+        self.mail_asks: dict[int, MailAsk] = {}
+        self.mail_watchers = 0
+        self.mail_watched_at = 0.0
         # where each skipped job was, for Undo: its run's status ("" with no run yet) and its place in the queue
         self._before_skip: dict[int, tuple[str, int | None]] = {}
 

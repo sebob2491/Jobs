@@ -298,7 +298,9 @@ class Settings:
     auto_submit_ats: list[str] = field(default_factory=list)
     headless: bool = False
     browser_channel: str = "chrome"  # "chrome", "msedge" or "chromium" (bundled)
-    email_codes: bool = False  # may Claude read sign-in/verification codes from the user's email
+    # may Claude read sign-in/verification codes from the user's email (in the chat, and for the desk while its chat is
+    # open: pipeline_mail.MailAsk)
+    email_codes: bool = False
     email_tracking: bool = False  # may Claude scan email for replies to applications
     accept_cookies: bool = False  # may the desk accept a cookie banner that offers no way to decline
     # may the desk make the person's accounts on job sites, and reset a saved password a site refuses
