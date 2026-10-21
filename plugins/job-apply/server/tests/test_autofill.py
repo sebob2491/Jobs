@@ -2232,6 +2232,131 @@ def test_an_employee_id_goes_only_on_its_own_employers_forms():
         assert resolve_field(f(asked), person, {"company": "Example Fab"}) is None, asked
 
 
+_WWID = "If you have previously worked for Example Fab in any capacity, please provide your WWID"
+
+
+def _id_plan(label, person, company="Example Fab", **box):
+    """plan_autofill's needs_input for one box asking `label` on `company`'s form: by label, with its flags."""
+    plan = plan_autofill([{"id": "w", "kind": "text", "label": label, "value": "", "required": False, **box}], person,
+                         {"company": company})
+    return {q["label"]: q for q in plan["needs_input"]}, {t["label"]: t["value"] for t in plan["to_fill"]}
+
+
+def test_an_optional_id_box_at_the_employer_is_the_persons_to_give():
+    """Intel's Workday review page (the owner, Oct 21: "If something asks for your WWID I'd like it to ask") left "If
+    you have previously worked for Intel Corporation in any capacity, please provide your WWID" empty as optional, the
+    profile saying the person had worked there. An optional box for their ID at this employer is theirs to give
+    ("employer_id": the desk asks it) where the profile says they worked here, or can't say; never where it says they
+    never did. A required one is asked as before; an ordinary optional question isn't asked; and nothing fills one."""
+    there = _person(work_history=[{"company": "Example Fab", "title": "Technician", "start": "2019-01",
+                                   "end": "2022-05"}])
+    never = _person(work_history=[{"company": "Northwind Litho", "title": "Technician", "start": "2019-01",
+                                   "end": "2022-05"}])
+    unsure = _person(work_history=[{"company": "Example Fab Services", "title": "Technician", "start": "2019-01",
+                                    "end": "2022-05"}])
+    for person, asked in ((there, True), (unsure, True), (never, False)):
+        needs, filled = _id_plan(_WWID, person)
+        assert bool(needs[_WWID].get("employer_id")) == asked and filled == {}, (person.data["work_history"], needs)
+    needs, filled = _id_plan(_WWID, never, required=True)  # (required: asked, as before)
+    assert needs[_WWID]["required"] is True and filled == {}
+    needs, _ = _id_plan("Favorite tool color", there)  # (an ordinary optional question: left empty, as before)
+    assert not needs["Favorite tool color"].get("employer_id")
+    # its other wordings, about this employer or "us"
+    for label in ("WWID", "Worldwide ID", "Employee ID (if previously employed)", "Employee Number", "Worker ID",
+                  "Badge number", "Personnel number", "Former Employee ID", "Previous employee ID",
+                  "If you were previously employed by the company, enter your employee ID",
+                  "Have you worked with us before? Employee number:",
+                  "If you are a former employee of Example Fab, please enter your employee ID"):
+        needs, filled = _id_plan(label, there)
+        assert needs[label].get("employer_id") and filled == {}, label
+    # never another employer's ID, someone else's, or one in a past job's block: left empty, never filled
+    for label, box in (("Employee ID at your previous employer", {}), ("Federal employee ID", {}),
+                       ("DOE badge number", {}), ("Referring Employee ID", {}), ("Your manager's employee number", {}),
+                       ("Employee ID", {"section": "Work Experience 1"})):
+        needs, filled = _id_plan(label, there, **box)
+        assert not needs[label].get("employer_id") and filled == {}, label
+    needs, filled = _id_plan(_WWID, _person(work_history=[{"company": "Other Fab", "title": "Technician",
+                                                           "start": "2019-01", "end": "2022-05"}]), "Other Fab")
+    assert not needs[_WWID].get("employer_id") and filled == {}  # (Example Fab's, on Other Fab's form)
+
+
+def test_an_id_box_never_takes_another_rules_answer():
+    """"If you were previously employed by the company, enter your employee ID" (a text box) was answered "Yes,
+    previously" by the rule for "have you worked here before?", its "company" read as another party's (a Company
+    Name's): an ID box takes only the person's ID at the employer, or nothing."""
+    there = _person(work_history=[{"company": "Example Fab", "title": "Technician", "start": "2019-01",
+                                   "end": "2022-05"}])
+    label = "If you were previously employed by the company, enter your employee ID"
+    assert _answer(label, there, job={"company": "Example Fab"}) is None
+    keeps = Profile({**there.data, "history": {"employee_ids": {"Example Fab": "12345678"}}})
+    assert _answer(label, keeps, job={"company": "Example Fab"}) == "12345678"
+    # nor the profile's ID at this employer in a box for another's
+    assert _answer("Employee ID at your previous employer", keeps, job={"company": "Example Fab"}) is None
+    assert _answer("Employee ID", keeps, job={"company": "Example Fab"}, section="Work Experience 1") is None
+
+
+def test_an_id_remembered_at_one_employer_is_used_only_there(job_apply_home):
+    """An employee ID is the person's own only at the employer that gave it: answered on the card, it's kept with that
+    employer (answers.yaml's `at`) and fills the box at that employer's next application (its whole name, or a short
+    name its list entry gives it), never at another's with the same wording, which asks the person there instead. Kept
+    at two employers, each keeps its own. One kept for every employer (written by hand) is never an ID box's; other
+    answers are as they were."""
+    from job_apply import config
+
+    label = "Employee ID (if previously employed)"
+    entry = config.save_answer(label, "12345678", "Example Fab", at="Example Fab")
+    assert entry["at"] == "Example Fab"
+
+    def worked(*employers):
+        return Profile({**config.Profile.load().data, "work_history": [
+            {"company": c, "title": "Technician", "start": "2019-01", "end": "2022-05"} for c in employers]})
+    person = worked("Example Fab", "Other Fab")
+    needs, filled = _id_plan(label, person, "Example Fab, Inc.")
+    assert filled == {label: "12345678"} and needs == {}  # (filled, never asked)
+    needs, filled = _id_plan(label, person, "Other Fab")
+    assert filled == {} and needs[label].get("employer_id")  # (asked there: they worked at Other Fab too)
+    needs, filled = _id_plan(label, worked("Example Fab"), "Other Fab")
+    assert filled == {} and not needs[label].get("employer_id")  # (and left empty where they never worked)
+    # the same question answered at Other Fab: both kept, each for its own employer
+    config.save_answer(label, "87654321", "Other Fab", at="Other Fab")
+    person = worked("Example Fab", "Other Fab")
+    assert _id_plan(label, person, "Other Fab")[1] == {label: "87654321"}
+    assert _id_plan(label, person, "Example Fab")[1] == {label: "12345678"}
+    # answered again at Example Fab: its own replaced, Other Fab's kept
+    config.save_answer(label, "11112222", "Example Fab", at="Example Fab")
+    assert sorted((a["answer"], a["at"]) for a in config.saved_answers()) == [
+        ("11112222", "Example Fab"), ("87654321", "Other Fab")]
+    # one written by hand for every employer, or kept for another, is never an ID box's; one given at this employer
+    # before IDs were kept with theirs (its `from`) still is
+    for kept, used in (({"match": "WWID", "answer": "55556666"}, False),
+                       ({"match": "wwid", "answer": "55556666", "question": "WWID", "from": "Example Fab"}, True),
+                       ({"match": "wwid", "answer": "55556666", "question": "WWID", "from": "Other Fab"}, False)):
+        alone = Profile({**worked("Example Fab").data, "answers": [kept]})
+        got = resolve_field(f("WWID"), alone, {"company": "Example Fab"})
+        assert (got and got.value) == ("55556666" if used else None), kept
+    # an answer kept for an employer alone (by hand, to any question) goes only on that employer's forms
+    alone = Profile({**worked().data, "answers": [{"match": "tool color", "answer": "Blue", "at": "Example Fab"}]})
+    assert resolve_field(f("Favorite tool color"), alone, {"company": "Example Fab"}).value == "Blue"
+    assert resolve_field(f("Favorite tool color"), alone, {"company": "Other Fab"}) is None
+    # and any other answer is as it was
+    alone = Profile({**worked().data, "answers": [{"match": "tool color", "answer": "Blue"}]})
+    assert resolve_field(f("Favorite tool color"), alone, {"company": "Other Fab"}).value == "Blue"
+
+
+def test_an_id_kept_under_an_employers_short_name_is_that_employers(monkeypatch):
+    """The employer's short names from its list entry (aliases) name it too: an ID kept "at" UCT is Ultra Clean
+    Holdings'."""
+    from job_apply import autofill
+
+    monkeypatch.setattr(autofill, "employer_aliases",
+                        lambda company: ["uct"] if autofill.norm(company) == "ultra clean holdings" else [])
+    assert autofill.same_employer_as("UCT", "Ultra Clean Holdings")
+    assert autofill.same_employer_as("Ultra Clean Holdings", "UCT")
+    assert not autofill.same_employer_as("UCT", "Example Fab") and not autofill.same_employer_as("", "")
+    keeps = Profile({"history": {"employee_ids": {"UCT": "12345678"}}})
+    assert _answer("Badge number", keeps, job={"company": "Ultra Clean Holdings"}) == "12345678"
+
+
 def test_recurring_background_questions_are_answered_from_a_no_in_the_profile():
     """An employer's Application Questions (live, Oct 2026) asked about government and Defense
     employment, agreements, intellectual property, plans to keep another job or sit on a board,

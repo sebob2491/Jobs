@@ -1114,6 +1114,8 @@ class Desk:
             raise ValueError("Answer each of its security questions here, or none of them (and fill them in in the "
                              "desk's browser window).")
         run.account_answers = given
+        # (the card's questions by their keys: a box's own, and its label's)
+        on_card = {k: q for q in run.questions for k in (question_key(q.get("label") or ""), placed_key(q))}
         for a in answers:
             label, value = str(a.get("label") or ""), a.get("value")
             if not label or value in (None, "") or question_key(label) in account:
@@ -1123,16 +1125,25 @@ class Desk:
                 if question_key(label) in (box, asked):
                     del run.once_left[box]
             if a.get("remember", True) and " | " not in label:  # (one box's own answer is never remembered)
-                # an answer naming this employer ("Acme website") is remembered as "Company Website", or not at
-                # all: it isn't the answer at another employer's
-                kept = autofill.answer_to_remember(label, value, run.company)
+                # an ID at this employer is remembered as it was given, for this employer alone (answers.yaml's `at`):
+                # it's never another's (with no employer named, it's for this application only). Any other answer
+                # naming this employer ("Acme website") is remembered as "Company Website", or not at all: it isn't
+                # the answer at another employer's
+                own_id = autofill.employer_id_box(on_card.get(question_key(label)) or {"label": label},
+                                                  {"company": run.company}) is True
+                if own_id:
+                    kept = value if autofill.norm(run.company) else None
+                else:
+                    kept = autofill.answer_to_remember(label, value, run.company)
                 if kept is None:
-                    said = f'"{value}" names {run.company}, so it\'s used for this application only, not remembered.'
+                    said = (f'Your answer to "{label}" is used for this application only: the job names no employer.'
+                            if own_id else
+                            f'"{value}" names {run.company}, so it\'s used for this application only, not remembered.')
                     problem = f"{problem} {said}" if problem else said
                     run.once[question_key(label)] = value
                     continue
                 try:
-                    config.save_answer(label, kept, run.company)
+                    config.save_answer(label, kept, run.company, at=run.company if own_id else "")
                     if kept == value:
                         run.once.pop(question_key(label), None)  # an earlier answer for this application only
                         continue
@@ -1141,6 +1152,10 @@ class Desk:
                 except (ValueError, OSError) as e:
                     problem = f"Couldn't remember your answers ({e}); they're used for this application only."
             run.once[question_key(label)] = value
+        # (an optional question of theirs on the card that they left empty, an ID at this employer: left empty from
+        # here on, never asked again for the job)
+        self.applier.went_on_from_card(run, {question_key(str(a.get("label") or "")) for a in answers
+                                             if a.get("value") not in (None, "")})
         if run.started:
             # (its tab may hold what they did while its card was up: a file kept there is theirs)
             run.in_their_hands = True

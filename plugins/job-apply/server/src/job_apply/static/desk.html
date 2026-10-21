@@ -1144,10 +1144,14 @@ function question(jobId, q, i, repeated = false) {
   const where = `${q.section ? `${esc(q.section)}: ` : ""}${esc(q.label)}${q.sublabel ? ` (${esc(q.sublabel)})` : ""}`;
   // and, for one whose words say little, the site's words above it (what it agrees to or certifies)
   // (and, for an account form's security questions, that the answers go nowhere else)
+  // (and, for an optional box asking their ID at this employer, that it's optional, asked once, and remembered for this
+  // employer alone)
   const about = q.about ? `<span class="small">“${esc(q.about)}”</span>`
-    : q.account ? `<span class="small">For this account only: never remembered.</span>` : "";
+    : q.account ? `<span class="small">For this account only: never remembered.</span>`
+    : q.employer_id ? `<span class="small">Optional: leave it empty and it isn't asked again for this job.</span>` : "";
+  const keep = q.employer_id ? "Remember for this employer only" : "Remember for later applications";
   return `<label class="q"><span>${where}${q.error ? ` <span class="small">(${esc(q.error)})</span>` : ""}</span>${about}${input}
-    ${repeated ? "" : `<span class="remember"><input type="checkbox" data-remember="${esc(q.label)}" ${consent || forced ? "" : "checked"}> Remember for later applications</span>`}</label>`;
+    ${repeated ? "" : `<span class="remember"><input type="checkbox" data-remember="${esc(q.label)}" ${consent || forced ? "" : "checked"}> ${keep}</span>`}</label>`;
 }
 
 function jobButtons(r, which) {

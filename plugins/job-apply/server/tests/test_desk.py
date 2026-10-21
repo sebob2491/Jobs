@@ -816,6 +816,43 @@ def test_answering_again_fills_a_box_the_site_had_emptied(srv, job_apply_home):
     assert run.once_left == {}
 
 
+def test_an_id_on_the_card_is_remembered_for_its_employer_alone_or_left_once(srv, job_apply_home):
+    """An optional box for the person's ID at this employer, put to them on the card (plan_autofill's "employer_id"):
+    answered with Remember ticked, it's kept for this employer alone (answers.yaml's `at`), as it was given, even where
+    it holds the employer's name; left empty as they go on (their other answers sent, or Carry on), it's never asked
+    again for the job (Run.asked_once), kept in the job's folder for after a restart of the desk."""
+    from job_apply.pipeline import Run, placed_key, question_key
+
+    wwid ="If you have previously worked for Example Fab in any capacity, please provide your WWID"
+    asked = [{"id": "w", "kind": "text", "label": wwid, "required": False, "employer_id": True},
+             {"id": "y", "kind": "text", "label": "Years in a cleanroom", "required": True}]
+    job = srv.add_job(url="https://example.com/a", title="FSE", company="Example Fab")["job"]
+    desk = Desk(srv)
+    run = Run(job["id"], "FSE", "Example Fab", status="needs_you", need="questions", questions=list(asked))
+    desk.applier.runs[job["id"]] = run
+    assert desk.answer(job["id"], [{"label": "Years in a cleanroom", "value": "3", "remember": False}]) is None
+    assert run.asked_once == {placed_key(asked[0]): question_key(wwid)}
+    path = Path(srv.tracker().get(job["id"])["folder"]) / pipeline.ASKED_FILE
+    again = Run(job["id"], "FSE", "Example Fab")  # (the desk, restarted)
+    pipeline._restore_asked_once(srv, again)
+    assert path.is_file() and again.asked_once == run.asked_once
+    assert "3" not in path.read_text(encoding="utf-8")  # (the questions' keys alone, never an answer)
+    # Carry on, the card asking it alone: left too
+    other = srv.add_job(url="https://example.com/b", title="Technician", company="Example Fab")["job"]
+    left = Run(other["id"], "Technician", "Example Fab", status="needs_you", need="questions", questions=asked[:1])
+    desk.applier.runs[other["id"]] = left
+    desk.applier.resume(other["id"])
+    assert left.asked_once == {placed_key(asked[0]): question_key(wwid)}
+    # answered, remembered: for Example Fab alone, as it was given (its name and all), and not left
+    third = srv.add_job(url="https://example.com/c", title="Operator", company="Example Fab")["job"]
+    given = Run(third["id"], "Operator", "Example Fab", status="needs_you", need="questions", questions=asked[:1])
+    desk.applier.runs[third["id"]] = given
+    assert desk.answer(third["id"], [{"label": wwid, "value": "EXAMPLE-12345678", "remember": True}]) is None
+    assert given.asked_once == {} and given.once == {}
+    assert [(a["question"], a["answer"], a["at"]) for a in config.saved_answers()] == [
+        (wwid, "EXAMPLE-12345678", "Example Fab")]
+
+
 def test_a_remembered_answer_replaces_one_given_for_this_application_only(srv, job_apply_home):
     """The page turned down an answer given for this application only, and the person answers
     again, remembering it: the earlier answer isn't tried again ahead of it."""

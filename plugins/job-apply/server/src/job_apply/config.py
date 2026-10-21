@@ -946,7 +946,8 @@ def save_bank_answer(bank_id: str, answer: Any) -> None:
 def _write_answers(data: dict[str, Any], entries: list[Any]) -> None:
     ensure_home()
     header = ("# Answers you gave in the Job Desk. Each one fills the same question on later\n"
-              "# applications; edit or delete entries freely. profile.yaml's own answers come after these.\n")
+              "# applications (one with `at:` only at that employer's, as an employee ID there);\n"
+              "# edit or delete entries freely. profile.yaml's own answers come after these.\n")
     path = answers_path()
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(header + yaml.safe_dump({**data, "answers": entries}, sort_keys=False, allow_unicode=True),
@@ -954,25 +955,36 @@ def _write_answers(data: dict[str, Any], entries: list[Any]) -> None:
     os.replace(tmp, path)  # all or nothing: a crash mid-write can't leave half a file
 
 
-def save_answer(label: str, answer: Any, source: str = "") -> dict[str, Any]:
-    """Remember the answer to a question for every later application that asks it.
+def save_answer(label: str, answer: Any, source: str = "", at: str = "") -> dict[str, Any]:
+    """Remember the answer to a question for every later application that asks it; with `at`, only for those at that
+    employer (the person's ID there: autofill.same_employer_as tells the employer).
     Everything else in answers.yaml stays; a file that doesn't parse is left untouched
     (ValueError) rather than overwritten."""
+    from .autofill import same_employer_as  # (autofill reads this module)
+
     match = question_pattern(label)
     if not match:
         raise ValueError("A question needs a label to be remembered")
     data = _answers_file()
     old = data.get("answers")
+
+    def same_scope(a: dict[str, Any]) -> bool:  # kept for every employer, as this one is, or for the same one
+        kept_at = str(a.get("at") or "").strip()
+        return not kept_at if not at.strip() else same_employer_as(kept_at, at)
     # (the same question answered again replaces its answer, by its pattern or by its words: a pattern written before
-    # question_pattern took markers between words is the same question)
+    # question_pattern took markers between words is the same question; one kept for an employer alone, only at that
+    # employer: another's ID stays)
     entries = [a for a in (old if isinstance(old, list) else [])
-               if not (isinstance(a, dict) and (a.get("match") == match or a.get("question") == label.strip()))]
+               if not (isinstance(a, dict) and (a.get("match") == match or a.get("question") == label.strip())
+                       and same_scope(a))]
     entry: dict[str, Any] = {"match": match, "answer": answer, "question": label.strip()}
     core = question_core(label)
     if core != " ".join(label_sentences(label)):  # the question in a longer label: asked in other wording around it
         entry["core"] = core
     if source:
         entry["from"] = source
+    if at.strip():
+        entry["at"] = at.strip()
     entries.insert(0, entry)
     _write_answers(data, entries)
     return entry

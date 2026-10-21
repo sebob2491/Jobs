@@ -56,7 +56,10 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     remembered in `~/.job-apply/answers.yaml` unless the user unticks "remember".
     A remembered answer fills only the same question, worded the same, and one about
     an employer ("Why do you want to work here?") isn't reused for another company.
-    Consent questions default to not remembered. A box the page wouldn't let the desk fill
+    Consent questions default to not remembered. An optional box for the user's ID at the employer
+    (a WWID, an employee, worker, badge or personnel number) is asked too, once a job, unless the
+    profile says they never worked there; left empty, it isn't asked again for that job, and an
+    answer is remembered for that employer alone. A box the page wouldn't let the desk fill
     (it timed out) isn't a question: the card says "I couldn't fill …";
   - a dialog open over a form, which the user answers in the desk's browser window before pressing
     Carry on (the boxes behind it are filled after that). With `settings.accept_notices` (on

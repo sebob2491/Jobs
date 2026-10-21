@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Application</title></head>
+<body>
+<!-- an optional box for the applicant's ID at this employer (worded as Intel's Workday asks for a WWID, Oct 21), beside
+     an ordinary optional question no profile answers: the ID is the person's to give, so it's asked (once a job); the
+     other is left empty -->
+<h1>Application</h1>
+<form id="app" novalidate>
+  <label for="fn">First Name</label><input id="fn" required>
+  <label for="wwid">If you have previously worked for Example Fab in any capacity, please provide your WWID</label>
+  <input id="wwid">
+  <label for="tool">Favorite tool color</label><input id="tool">
+  <button type="submit">Submit application</button>
+</form>
+</body>
+</html>

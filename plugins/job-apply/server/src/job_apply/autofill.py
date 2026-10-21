@@ -1193,15 +1193,7 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
     # ("US" in capitals, or "us" before a name, is the country's: "worked for US Bank?", "US Airways", never "for us",
     # this employer: the second review of run 147's fixes)
     asked = norm(re.sub(r"\bUS\b|\bus(?= [A-Z])", "U.S.", label))
-    # the employer by its first word, or by a short name its entry on the lists gives it (`aliases`: Ultra Clean
-    # Holdings' "Have you ever been employed by UCT?", run 147, wasn't known for the employer's). Never a bracket's
-    # words read as one: "(NNSS)" names a site, "(US)" a country
-    aliases = employer_aliases(str(job.get("company") or ""))
-    # (its first word, or where that's under 3 letters its leading words up to one that isn't: U.S. Bank is "u s bank",
-    # never "u", which "the US Postal Service" holds once "US" is the country's: the third review of run 147's fixes)
-    words = company.split()
-    lead = " ".join(words[:next((i + 1 for i, w in enumerate(words) if len(w) >= 3), len(words))])
-    first = "(?:" + "|".join(re.escape(n) for n in dict.fromkeys([lead, *aliases])) + ")"
+    first = "(?:" + "|".join(re.escape(n) for n in _employer_names(job)) + ")"
     names_it = re.search(r"\b(employ\w*|work\w*|intern\w*|contract\w*)( \w+){0,3}? (by|for|at|with|"
                          rf"of) (the |any |an? )?{first}\b"
                          # onsemi's "worked in any onsemi establishment" (never "worked in Arizona": a place)
@@ -1224,6 +1216,32 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
         # "worked with KLA metrology systems": the employer's products, not working for it; "worked at TEL customer
         # sites": its customers'
         return None
+    return _worked_here(prof, job, asked)
+
+
+def _employer_names(job: dict) -> list[str]:
+    """The names a question may call the employer applied to by, as norm() writes them: its first word, and the short
+    names its entry on the lists gives it (employer_aliases: Ultra Clean Holdings' "Have you ever been employed by
+    UCT?", run 147, wasn't known for the employer's). Never a bracket's words read as one: "(NNSS)" names a site, "(US)"
+    a country. None ([]) for a job with no employer named."""
+    company = norm(job.get("company"))
+    # (its first word, or where that's under 3 letters its leading words up to one that isn't: U.S. Bank is "u s bank",
+    # never "u", which "the US Postal Service" holds once "US" is the country's: the third review of run 147's fixes)
+    words = company.split()
+    lead = " ".join(words[:next((i + 1 for i, w in enumerate(words) if len(w) >= 3), len(words))])
+    return list(dict.fromkeys(n for n in [lead, *employer_aliases(str(job.get("company") or ""))] if n))
+
+
+def _worked_here(prof: Profile, job: dict, asked: str = "") -> str | None:
+    """Does the profile say the person worked for the employer applied to (the job's company)? From the employers in
+    the profile, past and present (previous_employers in its history section, work_history and
+    experience.current_company): "Yes, currently", "Yes, previously", "No", or None where it can't say (an employer of
+    theirs whose name may be this one's, a job now that may be here, or a question, `asked` as norm() writes it, that
+    takes in this one's subsidiaries or affiliates)."""
+    company = norm(job.get("company"))
+    if not company:
+        return None
+    aliases = employer_aliases(str(job.get("company") or ""))
     past = [norm(c) for c in _listed(prof.get("history.previous_employers"))]
     entries = [e for e in _listed(prof.get("work_history")) if isinstance(e, dict)]
     past += [norm(e.get("company")) for e in entries]
@@ -1707,14 +1725,82 @@ def _worked_for_listed(field: dict, prof: Profile, job: dict) -> tuple[bool, Any
 
 
 def _employee_id(prof: Profile, job: dict) -> str | None:
-    """The person's ID at the employer applied to (employee_ids in the profile's history section, by employer), for its
-    "Employee ID (if applicable)" or "please provide your WWID": never another employer's."""
+    """The person's ID at the employer applied to (employee_ids in the profile's history section, by employer, or by a
+    short name its entry on the lists gives it), for its "Employee ID (if applicable)" or "please provide your WWID":
+    never another employer's."""
     company = norm(job.get("company"))
     ids = prof.get("history.employee_ids")
     if not company or not isinstance(ids, dict):
         return None
     return next((str(value).strip() for name, value in ids.items()
-                 if value not in (None, "") and _same_employer(norm(str(name)), company)), None)
+                 if value not in (None, "") and same_employer_as(name, job.get("company"))), None)
+
+
+def same_employer_as(name: Any, company: Any) -> bool:
+    """Is `name` (the employer an answer or an ID was kept for) the employer `company`: the same name, the whole of it
+    (_same_employer), or a short name the entry of either on the lists gives it (employer_aliases: "UCT" is Ultra
+    Clean Holdings)? Never one name inside another ("Example Fab Services" isn't Example Fab), nor an empty one."""
+    a, b = norm(name), norm(company)
+    if not (a and b):
+        return False
+    return _same_employer(a, b) or a in employer_aliases(str(company)) or b in employer_aliases(str(name))
+
+
+# A box for the person's own ID at an employer (the owner's call, Oct 21: "If something asks for your WWID I'd like it
+# to ask"): a WWID or "Worldwide ID" (Intel's), an employee, worker, personnel, associate or staff ID or number, a badge
+# number; a former or previous one too
+_EMPLOYER_ID = re.compile(r"\bwwid\b|\bworld ?wide (?:employee )?(?:id|identification|number)\b|"
+                          r"\b(?:employee|worker|personnel|associate|staff|badge) ?(?:id|identification|number|no)\b")
+# ...in a block about a past job, a school or a reference: that employer's ID there, or someone else's
+_ANOTHER_BLOCK = re.compile(r"\b(?:work|employment|job) (?:experience|history)\b|\b(?:previous|prior|past|former|most "
+                            r"recent|last) (?:employment|employers?|jobs?|positions?)\b|\b(?:experience|employment|"
+                            r"employer|job|position)s? \d+\b|\beducation\b|\bschools?\b|\breferences?\b")
+# ...or saying whose it is: an organization worked for or employed by ("worked for Intel Corporation", "employed by
+# us"), or one the ID is at ("Employee ID at your last employer")...
+_WHOSE = re.compile(r"\b(?:employee|employed|employment|worked|work|working|intern|contractor)s? (?:\w+ )?"
+                    r"(?:of|by|for|at|with) (?:the )?|\b(?:id|identification|number|no|wwid) at (?:the )?")
+# ...this one, in so many words ("us", "this company", "any of its subsidiaries", "an Intel subsidiary")
+_THIS_ONE = re.compile(r"(?:us|our|this|here|any|an?|one|company|organi[sz]ation|firm|business|employer)\b")
+# ...or an organization's word or short name right before the ID ("Federal Employee ID", "DOE Badge Number")
+_ID_WORDS = (r"(?:employee|worker|personnel|associate|staff|badge) ?(?:id|identification|number|no)\b|"
+             r"(?:wwid|world ?wide)\b")
+_OWNER_WORDS = frozenset({"federal", "government", "military", "agency", "school", "student", "university", "college",
+                          "union", "state", "county", "city"})
+
+
+def employer_id_box(field: dict, job: dict | None) -> bool | None:
+    """Is this box for the person's own ID at an employer (_EMPLOYER_ID), and is that employer the one applied to?
+    True where it is: a bare "Employee ID", "Former Employee ID", "Badge number (if previously employed)", "If you have
+    previously worked for Intel Corporation in any capacity, please provide your WWID" on Intel's form, one "with us".
+    False where it's their ID at another: in a block about a past job, a school or a reference (_ANOTHER_BLOCK), or
+    naming another organization ("Employee ID at your previous employer", "If you worked for Example Fab, your employee
+    number" on another's form, "Federal employee ID", "DOE badge number" at an employer that isn't the DOE). None where
+    it's no such box: no ID asked, someone else's (a referrer's, a manager's, a recruiter's), a list, or a label too
+    long to be one box's."""
+    if field.get("kind", "text") != "text":
+        return None
+    raw = clean_label(_without_notes(field.get("label") or ""))
+    label = norm(raw)
+    if not label or len(label) > 160 or not _EMPLOYER_ID.search(label) or _SOMEONE_ELSE.search(label) \
+            or _ROLE_PARTY.search(label):
+        return None
+    if _ANOTHER_BLOCK.search(norm(field.get("section"))):
+        return False
+    job = job or {}
+    names = _employer_names(job)
+    own = set(norm(job.get("company")).split())
+
+    def ours(words: str) -> bool:
+        return bool(_THIS_ONE.match(words)) or any(re.match(rf"{re.escape(n)}\b", words) for n in names)
+    if any(not ours(label[m.end():]) for m in _WHOSE.finditer(label)):
+        return False
+    owner = [m[1] for m in re.finditer(rf"\b(\w+) (?:{_ID_WORDS})", label)]
+    # (a short name in capitals: never read from a label all in capitals, "FORMER EMPLOYEE ID")
+    short = [] if raw.isupper() else [norm(m[1]) for m in re.finditer(
+        rf"(?<![\w.])([A-Z][A-Z0-9]{{1,5}}) (?i:{_ID_WORDS})", raw)]
+    if any(w in _OWNER_WORDS and w not in own for w in owner) or any(s not in own and s not in names for s in short):
+        return False
+    return True
 
 
 _UNFINISHED = re.compile(r"^(none|n ?a|no|not applicable)$|\b(no degree|not (completed|finished)|incomplete|"
@@ -2729,8 +2815,20 @@ def _notice_of_consent(said: str) -> bool:
 
 def _answer_bank(prof: Profile, label: str, job: dict | None = None, common: bool = False) -> Answer | None:
     """The person's own answers (answers.yaml, profile.yaml's answers:) to this question; with `common`, only the
-    common questions' (the question bank's), which resolve_field tries last."""
+    common questions' (the question bank's), which resolve_field tries last. An answer kept for one employer alone
+    (`at`: an ID there) is used only on that employer's forms (same_employer_as); and a box for the person's ID at this
+    employer (employer_id_box) takes only an answer kept for this one (`at`, or the employer it was given for: `from`),
+    never one kept for every employer, nor another's."""
     company = norm((job or {}).get("company"))
+    asks_id: list[bool] = []  # (whether the question asks for their ID at this employer: read once, if an entry fits)
+
+    def kept_for_here(item: dict) -> bool:
+        at = str(item.get("at") or "").strip()
+        if at and not same_employer_as(at, (job or {}).get("company")):
+            return False
+        if not asks_id:
+            asks_id.append(employer_id_box({"label": label}, job) is True)
+        return not asks_id[0] or same_employer_as(at or item.get("from"), (job or {}).get("company"))
     for item in _listed(prof.get("answers")):
         if not isinstance(item, dict) or not item.get("match") or item.get("answer") in (None, ""):
             continue
@@ -2754,17 +2852,21 @@ def _answer_bank(prof: Profile, label: str, job: dict | None = None, common: boo
                 if _POINTS_AWAY.search(asked) or (_notice_of_consent(f"{label} {item['question']}")
                                                   and not _NO.match(str(item.get("answer")).strip())):
                     continue
-            source = norm(str(item.get("from") or ""))
+            # (one kept for an employer alone is told by that: kept_for_here)
+            source = "" if str(item.get("at") or "").strip() else norm(str(item.get("from") or ""))
             if source and source != company and (_EMPLOYER_SPECIFIC.search(asked) or source in norm(label)
                                                  or source.split()[0] in norm(item.get("answer")).split()):
                 continue  # about the company it was given for, or naming it
-            return Answer(item.get("answer"), f"answers[{item['match']}]")
-        try:
-            if re.search(str(item["match"]), label, re.I):
-                return Answer(item.get("answer"), f"answers[{item['match']}]")
-        except re.error:
-            if str(item["match"]).lower() in label.lower():
-                return Answer(item.get("answer"), f"answers[{item['match']}]")
+        else:
+            try:
+                fits = re.search(str(item["match"]), label, re.I) is not None
+            except re.error:
+                fits = str(item["match"]).lower() in label.lower()
+            if not fits:
+                continue
+        if not kept_for_here(item):
+            continue  # (an ID kept for another employer, or one kept for none)
+        return Answer(item.get("answer"), f"answers[{item['match']}]")
     return None
 
 
@@ -3229,6 +3331,15 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
         return _resolve_checkbox(field, prof, job, raw_label)
 
     ans = _answer_bank(prof, raw_label, job)
+    own_id = employer_id_box(field, job)
+    if own_id is not None:
+        # a box for the person's ID at an employer: at this one, their answer kept for it (_answer_bank) or the
+        # profile's employee_ids for it; at another (a past job's block, another organization named), only their own
+        # answer to it. Never another rule's: a Yes or No for its "if previously employed by the company", a number of
+        # the profile's
+        if ans is None and own_id and (kept := _employee_id(prof, job)):
+            ans = Answer(kept, "employee_id")
+        return ans
     if ans is None and _NEVER_GUESS.search(label):
         return None
     section = norm(field.get("section"))
@@ -4204,8 +4315,14 @@ def _plan_field(f: dict, fields: list[dict], prof: Profile, job: dict | None, ov
         asked = _asked({**f, "options": (f.get("options") or [])[1:]} if unset else f)
         # (a list on the site's first choice is never left empty: what it shows goes out, so it's asked as
         # required, optional or not: the review)
+        # (and an optional box for their ID at this employer is theirs to give, so it's asked, "employer_id", unless the
+        # profile says they never worked here: the owner's call, Oct 21, "If something asks for your WWID I'd like it
+        # to ask")
+        theirs = not f.get("required") and employer_id_box(f, job) is True \
+            and _worked_here(prof, job or {}, norm(clean_label(f.get("label") or ""))) != "No"
         return _Planned(key, blocks, ask={**asked, **({"unmatched": str(missed[0].value)} if missed else {}),
-                                          **({"required": True} if defaulted else {})})
+                                          **({"required": True} if defaulted else {}),
+                                          **({"employer_id": True} if theirs else {})})
     return _Planned(key, blocks)
 
 

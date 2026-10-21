@@ -159,6 +159,9 @@ No
 Remember for later applications
 Desired salary
 Remember for later applications
+Employee ID (if previously employed)
+Optional: leave it empty and it isn't asked again for this job.
+Remember for this employer only
 Show me
 Fill these in
 Carry on

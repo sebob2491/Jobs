@@ -9743,6 +9743,114 @@ def test_a_persons_answer_goes_into_a_list_on_the_sites_first_choice(srv, monkey
     assert value == answer and r.status == "ready", (value, r.status, r.reason)
 
 
+WWID = "If you have previously worked for Example Fab in any capacity, please provide your WWID"
+
+
+def _worked_at(home, *employers):
+    """The tests' profile with these employers (made up) among the ones the person worked for."""
+    path = home / "profile.yaml"
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
+    profile["history"] = {**(profile.get("history") or {}), "previous_employers": list(employers)}
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
+
+
+def test_an_optional_id_at_the_employer_is_asked_once_then_left_empty(srv, job_apply_home):
+    """Intel's Workday review page (the owner, Oct 21: "If something asks for your WWID I'd like it to ask"): "If you
+    have previously worked for Intel Corporation in any capacity, please provide your WWID" was left empty as optional,
+    though the profile says the person worked there. An ID at the employer is theirs to give: it's asked on the card.
+    Left empty there (Carry on), it isn't asked again for the job, nor after a restart of the desk, and it's under
+    "Left empty" as theirs; an ordinary optional question the profile doesn't answer is left empty, as before."""
+    _worked_at(job_apply_home, "Example Fab")
+    job = srv.add_job(url=fixture_url("site/employer-id-form.html"), title="FSE", company="Example Fab")["job"]
+
+    async def go(applier, carry_on):
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            asked = (r.need, [q["label"] for q in r.questions])
+            if carry_on:
+                applier.resume(job["id"])  # (the card's Carry on, its WWID left empty)
+                await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, asked, await r.page.input_value("#wwid")
+        finally:
+            await applier.stop()
+
+    r, asked, value = run(go(Applier(srv), True))
+    assert asked == ("questions", [WWID]), r.log
+    assert "optional: to leave it empty, press Carry on" in r.log[next(
+        i for i, line in enumerate(r.log) if "your profile doesn't answer" in line)], r.log
+    assert r.status == "ready" and value == "", (r.status, r.reason, r.log)
+    left = {e["label"]: e["why"] for e in r.went_in.public()["left"]}
+    assert left == {pipeline._short(WWID): "you left it empty",
+                    "Favorite tool color": "your profile doesn't answer it"}, left
+    assert sum("your profile doesn't answer" in line for line in r.log) == 1  # asked once
+    # the desk restarted (the job's Run made afresh): still left empty, never asked again
+    r, asked, value = run(go(Applier(srv), False))
+    assert r.status == "ready" and asked == ("", []) and value == "", (r.status, r.reason, r.log)
+    assert not any("your profile doesn't answer" in line for line in r.log), r.log
+
+
+def test_an_id_answered_on_the_card_fills_the_next_application_at_that_employer(srv, job_apply_home):
+    """The person's WWID, given on the card with Remember ticked, is kept for that employer alone and goes into its next
+    application without asking."""
+    from job_apply.desk import Desk
+
+    _worked_at(job_apply_home, "Example Fab")
+    first = srv.add_job(url=fixture_url("site/employer-id-form.html"), title="FSE", company="Example Fab")["job"]
+    second = srv.add_job(url=fixture_url("site/employer-id-form.html") + "?opening=2", title="Technician",
+                         company="Example Fab")["job"]
+    desk = Desk(srv)
+    applier = desk.applier
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(first["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            asked = [q["label"] for q in r.questions]
+            assert desk.answer(first["id"], [{"label": WWID, "value": "12345678", "remember": True}]) is None
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            filled = (r.status, await r.page.input_value("#wwid"))
+            nxt = applier.enqueue(second["id"])
+            await until(lambda: nxt.status not in ("queued", "running"), about=state(nxt))
+            return asked, filled, nxt, await nxt.page.input_value("#wwid")
+        finally:
+            await applier.stop()
+
+    asked, filled, nxt, value = run(go())
+    assert asked == [WWID] and filled == ("ready", "12345678"), (asked, filled)
+    assert [(a["answer"], a["at"]) for a in config.saved_answers()] == [("12345678", "Example Fab")]
+    assert nxt.status == "ready" and value == "12345678", (nxt.status, nxt.reason, nxt.log)
+    assert not any("your profile doesn't answer" in line for line in nxt.log), nxt.log
+
+
+def test_an_optional_id_question_is_put_to_the_person_once():
+    """_pending puts an optional question of the person's own (an ID at this employer: plan_autofill's "employer_id")
+    to them with the required ones, never one they left empty on an earlier card (Run.asked_once); and "Left empty"
+    lists it only then, as theirs. An ordinary optional question the profile doesn't answer is left, as before."""
+    wwid = {"id": "w", "kind": "text", "label": WWID, "required": False, "employer_id": True}
+    plain = {"id": "p", "kind": "text", "label": "Favorite tool color", "required": False}
+    needed = {"id": "n", "kind": "text", "label": "Years in a cleanroom", "required": True}
+    result = {"needs_input": [needed, wwid, plain], "failed": [], "filled": []}
+    assert [q["id"] for q in pipeline._pending(result, {})[0]] == ["n", "w"]
+    page = {"url": "https://example.com/apply", "headings": ["Questions"], "fields": [needed, wwid, plain]}
+    r = Run(1, "FSE", "Example Fab")
+    pipeline._went_left(r, result, page)
+    assert [(e["label"], e["why"]) for e in r.went_in.public()["left"]] == [
+        ("Favorite tool color", "your profile doesn't answer it")]  # (the ID is on its card: theirs to answer)
+    r.questions = [needed, wwid]
+    Applier(None).went_on_from_card(r, {question_key(needed["label"])})  # (answered the other, left the ID)
+    assert r.asked_once == {pipeline.placed_key(wwid): question_key(WWID)}
+    assert [q["id"] for q in pipeline._pending(result, {}, r.asked_once)[0]] == ["n"]
+    pipeline._went_left(r, result, page)
+    assert sorted((e["label"], e["why"]) for e in r.went_in.public()["left"]) == [
+        ("Favorite tool color", "your profile doesn't answer it"), (pipeline._short(WWID), "you left it empty")]
+    # a required one is asked as before, whether or not it was left on an earlier card
+    assert [q["id"] for q in pipeline._pending({**result, "needs_input": [{**wwid, "required": True}]}, {},
+                                               r.asked_once)[0]] == ["w"]
+
+
 def test_an_answer_that_doesnt_stick_the_first_time_is_filled_again_not_asked_again(srv, monkeypatch):
     """Lam's and Micron's consent questions (Eightfold), live: an answer the person gave didn't
     stick the first time, and the desk asked for it again. It's filled in a second time first."""
