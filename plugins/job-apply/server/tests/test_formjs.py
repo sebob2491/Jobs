@@ -159,6 +159,85 @@ def test_a_hidden_file_box_is_named_by_its_own_upload_button(srv, tmp_path):
     assert [f["label"] for f in got] == ["Upload Resume", "Upload Cover Letter", "Transcript", "Portfolio"]
 
 
+def test_a_file_box_reads_only_its_own_files_never_another_boxs(srv, tmp_path):
+    """Workday's My Experience (found with the desk's cover letters, Oct 2026): a Resume/CV box with its file listed
+    below it, and a Cover Letter box with none (its file kept from before just deleted, for the letter written for the
+    job). The empty box read the resume's file as its own, so the letter was never uploaded. Each box reads its own
+    list alone, shown file box or hidden one."""
+    box = ('<div><h3>{title}</h3><div data-automation-id="formField-{n}"><label id="{n}-label">Upload a file</label>'
+           '<div data-automation-id="file-upload-drop-zone">Drop files here or <button type="button">Select files'
+           '</button><input type="file" data-automation-id="file-upload-input-ref" aria-labelledby="{n}-label"{hide}>'
+           '</div><div>{files}</div></div></div>')
+    item = ('<div data-automation-id="file-upload-item"><div data-automation-id="file-upload-item-name">{name}</div>'
+            '<div>Successfully Uploaded!</div><button type="button" aria-label="Delete">Delete</button></div>')
+    for hide in ("", " hidden"):
+        got = fields_of(srv, tmp_path, box.format(title="Resume/CV", n="rs", hide=hide,
+                                                  files=item.format(name="2024-resume.pdf"))
+                        + box.format(title="Cover Letter", n="cl", hide=hide, files=""))
+        assert [f["value"] for f in got if f["kind"] == "file"] == ["2024-resume.pdf", ""], (hide, got)
+        got = fields_of(srv, tmp_path, box.format(title="Resume/CV", n="rs", hide=hide, files="")
+                        + box.format(title="Cover Letter", n="cl", hide=hide,
+                                     files=item.format(name="Sam_Rivera_Cover_Letter.pdf")))
+        assert [f["value"] for f in got if f["kind"] == "file"] == ["", "Sam_Rivera_Cover_Letter.pdf"], (hide, got)
+
+
+def test_a_drop_zones_hidden_twin_is_the_same_uploads_never_another_box(srv, tmp_path):
+    """The review of the cover letters: an upload widget with two file inputs of its own (its box, and a drop zone's
+    hidden twin with no label of its own) still reads the file listed under it; the walk stops only at another box's
+    input (one with a label of its own), as the Cover Letter's below it does."""
+    widget = ('<div class="field"><label for="rs">Resume</label><div class="widget"><input type="file" id="rs">'
+              '<div class="dz"><input type="file" class="dz-hidden-input" style="display: none"></div></div>'
+              '<div><span class="file-name">2024-resume.pdf</span></div></div>')
+    other = '<div class="field"><label for="cl">Cover Letter</label><input type="file" id="cl"></div>'
+    got = {f["label"]: f["value"] for f in fields_of(srv, tmp_path, widget + other) if f["kind"] == "file"}
+    assert got.get("Resume") == "2024-resume.pdf" and got.get("Cover Letter") == "", got
+
+
+def test_two_boxes_labelled_by_their_groups_legend_and_their_own_words_are_two_uploads(srv, tmp_path):
+    """The review's second round: two boxes in a Documents group, each labelled by the group's legend and its own words
+    (aria-labelledby "docs-legend rl" and "docs-legend cl"), were taken for one upload (only the first name, the
+    legend, was compared), so the Cover letter box read the resume's file as its own."""
+    group = ('<fieldset id="docs"><legend id="docs-legend">Documents</legend>'
+             '<div class="f"><span id="rl">Resume</span>'
+             '<input type="file" id="resume" aria-labelledby="docs-legend rl">'
+             '<div class="file-name">2024-resume.pdf</div></div>'
+             '<div class="f"><span id="cl">Cover letter</span><input type="file" id="cover" '
+             'aria-labelledby="docs-legend cl"></div></fieldset>')
+    got = [f["value"] for f in fields_of(srv, tmp_path, group) if f["kind"] == "file"]
+    assert got == ["2024-resume.pdf", ""], got
+    # (a drop zone's hidden twin named the same way, by the legend and the box's own words, is still the same upload)
+    twin = group.replace('aria-labelledby="docs-legend rl">', 'aria-labelledby="docs-legend rl"><input type="file" '
+                         'aria-labelledby="docs-legend rl" style="display: none">')
+    got = [f["value"] for f in fields_of(srv, tmp_path, twin) if f["kind"] == "file"]
+    assert got[0] == "2024-resume.pdf" and got[-1] == "", got
+
+
+def test_a_shown_box_of_its_own_row_is_another_upload_labelled_or_not(srv, tmp_path):
+    """The review's third round: a box with no label of its own inside the Cover letter's field (its own row, shown),
+    and two boxes named only by their section's heading, were each taken for the other's twin, so the Cover letter
+    box read the resume's file (and no letter went in). A twin is hidden, or beside the box in its own wrapper."""
+    wraps = ('<div class="docs"><label for="cover">Cover letter</label>'
+             '<div class="row"><input type="file" id="cover"></div>'
+             '<div class="row"><span>Resume</span><input type="file" id="resume"></div>'
+             '<ul><li class="file-name">2024-resume.pdf</li></ul></div>')
+    got = {f["label"]: f["value"] for f in fields_of(srv, tmp_path, wraps) if f["kind"] == "file"}
+    assert got.get("Cover letter") == "", got
+    shared = ('<section aria-labelledby="docs-h"><h3 id="docs-h">Resume and cover letter</h3>'
+              '<div><input type="file" id="resume" aria-labelledby="docs-h"></div>'
+              '<div><input type="file" id="cover" aria-labelledby="docs-h"></div>'
+              '<ul><li class="file-name">2024-resume.pdf</li></ul></section>')
+    got = [f["value"] for f in fields_of(srv, tmp_path, shared) if f["kind"] == "file"]
+    assert got == ["", ""], got
+    # (a hidden twin with the box's own label, beside it in its field, is still the same upload)
+    twin = ('<div class="field"><label id="rl">Resume</label><input type="file" id="resume" aria-labelledby="rl">'
+            '<input type="file" class="dz" aria-labelledby="rl" style="display:none">'
+            '<div class="file-name">2024-resume.pdf</div></div>'
+            '<div class="field"><label id="cl">Cover letter</label><input type="file" id="cover" '
+            'aria-labelledby="cl"></div>')
+    got = {f["label"]: f["value"] for f in fields_of(srv, tmp_path, twin) if f["kind"] == "file" and f["value"]}
+    assert got == {"Resume": "2024-resume.pdf"}, got
+
+
 WORKDAY_UPLOAD = ('<div data-automation-id="formField-" data-fkit-id="primaryQuestionnaire--a{n}">'
                   '<div id="rich-label{n}"><div data-automation-id="richText"><p><b>{question}</b>{star}</p></div>'
                   '</div><div><div style="width: 100%"><div aria-labelledby="rich-label{n}" '

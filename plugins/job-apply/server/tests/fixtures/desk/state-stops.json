@@ -21,7 +21,9 @@
   "posted_within": null,
   "auto_search": false,
   "jobs_at_once": 1,
-  "follow_up_days": 10
+  "follow_up_days": 10,
+  "cover_letters": true,
+  "cover_letters_approved": false
  },
  "tailoring": 1,
  "passwords": {
@@ -762,6 +764,65 @@
     "log": [],
     "log_at": [],
     "went_in": null
+   },
+   "handled": false,
+   "also_on": [],
+   "saved_at": null,
+   "new": false,
+   "not_interested": null
+  },
+  {
+   "url": "https://careers.example.com/letter/13",
+   "title": "Equipment Technician",
+   "company": "Example Letter",
+   "location": "Phoenix, AZ",
+   "posted": "2026-10-10",
+   "posted_days": 8,
+   "pay": null,
+   "ats": "workday",
+   "fit": {
+    "score": 72,
+    "reasons": [
+     "title matches"
+    ],
+    "concerns": [],
+    "blocked": false,
+    "recommended": true,
+    "parts": [
+     {
+      "why": "start",
+      "points": 50
+     },
+     {
+      "why": "title matches",
+      "points": 22
+     }
+    ]
+   },
+   "notes": [],
+   "job_id": 13,
+   "status": "saved",
+   "run": {
+    "job_id": 13,
+    "title": "Equipment Technician",
+    "company": "Example Letter",
+    "status": "needs_you",
+    "need": "cover_letter",
+    "reason": "This is the first cover letter the desk wrote for you (with your Claude login), and this job waits for your say. If it's right, press Use it: from then on each job's letter goes in without asking. To change how they're written, tell Claude in the chat what to change, or press Turn cover letters off.",
+    "code": "cover_letter",
+    "blocking": false,
+    "paused_at": 1009.0,
+    "captcha": false,
+    "left_at_restart": false,
+    "questions": [],
+    "log": [
+     "wrote the first cover letter for this job (your Claude login): it waits for your say on its card"
+    ],
+    "log_at": [
+     1009.0
+    ],
+    "went_in": null,
+    "letter_text": "# Sam Rivera\n\nsam.rivera@example.com · 480-555-0123 · Chandler, AZ\n\nDear Hiring Team,\n\nI am applying for the Equipment Technician position at Example Letter. <b>Made-up</b> letter text.\n\nSincerely,  \nSam Rivera\n"
    },
    "handled": false,
    "also_on": [],

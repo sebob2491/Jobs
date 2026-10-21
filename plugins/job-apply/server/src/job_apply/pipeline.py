@@ -49,6 +49,7 @@ from .never import (ANYWHERE, CALLS_OR_TEXTS, EMAILS, FUTURE_ROLES, GATE_OWN, GA
                     PARAGRAPH_WORDS, PRECISE, _never_for_them)
 from .pipeline_accounts import AccountsMixin
 from .pipeline_filling import FillingMixin
+from .pipeline_letters import LettersMixin
 from .pipeline_mail import MailMixin
 
 
@@ -955,7 +956,7 @@ STOP_CODES = frozenset({
     "site_blocks", "try_later", "posting_closed",
     # the person's by the rules
     "bot_check", "captcha", "cookie_banner", "notice_theirs", "agreement_theirs", "sends_first", "practice_stop",
-    "assessment", "screening", "maybe_duplicate", "tailor",
+    "assessment", "screening", "maybe_duplicate", "tailor", "cover_letter",
     # accounts, sign-ins and emails: the person's steps, then the desk's own that didn't work
     "account_theirs", "account_form_filled", "account_captcha", "security_questions", "email_code",
     "verify_pending", "account_form_more", "account_step_failed", "sign_in_refused", "reset_failed",
@@ -975,6 +976,7 @@ class Run:
     # questions | sign_in | bot_check | email_code | captcha | your_submit | stuck
     # | submit_failed (pressed, the form is still there) | check_submit (pressed, no confirmation)
     # | tailor (waiting for Claude to write a resume for this job) | restarted (begun before the desk restarted)
+    # | cover_letter (the first cover letter the desk wrote, waiting for the person's say: pipeline_letters)
     need: str = ""
     reason: str = ""
     code: str = ""  # its stop's (STOP_CODES), while it needs the person: set with need and reason by Applier._pause
@@ -1161,6 +1163,14 @@ class Run:
     # the jobs its "may be one already begun or applied to" card named (_held_for_maybe_same): the ones its Apply anyway
     # clears, never another (a restart asks again, the card worked out anew as it goes)
     maybe_shown: list[int] = field(default_factory=list)
+    # Its cover letter (pipeline_letters): the file the desk wrote for it, in its folder (its card links it); the first
+    # letter's text, while it waits for the person's say on the card (or, written, to be shown there); whether one was
+    # tried for it (once a job: a retry or a Carry on uses what's there, or goes on without); and whether it waits,
+    # before its tab opens, for its first letter being written
+    letter: str = ""
+    letter_text: str = ""
+    letter_tried: bool = False
+    letter_wait: bool = False
     page: Any = None  # its browser tab
     opened_tabs: list[Any] = field(default_factory=list)  # the tabs _open gave it, still open (Skip's)
     updated: float = field(default_factory=time.time)
@@ -1175,7 +1185,10 @@ class Run:
                                 "mail_last", "entries_short", "entries_told", "entries_ok", "account_answers",
                                 "employer_mail", "others_mail", "went_in", "agreed", "draft_pages", "submit_pressed",
                                 "sending", "cut_short", "started", "pass_steps", "rounds", "resumes", "marked",
-                                "maybe_shown", "kept_replaced", "once_left", "opened_tabs")},
+                                "maybe_shown", "kept_replaced", "once_left", "opened_tabs", "letter_tried",
+                                "letter_text", "letter_wait")},
+                # (the first cover letter's text, on its card alone)
+                "letter_text": self.letter_text if self.status == "needs_you" and self.need == "cover_letter" else "",
                 # (only for the cards that show it: a job queued or under way has none, and 30 of them made the
                 # page's state megabytes, every poll)
                 "went_in": None if self.status in ("queued", "running") else self.went_in.public(),
@@ -1496,7 +1509,7 @@ def _page_info(data: dict[str, Any]) -> dict[str, Any]:
 
 
 # ------------------------------------------------------ the Job Desk's applier
-class Applier(MailMixin, FillingMixin, AccountsMixin):
+class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
     """Works through queued jobs in the background: up to settings.jobs_at_once at a time (the desk's "Jobs at once"),
     each in a task and a browser tab of its own.
 
@@ -1536,6 +1549,20 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         # job's only when nothing listed makes it ambiguous (Tracker.not_interested_marks)
         self.listed: Callable[[], list[dict[str, Any]]] = lambda: []
         self.tailor = False  # hold each job until Claude has written a resume for it
+        # "Write a cover letter for each job" (pipeline_letters, kept in desk.json): on; the person's OK of the first
+        # one given; what stops every letter now, said on the desk (and since when: tried again LETTER_RETRY seconds
+        # on); each job's letter being written; how many at a time; and the jobs whose first letter waits for the
+        # person's say, its draft in their folder (read from the folders when first asked: _drafts)
+        self.letters = False
+        self.letters_approved = False
+        self.letters_problem: str | None = None
+        self._letters_problem_at = 0.0
+        self._letter_tasks: dict[int, asyncio.Task] = {}
+        self._letter_slots: asyncio.Semaphore | None = None
+        self._draft_ids: set[int] | None = None
+        self._letters_retried_at = 0.0  # (what stopped every letter, tried again once for each time it was said)
+        self._letters_refused = 0  # (letters refused for what they claim, in a row)
+        self._letters_tripped = False  # (LETTERS_REFUSED_MOST of them: none until the switch goes off and on)
         # The person pressed Pause queue: no new job starts until Resume queue (in memory, like the queue it holds),
         # but those they pressed Resume on, or answered on their card (pressed)
         self.paused = False
@@ -1624,6 +1651,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
                     task.result()
         self._worker_task = None
         self._slots.clear()
+        await self._stop_letters()
         with contextlib.suppress(AttributeError):
             if self.srv.browser.keep_front == self._front_tab:
                 self.srv.browser.keep_front = None
@@ -1679,6 +1707,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         run.updated = time.time()
         self._cancel(job_id)
         (self.tasks.appendleft if front else self.tasks.append)(("apply", job_id))
+        self._letter_soon(job_id)  # (its cover letter, written meanwhile: the switch on)
         self._wake.set()
         self._save_queue()
         return run
@@ -1707,6 +1736,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         run.resumes += 1  # (for its lines in the desk's history)
         self.go_on_for(run)
         self.pressed.add(job_id)  # (the person's own press: it goes even while the queue is paused)
+        self._letter_soon(job_id)  # (its cover letter: one held back after a restart is pressed on now)
         if signing_in:
             run.sign_in_tries = min(run.sign_in_tries, SIGN_IN_TRIES - 1)
         return run
@@ -1761,6 +1791,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
     def resume_queue(self) -> None:
         self.paused = False
         self._restored_ids.clear()  # (the jobs back from before a restart go on: said no more)
+        self._letters_next()  # (and their cover letters are written now)
         self._wake.set()
         self._save_queue()
 
@@ -1854,6 +1885,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
             if was != "submitted" and job_id not in self._slots:  # (one under way: its pass's line says it)
                 self._note_history(run, "marked_applied" if run.marked else "submitted")
             self._wake.set()
+        self._letter_dropped(job_id)  # (its cover letter being written, or its first one's card: dropped)
         self._save_queue()
 
     async def skip(self, job_id: int, closed: str = "") -> Run:
@@ -1876,6 +1908,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         run.account_answers = {}  # (an account form's answers from its card, for that form alone: never kept)
         run.submit_unsent = run.left_at_restart = False
         self._log(run, f"skipped by itself: posting closed ({closed})" if closed else "skipped")
+        self._letter_dropped(job_id)  # (its cover letter being written, or its first one's card: dropped)
         self.srv.tracker().update(job_id, status="skipped", note="skipped by the Job Desk: posting closed" if closed
                                   else "skipped in the Job Desk")
         # (a job on the desk, not under way: one under way has its pass's line, which says it)
@@ -2177,6 +2210,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
                   pressed_before=card == RESTART_CHECK, left_at_restart=True, started=True, submit_unsent=pressed,
                   paused_at=time.time())
         self.runs[job_id] = run
+        self._note_letter(run)  # (the cover letter in its folder: its card links it)
         self._log(run, said)
 
     # ------------------------------------------------------------- history
@@ -2294,6 +2328,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
             await self._until_one_is_done()
             return
         self._resume_tailored()
+        self._letters_retry()
         await self._front_next()
         # the person at a job in a round (a bot check, a review page): nothing else started over it, a solved check
         # noticed; a Submit they pressed (the round's own "Submit this one") still goes
@@ -2977,8 +3012,9 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         failed fill saves, so a problem report holds it (scrubbed) among its pages. The newest few
         stops are kept (as many as a report holds). Whatever goes wrong saving it, the job still
         waits on the person."""
-        if run.status != "needs_you" or run.need == "tailor" or run.page is None or run.page.is_closed():
-            return  # (waiting for a tailored resume is before its tab opens)
+        if (run.status != "needs_you" or run.need in ("tailor", "cover_letter") or run.page is None
+                or run.page.is_closed()):
+            return  # (waiting for a tailored resume, or the first cover letter's say, is before its tab opens)
         try:
             job = self.srv.tracker().get(run.job_id, with_description=False) or {}
             if not job.get("folder") or not self.srv.browser.use_tab(run.page):
@@ -3145,6 +3181,9 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
             job = srv.tracker().get(run.job_id, with_description=False) or {}
             if not tailored_ready(job):  # before its tab opens: nothing to keep waiting
                 return self._pause(run, "tailor", _TAILOR_SAYS, code="tailor")
+        # (the first cover letter the desk writes waits for the person's say, before its tab opens)
+        if self.letters and await self._held_for_first_letter(run):
+            return
         # left on a "Try Again Later" page, on its own tab still: the person has waited and pressed
         # Resume. Any other way back here (the queue carrying on after an emailed code, say) isn't that.
         waited_out = run.try_later and run.page is not None and not run.page.is_closed()
@@ -3794,6 +3833,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
                     self._log(run, f"couldn't press the {section} section's Add button: something on the page "
                               "covers it, so its blocks are left as they are")
                 self._note_short_entries(run, section, added, lap.data)
+        # a cover letter box while the job's letter is still being written: waited for (no part of the pass's own time)
+        ps.began += await self._letter_ready(run, lap.data)
         # a resume kept from before in its box (Workday's), where this job has one tailored for it: deleted, for
         # the fill to put the tailored one in its place; or, once the page is filled, the person's (paused)
         replacing = await self._replace_kept(run, lap.data)

@@ -247,6 +247,8 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
 - **Tailor my resume for each job** holds each picked job, before its browser tab
   opens, until Claude has written a resume for it (see Tailoring resumes). The page
   says how many are waiting. **Use my usual resume** sends one on without.
+- **Write a cover letter for each job** has the desk write each picked job's cover letter by
+  itself, in the background, through the user's own Claude Code sign-in (see Cover letters).
 
 ## The desk's wording
 
@@ -257,8 +259,9 @@ Use the desk's own words when you talk about it, and keep to them when you chang
   each job", "I submitted it myself").
 - States: one word per state, the same in an opening's row and its card: Queued, Working…, Questions, Sign in,
   Emailed code, Bot check, CAPTCHA, Stuck, Your Submit (the site's own Submit is the user's), Check if it went in
-  (Submit was pressed and no confirmation showed: never "press Submit"), Waiting for a resume, Restarted, Already
-  begun?, Waiting for you (any other stop), Ready to submit, Submitted, Didn't finish, Skipped. The bar over the
+  (Submit was pressed and no confirmation showed: never "press Submit"), Waiting for a resume, Cover letter to
+  check, Restarted, Already begun?, Waiting for you (any other stop), Ready to submit, Submitted, Didn't finish,
+  Skipped. The bar over the
   openings groups them: Not started, Working, Bot checks, Questions and sign-ins, Stuck, Ready, Done (and Any, New,
   Not interested).
 - Color: yellow means something waits for the user now; blue is information (a tip, an update); red is a problem
@@ -311,6 +314,36 @@ resume:
    job as soon as its PDF is saved. A `warning` about length means tighten it and
    render again; the job waits until it fits on 2 pages.
 5. A job whose description says it hasn't been read yet: `ingest_job(url)` first.
+
+## Cover letters
+
+With **Write a cover letter for each job** on, the desk writes each picked job's letter by
+itself, in the background, as soon as the job is queued: it runs the user's own `claude`
+command in print mode, with no tools and none of their MCP servers, so it uses their Claude
+plan and needs no API key. The letter (one page, from their resume, profile and the posting,
+using only what those say) is checked twice for what it claims (by the desk, then by a second
+`claude` call given the letter, resume and profile but never the posting): anything either
+finds and the job gets the usual cover letter, its log saying why (4 such in a row and the desk
+says so once and writes no more until the switch is turned off and on). A letter that passes goes into
+the job's folder, and a cover letter box uploads it; a box reached while it's still being
+written or checked waits up to 2 minutes for it. A job tried again keeps the letter it has. Where `claude` is missing, not signed in, too old, at its
+plan's limit or can't reach Claude, the desk says so once at the top of the page, and jobs go on with
+`documents.cover_letter` (or none): tell the user to install Claude Code and sign in (run
+`claude` in a terminal, then `/login`), or to update it.
+
+- **The first letter** ever written waits on its job's card ("Cover letter to check") for
+  the user's **Use it** (after that, letters go in without asking) or **Turn cover letters
+  off**; no other letter is written until then (a restart of the desk keeps it so). It's in
+  the job's folder as `cover_letter_draft.md`. When the user asks to change
+  it, read that file, write the new letter (same shape: `# Full Name`, the contact line, the
+  greeting, the paragraphs, `Sincerely,` and the name), using only what their resume and
+  profile say, and call `render_document("cover_letter", markdown, job_id)`: the card shows
+  the new one, and **Use it** sends it. One longer than a page comes back with an `error`
+  saying how many pages: tighten it and call again (the card keeps the one it had).
+- **One letter for a job**, outside the switch: write it the same way and call
+  `render_document("cover_letter", markdown, job_id)`; the desk uses it and never writes
+  over it.
+- `settings.cover_letter_model` picks the model (empty: `claude-sonnet-5-5`).
 
 ## Bot checks
 

@@ -269,10 +269,27 @@ def _jobs_at_once(raw: Any) -> tuple[int, str]:
     return _whole_number(raw, "jobs_at_once", JOBS_AT_ONCE_DEFAULT, JOBS_AT_ONCE_MAX)
 
 
+# A model's name as Claude Code's --model takes it: an alias ("sonnet") or a full name ("claude-sonnet-5-5")
+_MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-\[\]]{1,80}$")
+
+
+def _cover_letter_model(raw: Any) -> tuple[str, str]:
+    """settings.cover_letter_model: the model Claude Code writes the desk's cover letters with ("" for the usual one,
+    letters.DEFAULT_MODEL), and what to say of one that can't be a model's name."""
+    if raw is None or isinstance(raw, str) and not raw.strip():
+        return "", ""
+    said = str(raw).strip()
+    if isinstance(raw, str) and _MODEL_NAME.match(said):
+        return said, ""
+    return "", (f"settings.cover_letter_model should be a model's name, such as claude-sonnet-5-5, not {raw!r}; "
+                "using the usual one.")
+
+
 # The keys the desk reads under settings: (the template's); any other is said, as it has no effect
 # ("accept_notice: false")
 KNOWN_SETTINGS = ("submit_mode", "auto_submit_ats", "browser_channel", "headless", "email_codes", "email_tracking",
-                  "accept_cookies", "manage_accounts", "accept_notices", "jobs_at_once", "follow_up_days")
+                  "accept_cookies", "manage_accounts", "accept_notices", "jobs_at_once", "follow_up_days",
+                  "cover_letter_model")
 
 
 @dataclass
@@ -298,6 +315,9 @@ class Settings:
     # the days an application sent in waits with no reply before My applications marks it for a follow-up (1 to
     # FOLLOW_UP_DAYS_MAX)
     follow_up_days: int = FOLLOW_UP_DAYS_DEFAULT
+    # the model Claude Code writes the desk's cover letters with (the desk's "Write a cover letter for each job"; "":
+    # letters.DEFAULT_MODEL)
+    cover_letter_model: str = ""
     # the live check's test identity (live_test_identity): accounts and notices in practice mode too
     test_identity: bool = False
     warnings: list[str] = field(default_factory=list)
@@ -319,7 +339,8 @@ class Settings:
         at_once, at_once_said = _jobs_at_once(d.get("jobs_at_once"))
         follow_up, follow_up_said = _whole_number(d.get("follow_up_days"), "follow_up_days", FOLLOW_UP_DAYS_DEFAULT,
                                                   FOLLOW_UP_DAYS_MAX)
-        warnings += [said for said in (at_once_said, follow_up_said) if said]
+        letter_model, letter_model_said = _cover_letter_model(d.get("cover_letter_model"))
+        warnings += [said for said in (at_once_said, follow_up_said, letter_model_said) if said]
         for key in d:  # a key the desk doesn't read, a letter short of one it does (the review of Oct 15): said
             if str(key) not in KNOWN_SETTINGS:
                 near = difflib.get_close_matches(str(key), KNOWN_SETTINGS, n=1, cutoff=0.6)
@@ -341,6 +362,7 @@ class Settings:
             accept_notices=_on_unless_off(d.get("accept_notices"), malformed, ACCEPT_NOTICES_DEFAULT),
             jobs_at_once=at_once,
             follow_up_days=follow_up,
+            cover_letter_model=letter_model,
         )
         if os.environ.get("JOB_APPLY_HEADLESS") == "1":
             s.headless = True

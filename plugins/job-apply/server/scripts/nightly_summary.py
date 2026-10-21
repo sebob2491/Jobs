@@ -246,6 +246,7 @@ CODE_WHY: dict[str, tuple[str, str]] = {
     "screening": ("A tax credit screening", "Fill it in, then press Carry on"),
     "maybe_duplicate": ("May be a job applied to already", "Apply anyway, or Skip"),
     "tailor": ("Waiting for a tailored resume", "Claude writes it, or use the usual resume"),
+    "cover_letter": ("The first cover letter, to check", "Use it, or turn cover letters off"),
     "account_theirs": ("Account needed (sign-in)", "Sign in or create the account"),
     "account_form_filled": ("Account needed (site)", "The desk makes the account with its saved password"),
     "account_captcha": ("Account form (site) with a CAPTCHA", "Solve the CAPTCHA, create the account"),

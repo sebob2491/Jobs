@@ -26,10 +26,11 @@ UPDATE = os.environ.get("JOB_APPLY_UPDATE_SNAPSHOTS") == "1"
 CASES = {
     # a job stopped for each need: questions (with a What went in panel), a sign-in holding the queue, an emailed code,
     # a bot check, a CAPTCHA, stuck, a Submit that didn't go, the person's own Submit, one to check whether it went in,
-    # a tailored resume, one that may be begun elsewhere, one begun before a restart
+    # a tailored resume, the first cover letter to check (its text drawn as text), one that may be begun elsewhere, one
+    # begun before a restart
     "stops": {"state": "state-stops.json", "golden": "cards-stops.txt"},
-    # a ready job with its What went in panel, one that failed, one sent, one skipped, one being filled (its log's
-    # times masked) and two queued
+    # a ready job with its What went in panel (and a cover letter written for it), one that failed, one sent, one
+    # skipped, one being filled (its log's times masked) and two queued
     "ready": {"state": "state-ready.json", "golden": "cards-ready.txt"},
     # nothing under way (the one idle card): openings with pay listed (sure, and read from the text), pay not listed, no
     # date, a new one, one where the desk goes all the way, one also on Indeed, one not recommended, one Not interested;

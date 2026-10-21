@@ -157,6 +157,9 @@ button.score:hover { outline: 1px solid var(--muted); }
 .task p { margin: 4px 0 8px; font-size: 14px; }
 .task .actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .task.hands { background: var(--warn-bg); }
+/* the first cover letter, on its card for the person's say: drawn as text */
+.task .letter-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow: auto; font-size: 13px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin: 6px 0 8px; }
 .q { display: grid; gap: 4px; margin: 10px 0; }
 .q > span { font-size: 14px; }
 .q input[type=text], .q select { font: inherit; width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
@@ -283,6 +286,8 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
         <button data-at-once="1" aria-pressed="false">1</button><button data-at-once="2" aria-pressed="false">2</button><button data-at-once="3" aria-pressed="false">3</button></span>
       <label><input type="checkbox" id="tailor"> Tailor my resume for each job</label>
       <span class="hint" id="tailor-hint"></span>
+      <label title="Claude writes each one through your own Claude Code sign-in (your Claude plan; no key needed), from your resume, your profile and the job's posting, using only what they say. The first one waits for your OK on its card."><input type="checkbox" id="letters"> Write a cover letter for each job</label>
+      <span class="hint" id="letters-hint"></span>
     </div>
     <ul class="rows" id="rows"></ul>
     <div id="skipped-sites" class="openings-only"></div>
@@ -603,6 +608,7 @@ const STOP_WORDS = {questions: ["question card", "question cards"], sign_in: ["s
   your_submit: ["Submit of your own", "Submits of your own"], check_submit: ["Submit to check", "Submits to check"],
   submit_failed: ["Submit that didn't go", "Submits that didn't go"], stuck: ["stuck page", "stuck pages"],
   tailor: ["tailored resume", "tailored resumes"], restarted: ["restart", "restarts"], failed: ["failure", "failures"],
+  cover_letter: ["first cover letter to check", "first cover letters to check"],
   maybe_duplicate: ["job that may be one already begun", "jobs that may be ones already begun"],
   other: ["other stop", "other stops"]};
 const stopWords = (kind, n) => (STOP_WORDS[kind] || [String(kind).replace(/_/g, " "), String(kind).replace(/_/g, " ")])[n === 1 ? 0 : 1];
@@ -697,7 +703,7 @@ const stopMark = (r) => r.status !== "needs_you" ? "" : r.need === "bot_check" ?
 const NEED_PILL = {
   questions: "Questions", sign_in: "Sign in", email_code: "Emailed code", stuck: "Stuck", submit_failed: "Stuck",
   your_submit: "Your Submit", check_submit: "Check if it went in", tailor: "Waiting for a resume", restarted: "Restarted",
-  maybe_duplicate: "Already begun?",
+  maybe_duplicate: "Already begun?", cover_letter: "Cover letter to check",
 };
 const needPill = (r) => stopMark(r) ? [stopMark(r), "warn"]
   : [NEED_PILL[r.need] || "Waiting for you", STUCK_NEEDS.has(r.need) ? "bad" : "warn"];
@@ -1154,12 +1160,18 @@ function jobButtons(r, which) {
   if (which.includes("applied")) out.push(b("applied", "I submitted it myself", "primary"));
   if (which.includes("resume")) out.push(b("resume", "Carry on"));
   if (which.includes("usual_resume")) out.push(b("usual_resume", "Use my usual resume"));
+  if (which.includes("letter_ok")) out.push(b("letter_ok", "Use it", "primary",
+    "This letter goes into the application, and each job's from now on goes in without asking"));
+  if (which.includes("letters_off")) out.push(b("letters_off", "Turn cover letters off", "",
+    "No cover letter is written for any job; this one goes on with your usual cover letter, if you have one"));
   if (which.includes("later")) out.push(b("later", "Later", "",
     "Let the other jobs go on; this one waits in its tab until you finish it there"));
   if (which.includes("skip")) out.push(b("skip", "Skip job"));
   // sent on the site itself, whatever the card waited on (issue #112, note 31): it counts as applied
   if (which.includes("already")) out.push(b("applied", "I submitted it myself", "link"));
   if (which.includes("unskip")) out.push(b("unskip", "Undo", "primary"));
+  // the cover letter the desk wrote for it, opened from its folder
+  if (r.letter) out.push(b("letter", "Cover letter", "link", `The cover letter Claude wrote for this job (${r.letter})`));
   out.push(b("report", "Report a problem", "link"));
   return `<div class="actions">${out.join("")}</div>`;
 }
@@ -1271,6 +1283,9 @@ function renderSide() {
     else if (r.need === "your_submit" || r.need === "check_submit") body = jobButtons(r, ["show", "applied", "skip"]);
     else if (r.need === "submit_failed") body = jobButtons(r, ["show", "submit", "applied", "skip"]);
     else if (r.need === "tailor") body = jobButtons(r, ["usual_resume", "skip"]);
+    // the first cover letter written, for the person's say: its text (drawn as text), then Use it or Turn them off
+    else if (r.need === "cover_letter") body = `<div class="letter-text">${esc(r.letter_text || "")}</div>`
+      + jobButtons(r, ["letter_ok", "letters_off", "skip"]);
     // may be a job begun or applied to on another site: nothing opened until the person says
     else if (r.need === "maybe_duplicate") body = jobButtons(r, ["apply_anyway", "skip"]);
     else body = jobButtons(r, ["show", "resume", "skip", "already"]);
@@ -1391,6 +1406,8 @@ function renderHeader() {
   document.querySelectorAll("[data-at-once]").forEach((b) => b.setAttribute("aria-pressed", String(Number(b.dataset.atOnce) === s.jobs_at_once)));
   const tailor = $("tailor");
   if (document.activeElement !== tailor) tailor.checked = !!s.tailor_resumes;
+  const letters = $("letters");
+  if (document.activeElement !== letters) letters.checked = !!s.cover_letters;
   const handledOnly = $("handled-only");
   if (document.activeElement !== handledOnly) handledOnly.checked = !!s.handled_only;
   const minPay = $("min-pay");
@@ -1424,6 +1441,9 @@ function renderHeader() {
   if (document.activeElement !== troubleshootOn) troubleshootOn.checked = !!s.troubleshoot;
   $("plugin-version").textContent = state.version ? `job-apply ${state.version}` : "";
   $("tailor-hint").textContent = s.tailor_resumes ? "On: each job waits for Claude to write a resume for it." : "Off: your usual resume goes with every application.";
+  $("letters-hint").textContent = !s.cover_letters ? "Off: your usual cover letter, if you have one, goes in."
+    : s.cover_letters_approved ? "On: Claude writes one for each job, with your Claude login."
+    : "On: Claude writes one for each job, with your Claude login; the first waits for your OK.";
   const systems = {workday: "Workday", successfactors: "SuccessFactors", icims: "iCIMS", applicantstack: "ApplicantStack",
                    ukg: "UKG Pro", infor: "Infor", taleo: "Taleo", email: "Email"};
   // the systems named with the employers on the person's own lists (the page's own list until then)
@@ -1496,6 +1516,7 @@ function renderHeader() {
     + `${esc(searchWords(sr.error, "something went wrong in it"))}</span>. Press Find jobs to try again.`});
   if (state.profile_problem) notes.push({cls: "notice bad", html: `Problem: your profile can't be read: ${esc(state.profile_problem)} Fix it and the desk picks it up again by itself.`});
   if (state.mail_problem) notes.push({cls: "notice bad", html: problemSaid(esc(state.mail_problem))});
+  if (state.letters_problem) notes.push({cls: "notice bad", html: problemSaid(esc(state.letters_problem))});
   if (state.answers_problem) notes.push({cls: "notice bad", html: `Problem: your saved answers aren't being used: ${esc(state.answers_problem)}.`});
   if (state.tracker_problem && state.tracker_damaged) notes.push({cls: "notice bad", html: `Problem: your list of jobs can't be read `
     + `(${esc(state.tracker_problem)}). Close the desk, move <code>${esc(state.tracker_path)}</code> (and a `
@@ -2116,6 +2137,14 @@ document.addEventListener("click", (e) => {
     act(() => api(`/api/job/${job}/unskip`, {}));
   } else if (jobAct === "submit") {
     if (confirm("Submit this application now?")) act(() => api(`/api/job/${job}/submit`, {}));
+  } else if (jobAct === "letter") {  // the job's cover letter, fetched with the page's key and opened in a new tab
+    const win = window.open("", "_blank");
+    act(async () => {
+      const res = await fetch(`/api/job/${job}/letter`, {headers: {"x-desk-token": token}});
+      if (!res.ok) { if (win) win.close(); throw new Error((await res.json().catch(() => ({}))).error || res.statusText); }
+      const url = URL.createObjectURL(await res.blob());
+      if (win) win.location.href = url; else window.open(url, "_blank");
+    });
   } else if (jobAct) {
     act(() => api(`/api/job/${job}/${jobAct}`, {}));
   }
@@ -2203,6 +2232,7 @@ document.addEventListener("change", (e) => {
     act(() => api("/api/settings", {auto_submit: t.checked}));
   }
   if (t.id === "tailor") act(() => api("/api/settings", {tailor_resumes: t.checked}));
+  if (t.id === "letters") act(() => api("/api/settings", {cover_letters: t.checked}));
   if (t.id === "auto-search") act(() => api("/api/settings", {auto_search: t.checked}));
   if (t.id === "min-pay" && state) {
     // "60000", "$60,000", "60k": dollars a year; empty (or 0) for any pay

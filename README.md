@@ -22,7 +22,9 @@ It also fills Workday's "My Experience" section, with one block per job and
 degree in your profile, and it can write a tailored resume or cover letter for
 each job as a PDF that it uploads in place of your default. In the Job Desk, turn
 on "Tailor my resume for each job" and say "tailor my resumes" to Claude: each
-picked job waits until Claude has written its resume, then carries on.
+picked job waits until Claude has written its resume, then carries on. Turn on
+"Write a cover letter for each job" and the desk has Claude write each job's cover
+letter by itself (see [Cover letters](#cover-letters)).
 
 It works with any careers site, plus specific handling for the systems common
 at semiconductor companies: Workday (Applied Materials, KLA, Intel, Microchip,
@@ -252,6 +254,45 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
    your profile. If the desk changes any, the card's **What went in** lists each one
    ("old → new") and the job waits on its review page for you, even with **Submit for me**
    on. A page that loads blank is loaded again once or twice before it asks you.
+
+#### Cover letters
+
+Turn on **Write a cover letter for each job** (beside Submit for me) and each job you
+apply to gets a cover letter of its own, written while the job waits in the queue and
+uploaded wherever its application has a cover letter box:
+
+- **Who writes it:** Claude, through your own Claude Code sign-in: the desk runs the
+  `claude` command in the background, so it counts against your Claude plan like any other
+  use of Claude Code, and there's no API key to set up (though if `ANTHROPIC_API_KEY` is set
+  where the desk's server runs, Claude Code uses that key, billed to it, instead of your
+  plan). If `claude` isn't on this
+  computer or isn't signed in, the desk says so once at the top of the page (sign in by
+  running `claude` in a terminal and typing `/login`), and your applications go on with your
+  usual cover letter (`documents.cover_letter` in your profile), or none.
+- **What it says:** one page from your resume, your profile and the job's posting, using
+  only what they say: never a degree, certification, clearance, years of experience or skill
+  they don't state (coursework isn't a degree), no made-up numbers, names or contact details,
+  and no blanks like [Hiring Manager] left in. Your name and contact line come from your
+  profile. The posting is only Claude's material: anything in it that tries to give Claude
+  instructions is ignored, and Claude runs with no tools, none of your MCP servers or
+  plugins, and none of your own settings or hooks (an organization's managed settings, and
+  any hooks they set, still apply). The
+  desk then checks each letter before it's used: one that claims more years of experience than
+  your profile states, a number that isn't in your resume, profile or the posting, a degree,
+  diploma, clearance (or a higher level of one), certification or license your resume and
+  profile don't show (a profile answer of "None" or "Eligible" shows nothing), a greeting to
+  someone the posting doesn't name, or your street address is set aside, and that job gets your
+  usual cover letter. Then Claude reads it once more, the same way (a second call, given the
+  letter, your resume and profile but never the posting), and one with any claim they don't
+  support is set aside too. If 4 letters in a row fail these checks, the desk says so once and
+  uses your usual cover letter until you turn the switch off and on (or restart the desk).
+- **The first one waits for you:** the first letter the desk writes shows on its job's
+  card. Press **Use it** and every letter after it goes in without asking; to change how
+  they're written, tell Claude in the chat what to change; or press **Turn cover letters
+  off**. Each job's log says when its letter was written, and its card's **Cover letter**
+  opens it. The letter is saved in the job's folder, and a job tried again keeps it.
+- `settings.cover_letter_model` in your profile picks the model (the usual one is
+  `claude-sonnet-5-5`).
 
 Each employer has its own account on its job site. In the desk's **Site passwords**
 card, save one password for a job system: Workday (15 of the semiconductor employers and 27 of the
