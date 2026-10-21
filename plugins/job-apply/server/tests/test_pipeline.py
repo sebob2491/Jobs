@@ -9341,10 +9341,12 @@ def test_skip_closes_the_jobs_old_posting_tab_but_never_one_gone_elsewhere(srv):
         applier.runs[other["id"]] = others
         claudes = await at(srv.browser, "https://careers.examplefab.example/jobs/3")  # (Claude's, opened for it)
         srv.browser.tab_jobs[claudes] = job["id"]
+        reused = await at(srv.browser, "https://careers.examplefab.example/jobs/4")  # (one of its, Claude's since for
+        srv.browser.tab_jobs[reused] = other["id"]  # another job: the fifth review)
         r.page = await at(srv.browser, url + "/apply")  # (the new one)
-        r.opened_tabs = [old, elsewhere, others.page, r.page]
+        r.opened_tabs = [old, elsewhere, others.page, reused, r.page]
         await applier.skip(job["id"])
-        return old, r.page, [elsewhere, others.page, claudes]
+        return old, r.page, [elsewhere, others.page, claudes, reused]
 
     old, new, kept = run(go())
     assert old.is_closed() and new.is_closed()
