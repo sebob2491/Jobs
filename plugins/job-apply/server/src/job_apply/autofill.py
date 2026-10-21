@@ -1343,20 +1343,28 @@ def _government(prof: Profile, job: dict, label: str = "") -> Any:
     some): "No" only where the profile says neither. Never where the profile's history says the person worked for the
     federal government (history.us_government_employee), or served in the U.S. military where the question counts it:
     the background's "no" is for the last 5 years, and its "ever" isn't it (the review of 0.3.227); a question about
-    now or lately ("Are you currently a state or local government employee?", "...in the last 5 years?") is still
-    the background's (the second review's)."""
+    now or lately alone ("Are you currently a state or local government employee?", "...in the last 5 years?") is
+    still the background's (the second review's), never one that asks "ever" too ("Are you now or have you ever been
+    employed by the federal government?", "...former or current...?": the third review's)."""
     asked = norm(label)
     if re.search(r"\b(military|armed forces|uniformed)\b", asked) \
             and (not _said_no(prof, "military") or _served_us_military(prof)):
         return None
-    if _fact(prof, "history.us_government_employee") and not _NOW_OR_LATELY.search(asked):
+    if _fact(prof, "history.us_government_employee") and not _now_or_lately(asked):
         return None
     return "No" if _said_no(prof, "government_employee") else None
 
 
-# A question about now or lately, not "ever" or "former" ("current or former" is ever)
-_NOW_OR_LATELY = re.compile(r"\b(?:currently|presently|now)\b|\bcurrent\b(?! or former)|\b(?:last|past|within)"
-                            r"(?: \w+){0,2} (?:years?|months?)\b")
+def _now_or_lately(asked: str) -> bool:
+    """A question (norm()'s) about now or lately alone: "currently", "now", "current" (never "current or former" nor
+    "former or current"), "in the last 5 years"; never one that asks about any time too ("ever", "former",
+    "previously", "prior", "at any time")."""
+    if re.search(r"\b(?:ever|former\w*|previous\w*|prior|at any time)\b", asked):
+        return False
+    return bool(re.search(r"\b(?:currently|presently|now)\b|(?<!former or )\bcurrent\b(?! or former)|\b(?:last|past|"
+                          r"within)(?: \w+){0,2} (?:years?|months?)\b", asked))
+
+
 _DOD_SAID = _background("defense_department")
 
 
@@ -1364,14 +1372,14 @@ def _dod_employee(prof: Profile, job: dict, label: str = "") -> Any:
     """The background's Department of Defense employment ("no" answers any wording of it), but where the question
     counts military service in it ("...(military or civilian)?", "...including military service?", "...uniformed
     service members?"), only for someone the profile says never served (_served_us_military: the second review of
-    0.3.227 found a veteran's No). And never for one it says served, who was the DoD's, unless it asks about now
-    ("Are you currently employed by the Department of Defense?" is still the background's)."""
+    0.3.227 found a veteran's No). Never for one it says served, who was the DoD's, whenever it asks about (one on
+    active duty is now: the third review's); nor where it asks about a contractor too ("...a current DoD employee or
+    contractor?"), which the background doesn't say."""
     asked = norm(label)
     served = _served_us_military(prof)
-    if re.search(r"\b(?:military|uniformed|service members?|armed forces|servicemembers?)\b", asked) \
+    if served or re.search(r"\bcontractors?\b", asked) \
+            or re.search(r"\b(?:military|uniformed|service members?|armed forces|servicemembers?)\b", asked) \
             and served is not False:
-        return None
-    if served and not re.search(r"\b(?:currently|presently|now)\b|\bcurrent\b(?! or former)", asked):
         return None
     return _DOD_SAID(prof, job, label)  # type: ignore[call-arg]
 
@@ -1605,10 +1613,23 @@ _AMONG_OTHERS = re.compile(r"\b(?:affiliat\w*|subsidiar\w*|predecessors?|success
                            r"or others|and others)\b")
 # One word of six letters or fewer, or in capitals: a short name, maybe an employer's initials
 _SHORT_NAME = re.compile(r"[A-Za-z0-9&.-]{1,6}|[A-Z0-9&.-]+")
-# A government agency's name, or a list of them ("...any of the following agencies?": a VA hospital, the IRS, an Air
-# Force base the profile names may be one of them by another name)
-_AGENCY = re.compile(r"\b(?:agencies|departments?|dept|agency|bureau|administration|commission|office of|army|navy|"
-                     r"air force|marine corps|coast guard|space force|national guard|federal)\b")
+# A government body's name, federal, state or local, or a list of them ("...any of the following agencies?": a VA
+# hospital, the IRS, an Air Force base, the city's police or airport the profile names may be one of them by another
+# name: the second and third reviews of 0.3.227)
+_AGENCY = re.compile(r"\b(?:agencies|departments?|dept|agency|bureau|administration|commission|office of|board of|"
+                     r"army|navy|air force|marine corps|coast guard|space force|national guard|federal|government|"
+                     r"city of|town of|village of|state of|county|counties|district|police|sheriff\w*|fire|"
+                     r"municipal\w*|authority|airport|public|transit|court|courts|va|veterans affairs)\b")
+
+
+_LOCAL_BODY = re.compile(r"\b(?:city of|town of|village of|state of|county|counties|district|municipal\w*|sheriff\w*|"
+                         r"police|fire)\b")
+
+
+def _federal_body(name: str) -> bool:
+    """A government body's name (norm()'s) that isn't a state's or a city's, county's or district's: a federal one."""
+    lead = _leading_words(name)
+    return bool(_AGENCY.search(name)) and not (_LOCAL_BODY.search(name) or lead and lead[0] in _STATE_BY_NAME)
 
 
 def _short_named(option: str) -> bool:
@@ -1671,7 +1692,7 @@ def _worked_for_listed(field: dict, prof: Profile, job: dict) -> tuple[bool, Any
     among_others = bool(_AMONG_OTHERS.search(label))
     company = norm(job.get("company"))
     picked: list[str] = []
-    unrelated = False
+    unrelated: list[str] = []
     for c in employers:
         sure = [o for o in orgs if _same_employer(c, o)]
         if len(sure) == 1 and all(o in sure for o in orgs if _may_be_employer(c, o)):
@@ -1682,7 +1703,7 @@ def _worked_for_listed(field: dict, prof: Profile, job: dict) -> tuple[bool, Any
         if sure or any(_may_be_employer(c, o) for o in orgs) or company and _may_be_employer(c, company) \
                 or among_others:
             return True, None
-        unrelated = True
+        unrelated.append(c)
     picked = list(dict.fromkeys(picked))
     if len(picked) > 1:
         return True, None  # (several: theirs to give, as the list takes them)
@@ -1692,9 +1713,14 @@ def _worked_for_listed(field: dict, prof: Profile, job: dict) -> tuple[bool, Any
         # person's (the review of 0.3.227)
         return True, None
     if unrelated and (_AGENCY.search(label) or any(_AGENCY.search(norm(o)) for o in orgs)) \
-            and not (_fact(prof, "history.us_government_employee") is False and _served_us_military(prof) is False):
-        # an agency the profile names by another name (a VA hospital, the IRS, an Air Force base): the none only where
-        # it says the person never worked for the federal government nor served (the second review of 0.3.227)
+            and (any(_AGENCY.search(c) for c in unrelated)
+                 or (re.search(r"\bfederal\b", label) or any(_federal_body(norm(o)) for o in orgs))
+                 and not (_fact(prof, "history.us_government_employee") is False
+                          and _served_us_military(prof) is False)):
+        # an agency the profile names by another name (a VA hospital, the IRS, an Air Force base; the city's police,
+        # its airport, the state's transportation department): the none only where no employer of theirs is a
+        # government body by its name, and, for federal agencies, the profile says the person never worked for the
+        # federal government nor served (the second and third reviews of 0.3.227)
         return True, None
     choice = picked[0] if picked else nones[0]
     return True, [choice] if field.get("kind") == "checkbox_group" else choice

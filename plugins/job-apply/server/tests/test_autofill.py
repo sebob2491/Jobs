@@ -5200,7 +5200,9 @@ def test_a_dod_question_counting_military_service_is_never_a_veterans_no(label):
     never = {"history": {"us_government_employee": False, "us_military": False},
              "background": {"defense_department": False, "military": False}}
     assert _nnss(label, never) == "No"
-    assert _nnss("Are you currently employed by the Department of Defense?", veteran) == "No"
+    # (nor now: one who served may be on active duty, the third review's)
+    assert _nnss("Are you currently employed by the Department of Defense?", veteran) is None
+    assert _nnss("Are you currently employed by the Department of Defense?", never) == "No"
 
 
 @pytest.mark.parametrize("label", [
@@ -5261,3 +5263,61 @@ def test_the_background_still_answers_now_or_lately_beside_federal_history():
     assert _nnss("Are you currently a state or local government employee?", data) == "No"
     assert _nnss("Have you been a government employee in the last 5 years?", data) == "No"
     assert _nnss("Are you a former federal employee?", data) is None
+
+
+# --- the third review of 0.3.227 -----------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("label", [
+    "Are you now or have you ever been employed by the federal government?",
+    "Are you currently, or have you ever been, a federal government employee?",
+    "Are you currently or have you ever been employed by a government agency?",
+    "Are you a former or current government employee?",
+    "Have you ever worked for the federal government, and if so, within the past 5 years?",
+])
+def test_a_now_or_ever_government_question_is_never_the_backgrounds_no_beside_federal_history(label):
+    """The third review of 0.3.227: "now or ever" read as "now", and someone the history says worked for the federal
+    government long ago got the background's 5-year No. A question that asks about any time stands aside; one about
+    now alone keeps the background's answer."""
+    data = {"history": {"us_government_employee": True}, "background": {"government_employee": False}}
+    a = resolve_field(f(label, "radio_group", options=YES_NO), Profile(data), NNSS)
+    assert a is None or a.value != "No", (label, a)
+
+
+@pytest.mark.parametrize("label", [
+    "Are you a former or current DoD employee?",
+    "Are you currently or have you ever been employed by the Department of Defense?",
+    "Are you now or have you ever been a DoD employee?",
+])
+def test_a_now_or_ever_dod_question_is_never_a_veterans_no(label):
+    """The third review of 0.3.227: a veteran got the background's DoD No where the question asks "now or ever"."""
+    veteran = {"history": {"us_government_employee": False, "us_military": True},
+               "background": {"defense_department": False, "military": True}}
+    never = {"history": {"us_government_employee": False, "us_military": False},
+             "background": {"defense_department": False, "military": False}}
+    assert (_nnss(label, veteran), _nnss(label, never)) == (None, "No")
+
+
+def test_a_dod_question_about_a_contractor_too_is_the_persons():
+    """"Are you a current DoD employee or contractor?": the background says nothing of a contractor (the third
+    review's)."""
+    never = {"history": {"us_government_employee": False, "us_military": False},
+             "background": {"defense_department": False, "military": False}}
+    assert _nnss("Are you a current DoD employee or contractor?", never) is None
+
+
+@pytest.mark.parametrize("employer", ["Phoenix Police Department", "Phoenix Sky Harbor International Airport",
+                                      "Arizona Department of Transportation", "Phoenix Union High School District"])
+def test_a_list_of_state_or_local_bodies_is_never_none_for_a_government_employer(employer):
+    """The third review of 0.3.227: "None of the above" among the City of Phoenix, the State of Arizona and Maricopa
+    County for someone at the city's police, its airport or the state's transportation department, whose names aren't
+    the choices'. The none only where no employer of theirs is a government body by its name."""
+    options = ["City of Phoenix", "State of Arizona", "Maricopa County", "None of the above"]
+    history = {"us_government_employee": False, "us_military": False}
+    for label in ("Have you ever worked for any of the following agencies?",
+                  "Have you ever worked for any of the following organizations?"):
+        at = Profile({"work_history": [{"company": employer, "start": "2018-01", "end": "2020-01"}],
+                      "history": history})
+        assert resolve_field(f(label, "combobox", options=options), at, {"company": "Example Fab"}) is None, label
+        intel = Profile({"work_history": [{"company": "Intel", "start": "2018-01", "end": "2020-01"}]})
+        assert resolve_field(f(label, "combobox", options=options), intel, {"company": "Example Fab"}).value == \
+            "None of the above"
