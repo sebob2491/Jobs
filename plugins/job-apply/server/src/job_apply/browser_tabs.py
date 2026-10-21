@@ -138,6 +138,22 @@ class TabsMixin:
             tab = self._openers.get(tab)
         return out
 
+    def job_tabs(self, job_id: int, tab: Page | None, others: set[Page]) -> list[Page]:
+        """One job's tabs still open: its tab and the tabs that opened it (lineage), and every tab one of those opened
+        in turn (a sign-in window, a policy page, a second window the site opened). Never a tab of `others` (another
+        job's own tab), nor one Claude opened for another job (tab_jobs), nor one opened from either. A tab Claude
+        opened for this job counts only as one of these: one it went on to use for something else stays."""
+        own = set(self.lineage(tab))
+        out: list[Page] = []
+        for page in list(self._ctx.pages) if self._ctx is not None else []:
+            for t in self.lineage(page):  # (the nearest of its openers that's anyone's says whose it is)
+                if t in others or self.tab_jobs.get(t, job_id) != job_id:
+                    break
+                if t in own:
+                    out.append(page)
+                    break
+        return [t for t in out if not t.is_closed()]
+
     def job_in(self, tab: Page | None) -> int | None:
         """The job this tab (or the tab that opened it) was opened for, if any."""
         return next((self.tab_jobs[t] for t in self.lineage(tab) if t in self.tab_jobs), None)

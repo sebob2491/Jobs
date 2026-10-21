@@ -1881,14 +1881,17 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         if was not in ("", "skipped") and job_id not in self._slots:
             self._note_history(run, "skipped")
         self._save_queue()
-        for tab in self.srv.browser.lineage(run.page):  # its application tab, and the tab that opened it
-            if not tab.is_closed():
-                try:
-                    await tab.close()
-                except Exception:
-                    pass
+        await self._close_job_tabs(run)
         # run.page stays, closed: put back by Undo, the job opens again in a new tab, and says why it starts over
         return run
+
+    async def _close_job_tabs(self, run: Run) -> None:
+        """Close a skipped job's tabs: its application tab, the tab that opened it, and any tab either opened (a
+        sign-in window, a policy page). Never a tab another job still has."""
+        others = {r.page for r in self.runs.values() if r.job_id != run.job_id and r.page is not None}
+        for tab in self.srv.browser.job_tabs(run.job_id, run.page, others):
+            with contextlib.suppress(Exception):
+                await tab.close()
 
     async def unskip(self, job_id: int) -> Run | None:
         """The person's Undo on a skipped job. The tracker gets back the status the job had before
@@ -2485,6 +2488,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
                         run.submit_pressed = False  # (the person's Submit has had its go)
                     run.updated = time.time()
             with contextlib.suppress(Exception):  # (a tab that won't close: never the job's surprise)
+                if run.status == "skipped":  # skipped as its step went: a tab the step opened after the Skip
+                    await self._close_job_tabs(run)
                 await self._close_done_tabs()
         except asyncio.CancelledError:
             cancelled = True
