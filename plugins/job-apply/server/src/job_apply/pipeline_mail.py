@@ -382,10 +382,12 @@ class MailMixin:
             # a reset's link works once: one opened already (for this job or another) sets nothing. The new one is
             # waited for; and should none come, its wait running out is said, never taken for no email at all
             run.reset_spent = run.account_known = True
+            pipeline.note_account(run.reset_from or run.url, "reset email")  # (an account there: accounts.json)
             run.mail_last += "; not used: that reset link was opened already"
             return
         if found.kind == "reset" and found.received < asked - pipeline.RESET_CLOCK_SKEW:
             run.reset_spent = run.account_known = True
+            pipeline.note_account(run.reset_from or run.url, "reset email")  # (an account there: accounts.json)
             run.mail_last += "; not used: it came well before the reset was asked for, an earlier reset's"
             return
         if found.kind == "reset" and found.received < asked and time.time() - asked < pipeline.RESET_FRESH_WAIT:
@@ -408,6 +410,7 @@ class MailMixin:
                 if run.page is None or run.page.is_closed():
                     return
                 run.reset_opened = run.account_known = True  # (the account is there: a refused sign-in makes none)
+                pipeline.note_account(run.reset_from or run.url, "reset email")
                 await run.page.goto(found.value, wait_until="domcontentloaded", timeout=45000)
                 run.mail_done = True
                 self._log(run, f"opened the password reset link from your email ({pipeline._sent_from(found)})")

@@ -707,3 +707,176 @@ def test_a_report_hides_the_runs_own_in_an_addresss_path_but_never_its_host_nor_
     assert ("https://fabnights.example/verify/REDACTED" in text
             and "https://fabnights.example/profile/REDACTED/edit" in text)
     assert "dates 2019-2023 shown" in text, text
+
+
+def test_an_anonymous_report_and_a_note_name_no_other_employer_the_desk_knows(srv, job_apply_home, tmp_path):
+    """The owner's note 51 (Oct 20): an anonymous report named another employer in its log (a job it waited on for the
+    inbox, a tab gone on to another's site). Every employer the desk knows but the job's own is "another employer" in
+    an anonymous report, in its saved pages, and in a note: the tracker's jobs', the person's companies file's (and
+    their short names), the plugin's lists'. The job's own is "the employer" as before, and a run that isn't the
+    job's own is never in its report."""
+    (job_apply_home / "companies.yaml").write_text(
+        "lists: []\ncompanies:\n  - name: Quarry Ridge Optics\n    careers_url: https://careers.quarry-ridge.example\n"
+        "    aliases: [QRO]\n", encoding="utf-8")
+    srv.add_job(url="https://careers.tamarisk-fab.example/job/7", title="Technician", company="Tamarisk Fab Inc.")
+    job = srv.add_job(url="https://acme.wd1.myworkdayjobs.com/External/job/x", title="Technician",
+                      company="Acme Semi")["job"]
+    folder = Path(job["folder"])
+    snap = folder / "debug" / "20261020-090000-000-stop"
+    snap.mkdir(parents=True)
+    (snap / "page.html").write_text("<html><body><h1>My Information</h1><p>Also hiring: Quarry Ridge Optics and "
+                                    "Tamarisk Fab</p><label for=a>Company</label><input id=a></body></html>",
+                                    encoding="utf-8")
+    (snap / "snapshot.json").write_text(json.dumps({
+        "url": "https://acme.wd1.myworkdayjobs.com/External/job/x/apply", "title": "Apply - Acme Semi",
+        "note": "stopped: stuck", "frames": [{"file": "page.html", "url": "https://acme.wd1.myworkdayjobs.com/x"}],
+        "fields": [{"label": "Company", "kind": "text", "required": True, "value": ""}]}), encoding="utf-8")
+    r = Run(job["id"], "Technician", "Acme Semi", status="needs_you", need="stuck", code="step_not_saved",
+            reason="The page didn't move on.",
+            log=["opened https://acme.wd1.myworkdayjobs.com/External/job/x",
+                 "waiting: Tamarisk Fab is signing in or waiting on an email; this one carries on after that",
+                 "its tab went on to Quarry Ridge Optics's careers site (QRO), so I opened the job again",
+                 "filled 3 field(s) on “My Information” at Acme Semi"])
+    employers = srv.tracker().companies()
+    out = report.build(job, r, PERSON, anonymous=True, employers=employers)
+    text = out["preview"]
+    with zipfile.ZipFile(out["zip"]) as z:
+        everything = text + "".join(z.read(n).decode("utf-8") for n in z.namelist())
+    note = report.note(job, r, PERSON, employers=employers)
+    for said in (everything, note):
+        for named in ("Tamarisk", "Quarry Ridge", "QRO", "Acme"):
+            assert named not in said, (named, said)
+    assert "waiting: another employer is signing in" in text and "another employer's careers site" in text, text
+    assert "on “My Information” at the employer" in text and "on “My Information” at the employer" in note
+    # (a report that says which job it was names its employer, and never another's run)
+    named = report.build(job, r, PERSON, employers=employers)["preview"]
+    assert "Acme Semi" in named
+    other = Run(job["id"] + 1, "Technician", "Tamarisk Fab Inc.", status="needs_you", need="stuck",
+                log=["filled 2 field(s) at Tamarisk Fab"])
+    assert "Tamarisk" not in report.build(job, other, PERSON, employers=employers)["preview"]
+
+
+def test_other_employers_are_named_every_way_and_the_saved_pages_markup_stays_whole(srv, job_apply_home):
+    """The review of note 51's fix: another employer is also taken out by its name less a part in brackets ("Quarry
+    Labs (Henderson data center)": "Quarry Labs"), a bracket's own name ("Saguaro Gaming (Red Mesa Resorts)"), in
+    capitals ("TAMARISK SYSTEMS"), and by a short name of the curated few ("Northrop" of "Northrop Grumman"); never
+    the job's place ("Pinal County", an employer too). And a short one-word name ("TEL", "Switch") never breaks the
+    saved pages' markup (type="tel", role="switch")."""
+    for name in ("Quarry Labs (Henderson data center)", "Saguaro Gaming (Red Mesa Resorts)", "Tamarisk Systems",
+                 "Northrop Grumman", "Pinal County", "TEL", "Switch"):
+        srv.add_job(url=f"https://careers.example/{len(name)}/{name[:3]}", title="Technician", company=name)
+    job = srv.add_job(url="https://acme.wd1.myworkdayjobs.com/External/job/x", title="Technician", company="Acme Semi",
+                      location="Pinal County, AZ")["job"]
+    snap = Path(job["folder"]) / "debug" / "20261021-090000-000-stop"
+    snap.mkdir(parents=True)
+    (snap / "page.html").write_text(
+        '<html><body><h1>My Information</h1><p>Also hiring at Quarry Labs and TAMARISK SYSTEMS</p>'
+        '<label for=a>Phone</label><input id=a type="tel" autocomplete="tel-national">'
+        '<div role="switch" aria-checked="false">Text me</div></body></html>', encoding="utf-8")
+    (snap / "snapshot.json").write_text(json.dumps({
+        "url": "https://acme.wd1.myworkdayjobs.com/External/job/x/apply", "title": "Apply - Acme Semi",
+        "note": "stopped: stuck", "frames": [{"file": "page.html", "url": "https://acme.wd1.myworkdayjobs.com/x"}],
+        "fields": [{"label": "Phone", "kind": "text", "required": True, "value": ""}]}), encoding="utf-8")
+    r = Run(job["id"], "Technician", "Acme Semi", status="needs_you", need="stuck", reason="The page didn't move on.",
+            log=["waited for Quarry Labs", "its tab went on to Red Mesa Resorts' site", "TAMARISK SYSTEMS said no",
+                 "Northrop called", "the job is in Pinal County", "TEL and Switch are hiring"])
+    employers = srv.tracker().companies()
+    out = report.build(job, r, PERSON, anonymous=True, employers=employers)
+    with zipfile.ZipFile(out["zip"]) as z:
+        page = z.read("pages/20261021-090000-000-stop.html").decode("utf-8")
+    for named in ("Quarry", "Red Mesa", "TAMARISK", "Northrop", "TEL ", "Switch"):
+        assert named not in out["preview"], (named, out["preview"])
+    assert "Pinal County" not in out["preview"] and "the job's location" in out["preview"], out["preview"]
+    assert "Quarry Labs" not in page and "TAMARISK" not in page, page
+    assert 'type="tel"' in page and 'autocomplete="tel-national"' in page and 'role="switch"' in page, page
+
+
+def test_another_employers_first_word_alone_and_its_words_in_a_sentence_are_never_taken_out(srv, job_apply_home):
+    """The review of fix-ready-check, round 2: a name's first word by rule ("Salt" of "Salt River Project", "Light" of
+    "Light & Wonder", "Grant" of "Grant Thornton", "Tokyo" of "Tokyo Electron", "Station" of "Station Casinos") and a
+    one-word name in any case ("the switch" for "Switch") took everyday words out of a report and a note, the job's own
+    title too. A one-word name goes as written and in capitals, and never inside the job's own title or place."""
+    for name in ("Salt River Project", "Light & Wonder", "Grant Thornton", "Switch", "Tokyo Electron (TEL)",
+                 "Station Casinos (Red Rock Resorts)"):
+        srv.add_job(url=f"https://careers.example/{len(name)}/{name[:3]}", title="Technician", company=name)
+    job = srv.add_job(url="https://acme.wd1.myworkdayjobs.com/External/job/x",
+                      title="Light Industrial Work Station Technician", company="Acme Semi",
+                      location="Tokyo, Japan")["job"]
+    r = Run(job["id"], "Light Industrial Work Station Technician", "Acme Semi", status="needs_you", need="stuck",
+            reason="The page didn't move on.",
+            log=["the page says: Relocation to Salt Lake City is offered", "Light industrial experience wanted",
+                 "Grant permission to text you", "turned on the switch for texts", "Switch and SWITCH are hiring",
+                 "TEL said no", "waited for Grant Thornton", "Station Casinos called"])
+    employers = srv.tracker().companies()
+    text = report.build(job, r, PERSON, anonymous=True, employers=employers)["preview"]
+    note = report.note(job, r, PERSON, employers=employers)
+    for said in (text, note):
+        for kept in ("Salt Lake City", "Light industrial experience", "Grant permission", "the switch for texts"):
+            assert kept in said, (kept, said)
+        assert "another employer and another employer are hiring" in said, said
+        for named in ("TEL", "Grant Thornton", "Station Casinos", "Switch"):
+            assert named not in said, (named, said)
+    # (the note names the job: its title whole, its place too)
+    assert "Light Industrial Work Station Technician" in note, note
+    switch = srv.add_job(url="https://acme.wd1.myworkdayjobs.com/External/job/y", title="Network Switch Technician",
+                         company="Acme Semi")["job"]
+    on = Run(switch["id"], "Network Switch Technician", "Acme Semi", status="needs_you", need="stuck",
+             log=["filled 2 field(s) on Network Switch Technician", "Switch is hiring"])
+    said = report.note(switch, on, PERSON, employers=employers)
+    assert "Network Switch Technician" in said and "another employer is hiring" in said, said
+
+
+def test_an_anonymous_reports_saved_pages_lose_a_one_word_employer_from_their_words_alone(srv, job_apply_home):
+    """The review of fix-ready-check, round 2: a saved page kept another employer's one-word name ("Intel", "TEL"),
+    which comes out of the pages' words (their title too) and their words for a person (alt, aria-label) as written,
+    never out of their markup: type="tel", role="switch", autocomplete="tel-national", an id stay."""
+    job = srv.add_job(url="https://acme.wd1.myworkdayjobs.com/External/job/x", title="Technician",
+                      company="Acme Semi")["job"]
+    snap = Path(job["folder"]) / "debug" / "20261021-100000-000-stop"
+    snap.mkdir(parents=True)
+    (snap / "page.html").write_text(
+        '<html><head><title>Intel Careers</title></head><body><h1>My Information</h1>'
+        '<p>Have you worked for TEL or Intel before?</p><img src="x.png" alt="Intel logo">'
+        '<label for=a>Phone</label><input id="Intel-box" type="tel" autocomplete="tel-national" '
+        'aria-label="Intel phone">'
+        '<div role="switch" class="Switch" aria-checked="false">Text me</div></body></html>', encoding="utf-8")
+    (snap / "snapshot.json").write_text(json.dumps({
+        "url": "https://acme.wd1.myworkdayjobs.com/External/job/x/apply", "title": "Apply - Acme Semi",
+        "note": "stopped: stuck", "frames": [{"file": "page.html", "url": "https://acme.wd1.myworkdayjobs.com/x"}],
+        "fields": [{"label": "Have you worked for TEL or Intel before?", "kind": "radio", "required": True,
+                    "value": ""}]}), encoding="utf-8")
+    r = Run(job["id"], "Technician", "Acme Semi", status="needs_you", need="stuck", reason="The page didn't move on.")
+    out = report.build(job, r, PERSON, anonymous=True, employers=srv.tracker().companies())
+    with zipfile.ZipFile(out["zip"]) as z:
+        page = z.read("pages/20261021-100000-000-stop.html").decode("utf-8")
+        expect = z.read("pages/20261021-100000-000-stop.expect.json").decode("utf-8")
+    for said in (page, expect):
+        assert "Intel " not in said and "TEL " not in said, said
+    assert ("<title>REDACTED Careers</title>" in page and 'alt="REDACTED logo"' in page
+            and 'aria-label="REDACTED phone"' in page), page
+    assert ('type="tel"' in page and 'autocomplete="tel-national"' in page and 'role="switch"' in page
+            and 'id="Intel-box"' in page and 'class="Switch"' in page), page
+
+
+def test_an_anonymous_reports_saved_pages_lose_another_employer_named_only_in_their_title_or_alt(srv, job_apply_home):
+    """The review of fix-ready-check, round 3: another employer named only in a page's <title> or an image's alt
+    ("Intel Careers | Lam Research", alt="Intel logo") was never looked for there (the pages' words left their head and
+    attributes out), and stayed in the saved page."""
+    job = srv.add_job(url="https://acme.wd1.myworkdayjobs.com/External/job/x", title="Technician",
+                      company="Acme Semi")["job"]
+    snap = Path(job["folder"]) / "debug" / "20261021-110000-000-stop"
+    snap.mkdir(parents=True)
+    (snap / "page.html").write_text(
+        '<html><head><title>Intel Careers | Lam Research</title></head><body><h1>My Information</h1>'
+        '<img src="x.png" alt="Intel logo"><label for=a>Phone</label><input id=a type="tel"></body></html>',
+        encoding="utf-8")
+    (snap / "snapshot.json").write_text(json.dumps({
+        "url": "https://acme.wd1.myworkdayjobs.com/External/job/x/apply", "title": "Apply - Acme Semi",
+        "note": "stopped: stuck", "frames": [{"file": "page.html", "url": "https://acme.wd1.myworkdayjobs.com/x"}],
+        "fields": [{"label": "Phone", "kind": "text", "required": True, "value": ""}]}), encoding="utf-8")
+    r = Run(job["id"], "Technician", "Acme Semi", status="needs_you", need="stuck", reason="The page didn't move on.")
+    out = report.build(job, r, PERSON, anonymous=True, employers=srv.tracker().companies())
+    with zipfile.ZipFile(out["zip"]) as z:
+        page = z.read("pages/20261021-110000-000-stop.html").decode("utf-8")
+    assert "Intel" not in page and "Lam Research" not in page, page
+    assert 'type="tel"' in page, page

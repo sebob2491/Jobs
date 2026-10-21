@@ -961,7 +961,9 @@ async def report_problem(job_id: int, anonymous: bool = False) -> dict[str, Any]
     run = desk._desk.applier.runs.get(job["id"]) if desk._desk is not None else None
     # (and what the desk's history keeps out of a line on it, the report too)
     hide = await asyncio.to_thread(Applier._report_hidden, run) if run is not None else set()
-    return await asyncio.to_thread(report.build, job, run, anonymous=anonymous, hide=hide)
+    # (and every employer the tracker's jobs name: an anonymous report names none but as "another employer")
+    return await asyncio.to_thread(report.build, job, run, anonymous=anonymous, hide=hide,
+                                   employers=tracker().companies())
 
 
 @tool()
@@ -1151,6 +1153,8 @@ async def autofill(job_id: int | None = None, overwrite: bool = False, redo: lis
         "failed": failed,
         **({"debug_snapshot": snapshot} if snapshot else {}),
         "needs_input": plan["needs_input"],
+        # (the boxes the plan leaves empty on purpose: a current job's end date)
+        **({"skipped": plan["skipped"]} if plan.get("skipped") else {}),
         **({"countries_corrected": corrected} if corrected else {}),  # (the page may now draw that country's boxes)
         "already_filled": len(plan["already_filled"]),
         "errors": after["errors"],

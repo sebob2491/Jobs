@@ -3079,6 +3079,189 @@ def test_security_questions_are_read_by_a_box_or_by_the_forms_heading():
     assert not pipeline._shows_address("sam.rivera@example.com.au", "sam.rivera@example.com")
 
 
+def account_there(url: str = "") -> None:
+    """The desk knows of an account of the person's at this address's place (accounts.json, pipeline_accounts): a
+    saved password the site refuses there is reset, not taken for no account (the owner's note 46). By default the
+    fake application site's (tests/fixtures/site: one place, its folder)."""
+    pipeline.note_account(url or fixture_url("site/signin-forgot.html"), "signed in")
+
+
+def test_where_an_account_is_kept_is_its_systems_own_place():
+    """An account is a job system's for one employer: a Workday tenant's or an iCIMS site's host; on a host many
+    employers share, the employer's part of the address too (SuccessFactors' ?company=, UKG Pro's first folder,
+    BrassRing's partnerid). A page saved on this computer, by its folder."""
+    from job_apply.pipeline_accounts import account_place as place
+
+    assert place("https://acme.wd1.myworkdayjobs.com/en-US/External/login") == "acme.wd1.myworkdayjobs.com"
+    assert place("https://www.careers-acme.icims.com/jobs/1/login?hashed=1") == "careers-acme.icims.com"
+    assert place("https://career4.successfactors.com/career?company=AcmeP&career_ns=job_listing") == \
+        "career4.successfactors.com?company=acmep"
+    assert place("https://recruiting.ultipro.com/ACM1000ACME/JobBoard/abc/OpportunityDetail") == \
+        "recruiting.ultipro.com/acm1000acme"
+    assert place("https://sjobs.brassring.com/TGnewUI/Search/Home/Home?partnerid=25678&siteid=5283") == \
+        "sjobs.brassring.com?partnerid=25678"
+    assert place(fixture_url("site/signin-forgot.html")) == place(fixture_url("site/forgot-password.html") + "?a=1")
+    assert place("") == "" and place("not an address") == ""
+    # (the review: Workday's myworkdaysite.com is many tenants' too, and SuccessFactors may name its tenant otherwise)
+    assert place("https://wd1.myworkdaysite.com/en-US/recruiting/acme/External/login") == \
+        "wd1.myworkdaysite.com/acme"
+    assert place("https://wd1.myworkdaysite.com/recruiting/other/External") != \
+        place("https://wd1.myworkdaysite.com/recruiting/acme/External")
+    assert place("https://career2.successfactors.eu/career?career_company=AcmeP&lang=en_US") == \
+        "career2.successfactors.eu?career_company=acmep"
+
+
+def test_the_sites_word_that_an_account_exists_is_read_however_its_put():
+    """The review of note 46's fix: Create Account comes first where no account is known, so the site's word that the
+    email has one is what turns the desk to a reset; never its offer to sign in instead."""
+    for said in ("There is already an account associated with this email address.",
+                 "An account has already been created with this email address.",
+                 "This email address is already used by another user.", "The user name is already used.",
+                 "It looks like you already have an account. Please sign in.",
+                 "Looks like you already have an account with us.",
+                 "We found an existing account with this email address.", "Email address is already in our system.",
+                 "We couldn't register you: an account with this email was already created",
+                 "An account with this email address already exists.", "You already have an account."):
+        assert pipeline._ACCOUNT_EXISTS.search(said), said
+    for said in ("Already have an account? Sign in", "If you already have an account, sign in.",
+                 "Create an account to apply.", "Forgot your password?"):
+        assert not pipeline._ACCOUNT_EXISTS.search(said), said
+
+
+def test_a_sign_ins_help_on_an_account_already_made_isnt_its_word_that_one_exists():
+    """The review of fix-ready-check, round 2: a sign-in's own help, on what to do with an account the person may have
+    made, read as the site's word that the email has one (and so a reset asked for)."""
+    for said in ("Sign in with the email address you already used to apply.",
+                 "If your profile was already created, sign in below.",
+                 "Returning user? Sign in with the account you already created.",
+                 "Welcome!\nLog in with the username you already registered."):
+        assert not pipeline._says_account_exists(said), said
+    for said in ("Sign in below. An account with this email address already exists.",
+                 "Returning user?\nThis email address is already registered.",
+                 "There is already an account associated with this email address.",
+                 # (the review, round 3: a sentence's own words after a colon, whatever goes before it)
+                 "Already registered: an account with this email already exists.",
+                 "Login failed: an account with this email address already exists."):
+        assert pipeline._says_account_exists(said), said
+
+
+def test_an_account_is_known_where_a_job_was_applied_to_and_kept_whoever_notes_it_at_once(job_apply_home, monkeypatch):
+    """The review of note 46's fix: someone updating the desk has no accounts.json, but the tracker's jobs applied to
+    at a place say an account is there. And two jobs noting theirs at once never lose one (written under a lock)."""
+    import threading
+
+    from job_apply import config
+    from job_apply import pipeline_accounts as accounts
+
+    url = "https://acme.wd1.myworkdayjobs.com/en-US/External/login"
+    assert not accounts.account_known(url)
+    assert accounts.account_known(url, ["https://acme.wd1.myworkdayjobs.com/en-US/External/job/Tech_R1/apply"])
+    assert not accounts.account_known(url, ["https://other.wd1.myworkdayjobs.com/External/job/Tech_R1"])
+    write = config.write_text_atomic
+
+    def slow(path, text):  # (a write that takes a moment: another job's note meanwhile)
+        time.sleep(0.05)
+        write(path, text)
+
+    monkeypatch.setattr(config, "write_text_atomic", slow)
+    notes = [threading.Thread(target=accounts.note_account, args=(f"https://t{i}.wd1.myworkdayjobs.com/x", "made"))
+             for i in range(8)]
+    for t in notes:
+        t.start()
+    for t in notes:
+        t.join()
+    assert all(accounts.account_known(f"https://t{i}.wd1.myworkdayjobs.com/y") for i in range(8))
+
+
+def test_with_no_account_known_there_a_refused_password_makes_one_before_any_reset(srv, monkeypatch, job_apply_home):
+    """The owner's note 46 (Oct 20): with the inbox watched, a saved password the site refused went to its "Forgot
+    password", at a site the person had never had an account at. Where the desk knows of no account of theirs there
+    (made, signed in to, a reset emailed, or the site's word), Create Account comes first: its terms ticked (never its
+    newsletter), and a password reset only once the site says the email has an account ("An account with this email
+    address already exists."). Then it knows of one there: the next job at that site is reset at once."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+
+    sent: list[str] = []
+
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None, others=None):
+        if want != "reset":
+            return None
+        sent.append(link := fixture_url("site/reset-password.html") + f"?token=t{len(sent)}")  # (each reset its own)
+        return pipeline.mailbox.Found(want, link, "careers.example.com", time.time())
+
+    monkeypatch.setattr(pipeline.mailbox, "search", inbox)
+    first = srv.add_job(url=fixture_url("site/signin-forgot.html"), title="FSE", company="Example Fab")["job"]
+    second = srv.add_job(url=fixture_url("site/signin-forgot.html") + "?second", title="Technician",
+                         company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            out = []
+            for job in (first, second):
+                r = applier.enqueue(job["id"])
+                await until(lambda r=r: r.status == "needs_you" and r.need != "email_code" or r.status == "ready",
+                            timeout=90, about=state(r))
+                out.append(r)
+            return out
+        finally:
+            await applier.stop()
+
+    a, b = run(go())
+    made = next(i for i, line in enumerate(a.log) if line == "your saved password didn't sign in, so I opened "
+                                                             "Create Account")
+    reset = next(i for i, line in enumerate(a.log) if "asked it to email a password reset" in line)
+    assert made < reset, a.log
+    assert any(line.startswith("pressed “Create Account” to create your account") and "terms and conditions" in line
+               and "newsletter" not in line for line in a.log), a.log
+    assert a.seen_form and "created your account" not in "\n".join(a.log), (a.reason, a.log)
+    # (known there from now on: the next job's refused password is reset at once)
+    assert any("asked it to email a password reset" in line for line in b.log), b.log
+    assert "opened Create Account" not in "\n".join(b.log), b.log
+
+
+def test_a_site_with_a_job_applied_to_there_is_reset_at_once(srv, monkeypatch, job_apply_home):
+    """The review of note 46's fix: someone updating the desk has no accounts.json, but a job applied to at the same
+    place (the tracker's) says the account is there: a saved password refused there is reset at once, with no Create
+    Account first."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    saved_password(monkeypatch)
+    manage_accounts(job_apply_home)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+
+    def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None, others=None):
+        link = fixture_url("site/reset-password.html") + "?token=abc"
+        return pipeline.mailbox.Found(want, link, "careers.example.com", time.time()) if want == "reset" else None
+
+    monkeypatch.setattr(pipeline.mailbox, "search", inbox)
+    before = srv.add_job(url=fixture_url("site/step1.html") + "?before", title="Technician", company="Example Fab")
+    srv.tracker().update(before["job"]["id"], status="applied", note="applied by hand")
+    job = srv.add_job(url=fixture_url("site/signin-forgot.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you" and r.need != "email_code" or r.status == "ready",
+                        timeout=90, about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert any("asked it to email a password reset" in line for line in r.log), r.log
+    assert "opened Create Account" not in "\n".join(r.log), r.log
+
+
 @pytest.mark.parametrize("then,slow,late", [("", 0, False), ("done", 0, False), ("alone", 0, False), ("", 3000, False),
                                             ("", 0, True)],
                          ids=["plain", "done", "alone", "slow", "slowforgot"])
@@ -3099,6 +3282,9 @@ def test_with_manage_accounts_a_refused_saved_password_is_reset(srv, monkeypatch
     monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
     saved_password(monkeypatch)
     manage_accounts(job_apply_home)
+    # (an account of the person's there the desk knows of, whatever the site says of it now: a saved password it refuses
+    # is reset first, the owner's note 46)
+    account_there()
     monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
     monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
     wanted = []
@@ -3192,6 +3378,9 @@ def _reset_through(monkeypatch, job_apply_home, srv, link: str, resumes: int = 0
     monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
     saved_password(monkeypatch)
     manage_accounts(job_apply_home)
+    # (an account of the person's there the desk knows of, whatever the site says of it now: a saved password it refuses
+    # is reset first, the owner's note 46)
+    account_there()
     monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
     monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
 
@@ -3314,6 +3503,9 @@ def test_a_reset_email_whose_link_was_opened_already_is_said_never_taken_for_no_
     monkeypatch.setattr(pipeline, "RESET_MAIL_WAIT", 4)
     saved_password(monkeypatch)
     manage_accounts(job_apply_home)
+    # (an account of the person's there the desk knows of, whatever the site says of it now: a saved password it refuses
+    # is reset first, the owner's note 46)
+    account_there()
     link = fixture_url("site/reset-password.html") + "?token=sent-again"
     watched_inbox(monkeypatch, reset_link=link)
     pipeline._take_code(("careers.example.com", link, time.time()), 999)  # (opened already: another job's reset)
@@ -3642,8 +3834,10 @@ def test_boxes_the_pages_errors_say_are_empty_though_filled_are_typed_again(srv,
     assert "review.html" in r.url, (r.url, r.reason, r.log)
     if query == "?silent":
         assert any(line.startswith("typed ") and "required box(es) again" in line for line in r.log), r.log
-    elif query == "?wipe":  # (wiped: filled from the profile again, as in live run 12)
-        assert any(line.startswith("filled again") for line in r.log), r.log
+    elif query == "?wipe":  # (wiped: filled from the profile again, as in live run 12; since the owner's note 51, Oct
+        # 20, the boxes still empty are seen before Save and continue is pressed, and filled again then)
+        assert any("required boxes still empty after filling" in line and "Address 1" in line for line in r.log), \
+            r.log
     else:
         assert any(line.startswith("typed again") and "Address 1" in line for line in r.log), r.log
 
@@ -4433,6 +4627,9 @@ def test_a_reset_the_site_has_no_account_for_makes_one_instead(srv, monkeypatch,
     saved_password(monkeypatch)
     manage_accounts(job_apply_home)
     watched_inbox(monkeypatch)
+    # (an account of the person's there the desk knows of, whatever the site says of it now: a saved password it refuses
+    # is reset first, the owner's note 46)
+    account_there()
     job = srv.add_job(url=fixture_url("site/signin-submit.html") + "?unknown", title="FSE",
                       company="Example Fab")["job"]
     applier = Applier(srv)
@@ -4465,6 +4662,9 @@ def test_no_reset_email_in_a_few_minutes_makes_an_account_and_the_queue_goes_on(
     saved_password(monkeypatch)
     manage_accounts(job_apply_home)
     watched_inbox(monkeypatch)
+    # (an account of the person's there the desk knows of, whatever the site says of it now: a saved password it refuses
+    # is reset first, the owner's note 46)
+    account_there()
     job = srv.add_job(url=fixture_url("site/signin-submit.html"), title="FSE", company="Example Fab")["job"]
     other = srv.add_job(url=fixture_url("generic_form.html" if at_once == 1 else "site/posting.html"), title="Tech",
                         company="Example Litho")["job"]
@@ -4502,6 +4702,9 @@ def test_a_reset_the_desk_cant_fill_in_makes_an_account_instead(srv, monkeypatch
     saved_password(monkeypatch)
     manage_accounts(job_apply_home)
     watched_inbox(monkeypatch)
+    # (an account of the person's there the desk knows of, whatever the site says of it now: a saved password it refuses
+    # is reset first, the owner's note 46)
+    account_there()
     job = srv.add_job(url=fixture_url("site/signin-submit.html") + "?reset=odd", title="FSE",
                       company="Example Fab")["job"]
     applier = Applier(srv)
@@ -4576,6 +4779,9 @@ def test_a_reset_with_a_captcha_makes_the_account_instead(srv, monkeypatch, job_
     elif who == "practice":
         manage_accounts(job_apply_home, submit_mode="dry_run")
     watched_inbox(monkeypatch)
+    # (an account of the person's there the desk knows of, whatever the site says of it now: a saved password it refuses
+    # is reset first, the owner's note 46)
+    account_there()
     url = fixture_url("site/brassring-signin.html") + ("?captcha" if who == "captcha" else "")
     job = srv.add_job(url=url, title="Senior Analyst", company="Example Corp")["job"]
     applier = Applier(srv)
@@ -5187,6 +5393,9 @@ def test_a_sign_in_page_good_for_one_visit_is_reached_again_through_the_posting(
     saved_password(monkeypatch)
     manage_accounts(job_apply_home)
     watched_inbox(monkeypatch)
+    # (an account of the person's there the desk knows of, whatever the site says of it now: a saved password it refuses
+    # is reset first, the owner's note 46)
+    account_there()
     # (menu: its "Apply now" opens a menu whose "Apply Now" goes on, EY's: pressed again once the job's opened again,
     # it isn't a third press)
     posting = fixture_url("site/sf-posting.html") + {"error": "", "home": "?home", "menu": "?menu"}[gone]
@@ -5281,6 +5490,9 @@ def test_infors_sign_in_opened_again_by_its_address_is_reached_through_the_posti
     monkeypatch.setenv("JOB_APPLY_SECRET_INFOR_PASSWORD", "not-a-real-password")
     manage_accounts(job_apply_home)
     watched_inbox(monkeypatch)
+    # (an account of the person's there the desk knows of, whatever the site says of it now: a saved password it refuses
+    # is reset first, the owner's note 46)
+    account_there(INFOR_POSTING)
     job = srv.add_job(url=INFOR_POSTING, title="Field Service Technician", company="Benchmark Electronics")["job"]
     applier = Applier(srv)
 
@@ -5321,6 +5533,9 @@ def test_infors_register_is_the_way_to_an_account_when_the_postings_apply_goes_n
     monkeypatch.setenv("JOB_APPLY_SECRET_INFOR_PASSWORD", "not-a-real-password")
     manage_accounts(job_apply_home)
     watched_inbox(monkeypatch)
+    # (an account of the person's there the desk knows of, whatever the site says of it now: a saved password it refuses
+    # is reset first, the owner's note 46)
+    account_there(INFOR_POSTING)
     job = srv.add_job(url=INFOR_POSTING, title="Field Service Technician", company="Benchmark Electronics")["job"]
     applier = Applier(srv)
 
@@ -5530,6 +5745,9 @@ def test_a_workday_reset_that_says_if_an_account_exists_waits_then_makes_one(srv
     saved_password(monkeypatch)
     manage_accounts(job_apply_home)
     watched_inbox(monkeypatch)
+    # (an account of the person's there the desk knows of, whatever the site says of it now: a saved password it refuses
+    # is reset first, the owner's note 46)
+    account_there()
     job = srv.add_job(url=fixture_url("site/signin-submit.html") + f"?reset={mode}", title="FSE",
                       company="Example Fab")["job"]
     applier = Applier(srv)
@@ -6808,7 +7026,7 @@ def served_fixtures():
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("query", ["?verify", "?verify=late"])
+@pytest.mark.parametrize("query", ["?verify", "?verify=late", "?verify&help", "?verify&made"])
 def test_with_the_inbox_a_new_account_to_verify_is_signed_in_to_once_its_link_is_opened(srv, monkeypatch,
                                                                                        job_apply_home, query):
     """Banner Health's Workday (live, Oct 2026, the test identity): the saved password didn't sign in, no
@@ -6818,7 +7036,10 @@ def test_with_the_inbox_a_new_account_to_verify_is_signed_in_to_once_its_link_is
     page waits for that email: with the inbox watched, its link (the site's own) is opened in this browser,
     and then the saved password is pressed, once. &late: the page says so only once Sign In is pressed, so
     the job's two sign-ins are used up when the link is opened (a refusal for want of the link isn't a
-    wrong password: it doesn't stop the sign-in after the link)."""
+    wrong password: it doesn't stop the sign-in after the link). &help: the sign-in's help says "Sign in with the
+    account you already created", and &made: the page says "Your account has already been created" before the link
+    was opened: never a reset (the review of fix-ready-check, round 2: the help read as the account being there, and
+    the site's word that it exists read before its wait for the link)."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "RESET_MAIL_WAIT", 4)
     monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
@@ -6851,7 +7072,9 @@ def test_with_the_inbox_a_new_account_to_verify_is_signed_in_to_once_its_link_is
 
         r, did = run(go())
     log = r.log
-    assert "reset" in asked and "link" in asked, asked
+    # (Banner Health's was the test identity's first application there: with no account known there, Create Account at
+    # once, never a reset asked for an account that isn't there, the owner's note 46)
+    assert "reset" not in asked and "link" in asked, asked
     # (one refused before the account was made, one for want of the link if the page didn't say so, one after it)
     assert (did["created"], did["presses"], did["signIns"]) == (1, 1, 2 + query.endswith("late")), (did, log)
     made = next(i for i, line in enumerate(log) if line.startswith("pressed \u201cCreate Account\u201d"))
@@ -12342,7 +12565,8 @@ def test_an_account_pause_holds_until_the_tab_leaves_the_account_site(srv):
 def test_a_review_page_that_lists_errors_says_so_and_isnt_submitted_for_you(srv, monkeypatch, auto):
     """Insight Enterprises' review page (live, Oct 2026) listed "Error: Last Name cannot be left
     blank." and the desk called the job ready as if nothing were wrong; with Submit for me on, it
-    would have pressed Submit on it."""
+    would have pressed Submit on it. Since the owner's notes 47 to 51 (Oct 20), a page that shows an error is never
+    "Ready to submit" either: the job is the person's, with what the page says."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     job = srv.add_job(url=fixture_url("site/review-errors.html"), title="HRBP", company="Example Fab")["job"]
     applier = Applier(srv)
@@ -12360,15 +12584,14 @@ def test_a_review_page_that_lists_errors_says_so_and_isnt_submitted_for_you(srv,
     r, sent = run(go())
     assert "Last Name cannot be left blank" in r.reason and "error found" not in r.reason, (r.status, r.reason)
     assert not sent
-    if auto:
-        assert (r.status, r.need) == ("needs_you", "stuck"), (r.status, r.reason)
-    else:
-        assert r.status == "ready", (r.status, r.reason)
+    assert (r.status, r.need, r.code) == ("needs_you", "stuck", "review_errors"), (r.status, r.reason)
+    assert "reached the review page" not in r.log, r.log
 
 
 def test_a_review_page_with_errors_after_an_earlier_press_says_both(srv, monkeypatch):
     """Submit pressed for this job before, no confirmation, and the review page now lists an
-    error: the warning that it may have gone through doesn't hide what the page shows."""
+    error: the warning that it may have gone through doesn't hide what the page shows (nor is a page with an error
+    called ready: the owner's notes 47 to 51)."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     job = srv.add_job(url=fixture_url("site/review-errors.html"), title="HRBP", company="Example Fab")["job"]
     srv.tracker().update(job["id"], note="pressed Submit; no confirmation showed")
@@ -12384,8 +12607,104 @@ def test_a_review_page_with_errors_after_an_earlier_press_says_both(srv, monkeyp
             await applier.stop()
 
     r = run(go())
-    assert r.status == "ready" and "pressed for this job before" in r.reason, (r.status, r.reason)
+    assert r.status == "needs_you" and "pressed for this job before" in r.reason, (r.status, r.reason)
     assert "Last Name cannot be left blank" in r.reason, r.reason
+
+
+def _left_empty_run(srv, monkeypatch, query: str) -> tuple[Run, int, dict]:
+    """tests/fixtures/site/required-left-empty.html with `query`, run until the job stops or is ready: the run, how
+    many times the step's own button was pressed, and what its boxes hold (by id)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/required-left-empty.html") + query, title="Equipment Technician",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            sent = await r.page.evaluate("() => window.sent || 0")
+            held = await r.page.evaluate("() => Object.fromEntries([...document.querySelectorAll('input, select')]"
+                                         ".map((b) => [b.id, b.type === 'radio' ? b.checked : b.value]))")
+            return r, sent, held
+        finally:
+            await applier.stop()
+
+    return run(go())
+
+
+@pytest.mark.parametrize("query,asked", [("?wrapper", "Badge color"), ("?radios", "Preferred shift"),
+                                         ("?select", "Shirt size"), ("?star", "Badge color"),
+                                         ("?class", "Badge color")],
+                         ids=["wrapper", "radios", "select", "star", "class"])
+def test_a_required_box_left_empty_is_asked_and_the_job_never_called_ready(srv, monkeypatch, query, asked):
+    """The owner's notes 47, 48 and 50 (Oct 20): jobs called "Ready to submit" while required boxes were still empty.
+    A box the page marks required other than by its own attribute (aria-required on the wrapper around it or around
+    its group of radios, Lever's "✱", a label drawn required by its class) and a required list still on its own
+    first choice ("Select a size", with a value of its own) are required boxes: the profile doesn't answer them, so
+    they're asked on the card, and the job is never ready while they're empty."""
+    r, sent, _ = _left_empty_run(srv, monkeypatch, query)
+    assert (r.status, r.need) == ("needs_you", "questions"), (r.status, r.reason, r.log)
+    assert any(asked in (q.get("label") or "") for q in r.questions), r.questions
+    assert sent == 0 and "reached the review page" not in r.log, (sent, r.log)
+
+
+def test_a_step_with_a_required_box_left_empty_is_never_pressed_on(srv, monkeypatch):
+    """The owner's note 51 (Oct 20): the desk pressed "Save and Continue" on a step where it had filled nothing and
+    required boxes were empty. A required box it took for optional (aria-required on its wrapper) is asked before the
+    step's button is pressed; the button isn't pressed."""
+    r, sent, _ = _left_empty_run(srv, monkeypatch, "?wrapper&step")
+    assert (r.status, r.need) == ("needs_you", "questions"), (r.status, r.reason, r.log)
+    assert any("Badge color" in (q.get("label") or "") for q in r.questions), r.questions
+    assert sent == 0 and not any(line.startswith("clicked") for line in r.log), (sent, r.log)
+
+
+def test_a_required_box_the_page_empties_again_is_named_never_ready(srv, monkeypatch):
+    """A required City the page empties again a moment after it's filled (as a site's resume reading does): read again
+    before the job is called ready, it's empty, so the page is filled once more; still empty, it's said by name on
+    the card (the page didn't keep it), and the job is the person's, never "Ready to submit"."""
+    r, sent, _ = _left_empty_run(srv, monkeypatch, "?lost")
+    assert (r.status, r.code) == ("needs_you", "box_not_filled"), (r.status, r.reason, r.log)
+    assert "“City”" in r.reason and "didn't keep" in r.reason, r.reason
+    assert any("still empty after filling" in line and "City" in line for line in r.log), r.log
+    assert sent == 0 and "reached the review page" not in r.log, (sent, r.log)
+
+
+@pytest.mark.parametrize("query", ["?hidden", "?step"])
+def test_a_page_with_no_required_box_left_empty_or_error_is_ready_and_says_it_was_checked(srv, monkeypatch, query):
+    """No false stops: required boxes the page doesn't show (a section display:none, one hidden, one aria-hidden, a
+    file box in a hidden section) leave the job ready (?hidden), and so does a review page whose answers are words, no
+    boxes (?step, review.html). The ready card says what was checked, so the person can trust it."""
+    r, _, _ = _left_empty_run(srv, monkeypatch, query)
+    assert r.status == "ready", (r.status, r.reason, r.log)
+    assert pipeline.READY_CHECKED in r.reason, r.reason
+    assert "checked the review page: no required box is left empty, and it shows no error" in r.log, r.log
+
+
+def test_the_ready_check_passes_by_a_box_the_pages_fill_left_empty_on_purpose(srv):
+    """The review of the ready check: a one-page form whose required box the fill leaves empty on purpose (a current
+    job's End Date: autofill's "skipped") was passed by before its Submit, then called "Not ready" on it. The check
+    before the job is called ready passes it by too, on that page; any other required box empty is still unready."""
+    applier = Applier(srv)
+    data = {"url": "https://jobs.example/apply", "headings": ["Experience"],
+            "fields": [{"id": "e", "kind": "text", "label": "To*", "required": True, "value": "",
+                        "section": "Work Experience 1"}]}
+    r = Run(1, "Technician", "Example Fab", status="running")
+    r.skipped_on = (pipeline._step_page(data), frozenset({"e"}))
+    assert not applier._unready(r, data) and r.status == "running"
+    other = Run(2, "Technician", "Example Fab", status="running")
+    assert applier._unready(other, data) and other.code == "review_errors"
+
+
+def test_a_review_step_that_lists_what_is_wrong_is_not_ready(srv, monkeypatch):
+    """A Workday-like review step after Save and Continue (its answers as words, no boxes) with "Errors Found" and its
+    "Error - Phone Number" over the Submit: the page's own word that something is wanted. Not "Ready to submit": the
+    person's, with what the page says."""
+    r, sent, _ = _left_empty_run(srv, monkeypatch, "?banner")
+    assert (r.status, r.need, r.code) == ("needs_you", "stuck", "review_errors"), (r.status, r.reason, r.log)
+    assert "Phone Number" in r.reason and "Carry on" in r.reason, r.reason
+    assert sent == 1, sent  # (Save and Continue, never the Submit)
 
 
 def test_a_page_that_asks_if_youre_a_robot_is_a_bot_check(srv, monkeypatch):
@@ -13922,15 +14241,45 @@ def test_a_drafts_boxes_take_the_profiles_answer_only_where_it_differs():
     assert plan_autofill(declined, config.Profile(data), {}, refresh=True)["to_fill"] == []
 
 
-@pytest.mark.parametrize("page", ["applied-before-posting.html", "applied-before-form.html"])
+@pytest.mark.parametrize("query", ["?other", "?card"])
+def test_another_jobs_already_applied_is_never_this_ones(srv, monkeypatch, query):
+    """The review of note 49's fix: "You have already applied for Process Technician." on an Equipment Technician's
+    page (?other), or a "Similar jobs" card's "You have already applied" (?card), is another job's: this one isn't
+    marked applied, and its application is filled as any other."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/applied-before-form.html") + query, title="Equipment Technician",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status != "submitted" and "applied to already" not in r.reason.lower(), (r.status, r.reason, r.log)
+    assert srv.tracker().get(job["id"])["status"] != "applied"
+
+
+@pytest.mark.parametrize("page", ["applied-before-posting.html", "applied-before-form.html",
+                                  "applied-before-form.html?bare", "applied-before-form.html?title",
+                                  "applied-before-form.html?looks"])
 def test_a_job_the_site_says_was_applied_to_already_is_marked_applied_and_never_filled(srv, monkeypatch, page):
     """Issue #112, note 30: a job applied to by hand (the tracker never knew) was opened again. Workday's job page
     says "You applied for this job on <date>." over its View Application, and the desk stopped there, the job
     opened again three times in 8 minutes; an Eightfold application said it was applied to already, and the desk
-    filled it all and offered Submit. Each is marked applied, nothing is filled, and it's never queued again."""
+    filled it all and offered Submit. Each is marked applied, nothing is filled, and it's never queued again. So is
+    one whose notice names no job, or names it by its title (the owner's note 49, Oct 20: "You have already
+    applied.", "It looks like you have already applied", "You have already applied for <the job's title>")."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
-    job = srv.add_job(url=fixture_url(f"site/{page}"), title="Equipment Technician", company="Example Fab")["job"]
+    name, _, query = page.partition("?")
+    job = srv.add_job(url=fixture_url(f"site/{name}") + (f"?{query}" if query else ""), title="Equipment Technician",
+                      company="Example Fab")["job"]
     applier = Applier(srv)
 
     async def go():
@@ -13973,10 +14322,132 @@ def test_already_applied_wording():
             "You have already applied. You may apply to 3 jobs every 30 days.": False,
             "Thank you.\nYou have already applied for this position.": True,
             "Equipment Technician\nYou applied for this job on 10/09/2026.": True,  # (under its heading)
-            "If you are an internal candidate or\nyou have already applied for this position, sign in.": False}
-    assert {t: bool(_applied_before({}, t)) for t in said} == said
+            "If you are an internal candidate or\nyou have already applied for this position, sign in.": False,
+            # (the owner's note 49, Oct 20: the site's own word naming no job, or naming it by its title)
+            "You have already applied.": True, "You have already applied!": True,
+            "It looks like you have already applied": True, "It looks like you've already applied for this job.": True,
+            "You have already applied for Equipment Technician (R12345).": True,
+            "Equipment Technician\nYou have already applied.": True,
+            # (and still never another position, a number of them, a limit, or a question)
+            "You have already applied for another position.": False,
+            "You have already applied for a different role with us.": False,
+            "You have already applied for 3 positions this month.": False,
+            "You have already applied for a position with us.": False,
+            "You have already applied for the maximum number of jobs.": False,
+            "You have already applied. You can only apply once every 90 days.": False,
+            "You have already applied for this position before.": False,
+            "Have you already applied?": False, "Already applied? Sign in.": False,
+            "If you have already applied.": False,
+            # (the review: another job named, or a list of them, is never this one's)
+            "You have already applied for Process Technician.": False,
+            "You have already applied for the following jobs:\nProcess Technician\nEquipment Technician": False,
+            "You have already applied for these jobs.": False}
+    assert {t: bool(_applied_before({}, t, "Equipment Technician")) for t in said} == said
     asked = {"fields": [{"label": "You have already applied for this position. Is that right?"}]}
     assert not _applied_before(asked, "You have already applied for this position. Is that right?")
+    # a title is this job's only where it's this job's own
+    assert not _applied_before({}, "You have already applied for Equipment Technician (R12345).", "Process Technician")
+    # words naming no job, in a page's words that list other postings ("Similar jobs" cards), aren't this job's; in
+    # the page's own notices (an alert, a banner, a heading outside any list) they are, and only that sentence is quoted
+    page = ("Equipment Technician\nApply now\nSimilar jobs\nProcess Technician\nChandler, AZ\n"
+            "You have already applied\n" +"More about working here. " * 20)
+    assert not _applied_before({}, page, "Equipment Technician")
+    assert _applied_before({"notices": ["You have already applied"]}, page, "Equipment Technician") == \
+        "You have already applied"
+    assert _applied_before({}, "Thank you.\nYou have already applied for Equipment Technician\nSimilar jobs\nA\nB",
+                           "Equipment Technician") == "You have already applied for Equipment Technician"
+
+
+def test_already_applied_naming_the_job_however_a_site_puts_it():
+    """The review of fix-ready-check, round 2: a title's "Sr." ended its sentence, and "the … position", "applied to …",
+    "… on <date>" and "… - Chandler, AZ" (a tracker's title has no place) weren't this job's. Still never another's."""
+    from job_apply.pipeline import _applied_before
+
+    said = {("You have already applied for Sr. Process Engineer.", "Sr. Process Engineer"): True,
+            ("You have already applied for the Equipment Technician position.", "Equipment Technician"): True,
+            ("You have already applied to Equipment Technician.", "Equipment Technician"): True,
+            ("You have already applied for Equipment Technician on 10/12/2026.", "Equipment Technician"): True,
+            ("You have already applied for Equipment Technician on Oct 12, 2026.", "Equipment Technician"): True,
+            ("You have already applied for Equipment Technician - Chandler, AZ.", "Equipment Technician"): True,
+            ("You have already applied for Sr. Process Engineer.", "Process Engineer"): False,
+            ("You have already applied for Equipment Technician - Senior.", "Equipment Technician"): False,
+            ("You have already applied to Example Fab.", "Equipment Technician"): False,
+            ("You have already applied for the Process Technician position.", "Equipment Technician"): False,
+            ("You have already applied to these jobs.", "Equipment Technician"): False}
+    assert {k: bool(_applied_before({}, *k)) for k in said} == said
+    assert _applied_before({}, "You have already applied for Sr. Process Engineer. See your status.",
+                           "Sr. Process Engineer") == "You have already applied for Sr. Process Engineer."
+
+
+def _look_at(srv, tmp_path, body):
+    page = tmp_path / "job.html"
+    page.write_text(f"<!doctype html><html><body>{body}</body></html>", encoding="utf-8")
+    run(srv.browser.goto(page.resolve().as_uri()))
+    return run(srv.browser.inspect(include_dropdown_options=False))
+
+
+@pytest.mark.skipif(not browser_available(), reason="Chromium not installed")
+def test_already_applied_in_a_pages_own_card_or_under_its_title_is_this_jobs(srv, tmp_path):
+    """The review of fix-ready-check, round 2: a job page whose main content is one card (Bootstrap's) with the site's
+    "You have already applied." in its alert, or that says so in a paragraph under the job's title, was never read as
+    applied. Cards side by side ("Similar jobs") still are other jobs'."""
+    from job_apply.pipeline import _applied_before
+
+    filler = "<p>" + "Duties include equipment maintenance and troubleshooting. " * 10 + "</p>"
+    text = "Equipment Technician\nYou have already applied.\n" + "Duties include equipment maintenance. " * 10
+    data = _look_at(srv, tmp_path, '<div class="card"><div class="card-body"><h1>Equipment Technician</h1>'
+                    '<div class="alert alert-info">You have already applied.</div>' + filler + '</div></div>')
+    assert _applied_before(data, text, "Equipment Technician"), data.get("notices")
+    data = _look_at(srv, tmp_path, '<h1>Equipment Technician</h1><p>You have already applied.</p>' + filler)
+    assert _applied_before(data, text, "Equipment Technician"), data.get("headings")
+    cards = ('<h1>Equipment Technician</h1>' + filler + '<h2>Similar jobs</h2>'
+             + ('<div class="card"><h3>Process Technician</h3><div class="alert">You have already applied.</div>'
+                '</div>') * 2)
+    data = _look_at(srv, tmp_path, cards)
+    listed = ("Equipment Technician\n" + "Duties include equipment maintenance. " * 10
+              + "\nSimilar jobs\nProcess Technician\nYou have already applied.\nProcess Technician\n"
+              "You have already applied.")
+    assert not _applied_before(data, listed, "Equipment Technician"), data.get("notices")
+
+
+@pytest.mark.skipif(not browser_available(), reason="Chromium not installed")
+def test_a_similar_jobs_already_applied_is_never_this_ones_whatever_its_title_or_card(srv, tmp_path):
+    """The review of fix-ready-check, round 3: a similar job of the same title under "Similar jobs" (another place),
+    and one recommendation card under "You may also like" with its status "You have already applied", were read as
+    this job's. Neither is; nor is a card that names another job. A card naming this job alone still is."""
+    from job_apply.pipeline import _applied_before
+
+    filler = "<p>" + "Duties include equipment maintenance and troubleshooting. " * 10 + "</p>"
+
+    def look(body):
+        data = _look_at(srv, tmp_path, body)
+        return data, run(srv.browser.visible_text(8000))
+
+    pages = {
+        "same title": '<h1>Equipment Technician</h1><p>Chandler, AZ</p>' + filler
+        + '<h2>Similar jobs</h2><div class="similar"><h3>Equipment Technician</h3><p>Tempe, AZ</p>'
+        '<p>You have already applied</p></div><div class="similar"><h3>Process Technician</h3><p>Mesa, AZ</p></div>',
+        "one card": '<h1>Equipment Technician</h1>' + filler + '<h2>You may also like</h2><div class="job-card">'
+        '<a href="#">Process Technician</a><span class="status-message">You have already applied</span></div>',
+        "names another": '<h1>Equipment Technician</h1>' + filler + '<div class="job-card"><a href="#">Process '
+        'Technician</a><span class="status-message">You have already applied</span></div>'}
+    for name, body in pages.items():
+        data, text = look(body)
+        assert not _applied_before(data, text, "Equipment Technician", "Chandler, AZ"), (name, data.get("notices"),
+                                                                                         data.get("card_notices"))
+    data, text = look('<div class="job-card"><h1>Equipment Technician</h1><a href="#">Equipment Technician</a>'
+                      '<span class="status-message">You have already applied</span></div>' + filler)
+    assert _applied_before(data, text, "Equipment Technician", "Chandler, AZ"), data.get("card_notices")
+
+
+def test_already_applied_for_a_title_at_a_place_is_this_job_only_at_its_own():
+    """The review of fix-ready-check, round 3: "… - Chandler, AZ" on a Tempe job of the same title is another job."""
+    from job_apply.pipeline import _applied_before
+
+    said = "You have already applied for Equipment Technician II - Chandler, AZ."
+    assert not _applied_before({}, said, "Equipment Technician II", "Tempe, AZ")
+    assert _applied_before({}, said, "Equipment Technician II", "Chandler, AZ 85226")
+    assert _applied_before({}, said, "Equipment Technician II")
 
 
 def test_confirmation_wording():
@@ -14105,7 +14576,7 @@ def test_answers_that_didnt_go_in_are_noted_without_the_answer(srv, job_apply_ho
 
 
 def test_a_note_that_cant_be_taken_doesnt_stop_the_pause(srv, job_apply_home, monkeypatch):
-    def broken(job, run, profile=None, hide=()):
+    def broken(job, run, profile=None, hide=(), employers=()):
         raise OSError("disk full")
 
     monkeypatch.setattr(pipeline.report, "take_note", broken)
@@ -15236,6 +15707,9 @@ def test_a_refusal_for_want_of_verification_drawn_after_the_look_is_still_the_wa
     asked = []
 
     with served_fixtures() as site:
+        # (an account of the person's there the desk knows of, whatever the site says of it now: a saved password it
+        # refuses is reset first, the owner's note 46)
+        account_there(f"{site}site/workday-account.html")
         link = f"{site}site/workday-verify.html"
 
         def inbox(address, password, since, senders, want, allowed_link, before=None, look_back=None, others=None):
@@ -15268,9 +15742,9 @@ def test_a_refusal_for_want_of_verification_drawn_after_the_look_is_still_the_wa
 @pytest.mark.slow
 def test_a_new_accounts_refusal_drawn_after_the_look_is_still_the_wait(srv, monkeypatch, job_apply_home):
     """The same for the account the desk just made: Workday's "An email has been sent to you. Please verify your
-    account" is its Sign In's answer too, drawn a moment after the press (the review of 0.3.180). After the one
-    reset asked before the account was made (the saved password refused, no reset email: the way to Create
-    Account), the desk waits for the link, asks for no second reset and presses no second Create Account; the link
+    account" is its Sign In's answer too, drawn a moment after the press (the review of 0.3.180). Once the account is
+    made (the saved password refused where no account is known: Create Account at once, never a reset first, the
+    owner's note 46), the desk waits for the link, asks for no reset and presses no second Create Account; the link
     opened, it signs in once."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "RESET_MAIL_WAIT", 4)
@@ -15304,12 +15778,12 @@ def test_a_new_accounts_refusal_drawn_after_the_look_is_still_the_wait(srv, monk
 
         r, did = run(go())
     log = r.log
-    assert "reset" in asked and "link" in asked and asked.index("reset") < asked.index("link"), asked
-    # (one refused before the account was made, one for want of the link, one after it; one reset, before the account)
-    assert (did["created"], did["presses"], did.get("resets", 0), did["signIns"]) == (1, 1, 1, 3), (did, log)
+    # (no account known there: Create Account at once, never a reset first, the owner's note 46)
+    assert "reset" not in asked and "link" in asked, asked
+    # (one refused before the account was made, one for want of the link, one after it; no reset)
+    assert (did["created"], did["presses"], did.get("resets", 0), did["signIns"]) == (1, 1, 0, 3), (did, log)
     made = next(i for i, line in enumerate(log) if line.startswith("pressed \u201cCreate Account\u201d"))
-    resets = [i for i, line in enumerate(log) if "asked it to email a password reset" in line]
-    assert resets and all(i < made for i in resets), log
+    assert not any("asked it to email a password reset" in line for line in log), log
     waited = next(i for i, line in enumerate(log) if "emailed you a link to verify your new account" in line)
     opened = log.index("opened the confirmation link from your email (sent from myworkday.com)")
     assert made < waited < opened and r.need not in ("sign_in", "email_code"), (r.reason, log)
@@ -15673,7 +16147,7 @@ def test_a_wait_on_an_emailed_code_holds_another_jobs_sign_in_until_its_code_is_
     a, b, held = run(go())
     assert held == ("running", ""), held
     assert "entered the code from your email (sent from careers.example.com)" in a.log, a.log
-    assert b.need == "sign_in" and ("waiting: Example Fab is signing in or waiting on an email; this one carries on "
+    assert b.need == "sign_in" and ("waiting: another job is signing in or waiting on an email; this one carries on "
                                     "after that") in b.log, b.log
     b_paused = [p for p in paused if p[0] == signing_in["id"]]
     assert b_paused and all(code_in for _, _, code_in in b_paused), paused
@@ -15708,7 +16182,7 @@ def test_only_one_job_under_way_is_in_a_step_that_may_email_the_person(srv, monk
 
     r, held = run(go())
     assert held == ("running", "", "signin.html"), held
-    assert "waiting: Acme Fab is signing in or waiting on an email; this one carries on after that" in r.log, r.log
+    assert "waiting: another job is signing in or waiting on an email; this one carries on after that" in r.log, r.log
     assert r.need == "sign_in" and r.blocking, (r.need, r.reason)
 
 
@@ -16486,7 +16960,7 @@ def test_a_job_on_a_system_that_emails_codes_holds_the_inbox_from_its_start(srv,
             applier.enqueue(own_site)
             await until(lambda: own_site in began)
             await asyncio.sleep(1)
-            held = (workday in began, list(w.log))
+            held = (workday in began, list(w.log), w.reason)
             holder.inbox = False  # into its application
             await until(lambda: workday in began)
             return held
@@ -16495,8 +16969,11 @@ def test_a_job_on_a_system_that_emails_codes_holds_the_inbox_from_its_start(srv,
             await applier.stop()
 
     held = run(go())
-    assert held[0] is False and "waiting: Acme Fab is signing in or waiting on an email; this one carries on after " \
-        "that" in held[1], held
+    assert held[0] is False and "waiting: another job is signing in or waiting on an email; this one carries on " \
+        "after that" in held[1], held
+    # (which job holds it is on its card meanwhile; its log, which a report on it carries, names no other employer:
+    # the owner's note 51, Oct 20)
+    assert "Acme Fab" in held[2] and not any("Acme Fab" in line for line in held[1]), held
     assert began[workday][0] is True and began[own_site][0] is False, began
 
 

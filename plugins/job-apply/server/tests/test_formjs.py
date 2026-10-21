@@ -689,8 +689,10 @@ def test_a_security_box_reads_as_answered_only_with_its_answer_seen_going_in(srv
                       ".setAttribute('data-ja-secret', 'pending'))", [ids["Question 2"], ids["Question 1 Answer"]]))
     run(page.evaluate("() => { document.getElementById('c').selectedIndex = 0; }"))  # (put back by the person)
     after = {f["label"]: f["value"] for f in run(srv.browser.inspect(include_dropdown_options=False))["fields"]}
+    # (Question 3 back on its "-- Please choose --", which the form reader now reads as the prompt it is: empty, as
+    # its other placeholders; never its value, nor "(set)")
     assert after == {"Question 1": "", "Question 2": "", "Question 1 Answer": "(unconfirmed)",
-                     "Question 3": "(unconfirmed)"}, after
+                     "Question 3": ""}, after
 
 
 def test_a_button_marked_aria_live_is_never_read_as_the_pages_error(srv, tmp_path):
@@ -919,3 +921,187 @@ def test_a_framed_gates_own_words_are_its_frames_alone(srv, tmp_path):
         actions = run(srv.browser.inspect(include_dropdown_options=False))["actions"]
         own = run(srv.browser.own_frame_text(next(a for a in actions if a["text"] == "I Agree")["id"]))
         assert (own is not None and "Read our privacy agreement." in own) is alone, (frame, own)
+
+
+def test_a_box_required_by_its_wrapper_its_labels_class_or_another_star_is_required(srv, tmp_path):
+    """The owner's notes 47, 48 and 50 (Oct 20): jobs called ready while required boxes were empty. A box is required
+    by aria-required on the wrapper of its own around it (or around its group's fieldset), a class on that wrapper or
+    on its label that says so ("required", "mandatory": its star drawn by CSS), a marker beside it in that wrapper
+    ("<span class="required">*</span>" outside the label), or Lever's "✱". Never by a wrapper that holds another
+    question's box, a class that only holds the word ("requiredFieldsNote") or says it isn't, nor a plain one."""
+    got = fields_of(srv, tmp_path, (
+        '<div aria-required="true"><label for="a">Badge</label><input id="a"></div>'
+        '<div aria-required="true"><fieldset><legend>Shift</legend><label><input type="radio" name="s"> Days</label>'
+        '<label><input type="radio" name="s"> Nights</label></fieldset></div>'
+        '<label for="c">Full name ✱</label><input id="c">'
+        '<label for="d" class="required">Title</label><input id="d">'
+        '<div class="form-group required"><label for="e">Zip</label><input id="e"></div>'
+        '<div><label for="f">Phone</label><span class="required">*</span><input id="f"></div>'
+        '<div class="field field--mandatory"><label for="g">City</label><input id="g"></div>'
+        # (not required)
+        '<div class="form-group"><label for="h">Middle name</label><input id="h"></div>'
+        '<div aria-required="true"><label for="i">One</label><input id="i">'
+        '<label for="j">Two</label><input id="j"></div>'
+        '<div class="requiredFieldsNote"><label for="k">Suffix</label><input id="k"></div>'
+        '<label for="l" class="not-required">Nickname</label><input id="l">'
+        '<div class="form-group required optional"><label for="m">Website</label><input id="m"></div>'))
+    assert {f["label"]: f["required"] for f in got} == {
+        "Badge": True, "Shift": True, "Full name ✱": True, "Title": True, "Zip": True, "Phone": True,
+        "City": True, "Middle name": False, "One": False, "Two": False, "Suffix": False, "Nickname": False,
+        "Website": False}, got
+
+
+def test_a_list_on_a_first_choice_that_only_asks_for_one_is_empty(srv, tmp_path):
+    """A list still on its own first choice that asks for one ("Select your state" with a value of its own, "0"), or on
+    a greyed choice it opens on ("<option disabled selected>Gender"), has nothing chosen: read as answered, the job was
+    called ready with it. A real first choice, or a choice made, is its value."""
+    got = fields_of(srv, tmp_path, (
+        '<label for="a">State</label><select id="a"><option value="0">Select your state</option>'
+        '<option>Arizona</option></select>'
+        '<label for="b">Gender</label><select id="b"><option disabled selected>Gender</option><option>Female</option>'
+        '</select>'
+        '<label for="c">Shift</label><select id="c"><option>Days</option><option>Nights</option></select>'
+        '<label for="d">Size</label><select id="d"><option value="">Select</option><option selected>Large</option>'
+        '</select>'))
+    assert {f["label"]: f["value"] for f in got} == {"State": "", "Gender": "", "Shift": "Days", "Size": "Large"}, got
+
+
+def test_the_browsers_own_reading_of_a_required_box_is_kept_silently(srv, tmp_path):
+    """A required box's own validity, read without telling the page (never checkValidity or reportValidity): still
+    empty ("missing": a box, a group of radios, a box to tick), or holding what its own rules refuse ("bad": not in a
+    form that turns the browser's checks off). Nothing for an optional box, or one that's fine."""
+    got = fields_of(srv, tmp_path, (
+        '<form><label for="a">Name</label><input id="a" required>'
+        '<label for="b">Email</label><input id="b" type="email" required value="not-an-email">'
+        '<label for="c">Phone</label><input id="c" required value="480-555-0100">'
+        '<fieldset><legend>Shift</legend><label><input type="radio" name="s" required> Days</label>'
+        '<label><input type="radio" name="s"> Nights</label></fieldset>'
+        '<label><input type="checkbox" id="t" required> I agree to the terms</label>'
+        '<label for="o">Nickname</label><input id="o"></form>'
+        '<form novalidate><label for="n">Work email</label><input id="n" type="email" required value="nope"></form>'))
+    read = {f["label"]: (f.get("missing"), f.get("bad")) for f in got}
+    assert read == {"Name": (True, None), "Email": (None, True), "Phone": (None, None), "Shift": (True, None),
+                    "I agree to the terms": (True, None), "Nickname": (None, None), "Work email": (None, None)}, read
+    # (and nothing was said to the page: no box styled as refused for the person, as a check that tells the page does)
+    assert run(run(srv.browser.page()).evaluate("() => document.querySelectorAll(':user-invalid').length")) == 0
+
+
+def test_a_file_box_in_a_part_of_the_page_not_drawn_is_unseen(srv, tmp_path):
+    """A file box in a section hidden or folded shut, with its words, is no box the page asks for now ("unseen"): the
+    desk never stops for it as required. Not one an upload widget hides alone, beside its own button."""
+    got = fields_of(srv, tmp_path, (
+        '<section style="display:none"><label for="a">Transcript</label><input type="file" id="a" required></section>'
+        '<div><label for="b">Resume</label><input type="file" id="b" style="display:none" required>'
+        '<button type="button">Upload resume</button></div>'
+        '<div><span style="display:none"><input type="file" id="c"></span><button type="button">Cover letter'
+        '</button></div>'))
+    assert [bool(f.get("unseen")) for f in got if f["kind"] == "file"] == [True, False, False], got
+
+
+def test_a_pages_own_word_that_a_box_is_wanted_is_its_error_never_a_note(srv, tmp_path):
+    """A live region's or an "invalid" message's words that a box is wanted ("This field is required", Bootstrap's
+    invalid-feedback) are the page's errors (the owner's note 50, Oct 20). Never a form's note on what's required
+    ("Required fields are indicated with *"), a live region's other words, nor one around a box (its label isn't an
+    error) or inside an error read whole."""
+    page = tmp_path / "form.html"
+    page.write_text(
+        '<!doctype html><html><body><form><label for="a">Email</label><input id="a">'
+        '<div aria-live="polite">This field is required</div>'
+        '<div class="invalid-feedback">Please enter a valid email address.</div>'
+        '<p aria-live="polite">Required fields are indicated with *</p>'
+        '<p aria-live="polite">Fields marked with * are required</p>'
+        '<div aria-live="polite">3 results found</div>'
+        '<div class="is-invalid"><label for="b">Phone</label><input id="b"></div>'
+        '<div role="alert">Your work has not been saved! <span aria-live="polite">Please correct the errors below.'
+        '</span></div></form></body></html>', encoding="utf-8")
+    run(srv.browser.goto(page.resolve().as_uri()))
+    data = run(srv.browser.inspect(include_dropdown_options=False))
+    # (kept apart from the page's errors, which the rest of the desk reads as before: the review)
+    assert data["errors"] == ["Your work has not been saved! Please correct the errors below."], data["errors"]
+    assert data.get("wanted") == ["This field is required", "Please enter a valid email address."], data
+
+
+def test_a_passwords_rules_on_show_are_no_error_nor_wanted(srv, tmp_path):
+    """The review of the ready check: a password's rules shown before anything is typed ("Password must contain at
+    least 8 characters" in a live region, "Must contain a number" drawn by an "invalid" class) aren't the page's errors:
+    read as such, they'd change how a sign-in's refusal and a reset's slowness are told."""
+    page = tmp_path / "form.html"
+    page.write_text('<!doctype html><html><body><form><label for="e">Email</label><input id="e" type="email">'
+                    '<label for="p">Password</label><input id="p" type="password">'
+                    '<ul aria-live="polite"><li>Password must contain at least 8 characters</li></ul>'
+                    '<ul><li class="rule invalid">Must contain a number</li></ul></form></body></html>',
+                    encoding="utf-8")
+    run(srv.browser.goto(page.resolve().as_uri()))
+    data = run(srv.browser.inspect(include_dropdown_options=False))
+    assert not data["errors"] and not data.get("wanted"), data
+
+
+def test_a_required_box_whose_value_shows_beside_it_isnt_left_empty(srv, tmp_path):
+    """The review: an upload widget that empties its required box once the file is sent (its name shown beside it),
+    in a form that turns the browser's checks off, read as still missing its file forever."""
+    from job_apply.pipeline import _left_empty
+
+    got = fields_of(srv, tmp_path, '<form novalidate><div class="upload"><label for="r">Resume</label>'
+                                   '<input type="file" id="r" required><span class="file-name">resume.pdf</span></div>'
+                                   '<button>Submit</button></form>')
+    assert not _left_empty({"fields": got}), got
+
+
+def test_a_frameworks_validator_classes_and_hidden_markers_dont_make_a_box_required(srv, tmp_path):
+    """The review: AngularJS puts "ng-valid-required" on every box with an ng-required (false too) and on its ng-form;
+    and a required marker the page doesn't show says nothing."""
+    got = fields_of(srv, tmp_path, (
+        '<form><div class="q ng-valid ng-valid-required" ng-form="q1"><label for="m">Middle name</label>'
+        '<input id="m" class="ng-valid ng-valid-required" ng-required="false"></div>'
+        '<div class="q"><label for="n">Nickname</label><input id="n"></div>'
+        '<div><label for="s">Suffix</label><span class="required" style="display:none">*</span><input id="s"></div>'
+        '</form>'))
+    assert [f["required"] for f in got] == [False, False, False], got
+
+
+def test_a_lists_first_choice_that_is_an_answer_is_its_value(srv, tmp_path):
+    """The review: "Choose not to disclose" first in a list is an answer, not a prompt."""
+    got = fields_of(srv, tmp_path, '<form><label for="g">Gender *</label><select id="g">'
+                                   '<option value="D" selected>Choose not to disclose</option><option value="M">Male'
+                                   '</option><option value="F">Female</option></select></form>')
+    assert got[0]["value"] == "Choose not to disclose", got
+
+
+def test_a_lists_first_choice_that_asks_is_empty_whatever_its_value(srv, tmp_path):
+    """The review, round 2: a first choice that asks for one ("Select Gender", "Select Degree Type", "Select one
+    option", "Select Your Highest Level of Education") with a value of its own (a word, an id) was read as an answer.
+    One that answers ("Choose not to disclose", "Select if you prefer not to say", "I don't wish to answer") stays."""
+    got = fields_of(srv, tmp_path, (
+        '<form><label for="a">Gender</label><select id="a"><option value="select">Select Gender</option>'
+        '<option>Female</option></select>'
+        '<label for="b">Degree</label><select id="b"><option value="7f3c2a90-1b44-4c1e-9a0d-2f6e8b1c5d37">'
+        'Select Degree Type</option><option>Associate</option></select>'
+        '<label for="c">Shift</label><select id="c"><option value="x">Select one option</option><option>Days</option>'
+        '</select>'
+        '<label for="d">Education</label><select id="d"><option value="ed">Select Your Highest Level of Education'
+        '</option><option>High school</option></select>'
+        '<label for="e">Veteran</label><select id="e"><option value="n">Choose not to disclose</option>'
+        '<option>Yes</option></select>'
+        '<label for="f">Race</label><select id="f"><option value="p">Select if you prefer not to say</option>'
+        '<option>Asian</option></select>'
+        '<label for="g">Disability</label><select id="g"><option value="w">I don\'t wish to answer</option>'
+        '<option>Yes</option></select>'
+        # (the review, round 3: a "pick-up" is no prompt)
+        '<label for="h">Shifts</label><select id="h"><option value="p">Pick-up shifts as needed</option>'
+        '<option>Days</option></select></form>'))
+    assert {f["label"]: f["value"] for f in got} == {
+        "Gender": "", "Degree": "", "Shift": "", "Education": "", "Veteran": "Choose not to disclose",
+        "Race": "Select if you prefer not to say", "Disability": "I don't wish to answer",
+        "Shifts": "Pick-up shifts as needed"}, got
+
+
+def test_an_upload_widgets_emptied_box_in_a_checked_form_isnt_left_empty(srv, tmp_path):
+    """The review, round 2: the same upload widget (its required box emptied, the file's name shown beside it) in a
+    form whose checks are on, sent by its script (a button of type "button"): read as "bad", never ready."""
+    from job_apply.pipeline import _left_empty
+
+    got = fields_of(srv, tmp_path, '<form><div class="upload"><label for="r">Resume</label>'
+                                   '<input type="file" id="r" required><span class="file-name">resume.pdf</span></div>'
+                                   '<button type="button">Submit</button></form>')
+    assert not _left_empty({"fields": got}), got
+    assert not got[0].get("bad") and not got[0].get("missing"), got

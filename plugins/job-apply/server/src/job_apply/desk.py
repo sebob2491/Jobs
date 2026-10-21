@@ -655,7 +655,9 @@ class Desk:
                     anonymous = (await self._body(request)).get("anonymous") is True
                 run = a.runs.get(job_id)  # (and what the desk's history keeps out of a line on it, the report too)
                 hide = await asyncio.to_thread(Applier._report_hidden, run) if run is not None else set()
-                return JSONResponse(await asyncio.to_thread(report.build, job, run, anonymous=anonymous, hide=hide))
+                # (and every employer the tracker's jobs name: an anonymous report names none but as "another employer")
+                return JSONResponse(await asyncio.to_thread(report.build, job, run, anonymous=anonymous, hide=hide,
+                                                            employers=self.srv.tracker().companies()))
             else:
                 return JSONResponse({"error": f"unknown action {action!r}"}, status_code=404)
         except (KeyError, ValueError) as e:

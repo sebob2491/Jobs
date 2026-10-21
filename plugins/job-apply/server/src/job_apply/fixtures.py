@@ -17,6 +17,7 @@ import json
 import re
 import sys
 import unicodedata
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urljoin, urlsplit, urlunsplit
@@ -235,16 +236,34 @@ def _scrub_value(attr: str, value: str, secrets: list[str]) -> str:
 _CSS_URL_QUERY = re.compile(r"""(url\(\s*["']?[^"'()?\s]*)\?[^"')]*(["']?\s*\))""", re.I)
 
 
-def _redact_page(soup: BeautifulSoup, secrets: list[str]) -> None:
+# The attributes whose values are words for a person, not the page's workings: where `words` (redact_words) are taken
+# out of besides the page's text, never a box's type, role, class, id, name, address or autocomplete
+_HUMAN_ATTRS = {"title", "alt", "aria-label", "aria-description", "aria-placeholder", "aria-roledescription",
+                "aria-valuetext", "placeholder", "content", "label", "summary"}
+
+
+def redact_words(text: str, words: Iterable[str]) -> str:
+    """Take `words` out of text as written (case and all) and as words of their own: another employer's one-word name
+    ("Intel", "TEL", "Switch") in an anonymous report's saved pages, never "tel" of type="tel" or "switch" (the review
+    of fix-ready-check, round 2)."""
+    kept = sorted({w for w in words if w and w.strip()}, key=len, reverse=True)
+    if not kept:
+        return text
+    return re.sub(r"(?<!\w)(?:" + "|".join(map(re.escape, kept)) + r")(?!\w)", REDACTED, text)
+
+
+def _redact_page(soup: BeautifulSoup, secrets: list[str], words: Iterable[str] = ()) -> None:
     """Redact the page's words and attribute values, never its tag names or style sheets: a
-    last name "Li" mustn't turn <li> into <REDACTED>. And anyone else's details (scrub_others)."""
+    last name "Li" mustn't turn <li> into <REDACTED>. And anyone else's details (scrub_others).
+    `words` (redact_words) come out of its text and its words for a person (_HUMAN_ATTRS) alone."""
+    words = list(words)
     for node in soup.find_all(string=True):
         if isinstance(node, Comment):
             node.extract()  # (a comment can hold anything: a session, a debug dump, an address)
             continue
         if node.parent is not None and node.parent.name == "style":
             continue
-        new = scrub_others(redact(str(node), secrets))
+        new = scrub_others(redact_words(redact(str(node), secrets), words))
         if new != str(node):
             node.replace_with(new)
     for tag in soup.find_all(True):
@@ -262,6 +281,8 @@ def _redact_page(soup: BeautifulSoup, secrets: list[str]) -> None:
                              or attr in _URL_ATTRS and v.startswith("?"))):
                     value = _without_query(v)
                 tag[attr] = _scrub_value(attr, value, secrets)
+                if attr in _HUMAN_ATTRS:
+                    tag[attr] = redact_words(str(tag[attr]), words)
 
 
 _KEEP_META = re.compile(r"^(charset|viewport|content-type)$", re.I)
@@ -446,7 +467,8 @@ class _CssPruner:
         return all(t.lower() in self.tags for t in re.findall(r"(?:^|[\s>+~])([a-zA-Z][\w-]*)", bare))
 
 
-def clean_html(raw: str, secrets: list[str], frame_map: dict[str, str] | None = None, base_url: str = "") -> str:
+def clean_html(raw: str, secrets: list[str], frame_map: dict[str, str] | None = None, base_url: str = "",
+               words: Iterable[str] = ()) -> str:
     soup = BeautifulSoup(raw, "html.parser")
     for tag in soup.find_all(["script", "noscript", "base"]):
         tag.decompose()
@@ -502,7 +524,7 @@ def clean_html(raw: str, secrets: list[str], frame_map: dict[str, str] | None = 
             tag.string = css
         else:
             tag.decompose()
-    _redact_page(soup, secrets)
+    _redact_page(soup, secrets, words)
     return str(soup)
 
 
@@ -512,9 +534,11 @@ _STEP_WORDS = re.compile(r"\b(next|continue|submit|apply|sign ?in|log ?in|create
 
 
 def convert(snapshot: Path, name: str, out_dir: Path = DEFAULT_DIR, prof: Profile | None = None,
-            secrets: list[str] | None = None) -> list[Path]:
+            secrets: list[str] | None = None, words: Iterable[str] = ()) -> list[Path]:
     """Scrub a saved snapshot into `out_dir`: `{name}.html`, its frames, and `{name}.expect.json`.
-    `secrets` (default: the profile's personal strings) are what's taken out."""
+    `secrets` (default: the profile's personal strings) are what's taken out, and `words` from the pages' words alone
+    (redact_words)."""
+    words = list(words)
     meta = json.loads((snapshot / "snapshot.json").read_text(encoding="utf-8"))
     secrets = secrets if secrets is not None else personal_strings(prof or Profile.load())
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -530,7 +554,8 @@ def convert(snapshot: Path, name: str, out_dir: Path = DEFAULT_DIR, prof: Profil
             continue
         target = out_dir / (f"{name}.html" if fr["file"] == "page.html"
                             else frame_map.get(fr.get("url", ""), f"{name}.{fr['file']}"))
-        html = clean_html(src.read_text(encoding="utf-8"), secrets, frame_map, fr.get("url") or meta.get("url", ""))
+        html = clean_html(src.read_text(encoding="utf-8"), secrets, frame_map, fr.get("url") or meta.get("url", ""),
+                          words)
         target.write_text(html, encoding="utf-8")
         written.append(target)
 
@@ -551,8 +576,8 @@ def convert(snapshot: Path, name: str, out_dir: Path = DEFAULT_DIR, prof: Profil
     # written with its letters as they are ("José", not "Jos\\u00e9"), so the redaction finds them
     # (and anyone else's details, as on the page: else a label the page has scrubbed reads differently here, and the
     # labels' third parties stay in it: the review of 0.3.189)
-    expect_path.write_text(scrub_others(redact(json.dumps(expect, indent=2, ensure_ascii=False), secrets)),
-                           encoding="utf-8")
+    expect_path.write_text(scrub_others(redact_words(redact(json.dumps(expect, indent=2, ensure_ascii=False), secrets),
+                                                     words)), encoding="utf-8")
     written.append(expect_path)
     return written
 

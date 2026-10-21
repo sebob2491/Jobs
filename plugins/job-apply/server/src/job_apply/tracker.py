@@ -1016,6 +1016,19 @@ class Tracker:
         self.conn.commit()
 
     @_locked
+    def applied_urls(self) -> builtins.list[str]:
+        """The addresses of the jobs applied to (and on from there): where the person has an account, at a site that
+        makes one (pipeline_accounts: a saved password it refuses there is reset, not taken for none)."""
+        marks = ",".join("?" * len(_DONE))
+        return [str(u) for row in self.conn.execute(f"SELECT url, apply_url FROM jobs WHERE status IN ({marks})",
+                                                    sorted(_DONE)) for u in row if u]
+
+    @_locked
+    def companies(self) -> builtins.list[str]:
+        """Every employer the jobs here name: what a report or a note on one job takes out of it (report.build)."""
+        return [str(r[0]) for r in self.conn.execute("SELECT DISTINCT company FROM jobs WHERE company != ''")]
+
+    @_locked
     def list(self, status: str | None = None, company: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
         q = "SELECT * FROM jobs WHERE 1=1"
         args: list[Any] = []

@@ -2,8 +2,25 @@
 <html><head><meta charset="utf-8"><title>Submit application for Field Service Engineer</title></head>
 <body>
 <!-- An Eightfold-like one-page application for a job applied to before (issue #112, note 30): the form is still
-     drawn, under the site's notice -->
-<div role="alert" class="notice">You have already applied for this position.</div>
+     drawn, under the site's notice. ?bare: the notice names no job ("You have already applied.", the owner's note 49,
+     Oct 20); ?title: it names it by its title; ?looks: "It looks like you have already applied". ?other: it names
+     another job's title; ?card: no notice, but a "Similar jobs" list whose card for another job says "You have already
+     applied" (neither is this job applied to: the review) -->
+<div role="alert" class="notice" id="notice">You have already applied for this position.</div>
+<script>
+  const q = new URLSearchParams(location.search);
+  const said = q.has('bare') ? 'You have already applied.' : q.has('title')
+    ? 'You have already applied for Equipment Technician (R1234).'
+    : q.has('other') ? 'You have already applied for Process Technician.'
+    : q.has('looks') ? 'It looks like you have already applied' : '';
+  if (said) document.getElementById('notice').textContent = said;
+  if (q.has('card')) {
+    document.getElementById('notice').remove();
+    document.body.insertAdjacentHTML('beforeend', '<h2>Similar jobs</h2><ul><li><a href="#">Process Technician</a>'
+      + '<p>Chandler, AZ</p><p>You have already applied</p></li><li><a href="#">Field Service Engineer</a>'
+      + '<p>Tempe, AZ</p></li></ul><p>' + 'More about working here. '.repeat(20) + '</p>');
+  }
+</script>
 <h1>Application Form</h1>
 <form id="app" method="post" action="/careers/apply/submit" novalidate>
   <label for="fn">First name *</label><input id="fn" name="fn" required>

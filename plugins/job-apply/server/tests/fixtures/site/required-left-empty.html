@@ -1,0 +1,70 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply</title>
+<style>.required::after { content: " *"; color: #b00; }</style>
+</head>
+<body>
+<!-- the owner's notes 47, 48, 50 and 51 (Oct 20): jobs called "Ready to submit", and a Save and Continue pressed on a
+     step the desk had filled nothing on, while required boxes were still empty. One application step whose own
+     required box (First Name) the profile answers, and beside it what the query says:
+     ?wrapper: a question required by aria-required on the wrapper around its box, not on the box;
+     ?radios: a group of radios required by aria-required on the wrapper around its fieldset, nothing chosen;
+     ?select: a required list still on its own first choice, "Select a size" with a value of its own ("0");
+     ?star: a question marked required by Lever's "✱" in its label;
+     ?class: a question whose label is drawn required by its class ("<label class="required">", its star by CSS);
+     ?lost: a required City the page empties again a moment after anything is typed into it;
+     ?hidden: required boxes the page doesn't show (a section display:none, one hidden, one aria-hidden, a file box in
+     a hidden section);
+     ?banner: its button is "Save and Continue", and it leads to a Workday-like review step (its answers as words, no
+     boxes) whose "Errors Found" lists "Error - Phone Number" over the Submit;
+     ?step: its button is "Save and Continue" to the review page (review.html), and not a Submit.
+     window.sent counts presses of the step's own button (Submit Application or Save and Continue). -->
+<h2>Application</h2>
+<form id="app" novalidate onsubmit="return false">
+  <label for="fn">First Name *</label><input id="fn" name="fn" required>
+  <div id="extra"></div>
+</form>
+<script>
+  const q = new URLSearchParams(location.search);
+  const extra = document.getElementById('extra');
+  const parts = {
+    wrapper: '<div class="question" aria-required="true"><label for="badge">Badge color</label><input id="badge"></div>',
+    radios: '<div class="question" aria-required="true"><fieldset><legend>Preferred shift</legend>'
+      + '<label><input type="radio" name="shift" value="d"> Days</label>'
+      + '<label><input type="radio" name="shift" value="n"> Nights</label></fieldset></div>',
+    select: '<label for="size">Shirt size</label><select id="size" required><option value="0">Select a size</option>'
+      + '<option>Small</option><option>Large</option></select>',
+    star: '<label for="badge">Badge color ✱</label><input id="badge">',
+    class: '<label for="badge" class="required">Badge color</label><input id="badge">',
+    lost: '<label for="city">City *</label><input id="city" required>',
+    hidden: '<div style="display:none"><label for="h1">Hidden question *</label><input id="h1" required></div>'
+      + '<div hidden><label for="h2">Other hidden question *</label><input id="h2" required></div>'
+      + '<div aria-hidden="true"><label for="h3">Badge number *</label><input id="h3" required></div>'
+      + '<section style="display:none"><label for="h4">Transcript *</label><input type="file" id="h4" required></section>',
+  };
+  extra.innerHTML = Object.keys(parts).filter((k) => q.has(k)).map((k) => parts[k]).join('');
+  const city = document.getElementById('city');
+  if (city) city.addEventListener('change', () => setTimeout(() => { city.value = ''; }, 150));
+  const step = q.has('step') || q.has('banner');
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = step ? 'Save and Continue' : 'Submit Application';
+  document.getElementById('app').appendChild(button);
+  window.sent = 0;
+  button.addEventListener('click', () => {
+    window.sent += 1;
+    if (q.has('banner')) {
+      document.body.innerHTML = '<div data-automation-id="progressBarActiveStep">Review</div><h2>Review</h2>'
+        + '<h3><button type="button" aria-expanded="true">Errors Found</button></h3>'
+        + '<ol><li><button type="button">Error - Phone Number</button></li></ol>'
+        + '<div data-automation-id="errorMessage">The field Phone Number is required and must have a value.</div>'
+        + '<p>My Information</p><p>First Name</p><p>Sam</p>'
+        + '<button type="button" data-automation-id="pageFooterBackButton">Back</button>'
+        + '<button type="button" data-automation-id="pageFooterNextButton">Submit</button>';
+      return;
+    }
+    if (step) location.href = 'review.html';
+  });
+</script>
+</body>
+</html>
