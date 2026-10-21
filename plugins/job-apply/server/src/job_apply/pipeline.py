@@ -1105,6 +1105,11 @@ class Run:
     # key: left empty, not filled again while they stay optional and unflagged (_fill_once); the person's answer to the
     # question again takes it off (Desk's answers)
     once_left: dict[str, str] = field(default_factory=dict)
+    # optional questions of the person's own that a card put to them (an ID at this employer: plan_autofill's
+    # "employer_id"), which they went on from leaving empty: by placed_key, each with its label's key. Never asked again
+    # for the job (_pending), and listed under "Left empty" as theirs (_went_left); kept in its folder (ASKED_FILE), so
+    # a restart of the desk doesn't ask them again either
+    asked_once: dict[str, str] = field(default_factory=dict)
     mail_checked: float = 0.0  # when the inbox was last looked at for its emailed code or link
     mail_done: bool = False  # the code or link from the inbox went in: no more looking
     # the employer's own mail domains, from its list (looked up once), and _another_employers_mail's answer for this
@@ -1203,7 +1208,7 @@ class Run:
                                 "employer_mail", "others_mail", "went_in", "agreed", "draft_pages", "submit_pressed",
                                 "sending", "cut_short", "started", "pass_steps", "rounds", "resumes", "marked",
                                 "maybe_shown", "kept_replaced", "once_left", "opened_tabs", "letter_tried",
-                                "letter_text", "letter_wait")},
+                                "letter_text", "letter_wait", "asked_once")},
                 # (the first cover letter's text, on its card alone)
                 "letter_text": self.letter_text if self.status == "needs_you" and self.need == "cover_letter" else "",
                 # (only for the cards that show it: a job queued or under way has none, and 30 of them made the
@@ -1737,6 +1742,17 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         self._save_queue()
         return run
 
+    def went_on_from_card(self, run: Run, given: set[str] | frozenset[str] = frozenset()) -> None:
+        """The person went on from the job's card (its answers sent, `given` by their keys, or Carry on pressed): an
+        optional question of theirs it asked (an ID at this employer: "employer_id") that they left empty is left empty
+        from here on, never asked again for the job (Run.asked_once), and kept in its folder for after a restart."""
+        left = {placed_key(q): question_key(q.get("label") or "") for q in run.questions
+                if q.get("employer_id") and not q.get("required")
+                and not {placed_key(q), question_key(q.get("label") or "")} & given}
+        if left.keys() - run.asked_once.keys():
+            run.asked_once.update(left)
+            _keep_asked_once(self.srv, run)
+
     def _press_recorded(self, job: dict[str, Any]) -> bool:
         """Was Submit pressed for this job with no confirmation showing: its folder's record (submission.json), or the
         tracker's note? It may have gone."""
@@ -1750,6 +1766,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         the job by itself."""
         run = self.runs.get(job_id)
         signing_in = run is not None and run.need == "sign_in"  # (before enqueue clears it)
+        if run is not None and run.status == "needs_you":
+            self.went_on_from_card(run)  # (before enqueue clears its questions: one of theirs not answered is left)
         if run is not None and run.entries_told:
             run.entries_ok = dict(run.entries_told)  # (a card said a section was short: gone on with, if unchanged)
         if run is not None and run.need in ("stuck", "sign_in", "bot_check"):
@@ -2817,9 +2835,14 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                         gaps + (f" It also has {_count(len(pending), 'other question')}, here." if pending else "")
                         + couldnt, pending, code=gap_code)
         elif pending:
+            # (an optional question of theirs alone, an ID at this employer: the card's Fill these in wants an answer,
+            # so Carry on is the way to leave it empty)
+            optional = all(q.get("employer_id") and not q.get("required") for q in pending)
             self._pause(run, "questions", f"{_count(len(pending), 'question')} your profile doesn't answer. Answer "
                         f"{them} here: the desk fills {them} in, and remembers {them} for next time unless you untick "
-                        "that." + couldnt, pending, code="questions")
+                        "that." + (f" {'It is' if len(pending) == 1 else 'They are'} optional: to leave "
+                                   f"{them} empty, press Carry on." if optional else "")
+                        + couldnt, pending, code="questions")
         elif unfilled:
             self._pause(run, "stuck", f"{couldnt.strip()} Fill {'it' if len(unfilled) == 1 else 'them'} in the desk's "
                                       "browser window, then press Carry on; or press "
@@ -3206,6 +3229,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         # (a draft the desk changed before it was restarted: still held, its card's lines back)
         if not run.draft_changed:
             _restore_draft_changes(srv, run)
+        if not run.asked_once:  # (and the questions its cards asked that the person left empty: never asked again)
+            _restore_asked_once(srv, run)
         run.status, run.need, run.reason = "running", "", "Working on it"
         if self.tailor and not run.usual_resume:
             job = srv.tracker().get(run.job_id, with_description=False) or {}
@@ -3876,7 +3901,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         if not await self._replaced_in(run, lap.data, replacing, result):
             return _Then.STOP
         _required_by_errors(result, lap.data)
-        pending, missing_files = _pending(result, once_failed)
+        pending, missing_files = _pending(result, once_failed, run.asked_once)
         self._note_skipped(run, result)
         left = len(pending)
         pending = await self._attest(run, pending)
@@ -5571,10 +5596,12 @@ def _named_by_errors(data: dict[str, Any]) -> bool:
     return any(f.get("required") for f in empty)
 
 
-def _pending(result: dict[str, Any],
-             once_failed: dict[str, dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _pending(result: dict[str, Any], once_failed: dict[str, dict[str, Any]],
+             asked_once: dict[str, str] | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """After autofill: the required questions to put to the person (with any answer of theirs
-    the page turned down), and the required file inputs nothing could go in."""
+    the page turned down), and the required file inputs nothing could go in. And an optional question that is theirs
+    to answer (an ID at this employer: plan_autofill's "employer_id"), once a job: never one they went on from, left
+    empty, on an earlier card (`asked_once`: Run.asked_once)."""
     def turned_down(f: dict[str, Any]) -> dict[str, Any]:  # an answer of theirs for the box, or its label
         return once_failed.get(placed_key(f)) or once_failed.get(question_key(f.get("label") or "")) or {}
 
@@ -5583,7 +5610,8 @@ def _pending(result: dict[str, Any],
             if f.get("unmatched") else {}
 
     pending = [{**f, **unoffered(f), **turned_down(f)} for f in result["needs_input"]
-               if f.get("required") and f.get("kind") != "file"]
+               if (f.get("required") or f.get("employer_id") and not _asked_before(asked_once, f))
+               and f.get("kind") != "file"]
     # the profile's answers that didn't go in, where the site requires one (an optional field
     # is skipped: Qorvo's optional veteran question has no "don't wish to answer")
     # (and where the person's own answer was turned down too, theirs is what's said, with the entries it opened:
@@ -5602,6 +5630,14 @@ def _pending(result: dict[str, Any],
     pending += [f for key, f in once_failed.items() if key not in asked and f.get("kind") != "file"]
     missing_files = [f for f in result["needs_input"] if f.get("required") and f.get("kind") == "file"]
     return pending, missing_files
+
+
+def _asked_before(asked_once: dict[str, str] | None, f: dict[str, Any]) -> bool:
+    """Was this box put to the person on an earlier card, and left empty there (Run.asked_once): by its own key, or by
+    its label's (a box drawn again in another section)?"""
+    if not asked_once:
+        return False
+    return placed_key(f) in asked_once or question_key(f.get("label") or "") in asked_once.values()
 
 
 def _unfilled(pending: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -7542,10 +7578,51 @@ def _forget_draft_changes(srv: Any, job_id: int) -> None:
             path.unlink(missing_ok=True)
 
 
+# The optional questions of the person's own a card put to them and they went on from, leaving them empty
+# (Run.asked_once), kept in the job's own folder so a restart of the desk doesn't ask them again: their keys alone,
+# never an answer
+ASKED_FILE = "asked-once.json"
+
+
+def _asked_file(srv: Any, job_id: int) -> Path | None:
+    job = srv.tracker().get(job_id, with_description=False) or {}
+    return Path(job["folder"]) / ASKED_FILE if job.get("folder") else None
+
+
+def _keep_asked_once(srv: Any, run: Run) -> None:
+    """Keep the questions this job's cards asked that the person left empty (Run.asked_once). Whatever goes wrong
+    writing it, the job goes on (they're left empty for this run of the desk all the same)."""
+    try:
+        path = _asked_file(srv, run.job_id)
+        if path is None:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text_atomic(path, json.dumps({"left_empty": run.asked_once}))
+    except Exception:
+        logging.getLogger(__name__).warning("couldn't keep job %s's questions left empty", run.job_id, exc_info=True)
+
+
+def _restore_asked_once(srv: Any, run: Run) -> None:
+    """The questions this job's cards asked that the person left empty before the desk restarted: never asked again.
+    A file that won't read is no record (they may be asked once more)."""
+    try:
+        path = _asked_file(srv, run.job_id)
+        if path is None or not path.is_file():
+            return
+        kept = json.loads(path.read_text(encoding="utf-8")).get("left_empty")
+        if isinstance(kept, dict):
+            run.asked_once.update({k: v for k, v in kept.items() if isinstance(k, str) and isinstance(v, str)})
+    except Exception:
+        logging.getLogger(__name__).warning("couldn't read job %s's questions left empty", run.job_id, exc_info=True)
+
+
 @_quietly
 def _went_left(run: Run, result: dict[str, Any], *pages: dict[str, Any]) -> None:
     """The optional questions autofill left empty on its page (the profile doesn't answer them, none of their choices is
-    its answer, or the box wouldn't take it), for the panel's "Left empty": the page's as its latest fill left them."""
+    its answer, or the box wouldn't take it), for the panel's "Left empty": the page's as its latest fill left them. An
+    optional question of the person's own (an ID at this employer: "employer_id") is theirs on its card, not left empty,
+    until they go on from that card leaving it empty (Run.asked_once), or did so at this employer before ("left_here"):
+    then it's left, as theirs."""
     if not pages:
         return
     page, url = _page_name(pages[0]), _steady_url(pages[0].get("url"))
@@ -7559,7 +7636,15 @@ def _went_left(run: Run, result: dict[str, Any], *pages: dict[str, Any]) -> None
         shown = now.get(qid)
         if shown is not None and not is_empty_value(shown.get("value")) and not unset_choice(shown):
             continue  # (the site has answered it since: Oracle's County from the ZIP)
-        why = (f"your profile's answer “{q['unmatched']}” isn't one of its choices" if q.get("unmatched")
+        # (or one they left empty on a card at this employer before, Remember ticked: plan_autofill's "left_here")
+        theirs = bool(q.get("employer_id")) and _asked_before(run.asked_once, q) or bool(q.get("left_here"))
+        if q.get("employer_id") and not theirs:
+            continue  # (asked on its card: theirs to answer, not left)
+        # (left empty at this employer on an earlier job's card: said with how it's undone, the third review's LOW 1)
+        why = (f"you left it empty at {run.company or 'this employer'} before (to be asked again, ask Claude to clear "
+               "it from answers.yaml, or set history.employee_ids)" if q.get("left_here")
+               else "you left it empty" if theirs
+               else f"your profile's answer “{q['unmatched']}” isn't one of its choices" if q.get("unmatched")
                else "it wouldn't take your profile's answer" if q.get("error") else "your profile doesn't answer it")
         _, why = _went_value({}, why, "")
         key = run.went_in.key_for(url, qid, bases.get(qid) or f"{url} | {placed_key(q)} | 1", page)

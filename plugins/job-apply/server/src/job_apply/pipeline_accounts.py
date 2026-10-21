@@ -1174,7 +1174,7 @@ class AccountsMixin:
         if result["filled"]:
             self._log(run, f"filled {len(result['filled'])} field(s) on {pipeline._where(data)}")
         run.did("", result.get("filled"), data)
-        pending, missing_files = pipeline._pending(result, once_failed)
+        pending, missing_files = pipeline._pending(result, once_failed, run.asked_once)
         self._note_skipped(run, result)
         pending = await self._attest(run, pending)
         before = data

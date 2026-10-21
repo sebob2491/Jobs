@@ -151,6 +151,28 @@
       "label": "Desired salary",
       "kind": "text",
       "required": true
+     },
+     {
+      "id": "11",
+      "label": "Employee ID (if previously employed)",
+      "kind": "text",
+      "required": false,
+      "own_id": true,
+      "employer_id": true
+     },
+     {
+      "id": "12",
+      "label": "WWID",
+      "kind": "text",
+      "required": true,
+      "own_id": true
+     },
+     {
+      "id": "13",
+      "label": "Northwind Employee ID",
+      "kind": "text",
+      "required": true,
+      "id_unsure": true
      }
     ],
     "log": [],

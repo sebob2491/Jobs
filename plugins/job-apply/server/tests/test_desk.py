@@ -816,6 +816,116 @@ def test_answering_again_fills_a_box_the_site_had_emptied(srv, job_apply_home):
     assert run.once_left == {}
 
 
+def test_an_id_on_the_card_is_remembered_for_its_employer_alone_or_left_once(srv, job_apply_home):
+    """An optional box for the person's ID at this employer, put to them on the card (plan_autofill's "employer_id"):
+    answered with Remember ticked, it's kept for this employer alone (answers.yaml's `at`), as it was given, even where
+    it holds the employer's name; left empty as they go on (their other answers sent, or Carry on), it's never asked
+    again for the job (Run.asked_once), kept in the job's folder for after a restart of the desk."""
+    from job_apply.pipeline import Run, placed_key, question_key
+
+    wwid ="If you have previously worked for Example Fab in any capacity, please provide your WWID"
+    asked = [{"id": "w", "kind": "text", "label": wwid, "required": False, "employer_id": True},
+             {"id": "y", "kind": "text", "label": "Years in a cleanroom", "required": True}]
+    job = srv.add_job(url="https://example.com/a", title="FSE", company="Example Fab")["job"]
+    desk = Desk(srv)
+    run = Run(job["id"], "FSE", "Example Fab", status="needs_you", need="questions", questions=list(asked))
+    desk.applier.runs[job["id"]] = run
+    assert desk.answer(job["id"], [{"label": "Years in a cleanroom", "value": "3", "remember": False}]) is None
+    assert run.asked_once == {placed_key(asked[0]): question_key(wwid)}
+    path = Path(srv.tracker().get(job["id"])["folder"]) / pipeline.ASKED_FILE
+    again = Run(job["id"], "FSE", "Example Fab")  # (the desk, restarted)
+    pipeline._restore_asked_once(srv, again)
+    assert path.is_file() and again.asked_once == run.asked_once
+    assert "3" not in path.read_text(encoding="utf-8")  # (the questions' keys alone, never an answer)
+    # Carry on, the card asking it alone: left too
+    other = srv.add_job(url="https://example.com/b", title="Technician", company="Example Fab")["job"]
+    left = Run(other["id"], "Technician", "Example Fab", status="needs_you", need="questions", questions=asked[:1])
+    desk.applier.runs[other["id"]] = left
+    desk.applier.resume(other["id"])
+    assert left.asked_once == {placed_key(asked[0]): question_key(wwid)}
+    # answered, remembered: for Example Fab alone, as it was given (its name and all), and not left
+    third = srv.add_job(url="https://example.com/c", title="Operator", company="Example Fab")["job"]
+    given = Run(third["id"], "Operator", "Example Fab", status="needs_you", need="questions", questions=asked[:1])
+    desk.applier.runs[third["id"]] = given
+    assert desk.answer(third["id"], [{"label": wwid, "value": "EXAMPLE-12345678", "remember": True}]) is None
+    assert given.asked_once == {} and given.once == {}
+    assert [(a["question"], a["answer"], a["at"]) for a in config.saved_answers()] == [
+        (wwid, "EXAMPLE-12345678", "Example Fab")]
+
+
+def test_an_id_left_empty_with_remember_ticked_isnt_asked_at_that_employer_again(srv, job_apply_home):
+    """The review's LOW 1: an optional ID box left empty on a questions card with its Remember ticked and Fill these in
+    pressed (the person's own choice) is kept in answers.yaml as left empty at that employer, so it's never asked there
+    again; with Remember unticked, for this job alone. The second review's MEDIUM 1: Carry on, or another stop's card
+    that also lists it (a file to attach), leaves it for this job alone, never for the employer: Remember is ticked by
+    default, and the person may have typed the ID into the page. A text box whose words alone would ask the person's
+    own ID but that is another's ("Employee ID" under References) is answered for this application only, never
+    remembered by its words; a list whose words mention an ID is remembered as any question (MEDIUM 4)."""
+    from job_apply.pipeline import Run, question_key
+
+    wwid = "If you have previously worked for Example Fab in any capacity, please provide your WWID"
+    asked = [{"id": "w", "kind": "text", "label": wwid, "required": False, "own_id": True, "employer_id": True},
+             {"id": "y", "kind": "text", "label": "Years in a cleanroom", "required": True}]
+    desk = Desk(srv)
+
+    def card(n, questions, need="questions"):
+        job = srv.add_job(url=f"https://example.com/{n}", title="FSE", company="Example Fab")["job"]
+        desk.applier.runs[job["id"]] = Run(job["id"], "FSE", "Example Fab", status="needs_you", need=need,
+                                           questions=list(questions))
+        return job["id"]
+    first = card("a", asked)
+    assert desk.answer(first, [{"label": "Years in a cleanroom", "value": "3", "remember": False},
+                               {"label": wwid, "value": "", "remember": True}]) is None
+    assert [(a["question"], a["answer"], a["at"]) for a in config.saved_answers()] == [(wwid, None, "Example Fab")]
+    # Remember unticked: for this job alone
+    config.answers_path().unlink()
+    second = card("b", asked)
+    desk.answer(second, [{"label": "Years in a cleanroom", "value": "3", "remember": False},
+                         {"label": wwid, "value": "", "remember": False}])
+    assert config.saved_answers() == [] and desk.applier.runs[second].asked_once
+    # Carry on: for this job alone
+    third = card("c", asked[:1])
+    desk.applier.resume(third)
+    assert config.saved_answers() == [] and desk.applier.runs[third].asked_once
+    # another stop's card that lists it too (a file to attach), its other answers sent: for this job alone
+    fourth = card("d", asked, need="stuck")
+    desk.answer(fourth, [{"label": "Years in a cleanroom", "value": "3", "remember": False},
+                         {"label": wwid, "value": "", "remember": True}])
+    assert config.saved_answers() == [] and desk.applier.runs[fourth].asked_once
+    # an "Employee ID" under References, answered: this application only
+    reference = {"id": "r", "kind": "text", "label": "Employee ID", "section": "References", "required": True}
+    fifth = card("e", [reference])
+    note = desk.answer(fifth, [{"label": "Employee ID", "value": "87654321", "remember": True}])
+    assert note and "this application only" in note and config.saved_answers() == []
+    assert desk.applier.runs[fifth].once == {question_key("Employee ID"): "87654321"}
+    # a required ID box of the person's own is remembered for this employer alone, as an optional one is
+    required = {"id": "e", "kind": "text", "label": "Employee ID", "required": True, "own_id": True}
+    sixth = card("f", [required])
+    assert desk.answer(sixth, [{"label": "Employee ID", "value": "12345678", "remember": True}]) is None
+    assert [(a["answer"], a["at"]) for a in config.saved_answers()] == [("12345678", "Example Fab")]
+    # a list whose words mention an ID: remembered as any question, never for one employer alone
+    config.answers_path().unlink()
+    listed = {"id": "l", "kind": "radio_group", "label": "Have you worked here before? If yes, enter your employee ID "
+              "below", "options": ["Yes", "No"], "required": True}
+    seventh = card("g", [listed])
+    assert desk.answer(seventh, [{"label": listed["label"], "value": "Yes", "remember": True}]) is None
+    assert [(a["answer"], a.get("at")) for a in config.saved_answers()] == [("Yes", None)]
+    # (the third review's) one whose words may name another organization's ID: its answer for this application only,
+    # and left empty, for this job alone
+    config.answers_path().unlink()
+    unsure = {"id": "u", "kind": "text", "label": "Microchip Employee ID", "required": False, "id_unsure": True,
+              "employer_id": True}
+    eighth = card("h", [unsure, asked[1]])
+    assert desk.answer(eighth, [{"label": "Microchip Employee ID", "value": "87654321", "remember": True},
+                                {"label": "Years in a cleanroom", "value": "3", "remember": False}]) is None
+    assert config.saved_answers() == []
+    assert desk.applier.runs[eighth].once[question_key("Microchip Employee ID")] == "87654321"
+    ninth = card("i", [unsure, asked[1]])
+    desk.answer(ninth, [{"label": "Microchip Employee ID", "value": "", "remember": True},
+                        {"label": "Years in a cleanroom", "value": "3", "remember": False}])
+    assert config.saved_answers() == [] and desk.applier.runs[ninth].asked_once
+
+
 def test_a_remembered_answer_replaces_one_given_for_this_application_only(srv, job_apply_home):
     """The page turned down an answer given for this application only, and the person answers
     again, remembering it: the earlier answer isn't tried again ahead of it."""

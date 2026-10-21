@@ -26,6 +26,7 @@ companies:
     search: {eightfold: {host: careers.lamresearch.com, domain: lamresearch.com}}
   - name: Applied Materials
     careers_url: https://amat.wd1.myworkdayjobs.com/External
+    aliases: [AMAT]           # what its questions call it ("AMAT employee number")
     ats: workday
     az_sites: Chandler, Tempe, Phoenix
     confidence: high

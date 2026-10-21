@@ -1114,25 +1114,60 @@ class Desk:
             raise ValueError("Answer each of its security questions here, or none of them (and fill them in in the "
                              "desk's browser window).")
         run.account_answers = given
+        # (the card's questions by their keys: a box's own, and its label's)
+        on_card = {k: q for q in run.questions for k in (question_key(q.get("label") or ""), placed_key(q))}
+        prof = None  # (the person's employers, for whose ID a box asks: employer_id_box)
+        with contextlib.suppress(Exception):
+            prof = config.Profile.load()
         for a in answers:
             label, value = str(a.get("label") or ""), a.get("value")
-            if not label or value in (None, "") or question_key(label) in account:
+            if not label or question_key(label) in account:
+                continue
+            if value in (None, ""):
+                # (an optional ID at this employer left empty on a questions card with Remember ticked, sent with
+                # Fill these in: left empty at this employer from now on. Carry on leaves it for this job alone)
+                if run.need == "questions" and a.get("remember") is True \
+                        and (said := self._keep_left_empty(run, label)):
+                    problem = f"{problem} {said}" if problem else said
                 continue
             # (answered again: a box the site had emptied of it, left empty while optional, is filled again)
             for box, asked in list(run.once_left.items()):
                 if question_key(label) in (box, asked):
                     del run.once_left[box]
             if a.get("remember", True) and " | " not in label:  # (one box's own answer is never remembered)
-                # an answer naming this employer ("Acme website") is remembered as "Company Website", or not at
-                # all: it isn't the answer at another employer's
-                kept = autofill.answer_to_remember(label, value, run.company)
+                # an ID at this employer (a text box's) is remembered as it was given, for this employer alone
+                # (answers.yaml's `at`): it's never another's (with no employer named, it's for this application
+                # only). A text box whose words alone would ask the person's ID here but that is another's or someone
+                # else's (an "Employee ID" under References) is for this application only: remembered by its words, it
+                # would go into their own ID's box. A list or a tick box is remembered as any other question. Any other
+                # answer naming this employer ("Acme website") is remembered as "Company Website", or not at all: it
+                # isn't the answer at another employer's
+                employer = {"company": run.company}
+                card_box = on_card.get(question_key(label)) or {"label": label}
+                id_box = autofill.employer_id_box(card_box, employer, prof) is True
+                own_id = id_box and autofill.id_names_this_employer(card_box, employer)
+                if id_box and not own_id:
+                    # (its words may name another organization's ID, "Microchip Employee ID": asked, and its answer
+                    # for this application only, as its card says)
+                    run.once[question_key(label)] = value
+                    continue
+                mistaken = not id_box and card_box.get("kind", "text") in ("text", "textarea") \
+                    and autofill.employer_id_box({"label": label}, employer, prof) is True
+                if own_id:
+                    kept = value if autofill.norm(run.company) else None
+                else:
+                    kept = None if mistaken else autofill.answer_to_remember(label, value, run.company)
                 if kept is None:
-                    said = f'"{value}" names {run.company}, so it\'s used for this application only, not remembered.'
+                    said = (f'Your answer to "{label}" is used for this application only: the job names no employer.'
+                            if own_id else
+                            f'Your answer to "{label}" is used for this application only: on another form, those '
+                            f"words ask for your own ID at {run.company}." if mistaken else
+                            f'"{value}" names {run.company}, so it\'s used for this application only, not remembered.')
                     problem = f"{problem} {said}" if problem else said
                     run.once[question_key(label)] = value
                     continue
                 try:
-                    config.save_answer(label, kept, run.company)
+                    config.save_answer(label, kept, run.company, at=run.company if own_id else "")
                     if kept == value:
                         run.once.pop(question_key(label), None)  # an earlier answer for this application only
                         continue
@@ -1141,12 +1176,34 @@ class Desk:
                 except (ValueError, OSError) as e:
                     problem = f"Couldn't remember your answers ({e}); they're used for this application only."
             run.once[question_key(label)] = value
+        # (an optional question of theirs on the card that they left empty, an ID at this employer: left empty from
+        # here on, never asked again for the job)
+        self.applier.went_on_from_card(run, {question_key(str(a.get("label") or "")) for a in answers
+                                             if a.get("value") not in (None, "")})
         if run.started:
             # (its tab may hold what they did while its card was up: a file kept there is theirs)
             run.in_their_hands = True
         self.applier.go_on_for(self.applier.enqueue(job_id, submit=run.submit, front=True))
         self.applier.pressed.add(job_id)  # (answered on its card: it goes even while the queue is paused)
         return problem
+
+    def _keep_left_empty(self, run: Any, label: str) -> str | None:
+        """An optional question of the person's own on a questions card (their ID at this employer: "employer_id") left
+        empty with its Remember ticked and Fill these in pressed, the person's own choice: kept so in answers.yaml (an
+        entry `at` this employer with no answer), so it's never asked at this employer again
+        (autofill._left_at_employer) until they ask Claude to clear it, or put the ID in the profile's
+        history.employee_ids. Returns a note if that couldn't be kept."""
+        asked = next((q for q in run.questions
+                      if question_key(label) in (placed_key(q), question_key(q.get("label") or ""))), None)
+        # (and only one whose words name this employer's own ID, "own_id": one that may be another's is this job's)
+        if asked is None or not asked.get("employer_id") or not asked.get("own_id") or " | " in label \
+                or not autofill.norm(run.company):
+            return None
+        try:
+            config.save_answer(label, None, run.company, at=run.company)
+        except (ValueError, OSError) as e:
+            return f"Couldn't remember that you left “{label}” empty ({e}); it's left empty for this application only."
+        return None
 
     # ------------------------------------------------------------- state
     def state(self) -> dict[str, Any]:

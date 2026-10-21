@@ -183,6 +183,24 @@ def test_an_employee_id_is_taken_out_of_a_report(job_apply_home):
     assert "88812345" not in text and "filled Employee ID with" in text
 
 
+def test_an_id_given_on_the_desk_is_taken_out_of_a_report(job_apply_home):
+    """The review of the ID's change (LOW 5): an ID the person gave on the desk's card lives in answers.yaml, not the
+    profile's employee_ids, and the scrubbers took out only those. A report never shows one either, nor a pattern's
+    answer to an ID written by hand; an answer that isn't an ID stays."""
+    from job_apply import config
+
+    config.save_answer("Employee ID", "77712345", "Acme Semi", at="Acme Semi")
+    person = Profile({**config.Profile.load().data, "personal": {"first_name": "Jordan", "last_name": "Quill"},
+                      "answers": [*config.saved_answers(), {"match": "badge number", "answer": "BADGE-4242"},
+                                  {"match": "shift", "answer": "Swing"}]})
+    job = {"id": 12, "title": "Technician", "company": "Acme Semi", "ats": "workday", "url": "https://acme.example/y"}
+    r = Run(12, "Technician", "Acme Semi", status="needs_you", need="stuck",
+            log=["filled Employee ID with 77712345", "filled Badge number with BADGE-4242", "filled Shift with Swing"])
+    text = report.build(job, r, person)["preview"]
+    assert "77712345" not in text and "BADGE-4242" not in text and "filled Employee ID with" in text
+    assert "Swing" in text
+
+
 def test_a_report_or_note_takes_a_value_out_only_as_a_whole_word(job_apply_home):
     """A value was taken out even where it was only part of an everyday word: a first name "Rob"
     left "PREDACTEDlem" for "Problem", garbled and easy to guess. Only whole words go, wherever
