@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import atexit
 import contextlib
 import json
 import math
@@ -36,8 +37,8 @@ from starlette.routing import Route
 
 from . import autofill, config, employment, history, letters, pay, places, report, workplace
 from .browser import _cookie_setting
-from .pipeline import (DESK_PASSWORDS, QUEUE_NO_LOCK, Applier, _may_accept_notices, _may_manage_accounts,
-                       _test_identity, placed_key, question_key)
+from .pipeline import (DESK_PASSWORDS, MAIL_WATCH_MAX, QUEUE_NO_LOCK, Applier, _may_accept_notices,
+                       _may_manage_accounts, _test_identity, placed_key, question_key)
 from .ats import ATS_NAMES, JOB_BOARDS, detect_ats, job_board
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .recommend import applicant_degree, days_since, not_interested_in, recommend, score_listing
@@ -66,6 +67,12 @@ def _recommendations_path() -> Path:
 
 def _settings_path() -> Path:
     return config.home() / "desk.json"
+
+
+def watch_path(port: int) -> Path:
+    """Where a running desk keeps its port and key for Claude's watch of its mail requests (job-apply-wait-mail): the
+    person's alone to read, and gone as the desk stops. Never on a command line, where other programs see it."""
+    return config.home() / f"desk_watch_{port}.json"
 
 
 def _found_path() -> Path:
@@ -180,6 +187,7 @@ class Desk:
         self._searches = 0  # (counts the openings cleared: a search started before keeps none of what it finds)
         self._left_searches: set[asyncio.Task] = set()  # (still running after a clear: held until they end)
         self._serve_task: asyncio.Task | None = None
+        self._watch_file_atexit = False
         self.updates = UpdateCheck()  # a newer published version, said on the page
         self._update_task: asyncio.Task | None = None
         self._server: uvicorn.Server | None = None
@@ -301,6 +309,7 @@ class Desk:
             r("/api/add", self.add_view, methods=["POST"]),
             r("/api/bank", self.bank_view, methods=["POST"]),
             r("/api/area", self.area_view, methods=["POST"]),
+            r("/api/mail/wait", self.mail_wait_view),
         ])
 
     async def start(self, port: int = DEFAULT_PORT, open_browser: bool = True) -> str:
@@ -321,6 +330,11 @@ class Desk:
             if self._serve_task.done():
                 raise RuntimeError(f"The Job Desk couldn't start on port {self.port}")
         self.applier.start()
+        with contextlib.suppress(OSError):  # (without it, Claude's watch for mail requests says the desk isn't open)
+            self._write_watch_file()
+            if not self._watch_file_atexit:  # (the MCP server ends with Claude Code, never stopping the desk)
+                self._watch_file_atexit = True
+                atexit.register(self._remove_watch_file)
         if self._update_task is None or self._update_task.done():
             self._update_task = asyncio.get_running_loop().create_task(self._watch_updates())
         if open_browser:
@@ -334,7 +348,56 @@ class Desk:
                 await self.updates.refresh()
             await asyncio.sleep(600)
 
+    def _write_watch_file(self) -> None:
+        """The port and key Claude's watch (job-apply-wait-mail) reaches this desk with: written anew, readable and
+        writable by the person alone (on Windows, a file in their own folder already is)."""
+        if self.port is None:
+            return
+        config.ensure_home()
+        path = watch_path(self.port)
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()  # (made anew: an older file's wider permissions aren't kept)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"port": self.port, "token": self.token, "pid": os.getpid()}, f)
+
+    def _remove_watch_file(self) -> None:
+        """This desk's watch file, gone as it stops (one another desk has written since is left)."""
+        if self.port is None:
+            return
+        path = watch_path(self.port)
+        try:
+            if json.loads(path.read_text(encoding="utf-8")).get("token") == self.token:
+                path.unlink()
+        except (OSError, ValueError, AttributeError):
+            pass
+
+    def watch_command(self) -> str:
+        """The command Claude runs in the background to wait for this desk's mail requests: the same in Git Bash,
+        PowerShell and a Unix shell, and with no key in it (the watch reads this desk's watch file)."""
+        server = (config.PLUGIN_ROOT / "server").as_posix()
+        file = watch_path(self.port or DEFAULT_PORT).as_posix()
+        return f'uv run --quiet --frozen --project "{server}" job-apply-wait-mail --desk "{file}"'
+
+    def mail_watch(self) -> dict[str, Any]:
+        """For Claude (open_job_desk, mail_requests): whether it should watch for the desk's mail requests (`watch`:
+        settings.email_codes on, and no email app password the desk can use), and the command that waits for one."""
+        a = self.applier
+        codes = a._email_codes_on()
+        before = a.mail_problem  # (a look at the login, said nowhere from here)
+        try:
+            working = a.mail_login() is not None
+        except Exception:
+            working = False
+        finally:
+            a.mail_problem = before
+        saved = _saved(["email_password"])["email_password"]
+        return {"email_codes": codes,
+                "app_password": "saved" if working else "saved, but the desk can't use it" if saved else "not saved",
+                "watch": codes and not working, "watch_command": self.watch_command()}
+
     async def stop(self) -> None:
+        self._remove_watch_file()
         await self.applier.stop()
         if self._update_task is not None and not self._update_task.done():
             self._update_task.cancel()
@@ -400,6 +463,26 @@ class Desk:
             return self._bad(e)
         return JSONResponse(await asyncio.to_thread(history.summary, days, recent),
                             headers={"Cache-Control": "no-store"})
+
+    async def mail_wait_view(self, request: Request) -> Response:
+        """Claude's watch for the desk's mail requests (settings.email_codes, no working email app password:
+        job-apply-wait-mail): answers as soon as a job's emailed code or link is asked of Claude (`due`), or after
+        `wait` seconds (MAIL_WATCH_MAX at most) with none. `watch` says whether there's anything left to wait for, and
+        `why` why not. Only whether there's something to do, never what: mail_requests() says that. Claude counts as
+        watching while a wait is open, and a few minutes after."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        try:
+            wait = _count_param(request, "wait", MAIL_WATCH_MAX, MAIL_WATCH_MAX)
+        except ValueError as e:
+            return self._bad(e)
+        a = self.applier
+        why = a.mail_watch_unwanted(queue=False)  # (the queue may be empty for a while yet: only at the end)
+        if why is None:
+            if await a.wait_for_mail_ask(wait, request.is_disconnected):
+                return JSONResponse({"due": True, "watch": True}, headers={"Cache-Control": "no-store"})
+            why = a.mail_watch_unwanted()
+        return JSONResponse({"due": False, "watch": why is None, "why": why}, headers={"Cache-Control": "no-store"})
 
     async def safety_view(self, request: Request) -> Response:
         """The page's Safety window: each setting that decides what the desk does in the person's name, as it is now."""
@@ -1083,6 +1166,9 @@ class Desk:
                tracker_problem: str | None) -> dict[str, Any]:
         settings = prof.settings
         runs = {jid: r.public() for jid, r in self.applier.runs.items()}
+        for waiting, shown in runs.items():  # (a job whose emailed code Claude is looking for in the person's Gmail)
+            shown["gmail"] = self.applier.gmail_looking(waiting)
+            shown["gmail_note"] = self.applier.gmail_note(waiting)  # (and why Claude no longer does, when it doesn't)
         rows, seen = [], set()
         handled = config.handled_employers()  # (where the desk goes all the way, in the live check)
         tracked_at = [t.find_by_url(item["url"]) for item in self.listings]
@@ -1368,13 +1454,16 @@ class Desk:
         where = f"{profile} email_codes (off unless set to true)"
         if s.email_codes and not unread:
             line("email_codes", "Emailed codes (Claude)", "on",
-                 "When you apply with Claude in the chat, Claude may read a sign-up or verification code, or a "
-                 "verification link, that a career site emails you, through the Gmail connector: only the newest "
-                 "message from that job's site or its job system, a link only when it goes back to that site, and no "
-                 "other mail.", where)
+                 "Claude may read a sign-up or verification code, or a verification link, that a career site emails "
+                 "you, through the Gmail connector: when you apply with Claude in the chat, and for the desk while its "
+                 "chat is open and no email app password of yours works here (the desk asks Claude for a job's own "
+                 "mail since its wait began, checks it as it does your inbox's, and puts the code in itself). Only the "
+                 "newest message from that job's site or its job system, a link only when it goes back to that site, "
+                 "and no other mail. Never a password reset's email: that's the email app password's alone.", where)
         else:
             line("email_codes", "Emailed codes (Claude)", fix if unread else "off",
-                 "When you apply with Claude in the chat, Claude asks you for a code or link a career site emails you.",
+                 "When you apply with Claude in the chat, Claude asks you for a code or link a career site emails you; "
+                 "on the desk you enter it yourself, unless its email app password reads it.",
                  where)
         saved = _saved(["email_password"])["email_password"]
         before = a.mail_problem

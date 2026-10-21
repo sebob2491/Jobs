@@ -1,0 +1,12 @@
+{
+ "id": "t-code-12",
+ "messages": [
+  {
+   "from": "Example Fab Co Careers <no-reply@careers.examplefab.example>",
+   "to": "jordan.sample@example.com",
+   "date": "2026-10-20T08:03:00-07:00",
+   "subject": "Verify your email",
+   "body": "Your verification code is 482913. It expires in 10 minutes. Enter it on the page where you applied to finish signing up."
+  }
+ ]
+}

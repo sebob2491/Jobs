@@ -6062,3 +6062,165 @@ def test_more_stays_open_while_troubleshooting_is_on(srv, job_apply_home, monkey
 
     seen = run(go())
     assert seen == {"open": True, "checked": True, "off_open": False}, seen
+
+
+# ----------------------------------------- emailed codes through Claude's Gmail (settings.email_codes)
+_ACME_VERIFY = "https://careers.acme-fab.example/verify"  # (made up: the repo is public)
+_ACME_PAGE = ('<html><body><h1>Confirm your email</h1><label for="code">Enter the verification code we sent to your '
+              'email</label><input id="code" type="text"><button type="button">Verify</button></body></html>')
+
+
+def _waiting_on_mail(srv, applier, page=None, left=False) -> "pipeline.Run":
+    job = srv.add_job(url=f"{_ACME_VERIFY}?job={len(applier.runs)}", title="FSE", company="Acme Fab")["job"]
+    r = pipeline.Run(job["id"], "FSE", "Acme Fab", status="needs_you", need="email_code", page=page, url=_ACME_VERIFY,
+                     paused_at=time.time(), paused_host="careers.acme-fab.example", left=left)
+    applier.runs[job["id"]] = r
+    return r
+
+
+def test_claudes_watch_for_mail_requests_is_a_long_wait_on_the_desk_behind_its_key(srv, monkeypatch, job_apply_home):
+    """The owner (Oct 21): Claude's watch for the desk's mail requests (job-apply-wait-mail, run in the background,
+    which wakes Claude as it ends) is a long wait on the desk, behind its key: it answers as soon as a job's emailed
+    code is asked of Claude, or after its wait with nothing, and only whether there's anything to do, never which job
+    nor what for. With settings.email_codes off it ends at once, nothing to watch. The command reads the desk's port
+    and key from a file only the person may read, gone once the desk stops: never a key on its command line."""
+    from job_apply import mailwatch
+    from job_apply.desk import watch_path
+
+    desk = Desk(srv)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        a = desk.applier
+        path = watch_path(desk.port)
+        out: dict = {"file": json.loads(path.read_text(encoding="utf-8")), "mode": path.stat().st_mode & 0o777,
+                     "command": desk.watch_command()}
+        try:
+            h = {"x-desk-token": desk.token}
+            async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{desk.port}", timeout=60, trust_env=False) as c:
+                out["no key"] = (await c.get("/api/mail/wait?wait=1")).status_code
+                out["wrong key"] = (await c.get("/api/mail/wait?wait=1", headers={"x-desk-token": "guess"})).status_code
+                began = time.monotonic()
+                out["off"] = (await c.get("/api/mail/wait?wait=30", headers=h)).json()  # email_codes off: at once
+                out["off took"] = time.monotonic() - began
+                _set_profile_settings(job_apply_home, email_codes=True)
+                out["quiet"] = (await c.get("/api/mail/wait?wait=1", headers=h)).json()  # nothing queued: stop
+                r = _waiting_on_mail(srv, a)
+                out["nothing yet"] = (await c.get("/api/mail/wait?wait=1", headers=h)).json()
+                waiting = asyncio.ensure_future(c.get("/api/mail/wait?wait=30", headers=h))
+                await asyncio.sleep(1.5)
+                out["held"], out["watching"] = not waiting.done(), a.claude_watching()
+                began = time.monotonic()
+                a._ask_claude(r, "code", {"acme-fab.example"}, time.time() - 120, None)
+                out["due"] = (await waiting).json()
+                out["woke in"] = time.monotonic() - began
+                shown = desk.state()  # (its row: among the openings, or the others)
+                out["card"] = next(o["run"]["gmail"] for o in shown["listings"] + shown["others"]
+                                   if o.get("job_id") == r.job_id and o.get("run"))
+                # the command, as Claude runs it: woken by the request; then, answered with nothing, a wait with none
+                out["cmd due"] = await asyncio.to_thread(mailwatch.watch, path, 5)
+                ask = a.mail_asks[r.job_id]
+                ask.answered, ask.looks = time.time(), 1
+                out["cmd quiet"] = await asyncio.to_thread(mailwatch.watch, path, 1)
+                ask.looks = pipeline.GMAIL_LOOKS_MOST  # (its looks used up: the card says it's the person's)
+                shown = desk.state()
+                out["spent card"] = next((o["run"]["gmail"], o["run"]["gmail_note"])
+                                         for o in shown["listings"] + shown["others"]
+                                         if o.get("job_id") == r.job_id and o.get("run"))
+        finally:
+            await desk.stop()
+        out["gone"] = not path.exists()
+        out["cmd closed"] = await asyncio.to_thread(mailwatch.watch, path, 1)
+        return out
+
+    out = run(go())
+    assert out["file"]["port"] and out["file"]["token"] == desk.token
+    if os.name != "nt":  # (Windows keeps a file in the person's own folder theirs alone)
+        assert out["mode"] == 0o600, oct(out["mode"])
+    assert desk.token not in out["command"] and "job-apply-wait-mail --desk" in out["command"], out["command"]
+    assert watch_path(desk.port).as_posix() in out["command"]
+    assert out["no key"] == out["wrong key"] == 403
+    assert out["off"] == {"due": False, "watch": False, "why": "settings.email_codes is off"} and out["off took"] < 5
+    assert out["quiet"] == {"due": False, "watch": False, "why": "no job is queued or waiting on the desk"}
+    assert out["nothing yet"] == {"due": False, "watch": True, "why": None}
+    assert out["held"] and out["watching"]
+    assert out["due"] == {"due": True, "watch": True} and out["woke in"] < 5  # (only whether: nothing of the job)
+    assert out["card"] == "code"
+    assert out["spent card"][0] is None and "yours to enter" in out["spent card"][1], out["spent card"]
+    assert out["cmd due"][0] == 0 and "call mail_requests()" in out["cmd due"][1], out["cmd due"]
+    assert out["cmd quiet"][0] == 0 and out["cmd quiet"][1].startswith("Nothing yet"), out["cmd quiet"]
+    assert out["gone"] and out["cmd closed"][0] == 1 and "isn't open" in out["cmd closed"][1]
+
+
+def test_claude_hands_the_desk_its_gmail_messages_and_hears_what_became_of_them_never_the_code(
+        srv, monkeypatch, job_apply_home):
+    """mail_requests() lists what a job waiting on its emailed code asks of Claude (the Gmail query alone: never the
+    person's mail), give_mail() hands back what Claude read, and the desk types the code into the job's own tab
+    itself. What either tool says never holds the code."""
+    from job_apply import desk as desk_module
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    _set_profile_settings(job_apply_home, email_codes=True)
+    d = Desk(srv)
+    monkeypatch.setattr(desk_module, "_desk", d)
+
+    async def go():
+        await srv.browser.page()
+
+        async def handler(route):
+            await route.fulfill(status=200, content_type="text/html", body=_ACME_PAGE)
+
+        await srv.browser._ctx.route("https://**.example/**", handler)
+        await d.start(port=0, open_browser=False)
+        try:
+            tab = await srv.browser.new_tab()
+            await tab.goto(_ACME_VERIFY)
+            # (the queue went on without it: it's looked at between jobs)
+            r = _waiting_on_mail(srv, d.applier, page=tab, left=True)
+            start = time.monotonic()
+            while not (asked := await srv.mail_requests())["requests"]:
+                assert time.monotonic() - start < 30, (asked, r.mail_last)
+                await asyncio.sleep(0.3)
+            given = await srv.give_mail(r.job_id, [{
+                "sender": "Acme Fab Careers <no-reply@careers.acme-fab.example>", "date": time.time(),
+                "subject": "Verify your email", "plaintext_body": "Your verification code is 482913."}])
+            again = await srv.mail_requests()
+            return r, asked, given, again, await tab.input_value("#code")
+        finally:
+            await d.stop()
+            pipeline._MAIL_TAKEN.clear()
+
+    r, asked, given, again, typed = run(go())
+    [ask] = asked["requests"]
+    assert (ask["job_id"], ask["want"], ask["senders"]) == (r.job_id, "code", ["acme-fab.example"]), ask
+    assert ask["query"].startswith("from:(acme-fab.example) after:") and asked["watch"], asked
+    assert set(asked) == {"requests", "watch", "why", "account", "watch_command", "note"}
+    assert asked["account"] == "sam.rivera@example.com"  # (the profile's address: the Gmail account to search)
+    assert typed == "482913" and given["used"], given
+    assert "482913" not in json.dumps(given) and "482913" not in json.dumps(again), given
+    assert again["requests"] == [], again
+    assert run(srv.give_mail(r.job_id, []))["used"] is False  # (none open now: nothing used)
+
+
+def test_mail_requests_counts_only_the_requests_claude_will_be_asked_again_and_says_a_slow_clock(
+        srv, monkeypatch, job_apply_home):
+    """The review's second round: mail_requests()'s "more looked at lately" counts the requests Claude will be asked
+    for again, never one spent (the person's to enter now). And messages all dated ahead of this computer's clock are
+    said to be so (its clock may be behind), not to have no date."""
+    from job_apply import desk as desk_module
+
+    _set_profile_settings(job_apply_home, email_codes=True)
+    d = Desk(srv)
+    monkeypatch.setattr(desk_module, "_desk", d)
+    a = d.applier
+    runs = [_waiting_on_mail(srv, a) for _ in range(3)]
+    for r in runs:
+        a._ask_claude(r, "code", {"acme-fab.example"}, r.paused_at - 120, None)
+    a.mail_asks[runs[1].job_id].looks, a.mail_asks[runs[1].job_id].answered = 1, time.time()  # (looked at just now)
+    a.mail_asks[runs[2].job_id].looks = pipeline.GMAIL_LOOKS_MOST  # (spent)
+    asked = run(srv.mail_requests())
+    ahead = run(srv.give_mail(runs[0].job_id, [{"sender": "no-reply@careers.acme-fab.example",
+                                                 "date": time.time() + 3600, "plaintext_body": "code 482913"}]))
+    assert [x["job_id"] for x in asked["requests"]] == [runs[0].job_id], asked
+    assert "1 more looked at lately" in asked["note"], asked["note"]
+    assert not ahead["used"] and "clock may be behind" in ahead["said"], ahead

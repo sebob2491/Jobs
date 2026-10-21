@@ -241,10 +241,13 @@ soon, with the least answered that it needs:
      whether they'd like 1 (one after another), 2 or 3, and write it; the desk's **Jobs at
      once** buttons change it later.
    - Email, only if the Gmail connector is connected: may Claude read the
-     verification codes and links career sites email them (`settings.email_codes`)?
-     May it check their email for replies to applications (`settings.email_tracking`)?
-     Both default to off. Explain that Claude only searches for those specific
-     messages and never sends or deletes mail.
+     verification codes and links career sites email them (`settings.email_codes`)? It
+     covers applying with Claude in the chat, and the Job Desk too: without an email app
+     password on the desk, Claude reads a waiting job's code through Gmail while the desk's
+     chat is open, and the desk puts it in. May it check their email for replies to
+     applications (`settings.email_tracking`)? Both default to off. Explain that Claude only
+     searches for those specific messages (for a code, only that job's site's mail since it
+     began waiting) and never sends or deletes mail.
 
    Write `~/.job-apply/profile.yaml` (keeping its comments), and show the user a short
    summary of their answers to confirm, with sensitive values (EEO choices) summarized

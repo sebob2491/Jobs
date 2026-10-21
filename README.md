@@ -443,7 +443,7 @@ Settings in `profile.yaml`:
 | Setting | Default | Effect |
 |---|---|---|
 | `submit_mode` | `review` | Set to `auto` to let Claude submit complete applications without asking, for the job systems in `auto_submit_ats`. `dry_run` fills everything and never submits, which is good for a first practice run. |
-| `email_codes` | `false` | Claude may read the sign-in codes and verification links that career sites email you (needs the Gmail connector) |
+| `email_codes` | `false` | Claude may read the sign-in codes and verification links that career sites email you (needs the Gmail connector): when you apply with Claude in the chat, and for the Job Desk while its chat is open and no email app password is saved on it (Claude reads only that job's own mail since it began waiting, and the desk puts the code in) |
 | `email_tracking` | `false` | Claude may search your email for replies to your applications (needs the Gmail connector) |
 | `accept_notices` | `true` | The Job Desk agrees for you to an employer's notice about AI screening of your application and to its privacy notice and terms of use (never a newsletter, job alerts or a talent community, texts or automated calls, a legal waiver, or the terms of your employment), and picks an application's attestation that its information is true (or your consent to its background check), noting each in the job's log. Never in practice mode. `false` leaves them to you. |
 | `accept_cookies` | `false` | The Job Desk declines cookie banners. One with no way to decline (TI's "Agree and Proceed") waits for you, unless this is `true`: then the desk accepts it for you. |

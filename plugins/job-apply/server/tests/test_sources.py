@@ -5,8 +5,9 @@ from pathlib import Path
 
 SERVER = Path(__file__).resolve().parent.parent
 ROOTS = ("src", "scripts", "tests")
-# owners whose .open() isn't a file's: the browser's and the desk's own, os.open (a file descriptor, binary)
-NOT_A_FILE = {"os", "webbrowser", "self", "srv", "browser", "page", "b", "desk", "applier", "server"}
+# owners whose .open() isn't a file's: the browser's and the desk's own, os.open (a file descriptor, binary), and an
+# urllib opener's (a request: mailwatch.py)
+NOT_A_FILE = {"os", "webbrowser", "self", "srv", "browser", "page", "b", "desk", "applier", "server", "opener"}
 
 
 def _text_calls_without_encoding(tree: ast.AST):

@@ -8,6 +8,10 @@ system's), is looked at, and only the code or link is kept from it (a password r
 when the desk asked for it). The inbox first, and its
 Spam (Junk) folder when the inbox has nothing: a site's first mail to an address sometimes lands
 there (BrassRing's own page says to look there), and it's the same code from the same sender.
+
+The same checks read the messages Claude hands the desk from the Gmail connector (settings.email_codes, with no app
+password: the desk's mail requests), one message at a time over plain data (Mail): its time against the wait's window,
+its sender against the job's own, another job's mail by its subject, then the code, link or reset found in it (pick).
 """
 
 from __future__ import annotations
@@ -18,11 +22,13 @@ import email.utils
 import functools
 import html
 import imaplib
+import math
 import re
 import ssl
 import time
-from dataclasses import dataclass
-from typing import Callable
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 # Where each mail service takes IMAP sign-ins with an app password, by the domain of the address.
@@ -140,11 +146,20 @@ def _parts(msg: email.message.EmailMessage) -> tuple[list[str], list[str]]:
         except (LookupError, ValueError):
             continue
         (markup if part.get_content_subtype() == "html" else plain).append(str(body))
+    texts = ["\n".join(plain)] if plain else []
+    if not markup:
+        return texts, []
+    words, links = html_words(markup)
+    return texts + [words], links
+
+
+def html_words(markup: list[str]) -> tuple[str, list[str]]:
+    """An email's HTML parts as words (a code its markup styles apart read as one, scripts and styles left out) and
+    the links in them: the inbox's (_parts) and the Gmail connector's (connector_mail) alike."""
     links = [html.unescape(h) for page in markup for h in re.findall(r"""href\s*=\s*["']([^"']+)""", page, re.I)]
     words = "\n".join(re.sub(r"<[^>]+>", " ", _SPLIT_CODE.sub("", re.sub(r"(?is)<(script|style).*?</\1>", " ", page)))
                       for page in markup)
-    texts = ["\n".join(plain)] if plain else []
-    return texts + ([html.unescape(words)] if markup else []), links
+    return html.unescape(words), links
 
 
 def find_code(text: str) -> str | None:
@@ -171,7 +186,9 @@ def _find_code(text: str) -> tuple[str | None, bool]:
                 if pattern is _DIGITS and len(value) == 4 and value.startswith(("19", "20")) \
                         and not _JOINING.match(before):
                     continue  # a year, unless it follows the words straight away
-                if _NAMED_NUMBER.search(text[:m.end() + c.start()]):
+                # (its last few words alone: the pattern ends where the number begins, and the whole text before
+                # each number made a long email's read take seconds, the review of 0.3.228)
+                if _NAMED_NUMBER.search(text[max(0, m.end() + c.start() - 80):m.end() + c.start()]):
                     continue  # "(Job 2617841)": the job's number, not the code
                 found.append((c.start(), value))
         found.sort()  # nearest first, digits or not: "K7Q2ZP. It expires in 1440 minutes"
@@ -317,9 +334,13 @@ def message_code(msg: email.message.EmailMessage, texts: list[str] | None = None
     """The code in a message. `texts`: its words (_parts), where they're at hand."""
     if texts is None:
         texts = _parts(msg)[0]
+    return _code_in(str(msg.get("Subject") or ""), texts)
+
+
+def _code_in(subject: str, texts: list[str]) -> str | None:
+    """The code in a message with this subject and these words (plain text first, then its HTML's)."""
     # its words before its subject: "Your verification code" in a subject would
     # otherwise read on into the body's first number (the job's)
-    subject = str(msg.get("Subject") or "")
     # the subject on its own last, then running into the words (a subject "Your
     # verification code" over a body "Use 482913 to verify your email")
     tries = [*texts, subject, subject + "\n" + (texts[0] if texts else "")]
@@ -390,9 +411,7 @@ def _scan(box: imaplib.IMAP4, folder: str, since: float, allowed: set[str], want
         sender = str(head.get("From") or "")
         if signed_only and not signed_by_sender(head):
             continue
-        if received >= since - look_back and (before is None or received < before) and sender_allowed(sender, allowed) \
-                and not (others and others(email.utils.parseaddr(sender)[1].rsplit("@", 1)[-1].lower(),
-                                           str(head.get("Subject") or ""))):
+        if in_window(sender, str(head.get("Subject") or ""), received, since, allowed, before, look_back, others):
             wanted.append((received, mid, sender))
     for received, mid, sender in sorted(wanted, key=lambda w: w[0], reverse=True):  # newest first
         _, parts = box.fetch(mid, "(BODY.PEEK[])")  # type: ignore[arg-type]  # imaplib takes bytes too
@@ -402,13 +421,156 @@ def _scan(box: imaplib.IMAP4, folder: str, since: float, allowed: set[str], want
         try:
             msg = email.message_from_bytes(raw[1], policy=email.policy.default)
             texts, links = _parts(msg)
-            if want == "code":
-                value = message_code(msg, texts)
-            else:
-                words = _RESET_WORDS if want == "reset" else _LINK_WORDS
-                value = next((v for t in texts or [""] if (v := find_link(t, links, allowed_link, words))), None)
+            value = found_in(want, str(msg.get("Subject") or ""), texts, links, allowed_link)
         except Exception:  # a malformed message: the next one
             continue
         if value:
-            return Found(want, value, email.utils.parseaddr(sender)[1].rsplit("@", 1)[-1], received)
+            return Found(want, value, _found_from(sender), received)
     return None
+
+
+# ------------------------------------------------- one message's checks, wherever it was read
+def _domain(sender: str) -> str:
+    """A From header's address's domain ("careers.ti.com"), in lower case."""
+    return email.utils.parseaddr(sender)[1].rsplit("@", 1)[-1].lower()
+
+
+def _found_from(sender: str) -> str:
+    """A From header's address's domain as Found keeps it (for the log, and _MAIL_TAKEN's key): as written."""
+    return email.utils.parseaddr(sender)[1].rsplit("@", 1)[-1]
+
+
+def in_window(sender: str, subject: str, received: float, since: float, allowed: set[str], before: float | None,
+              look_back: float, others: Callable[[str, str], bool] | None = None) -> bool:
+    """Is a message one a waiting job may read its code or link from, by its header alone: arrived after `since` less
+    `look_back` and before `before` (when given: mail after then is another waiting job's), from one of the `allowed`
+    senders, and not one `others` says is another job's (by its sender's domain and its subject)? The inbox's (_scan)
+    and the Gmail connector's (pick) alike."""
+    return (received >= since - look_back and (before is None or received < before) and sender_allowed(sender, allowed)
+            and not (others is not None and others(_domain(sender), subject)))
+
+
+def found_in(want: str, subject: str, texts: list[str], links: list[str],
+             allowed_link: Callable[[str], bool]) -> str | None:
+    """The code (want="code"), confirmation link ("link") or password reset link ("reset") in a message, by its subject,
+    its words (plain text first, then its HTML's) and its HTML's links: a link only where `allowed_link` takes it."""
+    if want == "code":
+        return _code_in(subject, texts)
+    words = _RESET_WORDS if want == "reset" else _LINK_WORDS
+    return next((v for t in texts or [""] if (v := find_link(t, links, allowed_link, words))), None)
+
+
+@dataclass
+class Mail:
+    """A message as the checks read it, wherever it was read: its From header, when it arrived (epoch seconds), its
+    subject, its words (plain text first, then its HTML's) and its HTML's links."""
+    sender: str
+    received: float
+    subject: str = ""
+    texts: list[str] = field(default_factory=list)
+    links: list[str] = field(default_factory=list)
+
+
+def pick(mails: list[Mail], since: float, allowed: set[str], want: str,
+         allowed_link: Callable[[str], bool] = lambda url: False, before: float | None = None,
+         look_back: float = LOOK_BACK, others: Callable[[str, str], bool] | None = None) -> Found | None:
+    """search's answer from messages read elsewhere (the Gmail connector's, handed to the desk by Claude): the newest
+    code, link or reset that passes the very checks search makes (in_window, then found_in), or None."""
+    wanted = [m for m in mails if in_window(m.sender, m.subject, m.received, since, allowed, before, look_back, others)]
+    for m in sorted(wanted, key=lambda m: m.received, reverse=True):  # newest first
+        try:
+            value = found_in(want, m.subject, m.texts, m.links, allowed_link)
+        except Exception:  # an odd message: the next one
+            continue
+        if value:
+            return Found(want, value, _found_from(m.sender), m.received)
+    return None
+
+
+# Characters of a handed message's text (and of its HTML, should it come with one) read: a sign-up email's plain text is
+# a few thousand, and the code and its link come early in it (the review of 0.3.228: all read off the event loop, and no
+# 200k-character body for the slower patterns to crawl)
+MAIL_TEXT_MAX = 20_000
+FUTURE_SKEW = 300  # seconds a message's date may run ahead of this computer's clock (one further ahead is no date)
+# A date as a person reads it (Gmail's own page: "Tue, Oct 20, 2026, 8:01 AM"), in this computer's time
+_HUMAN_DATES = ("%a, %b %d, %Y, %I:%M %p", "%a, %b %d, %Y, %I:%M:%S %p", "%b %d, %Y, %I:%M %p", "%b %d, %Y %I:%M %p",
+                "%b %d, %Y, %I:%M:%S %p", "%B %d, %Y, %I:%M %p", "%B %d, %Y %I:%M %p", "%m/%d/%Y, %I:%M %p",
+                "%m/%d/%Y %I:%M %p", "%m/%d/%Y %H:%M", "%Y/%m/%d %H:%M", "%Y/%m/%d %H:%M:%S")
+
+
+def received_at(said: Any, now: float | None = None) -> float | None:
+    """When a message arrived, as a mail service says it, in whole seconds: epoch seconds (or Gmail's internalDate,
+    milliseconds), as a number or digits, an RFC 2822 date ("Tue, 20 Oct 2026 08:01:02 -0700"), ISO 8601
+    ("2026-10-20T08:01:02-07:00"), or a date as Gmail's page shows it ("Oct 20, 2026, 8:01 AM"). One that names no
+    zone is this computer's time. None for anything else, and for a date more than FUTURE_SKEW ahead of now (one that
+    would outrank every real message, and never age out of the codes kept as used)."""
+    now = time.time() if now is None else now
+    when: float | None = None
+    if isinstance(said, bool):
+        return None
+    if isinstance(said, (int, float)) or isinstance(said, str) and re.fullmatch(r"\s*\d{9,14}(\.\d+)?\s*", said):
+        value = float(said)
+        when = value / 1000 if value > 1e11 else value  # (milliseconds: Gmail's internalDate)
+    elif isinstance(said, str) and said.strip():
+        text = " ".join(said.replace("\u202f", " ").replace("\xa0", " ").split())
+        moment: datetime | None = None
+        for pattern in _HUMAN_DATES:  # (before RFC 2822's reader, which takes "8:01 PM" for 8:01 in the morning)
+            try:
+                moment = datetime.strptime(text, pattern)
+                break
+            except ValueError:
+                continue
+        if moment is None and not re.search(r"\b[AP]M\b", text, re.I):
+            try:
+                moment = email.utils.parsedate_to_datetime(text)
+            except (TypeError, ValueError, IndexError):
+                moment = None
+        if moment is None:
+            try:
+                moment = datetime.fromisoformat(text.replace("Z", "+00:00").replace("z", "+00:00"))
+            except ValueError:
+                return None
+        when = moment.timestamp()  # (naive: this computer's time, as the person reads it)
+    if when is None or not math.isfinite(when) or when <= 0 or when > now + FUTURE_SKEW:
+        return None
+    return float(round(when))  # (whole seconds: the same message handed in another spelling is the same message)
+
+
+def dated_ahead(message: dict[str, Any]) -> bool:
+    """Is a message's date (internalDate or date) one that reads, but further ahead of this computer's clock than
+    FUTURE_SKEW: this clock behind, most likely?"""
+    for said in (message.get("internalDate"), message.get("date")):
+        if said not in (None, "") and received_at(said) is None:
+            when = received_at(said, math.inf)  # (read, whatever the clock says)
+            if when is not None and when > time.time() + FUTURE_SKEW:
+                return True
+    return False
+
+
+def connector_mail(message: dict[str, Any]) -> Mail | None:
+    """A message as the Gmail connector gives it (and Claude hands it on), read as the inbox's are: its sender (`from`,
+    or the connector's `sender`: an address, or {name, email}, its address alone), its date (`internalDate` when it's
+    there, Gmail's own; else `date`: received_at), its `subject`, its words (`text`, `plaintext_body` or `body`, then
+    `html` or `html_body`'s words, should one come) and its links (in its words, its HTML's, and any given as `links`),
+    each MAIL_TEXT_MAX characters at most. None without a sender or a date that reads (its window can't be checked)."""
+    who = message.get("from", message.get("sender"))
+    if isinstance(who, dict):  # (its address alone: a name may hold another address)
+        who = str(who.get("email") or who.get("address") or "")
+    given_at = message.get("internalDate")
+    when = received_at(given_at) if given_at not in (None, "") else None
+    if when is None:
+        when = received_at(message.get("date"))
+    if not isinstance(who, str) or not who.strip() or when is None:
+        return None
+    plain = next((v for k in ("text", "plaintext_body", "body") if isinstance(v := message.get(k), str) and v), "")
+    markup = next((v for k in ("html", "html_body") if isinstance(v := message.get(k), str) and v), "")
+    texts = [plain[:MAIL_TEXT_MAX]] if plain else []
+    links: list[str] = []
+    if markup:
+        words, links = html_words([markup[:MAIL_TEXT_MAX]])
+        texts.append(words)
+    given = message.get("links")
+    if isinstance(given, list):
+        links += [str(u) for u in given[:200] if isinstance(u, str)]
+    subject = message.get("subject")
+    return Mail(who.strip(), when, subject if isinstance(subject, str) else "", texts, links)
