@@ -419,7 +419,7 @@ plan's limit or can't reach Claude, the desk says so once at the top of the page
 - **One letter for a job**, outside the switch: write it the same way and call
   `render_document("cover_letter", markdown, job_id)`; the desk uses it and never writes
   over it.
-- `settings.cover_letter_model` picks the model (empty: `claude-sonnet-5-5`).
+- `settings.cover_letter_model` picks the model (empty: `claude-opus-5-5`, at medium effort).
 
 ## Bot checks
 

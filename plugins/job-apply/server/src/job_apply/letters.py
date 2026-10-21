@@ -36,7 +36,7 @@ from . import config
 from .autofill import _PARTIAL_STUDY, entry_dates, norm, school_under_way
 from .recommend import applicant_years
 
-DEFAULT_MODEL = "claude-sonnet-5-5"
+DEFAULT_MODEL = "claude-opus-5-5"
 CLI_TIMEOUT = 120.0  # seconds a letter may take before the job goes on without it (and its check as long again)
 DRAFT = "cover_letter_draft.md"  # the first letter, in its job's folder, until the person's OK (never uploaded)
 POSTING_CHARS = 12000  # of a posting's text, as tailoring_queue hands it to Claude
@@ -97,7 +97,7 @@ CHECK_RULES = [
 # slash commands, and no session kept. The model and the system prompt's file are added per call (cli_args).
 CLI_FLAGS = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
              "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--permission-mode", "dontAsk",
-             "--disable-slash-commands", "--no-session-persistence", "--effort", "low"]
+             "--disable-slash-commands", "--no-session-persistence", "--effort", "medium"]
 # What never reaches the child's environment: the desk's secrets; the marks of the Claude Code session the desk runs
 # in (its nested-session marker, its session, entry point and IDE port, its process, path, effort and trace), so the
 # child is a session of its own. All else goes with it as it is: what signs it in or picks the person's provider and
