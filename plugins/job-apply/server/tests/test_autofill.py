@@ -5323,3 +5323,69 @@ def test_beside_federal_history_the_background_answers_only_now_or_five_years(la
                   "Are you currently a state or local government employee?",
                   "Have you been a government employee within the past three years?"):
         assert _nnss(label, data) == "No", label
+
+
+# --- the fifth review of 0.3.227 -----------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("label", [
+    "Are you currently a federal employee or a retired federal employee?",
+    "Are you currently a federal employee or annuitant?",
+    "Are you currently a federal government employee or retiree?",
+    "Are you currently a government employee or will you be one?",
+])
+def test_beside_federal_history_now_or_retired_or_later_is_the_persons(label):
+    """The fifth review of 0.3.227: "currently ... or a retired federal employee / annuitant / retiree", "...or will you
+    be one?" ask about another time too: the profile doesn't say whether that federal job ended in retirement, nor
+    what's to come. The person's, beside a history that says the person worked for the federal government."""
+    data = {"history": {"us_government_employee": True}, "background": {"government_employee": False}}
+    assert _nnss(label, data) is None
+    assert _nnss("Are you currently a federal employee?", data) == "No"
+
+
+@pytest.mark.parametrize("history", [{"us_government_employee": True}, {"us_government_employee": False}, {}])
+def test_a_government_question_about_a_contractor_too_is_the_persons(history):
+    """The fifth review of 0.3.227: "Are you currently a government employee or contractor?" got the background's
+    No, which says nothing of contract work: the person's, whatever the history says."""
+    data = {"history": history, "background": {"government_employee": False}}
+    assert _nnss("Are you currently a government employee or contractor?", data) is None
+    assert _nnss("Have you ever been a government employee or government contractor?", data) is None
+
+
+@pytest.mark.parametrize("label, kind, extra", [
+    ("Have you ever worked for any of the following companies? (select all that apply)", "combobox", {}),
+    ("Have you ever worked for any of the following companies? (select all that apply)", "combobox",
+     {"search": True}),
+    ("Have you ever worked for any of the following companies? (select all that apply)", "listbox", {}),
+    ("Have you ever worked for any of the following companies? Check all that apply.", "combobox", {}),
+    ("Have you ever worked for one or more of the following companies?", "combobox", {}),
+    ("Have you ever worked for any of the following companies?", "combobox", {"search": True}),
+    ("Have you ever worked for any of the following companies?", "listbox", {}),
+])
+def test_a_list_that_takes_several_is_never_one_pick_beside_another_employer(label, kind, extra):
+    """The fifth review of 0.3.227: a multi-select read without its flag (Workday's search prompt, a list box, a
+    label that says "all that apply") was taken for a single choice, and Jacobs was picked alone for someone also at
+    Los Alamos National Laboratory, whose operator (Triad) is among the choices. A list that takes several, by any of
+    these, is the person's where another employer of theirs may be one by another name."""
+    options = ["Jacobs Engineering Group Inc.", "Honeywell International, Inc.", "Triad National Security, LLC",
+               "None of the above"]
+    both = {"work_history": [{"company": c, "start": "2018-01", "end": "2020-01"}
+                             for c in ("Jacobs Engineering Group", "Los Alamos National Laboratory")]}
+    assert _nnss(label, both, kind=kind, options=options, job={"company": "Example Fab"}, **extra) is None
+    # (the single choice still picks it)
+    assert _nnss("Have you ever worked for any of the following companies?", both, kind="combobox", options=options,
+                 job={"company": "Example Fab"}) == "Jacobs Engineering Group Inc."
+
+
+@pytest.mark.parametrize("label", [
+    "Have you formerly worked for any of the following companies?",
+    "Have you previously worked for any of the following companies?",
+])
+def test_formerly_worked_for_is_never_the_employer_they_are_at_now(label):
+    """The fifth review of 0.3.227: "Have you formerly worked for any of the following companies?" picked Jacobs for
+    someone at Jacobs now. The person's; one they left is still picked."""
+    options = ["Jacobs Engineering Group Inc.", "Honeywell International, Inc.", "None of the above"]
+    now = {"work_history": [{"company": "Jacobs Engineering Group", "start": "2021-01", "end": "present"}]}
+    left = {"work_history": [{"company": "Jacobs Engineering Group", "start": "2018-01", "end": "2020-01"}]}
+    assert _nnss(label, now, kind="combobox", options=options, job={"company": "Example Fab"}) is None
+    assert _nnss(label, left, kind="combobox", options=options, job={"company": "Example Fab"}) == \
+        "Jacobs Engineering Group Inc."

@@ -1345,10 +1345,14 @@ def _government(prof: Profile, job: dict, label: str = "") -> Any:
     the background's "no" is for the last 5 years, and its "ever" isn't it (the review of 0.3.227); a question about
     now or lately alone ("Are you currently a state or local government employee?", "...in the last 5 years?") is
     still the background's (the second review's), never one that asks "ever" too ("Are you now or have you ever been
-    employed by the federal government?", "...former or current...?": the third review's)."""
+    employed by the federal government?", "...former or current...?": the third review's). Never one about a
+    contractor too ("...a government employee or contractor?"), which the background doesn't say (the fifth
+    review's)."""
     asked = norm(label)
     if re.search(r"\b(military|armed forces|uniformed)\b", asked) \
             and (not _said_no(prof, "military") or _served_us_military(prof)):
+        return None
+    if re.search(r"\bcontractors?\b", asked):
         return None
     if _fact(prof, "history.us_government_employee") and not _now_or_lately(asked):
         return None
@@ -1364,7 +1368,9 @@ _WINDOW = re.compile(r"\b(?:in|within|during|over) the (?:last|past) (\d+|" + "|
 # you once ...?", "...or before that?", "..., or are you ...?"), another tense, "ever", "former", "at any time"
 _OTHER_TIME = re.compile(r"\bor (?:(?:\w+ ){0,2}(?:have|had|were|was|did|been)|are you|is (?:this|it)|before|once|"
                          r"previously|formerly|in the past|at some point)\b|\b(?:had you|were you|once|before|"
-                         r"at some point|ever|former\w*|previous\w*|prior|at any time|first time)\b|"
+                         r"at some point|ever|former\w*|previous\w*|prior|at any time|first time|will|"
+                         # (a federal job that ended in retirement, which the profile doesn't say: the fifth review)
+                         r"retire\w*|annuitant\w*|separated)\b|"
                          r"\bin the past\b(?! (?:\d+|" + "|".join(_NUMBER_WORDS) + r") )")
 
 
@@ -1685,11 +1691,18 @@ def _worked_for_listed(field: dict, prof: Profile, job: dict) -> tuple[bool, Any
             return True, None  # (one that may be one of them, or the employer applied to: theirs to say)
         others = True
     picked = list(dict.fromkeys(picked))
-    several = field.get("kind") == "checkbox_group" or bool(field.get("multiple"))
+    # (a list that takes several: a group of boxes, a multi-select, one whose label says so, a Workday search prompt
+    # (its multi-select's shape) or a list box (one over a multi-select carries no flag): the fifth review of 0.3.227)
+    several = field.get("kind") in ("checkbox_group", "listbox") or bool(field.get("multiple") or field.get("search")) \
+        or bool(re.search(r"\b(?:all|any) (?:that|which) apply\b|\b(?:select|check|choose|mark|tick) all\b|"
+                          r"\bone or more\b", label))
     if len(picked) != 1 or several and others:
         # none of theirs surely is one (the none is never the profile's), several are, or, where the list takes
         # several, another employer of theirs may be one by another name: the person's
         return True, None
+    if re.search(r"\b(?:formerly|previously|former|past)\b", label) \
+            and any(_same_employer(now, picked[0]) for now in _current_employers(prof)):
+        return True, None  # ("Have you formerly worked for ...?" of the employer they're at now: theirs to say)
     return True, [picked[0]] if field.get("kind") == "checkbox_group" else picked[0]
 
 
