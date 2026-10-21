@@ -1897,7 +1897,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         # desk's own: one it gave up that went on elsewhere (the person's mail), what such a tab opened, and a tab
         # Claude opened for the job (it may have gone on to another posting on the same site) stay
         tabs += [t for t in run.opened_tabs if t not in tabs and t not in others and not t.is_closed()
-                 and t is not browser.current_tab and self._own_place(run, t.url)]
+                 and browser.tab_jobs.get(t, run.job_id) == run.job_id and self._own_place(run, t.url)]
         for tab in tabs:
             with contextlib.suppress(Exception):
                 await tab.close()

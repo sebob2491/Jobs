@@ -9292,6 +9292,34 @@ async def at(browser, address):
     return tab
 
 
+def test_skip_closes_the_old_posting_tab_a_job_opened_again_left(srv, monkeypatch):
+    """The person closes a paused job's application tab; the desk opens the job again in a new tab ("its tab was closed,
+    so I opened the job again in a new tab"), and its old posting tab stays open, out of the new tab's lineage. Skip
+    closes it too (the fourth review: it was the tools' current tab by then, and was kept for that)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/popup-posting.html"), title="Sr. Field Application Engineering",
+                      company="Example Litho")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you" and job["id"] not in applier._slots, timeout=90)
+            application, posting = srv.browser.lineage(r.page)
+            await application.close()  # the person closes the application tab
+            await until(lambda: any("opened the job again" in line for line in r.log), timeout=60)
+            await until(lambda: r.status == "needs_you" and job["id"] not in applier._slots, timeout=90)
+            new = srv.browser.lineage(r.page)
+            await applier.skip(job["id"])
+            return posting, new
+        finally:
+            await applier.stop()
+
+    posting, new = run(go())
+    assert posting.is_closed() and all(t.is_closed() for t in new)
+
+
 def test_skip_closes_the_jobs_old_posting_tab_but_never_one_gone_elsewhere(srv):
     """The second review: a job opened again in a new tab (its tab closed, or gone on to another page) left its old
     posting tab open, out of its new tab's lineage, and Skip left it open. Skip closes a tab the desk opened for the
