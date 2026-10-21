@@ -1364,9 +1364,14 @@ def _dod_employee(prof: Profile, job: dict, label: str = "") -> Any:
     """The background's Department of Defense employment ("no" answers any wording of it), but where the question
     counts military service in it ("...(military or civilian)?", "...including military service?", "...uniformed
     service members?"), only for someone the profile says never served (_served_us_military: the second review of
-    0.3.227 found a veteran's No)."""
-    if re.search(r"\b(?:military|uniformed|service members?|armed forces|servicemembers?)\b", norm(label)) \
-            and _served_us_military(prof) is not False:
+    0.3.227 found a veteran's No). And never for one it says served, who was the DoD's, unless it asks about now
+    ("Are you currently employed by the Department of Defense?" is still the background's)."""
+    asked = norm(label)
+    served = _served_us_military(prof)
+    if re.search(r"\b(?:military|uniformed|service members?|armed forces|servicemembers?)\b", asked) \
+            and served is not False:
+        return None
+    if served and not re.search(r"\b(?:currently|presently|now)\b|\bcurrent\b(?! or former)", asked):
         return None
     return _DOD_SAID(prof, job, label)  # type: ignore[call-arg]
 
@@ -1433,7 +1438,7 @@ _SERVICE_ASKED = {
                            r"^(?:do you have|have you had) (?:any )?(?:prior |previous )?(?:(?:u s|us|united states) )?"
                            r"(?:military|armed forces) service$"),
     # "worked for the military": a service member did, and a civilian at it may have (the person's to say)
-    "worked_military": re.compile(r"^(?:have|had|were) you (?:ever )?(?:previously )?(?:worked|been employed) "
+    "worked_military": re.compile(r"^(?:have|had|were) you (?:ever )?(?:previously )?(?:worked|been employed|employed) "
                                   r"(?:for|by) (?:the )?(?:(?:u s|us|united states) )?(?:military|armed forces|armed "
                                   r"services)(?: as an? civilian(?: employee)?)?$"),
 }

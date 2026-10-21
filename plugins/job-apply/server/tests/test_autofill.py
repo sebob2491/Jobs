@@ -5200,7 +5200,33 @@ def test_a_dod_question_counting_military_service_is_never_a_veterans_no(label):
     never = {"history": {"us_government_employee": False, "us_military": False},
              "background": {"defense_department": False, "military": False}}
     assert _nnss(label, never) == "No"
-    assert _nnss("Have you ever been employed by the Department of Defense?", veteran) == "No"
+    assert _nnss("Are you currently employed by the Department of Defense?", veteran) == "No"
+
+
+@pytest.mark.parametrize("label", [
+    "Have you ever been employed by the Department of Defense?",
+    "Are you a former DoD employee?",
+    "Have you previously been employed by the U.S. Department of Defense?",
+])
+def test_a_veteran_was_employed_by_the_dod(label):
+    """The coordinator's follow-up to the second review of 0.3.227: a service member was the DoD's, so a veteran's
+    background "never employed by the DoD" is no No to "Have you ever been employed by the Department of Defense?":
+    the person's. Someone the profile says never served keeps the background's No."""
+    veteran = {"history": {"us_government_employee": False, "us_military": True},
+               "background": {"defense_department": False, "military": True, "government_employee": False}}
+    never = {"history": {"us_government_employee": False, "us_military": False},
+             "background": {"defense_department": False, "military": False}}
+    assert (_nnss(label, veteran), _nnss(label, never)) == (None, "No")
+
+
+def test_were_you_ever_employed_by_the_military_is_the_served_question():
+    """"Were you ever employed by the U.S. military?": Yes where the profile says the person served, No where it says
+    they neither served nor worked for the federal government, else the person's."""
+    label = "Were you ever employed by the U.S. military?"
+    assert _nnss(label, {"history": {"us_government_employee": False, "us_military": True}}) == "Yes"
+    assert _nnss(label, {"history": {"us_government_employee": False, "us_military": False}}) == "No"
+    assert _nnss(label, {"history": {"us_government_employee": True, "us_military": False}}) is None
+    assert _nnss(label, {}) is None
 
 
 @pytest.mark.parametrize("held", ["Secret (active 2012-2016)", "Top Secret, active 2015-2019",
