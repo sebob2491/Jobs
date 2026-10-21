@@ -852,29 +852,70 @@ def _citizenship_proof(prof: Profile, job: dict, label: str = "") -> Any:
 # one ("Secret (expired)", "TS, inactive", "eligible for a Secret", "Public Trust"); none where it says so ("None",
 # "No", false)
 _CLEARANCE_NONE = re.compile(r"^(?:none|no|n a|na|nil|not applicable|never)\b")
-_CLEARANCE_LEVEL = re.compile(r"\b(?:confidential|secret|top secret|ts|sci|q|l)\b")
 _CLEARANCE_NOT_NOW = re.compile(r"\b(?:not|inactive|expired|lapsed|former\w*|previous\w*|past|prior|once|terminated|"
                                 r"revoked|denied|suspended|pending|process\w*|applied|applying|interim|eligib\w*|"
                                 r"obtain\w*|reinstat\w*|held|had|was|until|before|sponsor\w*|public trust)\b")
+# The DOE's Q and L as a question names them (a lone letter is no level there: "Q. Do you hold ...", "Q3"): "DOE Q",
+# "an L clearance", "Q or L"
+_DOE_ASKED = re.compile(r"\bdoe ([ql])\b|\b([ql])(?: level)?(?: or (?:higher|above))? (?:security )?clearance\b|"
+                        r"\b([ql]) or ([ql])\b")
+# ...and the levels a "Do you hold ... clearance?" names (on norm()'s text), with "or higher"
+_LEVEL_NAMED = r"(?:top secret|secret|confidential|ts|sci|q|l)"
+_LEVELS_NAMED = rf"{_LEVEL_NAMED}(?:(?: or | and | ){_LEVEL_NAMED})*"
+_OR_HIGHER = r"(?: or (?:higher|above|greater|better))"
+
+
+def _clearance_levels(text: str, asked: bool = False) -> set[tuple[str, int, bool]]:
+    """The clearance levels a text names (norm()'s), each as (system, rank, SCI): the DoD's Top Secret (TS) over Secret
+    over Confidential, with SCI (which only a Top Secret has); the DOE's Q over L. `asked`: a question's words, whose
+    lone Q or L is a level only beside "clearance" or "DOE" (_DOE_ASKED)."""
+    found: set[tuple[str, int, bool]] = set()
+    if re.search(r"\bsci\b", text):
+        found.add(("dod", 3, True))
+    elif re.search(r"\b(?:ts|top secret)\b", text):
+        found.add(("dod", 3, False))
+    if re.search(r"(?<!top )\bsecret\b", text):
+        found.add(("dod", 2, False))
+    if re.search(r"\bconfidential\b", text):
+        found.add(("dod", 1, False))
+    letters = [g for m in _DOE_ASKED.finditer(text) for g in m.groups() if g] if asked \
+        else re.findall(r"\b([ql])\b", text)
+    found |= {("doe", 2 if g == "q" else 1, False) for g in letters}
+    return found
 
 
 def _clearance_held(prof: Profile, job: dict, label: str = "") -> Any:
     """"Do you currently have a security clearance granted by the U.S. Government?" (NNSS's question 9, run 148): Yes
     where the profile names one held now (an "active" one where the question asks for that), No where it says none,
-    else the person's."""
+    else the person's. A question naming a level ("Do you hold an active Secret clearance or higher?", "...TS/SCI?") is
+    Yes only for one the profile names that meets it (Top Secret meets Secret, Q meets L, and TS/SCI needs SCI named),
+    never from a bare true: the person's."""
     held = prof.get("work_authorization.security_clearance")
+    asked = _clearance_levels(norm(label), asked=True)
     if isinstance(held, bool):
-        return "Yes" if held else "No"
+        return "No" if not held else None if asked else "Yes"
     said = norm(held)
     if not said:
         return None
     if _CLEARANCE_NONE.match(said):
         return "No"
-    if _CLEARANCE_NOT_NOW.search(said) or not _CLEARANCE_LEVEL.search(said):
+    has = _clearance_levels(said)
+    if _CLEARANCE_NOT_NOW.search(said) or not has:
         return None
     if re.search(r"\bactive\b", norm(label)) and not re.search(r"\bactive\b", said):
         return None  # ("Secret" may be one held but not active now)
+    if asked and not any(h[0] == a[0] and h[1] >= a[1] and (h[2] or not a[2]) for h in has for a in asked):
+        return None  # (a lower one, another system's, or a Top Secret without its SCI named)
     return "Yes"
+
+
+def _clearance_said(prof: Profile, job: dict, label: str = "") -> Any:
+    """The profile's security_clearance as written, for a box or list about the clearance (a level among levels); never
+    a bare true or a yes for a question naming a level, which it doesn't say is met (_clearance_held)."""
+    held = prof.get("work_authorization.security_clearance")
+    if _clearance_levels(norm(label), asked=True) and (held is True or isinstance(held, str) and polarity(held)):
+        return None
+    return held
 
 
 def _authorized(prof: Profile, job: dict) -> Any:
@@ -2129,7 +2170,7 @@ def _reads_question(getter: Getter) -> bool:
 _READS_QUESTION = {_relatives, _government, _travel, _previously_employed, _no_sponsorship, _sponsorship, _UNDER_18,
                    _OVER_18, _phone, _masked_phone,
                    _local_or_relocate, _lives_in, _veteran, _has_degree, _citizenship_proof, _clearance_held,
-                   _us_service}
+                   _clearance_said, _us_service}
 
 HOW_HEARD = (r"(how|where) did you (first )?(hear|find|learn (about|of|that))|"
              r"source of (application|referral)|^source$")
@@ -2339,17 +2380,20 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("citizenship", r"citizenship|country of citizen|are you a (u ?s )?citizen\b" + _CITIZEN_GOES_ON,
      _p("work_authorization.citizenship"), None, None),
     # "Do you currently have a Security Clearance granted by the U.S. Government?" (NNSS's question 9, run 148)
+    # (and one naming a level: "Do you hold an active Secret clearance or higher?", "...a TS/SCI clearance?")
     ("clearance_held", r"^(\d+[a-z]? )?(do|are) you (currently |presently |now )?(have|hold|possess|holding|in "
                        r"possession of) (an? |any )?((active|current|valid) )?((u s|us|federal|government|dod|doe|"
-                       r"department of (defense|energy)) ){0,2}(security )?clearance( (granted|issued) by (the )?"
-                       r"((u s|us|united states|federal) )?(government|govt|department of (defense|energy)|dod|doe))?$",
+                       rf"department of (defense|energy)) ){{0,2}}({_LEVELS_NAMED}( level)?{_OR_HIGHER}? )?(security )?"
+                       rf"clearance( (at|of) (the |a )?{_LEVELS_NAMED}( level)?|( with| and)( an?)? sci( eligibility|"
+                       rf" access)?)?{_OR_HIGHER}?( (granted|issued) by (the )?((u s|us|united states|federal) )?"
+                       r"(government|govt|department of (defense|energy)|dod|doe))?$",
      _clearance_held, 160, _YES_NO_KINDS),
     # (never another question about one, which the clearance held doesn't answer: whether one was ever denied or
     # revoked, held before, could be obtained, needs a polygraph: a profile's false said the person couldn't get one,
-    # its true that they'd been denied one, run 148's questions 10 and 11)
+    # its true that they'd been denied one, run 148's questions 10 and 11; nor a level its bare true doesn't say)
     ("clearance", r"^(?!.*\b(have|had) you\b)(?!.*\b(deni\w*|revok\w*|suspend\w*|obtain\w*|eligib\w*|willing|able|"
                   r"unable|ability|ever|polygraph|poly|reinstat\w*|sponsor\w*|interim|upgrade\w*)\b)"
-                  r".*(security clearance|active clearance)", _p("work_authorization.security_clearance"), None, None),
+                  r".*(security clearance|active clearance)", _clearance_said, None, None),
     # "do you live nearby or are you willing to relocate?": a local applicant isn't relocating
     ("local_or_relocate", r"(located|live|living|reside|residing|based|commut).{0,60}relocat|"
                           r"relocat.{0,60}(located|live|living|reside|residing|commut)",

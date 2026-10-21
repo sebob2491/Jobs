@@ -4676,6 +4676,49 @@ def test_an_active_clearance_is_one_the_profile_says_is_active():
     assert _nnss(label, {"work_authorization": {"security_clearance": "None"}}) == "No"
 
 
+LEVELS_ASKED = ("Do you hold a Top Secret clearance?", "Do you have an active Secret clearance or higher?",
+                "Do you currently hold an active TS/SCI clearance?", "Do you have a DOE Q clearance?",
+                "Do you hold an active Secret security clearance?", "Do you have an active DOE L or Q clearance?",
+                "Do you hold a security clearance at the Secret level or higher?")
+
+
+@pytest.mark.parametrize("held, said", [
+    # (what each of LEVELS_ASKED is answered, in its order)
+    (True, (None,) * 7),
+    ("Yes", (None,) * 7),
+    (False, ("No",) * 7),
+    ("None", ("No",) * 7),
+    ("Top Secret (active)", ("Yes", "Yes", None, None, "Yes", None, "Yes")),
+    ("TS/SCI (active)", ("Yes", "Yes", "Yes", None, "Yes", None, "Yes")),
+    ("Secret (active)", (None, "Yes", None, None, "Yes", None, "Yes")),
+    ("Confidential (active)", (None,) * 7),
+    ("DOE Q (active)", (None, None, None, "Yes", None, "Yes", None)),
+    ("DOE L (active)", (None, None, None, None, None, "Yes", None)),
+    ("Top Secret", ("Yes", None, None, None, None, None, "Yes")),  # (an "active" one asked: not said)
+    ("Top Secret (expired)", (None,) * 7),
+])
+def test_a_clearance_question_naming_a_level_is_answered_only_where_the_profile_meets_it(held, said):
+    """"Do you hold a Top Secret clearance?", "...an active Secret clearance or higher?", "...TS/SCI?": a bare true
+    doesn't say which, so it's the person's (it answered "Do you hold an active Secret security clearance?" Yes). Yes
+    only for a level the profile names that meets it (Top Secret meets Secret, which meets Confidential; Q meets L;
+    TS/SCI needs SCI named; never across DoD and DOE), held now; No where the profile says none."""
+    data = {"work_authorization": {"security_clearance": held}}
+    assert tuple(_nnss(label, data) for label in LEVELS_ASKED) == said
+
+
+def test_a_level_named_in_a_box_is_never_a_bare_trues_yes():
+    """The same in a text box, which the clearance's own words go in: a bare true's "Yes" never, a none's "No" and a
+    level written out as written."""
+    label = "Do you hold an active Top Secret security clearance?"
+    assert _nnss(label, {"work_authorization": {"security_clearance": True}}, kind="text", options=None) is None
+    assert _nnss(label, {"work_authorization": {"security_clearance": False}}, kind="text", options=None) == "No"
+    assert _nnss(label, {"work_authorization": {"security_clearance": "Top Secret (active)"}}, kind="text",
+                 options=None) == "Top Secret (active)"
+    levels = ["None", "Confidential", "Secret", "Top Secret"]
+    assert _nnss("Security clearance level", {"work_authorization": {"security_clearance": "Secret (active)"}},
+                 kind="select", options=levels) == "Secret"
+
+
 @pytest.mark.parametrize("label", [
     "10. Have you ever been denied a Security Clearance?",
     "11. Are you able to obtain and maintain a security clearance?",
