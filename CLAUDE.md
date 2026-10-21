@@ -281,4 +281,7 @@ this file says otherwise, it wins.
     email a site was just asked for, from that site);
   - never ask for a password in chat (the desk page holds them).
 - **Answers come only from the profile or the person.** Never overstate education or
-  experience: coursework is not a degree.
+  experience: coursework is not a degree. Where the profile supports the answer, the desk
+  answers by itself (as automatic as possible: the owner's call, Oct 21; e.g. "Can you provide
+  proof of U.S. citizenship?" from `us_citizen`); it asks only what the profile can't say, and
+  never overstates.

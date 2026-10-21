@@ -498,12 +498,19 @@ class Profile:
         unsaid = [k for k in BACKGROUND_KEYS if self.get(f"background.{k}") is None]
         if unsaid:
             gaps.append("background: " + ", ".join(unsaid))
+        unsaid = [k for k in SERVICE_KEYS if self.get(f"history.{k}") is None]
+        if unsaid:
+            gaps.append("history: " + ", ".join(unsaid))
         return gaps
 
 
 # The yes/no questions many employers ask, answered once in the profile's background: section
 BACKGROUND_KEYS = ("relatives_at_employer", "government_employee", "military", "defense_department",
                    "restrictive_agreement", "intellectual_property", "outside_work", "board_member")
+# ...and the U.S. service the profile's history: section says, both ways (ever worked for the U.S. federal government,
+# ever served in the U.S. military): NNSS's "Have you ever worked for the U.S. Government ... or served in the U.S.
+# Military in any capacity?" (the owner's call, Oct 21)
+SERVICE_KEYS = ("us_government_employee", "us_military")
 
 
 def get_secret(name: str) -> str | None:

@@ -59,6 +59,13 @@ history:
   previous_employers: []      # companies you've worked for; answers "have you worked for X before?"
   employee_ids: {}            # your ID at an employer you've worked for, e.g. {Example Fab: "123456"}:
                               # filled only on that employer's forms ("Employee ID", "WWID")
+  # U.S. service, ever (true or false), which answers "Have you ever worked for the U.S. Government
+  # ... or served in the U.S. Military?" both ways: Yes where either is true, No where both are false
+  us_government_employee: ~   # ever worked for the U.S. federal government as a civilian (any agency or
+                              # branch, any capacity: an employee, an intern, a Special Government
+                              # Employee, an IPA assignment)? Not a state or local government, not a contractor
+  us_military: ~              # ever served in the U.S. military (any branch or capacity: active duty, the
+                              # Reserves or the National Guard)?
 
 # The yes/no questions many employers ask, answered once (true or false). A false answers them
 # however they're worded and whatever time they cover; a true leaves each one to you on the

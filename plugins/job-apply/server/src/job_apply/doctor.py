@@ -62,6 +62,7 @@ GAP_WORDS = {
     "work_history dates": "start and end months for some jobs",
     "education_history degree": "what you finished at some schools",
     "background": "the yes/no background questions employers ask",
+    "history": "whether you've worked for the U.S. federal government or served in the U.S. military",
 }
 BROWSER_NAMES = {"chrome": "Google Chrome", "chrome-beta": "Google Chrome Beta", "msedge": "Microsoft Edge"}
 
