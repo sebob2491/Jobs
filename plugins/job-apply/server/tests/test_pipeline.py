@@ -11369,6 +11369,76 @@ def test_a_window_looked_at_before_it_ended_or_with_a_wider_query_is_looked_at_a
     assert third[0] and r.mail_done, third
 
 
+@pytest.mark.parametrize("again", ["the same query", "a narrower query"])
+def test_a_request_listed_again_before_claude_hands_back_keeps_its_first_listings_time(
+        srv, monkeypatch, job_apply_home, again):
+    """The review's third round: Claude may call mail_requests() again between its search and give_mail (two jobs
+    waiting). The time the window was searched is its first listing's since the last hand-over, never a later one's: a
+    search made too soon after the window ended (Gmail a moment behind its mail) isn't taken as one that saw it all,
+    and the window isn't closed on it. Nor when it was listed again with another end (another job began waiting
+    meanwhile): which of the two Claude searched with isn't known."""
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    _email_codes(job_apply_home)
+    applier = Applier(srv)
+    now = float(round(time.time()))
+
+    async def go():
+        await _serve(srv, _GMAIL_PAGES, [])
+        r = await _gmail_job(srv, applier, paused_at=now - 200)
+        r.others_mail = None
+        applier._inbox_takes.append((now - 190, _shared_sender_job(srv, applier)))
+        applier.claude_seen()
+        await applier._check_mail(r)
+        ask = applier.mail_asks[r.job_id]
+        ask.public()  # (listed: Claude searches with it)
+        if again == "the same query":
+            ask.given_at = ask.before + 5  # (as if that was just as the window ended)
+        else:
+            ask.before -= 20  # (another job on its senders began waiting meanwhile: _ask_claude's renewal)
+        listed_again = ask.public()["query"]  # (and listed again, for another job, before Claude hands this back)
+        given = await _hand(applier, r, [_gmail_message(code="444444", at=now - 185)])
+        return r, ask, listed_again, given
+
+    r, ask, listed_again, given = run(go())
+    assert "before:" in listed_again and not given[0]
+    assert not ask.closed and ask.due(ask.answered + 3600), (ask.closed, given)  # (asked again, its wait over)
+
+
+def test_a_window_searched_up_to_another_jobs_wait_isnt_closed_once_that_job_stops_waiting(
+        srv, monkeypatch, job_apply_home):
+    """The review's third round: a request's window can end early at another waiting job's start (mail after it is that
+    job's), before the step that closes it for good. When that job stops waiting before the look, the window's real end
+    is the step, and Claude's search, ending at the waiting job's start, didn't see all of it: not closed, and asked
+    again, the query now ending at the step."""
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    _email_codes(job_apply_home)
+    applier = Applier(srv)
+    now = float(round(time.time()))
+
+    async def go():
+        await _serve(srv, _GMAIL_PAGES, [])
+        r = await _gmail_job(srv, applier, paused_at=now - 200)
+        later = await _gmail_job(srv, applier, paused_at=now - 150)  # (waiting on the same senders, from later on)
+        for run_ in (r, later):
+            run_.others_mail = None
+        applier._inbox_takes.append((now - 100, _shared_sender_job(srv, applier)))  # (the step that closes it)
+        applier.claude_seen()
+        await applier._check_mail(r)
+        ask = applier.mail_asks[r.job_id]
+        first = ask.public()["query"]
+        later.status, later.need = "ready", ""  # (its code in: it waits no more)
+        given = await _hand(applier, r, [_gmail_message(code="444444", at=now - 95)])
+        r.mail_checked = 0.0
+        ask.answered = 0.0
+        await applier._check_mail(r)
+        return ask, first, given, ask.public()["query"]
+
+    ask, first, given, renewed = run(go())
+    assert first.endswith(f" before:{int(now - 150)}"), first
+    assert not given[0] and not ask.closed, given
+    assert renewed.endswith(f" before:{int(now - 100 - pipeline.STEP_CLOCK_SKEW)}"), renewed
+
+
 @pytest.mark.parametrize("meanwhile", ["a step under way", "a step on other senders, over"])
 def test_gmail_mail_read_while_another_job_began_an_email_step_isnt_used(srv, monkeypatch, job_apply_home, meanwhile):
     """As the inbox's own look: another job that began a step that may email the person (a sign-in) while the desk

@@ -46,10 +46,13 @@ class MailAsk:
     looks: int = 0  # how many times it has (each a little further apart: due)
     mails: list[mailbox.Mail] | None = None  # handed back, for the job's next look
     said: tuple[bool, str] | None = None  # what became of them: used, and in plain words (never the code)
-    # the query as last given to Claude: its `before`, and when (a look that may be the window's last is one made with
-    # the whole window before it in the past)
+    # the query given to Claude since its last hand-over: its `before`, and when it was first listed (Claude's search,
+    # and so what it found, comes after that, never before), and whether it was listed again with another `before`
+    # (then which one Claude searched with isn't known). A look that may be the window's last is one made with the
+    # whole window before it in the past
     given_before: float | None = None
     given_at: float = 0.0
+    given_other: bool = False
     # its window ends at another job's step on the same senders (MailMixin._others_step_since), was looked at whole,
     # and nothing in it could be used: what comes after can't be told from that job's, so it's the person's to enter
     closed: bool = False
@@ -69,6 +72,10 @@ class MailAsk:
         return (f"Claude looked in your Gmail {self.looks} times and none came that it could use, so the {self.want} "
                 "is yours to enter in the desk's browser window")
 
+    def handed_over(self) -> None:
+        """Claude's hand-over came back (read, or nothing in it): the next listing's query is the next search's."""
+        self.given_at, self.given_other = 0.0, False
+
     def due(self, now: float) -> bool:
         """For Claude to look for now: nothing handed back on, not spent, and MAIL_POLL_SECONDS after its last look came
         back with nothing usable, twice that after the next, and so on, GMAIL_WAIT_MOST apart at most."""
@@ -78,7 +85,10 @@ class MailAsk:
     def query(self) -> str:
         """The Gmail search for it: those senders, in its window (Gmail leaves out Spam and Trash by itself). Kept as
         given: what Claude hands back was found with it."""
-        self.given_before, self.given_at = self.before, time.time()
+        if not self.given_at:  # (its first listing since the last hand-over: listed again, the earliest stands)
+            self.given_before, self.given_at, self.given_other = self.before, time.time(), False
+        elif self.before != self.given_before:
+            self.given_other = True
         q = f"from:({' OR '.join(sorted(self.senders))}) after:{math.floor(self.after)}"
         return q + (f" before:{math.ceil(self.before)}" if self.before is not None else "")
 
@@ -201,6 +211,7 @@ class MailMixin:
             if handed is not None and handed.mails is None:  # (read: due again a little later, unless used)
                 handed.answered = time.time()
                 handed.looks += 1
+                handed.handed_over()
                 self._tell_spent(run, handed)
                 handed.said = handed.said or (False, run.mail_last)
             if run.mail_done:
@@ -315,8 +326,9 @@ class MailMixin:
                                                 others=others_mail)
                 # (the window, closed by that step, looked at whole by a search that ended there, a minute after it
                 # ended: nothing more can come in it, so asking again would only be Claude's turns for nothing)
-                if (found is None and bound is not None and handed.given_before is not None
-                        and abs(handed.given_before - bound) <= 1 and handed.given_at > bound + pipeline.MAIL_SETTLE):
+                if (found is None and bound is not None and handed.given_before is not None and handed.given_at
+                        and not handed.given_other and abs(handed.given_before - bound) <= 1
+                        and handed.given_at > bound + pipeline.MAIL_SETTLE):
                     handed.closed = True
         except mailbox.MailboxError as e:
             if login is not None and "app password" in str(e):  # (only the inbox's own sign-in says so)
@@ -570,6 +582,7 @@ class MailMixin:
         if not mails:
             ask.answered = time.time()
             ask.looks += 1
+            ask.handed_over()
             run = self.runs.get(job_id)
             if run is not None:
                 self._tell_spent(run, ask)
