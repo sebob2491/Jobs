@@ -7621,7 +7621,8 @@ def _went_left(run: Run, result: dict[str, Any], *pages: dict[str, Any]) -> None
     """The optional questions autofill left empty on its page (the profile doesn't answer them, none of their choices is
     its answer, or the box wouldn't take it), for the panel's "Left empty": the page's as its latest fill left them. An
     optional question of the person's own (an ID at this employer: "employer_id") is theirs on its card, not left empty,
-    until they go on from that card leaving it empty (Run.asked_once): then it's left, as theirs."""
+    until they go on from that card leaving it empty (Run.asked_once), or did so at this employer before ("left_here"):
+    then it's left, as theirs."""
     if not pages:
         return
     page, url = _page_name(pages[0]), _steady_url(pages[0].get("url"))
@@ -7635,7 +7636,8 @@ def _went_left(run: Run, result: dict[str, Any], *pages: dict[str, Any]) -> None
         shown = now.get(qid)
         if shown is not None and not is_empty_value(shown.get("value")) and not unset_choice(shown):
             continue  # (the site has answered it since: Oracle's County from the ZIP)
-        theirs = bool(q.get("employer_id")) and _asked_before(run.asked_once, q)
+        # (or one they left empty on a card at this employer before, Remember ticked: plan_autofill's "left_here")
+        theirs = bool(q.get("employer_id")) and _asked_before(run.asked_once, q) or bool(q.get("left_here"))
         if q.get("employer_id") and not theirs:
             continue  # (asked on its card: theirs to answer, not left)
         why = ("you left it empty" if theirs

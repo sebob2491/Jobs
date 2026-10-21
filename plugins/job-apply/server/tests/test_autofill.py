@@ -2357,6 +2357,175 @@ def test_an_id_kept_under_an_employers_short_name_is_that_employers(monkeypatch)
     assert _answer("Badge number", keeps, job={"company": "Ultra Clean Holdings"}) == "12345678"
 
 
+def _at_example_fab():
+    """A made-up person who worked at Example Fab and works at Northwind Litho now, with Example Fab's ID in the
+    profile, and the same ID remembered from Example Fab's card for "Employee ID" (as Desk.answer keeps it)."""
+    return Profile({"work_history": [
+        {"company": "Example Fab", "title": "Technician", "start": "2019-01", "end": "2022-05"},
+        {"company": "Northwind Litho", "title": "Technician", "start": "2022-06", "end": "present"}],
+        "history": {"employee_ids": {"Example Fab": "12345678"}},
+        "answers": [{"match": r"^Employee\W+ID$", "question": "Employee ID", "answer": "12345678",
+                     "from": "Example Fab", "at": "Example Fab"}]})
+
+
+@pytest.mark.parametrize("box", [
+    {"label": "Employee ID", "section": "References"}, {"label": "Employee ID", "section": "Employment History"},
+    {"label": "Employee ID", "section": "Most Recent Employer"},
+    {"label": "Employee ID", "section": "Work Experience 1"},
+    {"label": "Current Employer Employee ID"}, {"label": "Previous Employer Employee ID"},
+    {"label": "Employee ID (previous company)"},
+    {"label": "Employee ID", "kind": "radio_group", "options": ["Yes", "No"]},
+    {"label": "Employee ID", "kind": "checkbox"}])
+def test_an_id_kept_for_this_employer_goes_only_into_its_own_id_box(box):
+    """The review of the ID's change (M1, M2): an ID kept for Example Fab (answers.yaml's `at`, or the profile's
+    employee_ids) went into every "Employee ID" on its form, under References, Employment History and Most Recent
+    Employer (another employer's block) too, read from the label alone; and "Current Employer Employee ID", "Previous
+    Employer Employee ID" took it, which main had left empty. The box is told by the whole of it (its section and kind
+    too): only the person's own ID box at this employer takes it, and another employer's or someone else's is neither
+    filled nor asked as optional. Only a text box is an ID box."""
+    from job_apply.autofill import employer_id_box
+
+    person = _at_example_fab()
+    field = {"id": "b", "kind": "text", "value": "", "required": False, **box}
+    assert employer_id_box(field, {"company": "Example Fab"}) is not True, box
+    plan = plan_autofill([field], person, {"company": "Example Fab"})
+    assert plan["to_fill"] == [] and not any(q.get("employer_id") for q in plan["needs_input"]), (box, plan)
+    for kept in (person, Profile({**person.data, "answers": []}), Profile({**person.data, "history": {}})):
+        got = resolve_field(field, kept, {"company": "Example Fab"})
+        assert got is None or got.value != "12345678", (box, got)
+    # (its own ID box, beside them, takes it)
+    own = {"id": "a", "kind": "text", "label": "Employee ID", "value": "", "required": False}
+    assert [t["value"] for t in plan_autofill([own, field], person, {"company": "Example Fab"})["to_fill"]] == [
+        "12345678"]
+
+
+@pytest.mark.parametrize("label,company,whose", [
+    # (the review's M3: "for", "of" or "at" with no name after it says nothing of another employer)
+    ("Employee ID (for former employees)", "Example Fab", True),
+    ("Employee ID for former employees", "Example Fab", True),
+    ("Employee Number (for rehires only)", "Example Fab", True),
+    ("Employee ID for internal applicants", "Example Fab", True),
+    ("Employee ID - for current employees only", "Example Fab", True),
+    ("Employee ID of former employee", "Example Fab", True), ("Employee ID for a former employee", "Example Fab", True),
+    ("EMPLOYEE ID (FOR FORMER EMPLOYEES)", "Example Fab", True),
+    ("Employee ID If Previously Employed With Us", "Example Fab", True),
+    ("Employee ID at Example Fab", "Example Fab", True),
+    ("If you were employed by an Example Fab subsidiary, provide your employee ID", "Example Fab", True),
+    # (this employer's short names in capitals: its initials, a short name its list entry or its own name gives)
+    ("TI Employee ID (if applicable)", "Texas Instruments", True),
+    ("Former TI employee? Your TI employee ID", "Texas Instruments", True),
+    ("ASU Employee ID (if applicable)", "Arizona State University", True),
+    ("AMD employee ID", "Advanced Micro Devices", True), ("SRP employee number", "Salt River Project", True),
+    ("AMAT employee number", "Applied Materials", True), ("UCT employee ID", "Ultra Clean Holdings (UCT)", True),
+    ("Example Fab's employee ID", "Example Fab", True),
+    # (the review's LOW 3: wordings missed)
+    ("Employee # (if applicable)", "Example Fab", True), ("Badge #", "Example Fab", True),
+    ("Team member ID", "Example Fab", True),
+    ("If you have previously worked for Example Fab in any capacity (including through an agency), please provide "
+     "your WWID", "Example Fab", True),
+    # another employer's (the review's M2 and LOW 2)
+    ("Microchip Employee ID", "Example Fab", False), ("Former Atmel employee number", "Microchip Technology", False),
+    ("Example Fab employee number", "Other Fab", False), ("Employee ID at Example Fab Services", "Example Fab", False),
+    ("If you have worked for a government contractor, provide your employee ID", "Example Fab", False),
+    ("Employee ID At Your Previous Employer", "Example Fab", False), ("DOE BADGE NUMBER", "Example Fab", False),
+    # someone else's, or no employee's ID at all (the review's LOW 2)
+    ("Friend's employee ID", "Example Fab", None), ("Sponsor's employee ID", "Example Fab", None),
+    ("If you were referred, give their WWID", "Example Fab", None),
+    ("If an employee told you about this job, enter their employee number", "Example Fab", None),
+    ("Employee Identification Number (EIN)", "Example Fab", None),
+    # an agency's or a recruiter's, by the words just before the ID (a mutation of the review's got past these)
+    ("Agency badge number", "Example Fab", None), ("Recruiter employee ID", "Example Fab", None),
+])
+def test_whose_id_a_box_asks_is_told_by_its_words(label, company, whose):
+    """employer_id_box: the person's own ID at the employer applied to (True), at another (False), or no such box
+    (None: someone else's, a tax ID). A name after "for", "of" or "at" names an employer only when it's written as one
+    (capitals that aren't "Former" or "Internal"); one in capitals before the ID is another's unless it's this one's
+    name, short name or initials; "a" anything after an employer worked for is another; "their", or a person's, is
+    someone else's. Where it's this one's, the profile's ID for it fills it."""
+    from job_apply.autofill import employer_id_box
+
+    assert employer_id_box({"label": label, "kind": "text"}, {"company": company}) is whose, label
+    keeps = Profile({"history": {"employee_ids": {company: "12345678"}}})
+    got = resolve_field(f(label), keeps, {"company": company})
+    assert (got and got.value) == ("12345678" if whose else None), label
+
+
+def test_a_long_notice_that_mentions_an_id_is_no_id_box():
+    """A label longer than one box's question (ID_LABEL_MAX) is a notice that mentions an employee number in passing,
+    never asked nor filled as one."""
+    from job_apply.autofill import ID_LABEL_MAX, employer_id_box, norm
+
+    notice = ("Example Fab keeps the details you give here, and its recruiters may compare them with its records of "
+              "former employees by name, employee number and dates of work, as its privacy notice sets out; say "
+              "below if you want a copy of that notice.")
+    assert len(norm(notice)) > ID_LABEL_MAX
+    assert employer_id_box({"label": notice, "kind": "text"}, {"company": "Example Fab"}) is None
+    needs, filled = _id_plan(notice, _at_example_fab())
+    assert filled == {} and not needs[notice].get("employer_id") and not needs[notice].get("own_id")
+
+
+def test_an_id_box_whose_question_takes_in_subsidiaries_is_asked_only_of_someone_who_may_have_worked_there():
+    """The review's LOW 1: "...Example Fab or any of its subsidiaries, provide your employee ID" made the profile's
+    answer "can't say", so it was asked of everyone. A subsidiary clause alone is no reason to ask: left empty where the
+    profile has no employer that is or may be this one, asked where it has one."""
+    label = "If you have worked for Example Fab or any of its subsidiaries, provide your employee ID"
+    stranger = _person(work_history=[{"company": "Northwind Litho", "title": "Technician", "start": "2019-01",
+                                      "end": "2022-05"}])
+    needs, _ = _id_plan(label, stranger)
+    assert needs[label].get("own_id") and not needs[label].get("employer_id")
+    for worked in ("Example Fab", "Example Fab Services"):
+        person = _person(work_history=[{"company": worked, "title": "Technician", "start": "2019-01",
+                                        "end": "2022-05"}])
+        assert _id_plan(label, person)[0][label].get("employer_id"), worked
+
+
+def test_an_id_left_empty_at_an_employer_is_not_asked_there_again(job_apply_home):
+    """The review's LOW 1: an optional ID box left empty on the card with Remember ticked is kept so (an answers.yaml
+    entry `at` that employer with no answer): never asked at that employer again ("left_here"), as at another."""
+    from job_apply import config
+
+    label = "Employee ID (if previously employed)"
+    config.save_answer(label, None, "Example Fab", at="Example Fab")
+
+    def worked(*employers):
+        return Profile({**config.Profile.load().data, "work_history": [
+            {"company": c, "title": "Technician", "start": "2019-01", "end": "2022-05"} for c in employers]})
+    person = worked("Example Fab", "Other Fab")
+    needs, filled = _id_plan(label, person, "Example Fab, Inc.")
+    assert filled == {} and needs[label].get("left_here") and not needs[label].get("employer_id")
+    needs, _ = _id_plan(label, person, "Other Fab")
+    assert needs[label].get("employer_id") and not needs[label].get("left_here")
+    # answered later at Example Fab: the answer takes the empty one's place
+    config.save_answer(label, "12345678", "Example Fab", at="Example Fab")
+    assert _id_plan(label, worked("Example Fab"), "Example Fab")[1] == {label: "12345678"}
+    assert [(a["answer"], a["at"]) for a in config.saved_answers()] == [("12345678", "Example Fab")]
+
+
+def test_an_answer_written_for_every_employer_fills_an_id_box_only_where_it_says_none():
+    """The review's LOW 4: a hand-written `{match: "employee id", answer: "N/A"}` (no `at` nor `from`) filled required
+    Employee ID boxes on main, and then never did. It does where it says there's none ("N/A", "None", "Not
+    applicable"); a number written for every employer never goes into an ID box."""
+    for answer, used in (("N/A", True), ("None", True), ("Not applicable", True), ("12345678", False)):
+        person = Profile({"answers": [{"match": "employee id", "answer": answer}]})
+        for company in ("Example Fab", "Other Fab"):
+            got = resolve_field(f("Employee ID", required=True), person, {"company": company})
+            assert (got and got.value) == (answer if used else None), (answer, company)
+
+
+def test_remembered_ids_are_the_answers_that_are_ids():
+    """The review's LOW 5: the IDs the person gave the desk live in answers.yaml, so the scrubbers take them out with
+    the profile's employee_ids: each answer to a question asking an ID, never one that says none, nor another answer."""
+    from job_apply.autofill import remembered_ids
+
+    person = Profile({"answers": [
+        {"match": "x", "question": "Employee ID", "answer": "12345678", "at": "Example Fab"},
+        {"match": "wwid", "question": "WWID", "answer": "EF-2468", "from": "Example Fab"},
+        {"match": "badge number", "answer": "B-1357"}, {"match": "employee id", "answer": "N/A"},
+        {"match": "y", "question": "Employee ID", "answer": None, "at": "Other Fab"},
+        {"match": "tool color", "answer": "Blue"}]})
+    assert remembered_ids(person) == ["12345678", "EF-2468", "B-1357"]
+
+
 def test_recurring_background_questions_are_answered_from_a_no_in_the_profile():
     """An employer's Application Questions (live, Oct 2026) asked about government and Defense
     employment, agreements, intellectual property, plans to keep another job or sit on a board,

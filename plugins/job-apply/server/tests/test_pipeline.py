@@ -9849,6 +9849,17 @@ def test_an_optional_id_question_is_put_to_the_person_once():
     # a required one is asked as before, whether or not it was left on an earlier card
     assert [q["id"] for q in pipeline._pending({**result, "needs_input": [{**wwid, "required": True}]}, {},
                                                r.asked_once)[0]] == ["w"]
+    # the same question drawn again in another section (its box's own key another): left as it was, by its words
+    again = {**wwid, "id": "w2", "section": "Application Questions"}
+    assert pipeline.placed_key(again) not in r.asked_once
+    assert pipeline._pending({**result, "needs_input": [again]}, {}, r.asked_once)[0] == []
+    # and one left empty at this employer before (plan_autofill's "left_here"): under "Left empty", never asked
+    before = {**wwid, "id": "w3", "employer_id": False, "left_here": True}
+    assert pipeline._pending({**result, "needs_input": [before]}, {}, {})[0] == []
+    fresh = Run(2, "FSE", "Example Fab")
+    pipeline._went_left(fresh, {**result, "needs_input": [before]}, {**page, "fields": [before]})
+    assert [(e["label"], e["why"]) for e in fresh.went_in.public()["left"]] == [
+        (pipeline._short(WWID), "you left it empty")]
 
 
 def test_an_answer_that_doesnt_stick_the_first_time_is_filled_again_not_asked_again(srv, monkeypatch):

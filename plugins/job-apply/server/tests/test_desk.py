@@ -853,6 +853,53 @@ def test_an_id_on_the_card_is_remembered_for_its_employer_alone_or_left_once(srv
         (wwid, "EXAMPLE-12345678", "Example Fab")]
 
 
+def test_an_id_left_empty_with_remember_ticked_isnt_asked_at_that_employer_again(srv, job_apply_home):
+    """The review's LOW 1: an optional ID box left empty on the card with Remember ticked (its other answers sent, or
+    Carry on with the card's Remember) is kept in answers.yaml as left empty at that employer, so it's never asked
+    there again; with Remember unticked, for this job alone. A box whose words alone would ask the person's own ID but
+    that is another's ("Employee ID" under References) is answered for this application only, never remembered by
+    its words."""
+    from job_apply.pipeline import Run, question_key
+
+    wwid = "If you have previously worked for Example Fab in any capacity, please provide your WWID"
+    asked = [{"id": "w", "kind": "text", "label": wwid, "required": False, "own_id": True, "employer_id": True},
+             {"id": "y", "kind": "text", "label": "Years in a cleanroom", "required": True}]
+    desk = Desk(srv)
+
+    def card(n, questions):
+        job = srv.add_job(url=f"https://example.com/{n}", title="FSE", company="Example Fab")["job"]
+        desk.applier.runs[job["id"]] = Run(job["id"], "FSE", "Example Fab", status="needs_you", need="questions",
+                                           questions=list(questions))
+        return job["id"]
+    first = card("a", asked)
+    assert desk.answer(first, [{"label": "Years in a cleanroom", "value": "3", "remember": False},
+                               {"label": wwid, "value": "", "remember": True}]) is None
+    assert [(a["question"], a["answer"], a["at"]) for a in config.saved_answers()] == [(wwid, None, "Example Fab")]
+    # Remember unticked: for this job alone
+    config.answers_path().unlink()
+    second = card("b", asked)
+    desk.answer(second, [{"label": "Years in a cleanroom", "value": "3", "remember": False},
+                         {"label": wwid, "value": "", "remember": False}])
+    assert config.saved_answers() == [] and desk.applier.runs[second].asked_once
+    # Carry on, the card sending what it leaves empty and its Remember
+    third = card("c", asked[:1])
+    desk.left_on_card(third, [{"label": wwid, "remember": True}])
+    desk.applier.resume(third)
+    assert [(a["question"], a["answer"], a["at"]) for a in config.saved_answers()] == [(wwid, None, "Example Fab")]
+    # an "Employee ID" under References, answered: this application only
+    config.answers_path().unlink()
+    reference = {"id": "r", "kind": "text", "label": "Employee ID", "section": "References", "required": True}
+    fourth = card("d", [reference])
+    note = desk.answer(fourth, [{"label": "Employee ID", "value": "87654321", "remember": True}])
+    assert note and "this application only" in note and config.saved_answers() == []
+    assert desk.applier.runs[fourth].once == {question_key("Employee ID"): "87654321"}
+    # a required ID box of the person's own is remembered for this employer alone, as an optional one is
+    required = {"id": "e", "kind": "text", "label": "Employee ID", "required": True, "own_id": True}
+    fifth = card("e", [required])
+    assert desk.answer(fifth, [{"label": "Employee ID", "value": "12345678", "remember": True}]) is None
+    assert [(a["answer"], a["at"]) for a in config.saved_answers()] == [("12345678", "Example Fab")]
+
+
 def test_a_remembered_answer_replaces_one_given_for_this_application_only(srv, job_apply_home):
     """The page turned down an answer given for this application only, and the person answers
     again, remembering it: the earlier answer isn't tried again ahead of it."""

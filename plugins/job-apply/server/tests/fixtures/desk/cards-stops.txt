@@ -160,7 +160,9 @@ Remember for later applications
 Desired salary
 Remember for later applications
 Employee ID (if previously employed)
-Optional: leave it empty and it isn't asked again for this job.
+Optional: left empty, it isn't asked again for this job, nor at Example Questions while Remember is ticked.
+Remember for this employer only
+WWID
 Remember for this employer only
 Show me
 Fill these in

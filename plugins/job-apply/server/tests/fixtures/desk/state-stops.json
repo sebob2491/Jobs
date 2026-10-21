@@ -157,7 +157,15 @@
       "label": "Employee ID (if previously employed)",
       "kind": "text",
       "required": false,
+      "own_id": true,
       "employer_id": true
+     },
+     {
+      "id": "12",
+      "label": "WWID",
+      "kind": "text",
+      "required": true,
+      "own_id": true
      }
     ],
     "log": [],

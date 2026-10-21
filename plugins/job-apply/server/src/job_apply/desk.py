@@ -612,6 +612,11 @@ class Desk:
             return JSONResponse({"error": f"No job with id {job_id}"}, status_code=404)
         try:
             if action == "resume":
+                # (with what its card leaves empty, an optional ID at this employer and its Remember: Desk.left_on_card)
+                left: Any = []
+                with contextlib.suppress(ValueError):
+                    left = (await self._body(request)).get("left") or []
+                self.left_on_card(job_id, left)
                 a.resume(job_id)
             elif action == "later":
                 a.later(job_id)
@@ -1118,7 +1123,12 @@ class Desk:
         on_card = {k: q for q in run.questions for k in (question_key(q.get("label") or ""), placed_key(q))}
         for a in answers:
             label, value = str(a.get("label") or ""), a.get("value")
-            if not label or value in (None, "") or question_key(label) in account:
+            if not label or question_key(label) in account:
+                continue
+            if value in (None, ""):
+                # (an optional ID at this employer left empty with Remember ticked: left empty here from now on)
+                if a.get("remember", True) and (said := self._keep_left_empty(run, label)):
+                    problem = f"{problem} {said}" if problem else said
                 continue
             # (answered again: a box the site had emptied of it, left empty while optional, is filled again)
             for box, asked in list(run.once_left.items()):
@@ -1126,18 +1136,24 @@ class Desk:
                     del run.once_left[box]
             if a.get("remember", True) and " | " not in label:  # (one box's own answer is never remembered)
                 # an ID at this employer is remembered as it was given, for this employer alone (answers.yaml's `at`):
-                # it's never another's (with no employer named, it's for this application only). Any other answer
-                # naming this employer ("Acme website") is remembered as "Company Website", or not at all: it isn't
-                # the answer at another employer's
+                # it's never another's (with no employer named, it's for this application only). One whose words
+                # alone would ask the person's ID here but whose box is another's or someone else's (an "Employee ID"
+                # under References) is for this application only: remembered by its words, it would go into their own
+                # ID's box. Any other answer naming this employer ("Acme website") is remembered as "Company Website",
+                # or not at all: it isn't the answer at another employer's
+                employer = {"company": run.company}
                 own_id = autofill.employer_id_box(on_card.get(question_key(label)) or {"label": label},
-                                                  {"company": run.company}) is True
+                                                  employer) is True
+                mistaken = not own_id and autofill.employer_id_box({"label": label}, employer) is True
                 if own_id:
                     kept = value if autofill.norm(run.company) else None
                 else:
-                    kept = autofill.answer_to_remember(label, value, run.company)
+                    kept = None if mistaken else autofill.answer_to_remember(label, value, run.company)
                 if kept is None:
                     said = (f'Your answer to "{label}" is used for this application only: the job names no employer.'
                             if own_id else
+                            f'Your answer to "{label}" is used for this application only: on another form, those '
+                            f"words ask for your own ID at {run.company}." if mistaken else
                             f'"{value}" names {run.company}, so it\'s used for this application only, not remembered.')
                     problem = f"{problem} {said}" if problem else said
                     run.once[question_key(label)] = value
@@ -1162,6 +1178,31 @@ class Desk:
         self.applier.go_on_for(self.applier.enqueue(job_id, submit=run.submit, front=True))
         self.applier.pressed.add(job_id)  # (answered on its card: it goes even while the queue is paused)
         return problem
+
+    def left_on_card(self, job_id: int, left: Any) -> None:
+        """The card's Carry on, pressed with these of its questions empty (`left`: [{"label", "remember"}], as the card
+        sends them): an optional ID at this employer among them with Remember ticked is left empty at this employer
+        from now on (_keep_left_empty). Whatever the card sent that isn't that is passed over."""
+        run = self.applier.runs.get(job_id)
+        if run is None or run.status != "needs_you" or not isinstance(left, list):
+            return
+        for item in left:
+            if isinstance(item, dict) and item.get("remember") is True and isinstance(item.get("label"), str):
+                self._keep_left_empty(run, item["label"])
+
+    def _keep_left_empty(self, run: Any, label: str) -> str | None:
+        """An optional question of the person's own on the card (their ID at this employer: "employer_id") left empty
+        with Remember ticked: kept so in answers.yaml (an entry `at` this employer with no answer), so it's never asked
+        at this employer again (autofill._left_at_employer). Returns a note if that couldn't be kept."""
+        asked = next((q for q in run.questions
+                      if question_key(label) in (placed_key(q), question_key(q.get("label") or ""))), None)
+        if asked is None or not asked.get("employer_id") or " | " in label or not autofill.norm(run.company):
+            return None
+        try:
+            config.save_answer(label, None, run.company, at=run.company)
+        except (ValueError, OSError) as e:
+            return f"Couldn't remember that you left “{label}” empty ({e}); it's left empty for this application only."
+        return None
 
     # ------------------------------------------------------------- state
     def state(self) -> dict[str, Any]:

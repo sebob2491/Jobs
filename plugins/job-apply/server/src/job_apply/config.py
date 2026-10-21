@@ -946,7 +946,8 @@ def save_bank_answer(bank_id: str, answer: Any) -> None:
 def _write_answers(data: dict[str, Any], entries: list[Any]) -> None:
     ensure_home()
     header = ("# Answers you gave in the Job Desk. Each one fills the same question on later\n"
-              "# applications (one with `at:` only at that employer's, as an employee ID there);\n"
+              "# applications (one with `at:` only at that employer's, as an employee ID there; one\n"
+              "# with no answer is a question left empty there, never asked there again);\n"
               "# edit or delete entries freely. profile.yaml's own answers come after these.\n")
     path = answers_path()
     tmp = path.with_name(path.name + ".tmp")
@@ -957,7 +958,8 @@ def _write_answers(data: dict[str, Any], entries: list[Any]) -> None:
 
 def save_answer(label: str, answer: Any, source: str = "", at: str = "") -> dict[str, Any]:
     """Remember the answer to a question for every later application that asks it; with `at`, only for those at that
-    employer (the person's ID there: autofill.same_employer_as tells the employer).
+    employer (the person's ID there: autofill.same_employer_as tells the employer), and with no answer (None) that the
+    person left it empty there (it isn't asked at that employer again).
     Everything else in answers.yaml stays; a file that doesn't parse is left untouched
     (ValueError) rather than overwritten."""
     from .autofill import same_employer_as  # (autofill reads this module)

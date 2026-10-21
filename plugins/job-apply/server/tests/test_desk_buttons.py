@@ -316,3 +316,39 @@ def test_what_and_where_opens_on_the_profiles_titles_and_places_and_cancel_saves
     assert [p.replace("×", "").strip() for p in places] == area["places"], places
     assert [name for name, on in lists if on] == area["lists"] and len(lists) == len(area["choices"]), lists
     assert desk.state()["area"]["titles"] == area["titles"] and desk.search["at"] == searched
+
+
+def test_an_optional_id_left_empty_on_its_card_goes_with_its_remember(srv, job_apply_home):
+    """The review of the ID's change (LOW 1): an optional box for the person's ID at this employer, left empty on its
+    card, is sent with its Remember (ticked: left empty at this employer from then on): with the card's other answers
+    on Fill these in, and on Carry on where the card asks nothing else."""
+    from job_apply import config
+
+    wwid = "If you have previously worked for Example Fab in any capacity, please provide your WWID"
+    optional = {"id": "w", "kind": "text", "label": wwid, "required": False, "own_id": True, "employer_id": True}
+    needed = {"id": "y", "kind": "text", "label": "Years in a cleanroom", "required": True}
+    desk, jobs = _stopped_desk(srv, {"Example Fab": dict(status="needs_you", need="questions",
+                                                         questions=[optional, needed]),
+                                     "Example Litho": dict(status="needs_you", need="questions",
+                                                           questions=[optional])})
+    fab, litho = jobs["Example Fab"], jobs["Example Litho"]
+    said: list[str] = []
+
+    async def go():
+        async with _desk_page(desk, said) as (page, calls):
+            card = page.locator(f'form[data-answer="{fab}"]')
+            await card.locator('input[data-q="Years in a cleanroom"]').fill("3")
+            await page.click(f"#needs [data-job='{fab}'][data-job-act=fill]")
+            await _until(lambda: len(calls) == 1, lambda: calls)
+            await page.click(f"#needs [data-job='{litho}'][data-job-act=resume]")
+            await _until(lambda: len(calls) == 2, lambda: calls)
+            return calls
+
+    calls = run(go())
+    assert calls == [("POST", "/api/answer", {"job_id": fab, "answers": [
+                         {"label": wwid, "value": "", "remember": True},
+                         {"label": "Years in a cleanroom", "value": "3", "remember": True}]}),
+                     ("POST", f"/api/job/{litho}/resume", {"left": [{"label": wwid, "remember": True}]})], calls
+    assert said == []
+    assert [(a["question"], a["answer"], a["at"]) for a in config.saved_answers() if a["question"] == wwid] == [
+        (wwid, None, "Example Litho"), (wwid, None, "Example Fab")]  # (the latest first)
