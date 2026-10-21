@@ -1890,7 +1890,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin):
         """Close a skipped job's tabs: its application tab, the tab that opened it, and any tab either opened (a
         sign-in window, a policy page). Never a tab another job still has."""
         browser = self.srv.browser
-        others = {r.page for r in self.runs.values() if r.job_id != run.job_id and r.page is not None}
+        # (a list: a tab is never hashed here, as a stand-in's can't be)
+        others = [r.page for r in self.runs.values() if r.job_id != run.job_id and r.page is not None]
         tabs = browser.job_tabs(run.job_id, run.page, others)
         # and a tab the desk opened for it before that still shows the job's own place: its posting tab from before it
         # was opened again in a new tab (its tab closed, or gone on to another page). That tab alone, and only the

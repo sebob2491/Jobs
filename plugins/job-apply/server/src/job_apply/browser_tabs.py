@@ -138,7 +138,7 @@ class TabsMixin:
             tab = self._openers.get(tab)
         return out
 
-    def job_tabs(self, job_id: int, tab: Page | None, others: set[Page]) -> list[Page]:
+    def job_tabs(self, job_id: int, tab: Page | None, others: list[Page]) -> list[Page]:
         """One job's tabs still open: its tab and the tabs that opened it (lineage), and every tab one of those opened
         in turn (a sign-in window, a policy page, a second window the site opened). Never a tab of `others` (another
         job's own tab), nor one Claude opened for another job (tab_jobs), nor one opened from either. A tab Claude
