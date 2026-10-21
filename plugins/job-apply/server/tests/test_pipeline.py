@@ -9294,11 +9294,13 @@ async def at(browser, address):
 
 def test_skip_closes_the_jobs_old_posting_tab_but_never_one_gone_elsewhere(srv):
     """The second review: a job opened again in a new tab (its tab closed, or gone on to another page) left its old
-    posting tab open, opened for it (tab_jobs) but no longer in its new tab's lineage, and Skip left it open. Skip
-    closes a tab opened for the job while it still shows the job's own place; one that went on to another site (the
-    person's mail) stays."""
+    posting tab open, out of its new tab's lineage, and Skip left it open. Skip closes a tab the desk opened for the
+    job before (Run.opened_tabs) while it still shows the job's own place. One of those that went on to another site
+    (the person's mail) stays, as does one that's another job's tab now; and a tab Claude opened for the job
+    (tab_jobs), which may have gone on to another posting on the same site (the third review: LinkedIn), stays."""
     url = "https://careers.examplefab.example/jobs/1"
     job = srv.add_job(url=url, title="FSE", company="Example Fab")["job"]
+    other = srv.add_job(url="https://careers.examplefab.example/jobs/2", title="Tech", company="Example Fab")["job"]
     applier = Applier(srv)
 
     async def go():
@@ -9306,14 +9308,19 @@ def test_skip_closes_the_jobs_old_posting_tab_but_never_one_gone_elsewhere(srv):
         applier.runs[job["id"]] = r
         old = await at(srv.browser, url)  # (its posting tab, from before it was opened again)
         elsewhere = await at(srv.browser, "https://mail.example.org/inbox")  # (one the person went on to mail in)
+        others = Run(other["id"], "Tech", "Example Fab", status="needs_you", need="sign_in")
+        others.page = await at(srv.browser, url)  # (another job's tab now)
+        applier.runs[other["id"]] = others
+        claudes = await at(srv.browser, "https://careers.examplefab.example/jobs/3")  # (Claude's, opened for it)
+        srv.browser.tab_jobs[claudes] = job["id"]
         r.page = await at(srv.browser, url + "/apply")  # (the new one)
-        for tab in (old, elsewhere, r.page):
-            srv.browser.tab_jobs[tab] = job["id"]
+        r.opened_tabs = [old, elsewhere, others.page, r.page]
         await applier.skip(job["id"])
-        return old, elsewhere, r.page
+        return old, r.page, [elsewhere, others.page, claudes]
 
-    old, elsewhere, new = run(go())
-    assert old.is_closed() and new.is_closed() and not elsewhere.is_closed()
+    old, new, kept = run(go())
+    assert old.is_closed() and new.is_closed()
+    assert not any(t.is_closed() for t in kept)
 
 
 def test_a_job_skipped_while_its_paused_tab_is_looked_at_isnt_started_again(srv, monkeypatch):
