@@ -4737,14 +4737,15 @@ def test_other_clearance_questions_are_the_persons(label, held):
 
 @pytest.mark.parametrize("label", [
     "Have you ever worked for any of the following companies?",
-    "Have you ever worked for NNSS, NNSA, Honeywell International or Jacobs Engineering Group?",
+    "Have you ever been employed by any of these organizations?",
+    "Have you ever worked for Honeywell International, Jacobs Engineering Group or Bechtel National?",
 ])
 def test_worked_for_one_of_the_organizations_listed_is_the_profiles(label):
     """"Have you ever worked for any of these?" among them and one choice that says none (NNSS's question 7, run 148,
     in other words): the none where no employer in the profile may be any of them, the one an employer of theirs is,
     and the person's where one of theirs may be one ("Honeywell Aerospace" for Honeywell International, Inc.), where
     several are, or where the profile names no employer at all."""
-    options = ["Honeywell International, Inc.", "Jacobs Engineering Group Inc.", "NNSA", "NNSS", "N/A"]
+    options = ["Honeywell International, Inc.", "Jacobs Engineering Group Inc.", "Bechtel National", "N/A"]
 
     def worked(*companies, kind="combobox"):
         data = {"work_history": [{"company": c, "start": "2018-01", "end": "2020-01"} for c in companies]}
@@ -4797,6 +4798,45 @@ def test_a_question_about_working_somewhere_that_lists_no_organizations_is_not_a
     assert _nnss("Have you ever worked for NNSS?", intel, options=["Yes", "No", "N/A"]) != "N/A"
 
 
+@pytest.mark.parametrize("label, options", [
+    ("Have you worked with any of the following equipment?", ["Lathe", "Mill", "CNC Router", "None of the above"]),
+    ("Have you ever worked with any of the following software?", ["SAP", "Oracle", "Workday", "None"]),
+    ("Have you worked with any of these chemicals?", ["Hydrofluoric acid", "Arsine", "Silane", "N/A"]),
+    ("Have you worked with any of these programming languages?", ["Python", "C++", "Java", "None"]),
+    ("Have you worked with any of the following? (select all that apply)",
+     ["Lam etch tools", "KLA metrology", "Applied Materials CVD", "None of the above"]),
+    ("Have you worked at any of the following types of facilities?", ["Semiconductor fab", "Cleanroom", "None"]),
+    ("Have you ever worked at any of the following locations?", ["Hospital", "Clinic", "Laboratory", "None"]),
+    ("Have you ever worked at one of these sites?", ["Chandler", "Hillsboro", "Rio Rancho", "None"]),
+    ("Have you ever worked at Chandler, Hillsboro or Rio Rancho?", ["Chandler", "Hillsboro", "Rio Rancho", "None"]),
+    ("Have you ever worked with any of the following companies?", ["Boeing", "Raytheon", "None"]),
+    ("Have you ever worked with any of the following customers?", ["Boeing", "Raytheon", "None"]),
+])
+def test_a_list_of_tools_places_or_customers_is_never_answered_none(label, options):
+    """The review of 0.3.227: the list rule took "Have you worked with any of the following equipment?" for a list of
+    employers and answered "None of the above" (and "None" for chemicals, software, sites, a supplier's customers).
+    Only who the person worked for: organizations by a word that says so ("...the following companies?"), or named
+    where it asks who they worked for; never "worked with", nor places "worked at"."""
+    for kind in ("radio_group", "checkbox_group"):
+        a = resolve_field(f(label, kind, options=options), _worked_at("Intel"), {"company": "Example Fab"})
+        assert a is None or a.rule != "work_history", (label, kind, a)
+
+
+@pytest.mark.parametrize("employer, short", [
+    ("BWX Technologies", "BWXT"), ("Lockheed Martin", "LMCO"), ("Northrop Grumman", "NGC"),
+    ("National Security Technologies", "NSTec"), ("Raytheon Technologies", "RTX"), ("General Dynamics", "GDIT"),
+])
+def test_a_choice_by_a_short_name_is_never_said_to_be_none_of_the_profiles(employer, short):
+    """The review of 0.3.227: a choice written as a short name (BWXT, NSTec) may be an employer the profile writes out
+    in full, which no rule here can tell: the N/A is the person's. One the profile's employer surely is is still its
+    choice."""
+    label, options = "Have you ever worked for any of the following companies?", [short, "Acme Widgets", "N/A"]
+    a = resolve_field(f(label, "combobox", options=options), _worked_at(employer), {"company": "Example Fab"})
+    assert a is None, (employer, short, a)
+    a = resolve_field(f(label, "combobox", options=options), _worked_at(short), {"company": "Example Fab"})
+    assert a is not None and a.value == short
+
+
 SERVICE_BOTH = (NNSS_SERVICE, NNSS_SERVICE + " If yes, you must complete the sub-questions below",
                 "Have you ever served in the U.S. military or worked for the federal government?",
                 "Did you serve in the U.S. military or work for a federal agency?")
@@ -4806,8 +4846,8 @@ SERVICE_BOTH = (NNSS_SERVICE, NNSS_SERVICE + " If yes, you must complete the sub
 def test_us_federal_or_military_service_is_the_profiles_both_ways(label):
     """NNSS's question 4 (run 148; the owner's call, Oct 21: setup asks it): Yes where the profile says the person
     worked for the U.S. federal government or served in the U.S. military, No where it says neither, else the
-    person's. A protected veteran served (never the other way round), and the background's "government employee now
-    or in the last 5 years" doesn't say "ever"."""
+    person's. The background's "government employee now or in the last 5 years" doesn't say "ever", and a veteran's
+    voluntary self-identification is never a screening answer (the coordinator's call on the review of 0.3.227)."""
     def asked(**data):
         return _nnss(label, data)
 
@@ -4820,7 +4860,8 @@ def test_us_federal_or_military_service_is_the_profiles_both_ways(label):
     assert asked(background={"government_employee": False, "military": False}) is None
     assert asked(history={"us_government_employee": False}, background={"military": False}) == "No"
     vet = "I identify as one or more of the classifications of protected veteran"
-    assert asked(history={"us_government_employee": False}, eeo={"veteran": vet}) == "Yes"
+    assert asked(history={"us_government_employee": False}, eeo={"veteran": vet}) is None
+    assert asked(history={"us_government_employee": False}, eeo={"veteran": "Veteran"}) is None
     assert asked(history={"us_government_employee": False}, eeo={"veteran": "I am not a protected veteran"}) is None
 
 
@@ -4916,3 +4957,155 @@ def test_nnss_answers_the_person_gives_are_used_again_at_its_next_job(job_apply_
     for label in (NNSS_SERVICE, NNSS_WORKED_FOR):
         kind, options, _ = given[label]
         assert resolve_field(f(label, kind, options=options), p, {"company": "Example Fab"}) is None, label
+
+
+# --- the review of 0.3.227: false answers about the person ---------------------------------------------------------
+
+@pytest.mark.parametrize("held, dod, doe", [
+    ("Secret (active), DoD", "Yes", None),
+    ("DOE Q (active)", None, "Yes"),
+    ("Secret (active)", "Yes", None),
+    ("Secret (active) - DHS", None, None),
+    (True, None, None),
+    (False, "No", "No"),
+    ("None", "No", "No"),
+    ("Top Secret / Q (active)", "Yes", "Yes"),
+])
+def test_a_clearance_question_naming_an_agency_is_answered_only_for_that_agencys(held, dod, doe):
+    """A question naming the agency ("...an active DoD clearance?", "...granted by the Department of Energy?"): a bare
+    true doesn't say whose, and another agency's clearance is none of its (a Q is the DOE's; a Secret named with no
+    agency the DoD's, never the DOE's). The review of 0.3.227: "Secret (active), DoD" was Yes to "active DOE
+    clearance?", "DOE Q (active)" Yes to "DoD security clearance?"."""
+    data = {"work_authorization": {"security_clearance": held}}
+    for label in ("Do you currently hold an active DoD clearance?", "Do you hold a DoD security clearance?",
+                  "Do you currently hold a security clearance issued by DoD?"):
+        assert _nnss(label, data) == dod, (label, held)
+    for label in ("Do you currently hold an active DOE clearance?", "Do you hold a DOE security clearance?",
+                  "Do you currently have a security clearance granted by the Department of Energy?"):
+        assert _nnss(label, data) == doe, (label, held)
+
+
+@pytest.mark.parametrize("held", [
+    "Secret (2012-2016)", "Secret 2016", "Secret (DoD), last investigated 2015", "Canadian Secret (active)",
+    "NATO Secret (active)", "Secret (UK)", "Secret (active) - foreign",
+])
+def test_a_clearance_with_dates_only_or_another_countrys_is_no_us_clearance_held_now(held):
+    """The review of 0.3.227: a clearance written with its dates and nothing saying it's active or current may be one
+    held then, and another country's or NATO's is no U.S. Government one: never Yes to "Do you currently have a
+    Security Clearance granted by the U.S. Government?", nor a level held in a list of levels."""
+    data = {"work_authorization": {"security_clearance": held}}
+    assert _nnss(NNSS_CLEARANCE, data) is None
+    assert _nnss("What level of security clearance do you hold?", data, kind="select",
+                 options=["None", "Confidential", "Secret", "Top Secret"]) is None
+    assert _nnss(NNSS_CLEARANCE, {"work_authorization": {"security_clearance": "Secret (active since 2016)"}}) == "Yes"
+
+
+def test_two_levels_asked_together_are_both_needed():
+    """"Do you hold an active Secret and Q clearance?": both, never the Secret alone (the review of 0.3.227)."""
+    label = "Do you hold an active Secret and Q clearance?"
+    assert _nnss(label, {"work_authorization": {"security_clearance": "Secret (active)"}}) is None
+    assert _nnss(label, {"work_authorization": {"security_clearance": "Top Secret / Q (active)"}}) == "Yes"
+    assert _nnss("Do you hold an active Secret or Q clearance?",
+                 {"work_authorization": {"security_clearance": "Secret (active)"}}) == "Yes"
+
+
+@pytest.mark.parametrize("held", ["Secret (expired 2021)", "Top Secret (inactive)", "Eligible for Secret",
+                                  "Interim Secret"])
+def test_a_clearance_not_held_now_is_no_level_held(held):
+    """The review of 0.3.227: a clearance the profile says isn't held now was given as the level held ("Secret" for
+    "What level of security clearance do you hold?", "Active security clearance"): the person's."""
+    data = {"work_authorization": {"security_clearance": held}}
+    levels = ["None", "Confidential", "Secret", "Top Secret", "TS/SCI"]
+    for label in ("What level of security clearance do you hold?", "Active security clearance",
+                  "Current security clearance"):
+        assert _nnss(label, data, kind="select", options=levels) is None, label
+    assert _nnss("What level of security clearance do you hold?",
+                 {"work_authorization": {"security_clearance": "Secret (active)"}}, kind="select",
+                 options=levels) == "Secret"
+
+
+@pytest.mark.parametrize("label", [
+    "Do you currently hold a security clearance that has been active within the last 2 years?",
+    "Do you hold a security clearance that has been adjudicated within the last 5 years?",
+    "Do you hold a security clearance with an investigation completed in the past 5 years?",
+])
+def test_a_clearance_question_about_its_time_is_the_persons(label):
+    """A clearance held now says nothing of when it was investigated or active: the person's."""
+    for held in (True, False, "Secret (active)"):
+        assert _nnss(label, {"work_authorization": {"security_clearance": held}}) is None, (label, held)
+
+
+def test_proof_of_citizenship_and_work_authorization_is_a_citizens_yes_only():
+    """The review of 0.3.227: the I-9's rule took "Can you provide proof of U.S. citizenship and authorization to
+    work?" and answered a permanent resident's authorization: Yes. With citizenship asked beside it, a citizen's Yes
+    only; "...citizenship or eligibility to work" stays the authorization's."""
+    resident = {"work_authorization": {"us_citizen": False, "us_person": True, "authorized_to_work": True}}
+    citizen = {"work_authorization": {"us_citizen": True, "authorized_to_work": True}}
+    for label in ("Can you provide proof of U.S. citizenship and authorization to work?",
+                  "Can you provide proof of U.S. citizenship and work authorization?"):
+        assert _nnss(label, resident) is None, label
+        assert _nnss(label, citizen) == "Yes", label
+    assert _nnss("Can you provide proof of U.S. citizenship or eligibility to work in the United States?",
+                 resident) == "Yes"
+
+
+def test_worked_for_the_military_is_not_served_in_it():
+    """The review of 0.3.227: "worked for the U.S. military" was read as served in it, so an Army civilian was No and a
+    service member Yes to "...as a civilian?"; "worked with" a federal agency (a contractor) as employed by it. Worked
+    for the military: Yes where they served, No where they neither served nor worked for the federal government, else
+    the person's; as a civilian: No only where they never worked for the federal government. "Worked with" is the
+    person's."""
+    civilian = {"history": {"us_government_employee": True, "us_military": False}}
+    neither = {"history": {"us_government_employee": False, "us_military": False}}
+    served = {"history": {"us_government_employee": False, "us_military": True}}
+    label = "Have you ever worked for the U.S. military?"
+    assert (_nnss(label, civilian), _nnss(label, neither), _nnss(label, served)) == (None, "No", "Yes")
+    label = "Have you ever worked for the U.S. military as a civilian?"
+    assert (_nnss(label, civilian), _nnss(label, neither), _nnss(label, served)) == (None, "No", "No")
+    for label in ("Have you ever worked with a federal agency?", "Have you ever worked with the federal government?",
+                  "Have you ever worked with the U.S. military?"):
+        for data in (civilian, neither, served):
+            assert _nnss(label, data) is None, (label, data)
+
+
+@pytest.mark.parametrize("label", [
+    "Have you ever worked for the federal government, including any position funded by a federal grant?",
+    "Have you ever worked for the U.S. Government in any capacity, including at a national laboratory or FFRDC?",
+    "Have you ever worked for the U.S. Government including as a volunteer?",
+    "Have you ever served in the U.S. military, including ROTC or a service academy?",
+    "Have you ever worked for the federal government or served in the U.S. military, including the Public Health "
+    "Service?",
+    "Have you ever served in the U.S. military? If yes, explain unless you served only in the Reserves",
+])
+def test_us_service_including_what_the_profile_doesnt_count_is_the_persons(label):
+    """The review of 0.3.227: "including ..." took anything, so a national laboratory, a grant, a volunteer, ROTC or
+    the Public Health Service was a No from a profile that never counted them; and a condition after the question
+    ("If yes, explain unless you served only in the Reserves") was taken for a request for details."""
+    for data in ({"history": {"us_government_employee": False, "us_military": False}},
+                 {"history": {"us_government_employee": True, "us_military": True}}):
+        a = resolve_field(f(label, "radio_group", options=YES_NO), Profile(data), NNSS)
+        assert a is None or a.rule != "us_service", (label, data, a)
+    asked = "Have you ever served in the U.S. military? If yes, please list branch and dates of service."
+    assert _nnss(asked, {"history": {"us_military": True}}) == "Yes"
+
+
+def test_the_background_never_contradicts_the_us_service_the_history_says():
+    """The review of 0.3.227: a profile whose history says the person worked for the federal government (or served),
+    and whose background says they weren't a government employee in the last 5 years (or never served), got the
+    background's No to "Were you ever employed by the federal government?" or "Do you have prior military service?".
+    The history answers what it says ("ever"), and the background's No is never given against it."""
+    data = {"history": {"us_government_employee": True, "us_military": True},
+            "background": {"government_employee": False, "military": False}}
+    assert _nnss("Were you ever employed by the federal government?", data) == "Yes"
+    assert _nnss("Have you ever worked for the U.S. Government (excluding military service)?", data) == "Yes"
+    assert _nnss("Do you have prior military service?", data) == "Yes"
+    for label in ("Are you a former federal employee?", "Have you ever been a federal government employee or official?",
+                  "Have you ever been employed by any government agency?",
+                  "Do you have any prior U.S. military experience?",
+                  "Have you ever served on active duty in the U.S. military?"):
+        assert _nnss(label, data) is None, label
+    # (the background's No still answers where the history doesn't say otherwise)
+    never = {"history": {"us_government_employee": False, "us_military": False},
+             "background": {"government_employee": False, "military": False}}
+    assert _nnss("Are you a former federal employee?", never) == "No"
+    assert _nnss("Do you have any prior U.S. military experience?", never) == "No"
