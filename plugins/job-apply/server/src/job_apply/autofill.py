@@ -1355,14 +1355,36 @@ def _government(prof: Profile, job: dict, label: str = "") -> Any:
     return "No" if _said_no(prof, "government_employee") else None
 
 
+_NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "twelve": 12, "eighteen": 18,
+                 "twenty four": 24, "thirty six": 36}
+# ...in the last N years or months
+_WINDOW = re.compile(r"\b(?:in|within|during|over) the (?:last|past) (\d+|" + "|".join(_NUMBER_WORDS)
+                     + r") (years?|months?)\b")
+# ...and what makes it about another time too: a second question after "or" ("..., or have you been ...?", "...or were
+# you once ...?", "...or before that?", "..., or are you ...?"), another tense, "ever", "former", "at any time"
+_OTHER_TIME = re.compile(r"\bor (?:(?:\w+ ){0,2}(?:have|had|were|was|did|been)|are you|is (?:this|it)|before|once|"
+                         r"previously|formerly|in the past|at some point)\b|\b(?:had you|were you|once|before|"
+                         r"at some point|ever|former\w*|previous\w*|prior|at any time|first time)\b|"
+                         r"\bin the past\b(?! (?:\d+|" + "|".join(_NUMBER_WORDS) + r") )")
+
+
 def _now_or_lately(asked: str) -> bool:
-    """A question (norm()'s) about now or lately alone: "currently", "now", "current" (never "current or former" nor
-    "former or current"), "in the last 5 years"; never one that asks about any time too ("ever", "former",
-    "previously", "prior", "at any time")."""
-    if re.search(r"\b(?:ever|former\w*|previous\w*|prior|at any time)\b", asked):
+    """A question (norm()'s) unmistakably about now or a window of 5 years or less, which the background's
+    government_employee ("now or in the last 5 years") answers: "currently", "presently" or "now", or "in the last N
+    years" (N up to 5, or months up to 60); and nothing about another time ("or have you been ...", "were you",
+    "once", "before", "at some point", "in the past" with no number, "ever", "former", "previous", "prior", "at any
+    time"), nor "have you" but with that window. An allowed shape, never a list of what may not be said (the fourth
+    review of 0.3.227: "Are you currently or have you been employed by the federal government?" was "now")."""
+    window = _WINDOW.search(asked)
+    if window:
+        count = window.group(1)
+        n = int(count) if count.isdigit() else _NUMBER_WORDS[count]
+        if n > (5 if window.group(2).startswith("year") else 60):
+            window = None
+    now = re.search(r"\b(?:currently|presently|now)\b", asked)
+    if not (now or window) or _OTHER_TIME.search(asked):
         return False
-    return bool(re.search(r"\b(?:currently|presently|now)\b|(?<!former or )\bcurrent\b(?! or former)|\b(?:last|past|"
-                          r"within)(?: \w+){0,2} (?:years?|months?)\b", asked))
+    return not re.search(r"\bhave you\b", asked) or bool(window)
 
 
 _DOD_SAID = _background("defense_department")
@@ -1604,41 +1626,6 @@ _NONE_OF_THEM = re.compile(r"n a|na|none|not applicable|neither|none of (?:the a
 # a choice that is no organization's name: a yes or no, "Other", a sentence about working there
 _NOT_A_NAME = re.compile(r"\b(?:yes|no|not|never|other|currently|previously|formerly|employed|worked|work|employee|"
                          r"contractor|intern)\b")
-# what reaches past the organizations it names, to ones none of its choices may be by name: their families
-# ("...or any of their affiliates or subsidiaries", "its parent companies or predecessors": Bechtel Nevada ran the
-# Nevada Test Site before NNSS's contractors, and AECOM's government arm is now Amentum), and examples ("e.g. ...",
-# "such as", "etc.")
-_AMONG_OTHERS = re.compile(r"\b(?:affiliat\w*|subsidiar\w*|predecessors?|successors?|parents?|sister|related "
-                           r"(?:compan\w*|entit\w*|organi[sz]ations?)|e g|eg|etc|such as|including|among others|"
-                           r"or others|and others)\b")
-# One word of six letters or fewer, or in capitals: a short name, maybe an employer's initials
-_SHORT_NAME = re.compile(r"[A-Za-z0-9&.-]{1,6}|[A-Z0-9&.-]+")
-# A government body's name, federal, state or local, or a list of them ("...any of the following agencies?": a VA
-# hospital, the IRS, an Air Force base, the city's police or airport the profile names may be one of them by another
-# name: the second and third reviews of 0.3.227)
-_AGENCY = re.compile(r"\b(?:agencies|departments?|dept|agency|bureau|administration|commission|office of|board of|"
-                     r"army|navy|air force|marine corps|coast guard|space force|national guard|federal|government|"
-                     r"city of|town of|village of|state of|county|counties|district|police|sheriff\w*|fire|"
-                     r"municipal\w*|authority|airport|public|transit|court|courts|va|veterans affairs)\b")
-
-
-_LOCAL_BODY = re.compile(r"\b(?:city of|town of|village of|state of|county|counties|district|municipal\w*|sheriff\w*|"
-                         r"police|fire)\b")
-
-
-def _federal_body(name: str) -> bool:
-    """A government body's name (norm()'s) that isn't a state's or a city's, county's or district's: a federal one."""
-    lead = _leading_words(name)
-    return bool(_AGENCY.search(name)) and not (_LOCAL_BODY.search(name) or lead and lead[0] in _STATE_BY_NAME)
-
-
-def _short_named(option: str) -> bool:
-    """A choice written as a short name ("BWXT", "NSTec LLC", "RTX Corporation", "BWXT Pantex"): one word of six letters
-    or fewer, or in capitals, as written or without its legal words; or a first word in capitals ("GDIT LLC")."""
-    key = _employer_key(option)
-    first = (option.split() or [""])[0].strip(",.")
-    return bool(_SHORT_NAME.fullmatch(option.strip()) or " " not in key and _SHORT_NAME.fullmatch(key)
-                or re.fullmatch(r"[A-Z0-9&]{2,}|[A-Z]{2,}[a-z]+", first))
 
 
 def _says_only_the_list(label: str, asked: re.Match[str], orgs: list[str], job: dict) -> bool:
@@ -1659,15 +1646,14 @@ def _says_only_the_list(label: str, asked: re.Match[str], orgs: list[str], job: 
 def _worked_for_listed(field: dict, prof: Profile, job: dict) -> tuple[bool, Any]:
     """"Have you ever worked for any of these?", its choices the organizations it names and one that says none
     (_NONE_OF_THEM), answered from the employers in the profile (previous_employers, work_history and the current
-    company, as _previously_employed reads them; the owner's call, Oct 21: what the profile supports is answered): the
-    one choice an employer of theirs surely is (_same_employer), or the none where none of theirs may be any of them or
-    the employer applied to (_may_be_employer: a may-be is the person's, never a No). Never the none where the question
-    reaches past the names its choices give (_AMONG_OTHERS: an affiliate, a predecessor, an example's others), which
-    the profile can't say none of its employers is; nor a choice of one where another of theirs may be one of those,
-    or may be a choice written as a short name (_short_named), or an agency of a list of them where the profile says
-    the person worked for the federal government or served. Nor anything where the question asks more than who
-    (_says_only_the_list: "...in the past 2 years?", "...as a contractor?"). (True, the choice) where it is this
-    question, (True, None) where it's the person's; (False, None) where the question is another."""
+    company, as _previously_employed reads them; the owner's call, Oct 21: what the profile supports is answered) only
+    with the one choice an employer of theirs surely is (_same_employer). Never the none: an employer the profile
+    names may be one of them by another name (a laboratory and the company that runs it, a city's department, a
+    renamed company, a short name), so no profile proves it (the fourth review of 0.3.227); nor where another of
+    theirs may be one of them (_may_be_employer), or, in a list that takes several, any other employer of theirs; nor
+    where the question asks more than who (_says_only_the_list: "...in the past 2 years?", "...as a contractor?").
+    (True, the choice) where it is this question, (True, None) where it's the person's (remembered once they answer);
+    (False, None) where the question is another."""
     label = norm(clean_label(_without_notes(field.get("label") or "")))
     options = [o for o in field.get("options") or [] if o and not _PLACEHOLDER_VALUES.match(o.strip())]
     asked = _WORKED_FOR_ASKED.search(label)
@@ -1687,43 +1673,24 @@ def _worked_for_listed(field: dict, prof: Profile, job: dict) -> tuple[bool, Any
     employers += [norm(e.get("company")) for e in _listed(prof.get("work_history")) if isinstance(e, dict)]
     employers += _current_employers(prof)
     employers = list(dict.fromkeys(c for c in employers if c))
-    if not employers:
-        return True, None  # (a profile that says nothing of their work says nothing of this either)
-    among_others = bool(_AMONG_OTHERS.search(label))
     company = norm(job.get("company"))
     picked: list[str] = []
-    unrelated: list[str] = []
+    others = False
     for c in employers:
         sure = [o for o in orgs if _same_employer(c, o)]
         if len(sure) == 1 and all(o in sure for o in orgs if _may_be_employer(c, o)):
             picked.append(sure[0])
             continue
-        # (one that may be any of them, or the employer applied to; or one the question may reach by a name it
-        # doesn't give)
-        if sure or any(_may_be_employer(c, o) for o in orgs) or company and _may_be_employer(c, company) \
-                or among_others:
-            return True, None
-        unrelated.append(c)
+        if sure or any(_may_be_employer(c, o) for o in orgs) or company and _may_be_employer(c, company):
+            return True, None  # (one that may be one of them, or the employer applied to: theirs to say)
+        others = True
     picked = list(dict.fromkeys(picked))
-    if len(picked) > 1:
-        return True, None  # (several: theirs to give, as the list takes them)
-    if unrelated and any(_short_named(o) and o not in picked for o in orgs):
-        # a choice by a short name ("BWXT", "NSTec", "LMCO") may be an employer the profile writes out in full
-        # (BWX Technologies, National Security Technologies, Lockheed Martin), which no rule here can tell: the
-        # person's (the review of 0.3.227)
+    several = field.get("kind") == "checkbox_group" or bool(field.get("multiple"))
+    if len(picked) != 1 or several and others:
+        # none of theirs surely is one (the none is never the profile's), several are, or, where the list takes
+        # several, another employer of theirs may be one by another name: the person's
         return True, None
-    if unrelated and (_AGENCY.search(label) or any(_AGENCY.search(norm(o)) for o in orgs)) \
-            and (any(_AGENCY.search(c) for c in unrelated)
-                 or (re.search(r"\bfederal\b", label) or any(_federal_body(norm(o)) for o in orgs))
-                 and not (_fact(prof, "history.us_government_employee") is False
-                          and _served_us_military(prof) is False)):
-        # an agency the profile names by another name (a VA hospital, the IRS, an Air Force base; the city's police,
-        # its airport, the state's transportation department): the none only where no employer of theirs is a
-        # government body by its name, and, for federal agencies, the profile says the person never worked for the
-        # federal government nor served (the second and third reviews of 0.3.227)
-        return True, None
-    choice = picked[0] if picked else nones[0]
-    return True, [choice] if field.get("kind") == "checkbox_group" else choice
+    return True, [picked[0]] if field.get("kind") == "checkbox_group" else picked[0]
 
 
 def _employee_id(prof: Profile, job: dict) -> str | None:

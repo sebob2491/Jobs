@@ -4608,8 +4608,8 @@ NNSS_SERVICE = ("4. Have you ever worked for the U.S. Government executive, judi
 NNSS_CLEARANCE = "9. Do you currently have a Security Clearance granted by the U.S. Government?"
 
 
-def _nnss(label, data, kind="radio_group", options=YES_NO, job=NNSS):
-    a = resolve_field(f(label, kind, options=options), Profile(data), job)
+def _nnss(label, data, kind="radio_group", options=YES_NO, job=NNSS, **kw):
+    a = resolve_field(f(label, kind, options=options, **kw), Profile(data), job)
     return a and a.value
 
 
@@ -4742,38 +4742,79 @@ def test_other_clearance_questions_are_the_persons(label, held):
 ])
 def test_worked_for_one_of_the_organizations_listed_is_the_profiles(label):
     """"Have you ever worked for any of these?" among them and one choice that says none (NNSS's question 7, run 148,
-    in other words): the none where no employer in the profile may be any of them, the one an employer of theirs is,
-    and the person's where one of theirs may be one ("Honeywell Aerospace" for Honeywell International, Inc.), where
-    several are, or where the profile names no employer at all."""
+    in other words): the one an employer of theirs surely is; the person's where one of theirs may be one ("Honeywell
+    Aerospace" for Honeywell International, Inc.), where several are, where the profile names no employer, and where
+    none of theirs is one: the none is never the profile's (the fourth review of 0.3.227). In a list that takes several,
+    another employer of theirs makes it the person's too (it may be one of them by another name)."""
     options = ["Honeywell International, Inc.", "Jacobs Engineering Group Inc.", "Bechtel National", "N/A"]
 
-    def worked(*companies, kind="combobox"):
+    def worked(*companies, kind="combobox", **kw):
         data = {"work_history": [{"company": c, "start": "2018-01", "end": "2020-01"} for c in companies]}
-        return _nnss(label, data, kind=kind, options=options)
+        return _nnss(label, data, kind=kind, options=options, **kw)
 
-    assert worked("Intel", "Example Fab Services") == "N/A"
     assert worked("Jacobs Engineering Group") == "Jacobs Engineering Group Inc."
     assert worked("Jacobs Engineering Group", "Intel") == "Jacobs Engineering Group Inc."
     assert worked("Honeywell International Inc.") == "Honeywell International, Inc."
+    assert worked("Jacobs Engineering Group", kind="checkbox_group") == ["Jacobs Engineering Group Inc."]
+    assert worked("Jacobs Engineering Group", "Intel", kind="checkbox_group") is None
+    assert worked("Jacobs Engineering Group", "Intel", multiple=True) is None
+    assert worked("Intel", "Example Fab Services") is None
+    assert worked("Intel", kind="radio_group") is None
     assert worked("Honeywell Aerospace") is None
     assert worked("Honeywell") is None
     assert worked("Jacobs Engineering Group", "Honeywell International") is None
     assert worked("Mission Support and Test Services") is None  # (may be the employer applied to)
     assert worked() is None
-    assert _nnss(label, {"history": {"previous_employers": ["Intel"]}}, options=options) == "N/A"
+    assert _nnss(label, {"history": {"previous_employers": ["Jacobs Engineering Group"]}}, options=options) == \
+        "Jacobs Engineering Group Inc."
     assert _nnss(label, {"experience": {"current_company": "Honeywell Aerospace"}}, options=options) is None
-    assert worked("Intel", kind="checkbox_group") == ["N/A"]
-    assert worked("Intel", kind="radio_group") == "N/A"
+
+
+@pytest.mark.parametrize("employer, label, options", [
+    # (a city's department, a state's, a university, by a name that isn't the list's)
+    ("Phoenix Convention Center", "Have you ever worked for any of the following agencies?",
+     ["City of Phoenix", "State of Arizona", "Maricopa County", "None of the above"]),
+    ("ADOT", "Have you ever worked for any of the following agencies?",
+     ["City of Phoenix", "State of Arizona", "Maricopa County", "None of the above"]),
+    ("Phoenix Police Department", "Have you ever worked for any of the following organizations?",
+     ["City of Phoenix", "State of Arizona", "Maricopa County", "None of the above"]),
+    ("Phoenix VA Health Care System", "Have you ever worked for any of the following agencies?",
+     ["Department of Veterans Affairs", "Department of Defense", "None of the above"]),
+    # (a DOE site and the company that runs it)
+    ("Los Alamos National Laboratory", "Have you ever worked for any of the following companies?",
+     ["Triad National Security", "Consolidated Nuclear Security", "None"]),
+    ("Sandia National Laboratories", "Have you ever worked for any of the following companies?",
+     ["National Technology and Engineering Solutions of Sandia", "Mission Support and Test Services", "None"]),
+    # (a short name, a renamed company)
+    ("BWX Technologies", "Have you ever worked for any of the following companies?", ["BWXT Pantex", "Acme", "N/A"]),
+    ("National Security Technologies", "Have you ever worked for any of the following companies?",
+     ["NSTec LLC", "Bechtel Corporation", "N/A"]),
+    ("AECOM", "Have you ever worked for any of the following companies?", ["Amentum", "Acme Widgets", "N/A"]),
+    ("Intel", "Have you ever worked for any of the following companies?",
+     ["Honeywell International", "Jacobs Engineering Group", "N/A"]),
+])
+def test_the_none_of_a_list_of_organizations_is_never_the_profiles(employer, label, options):
+    """The fourth review of 0.3.227: a profile can't prove the person never worked for any of a list of organizations:
+    its employer may be one of them by another name (a city's convention center or water service, a VA hospital, a
+    national laboratory and the company that runs it, a short name, a renamed company). The none is the person's, in
+    any list, and remembered once they give it; one the profile's employer surely is is still picked."""
+    for kind in ("combobox", "radio_group", "checkbox_group"):
+        assert _nnss(label, {"work_history": [{"company": employer, "start": "2018-01", "end": "2020-01"}]},
+                     kind=kind, options=options, job={"company": "Example Fab"}) is None, (employer, kind)
+    assert _nnss("Have you ever worked for any of the following companies?", {"work_history": [
+        {"company": "BWXT", "start": "2018-01", "end": "2020-01"}]}, options=["BWXT", "Acme Widgets", "N/A"],
+        job={"company": "Example Fab"}) == "BWXT"
 
 
 def test_worked_for_an_organization_its_family_or_examples_is_never_a_none():
-    """NNSS's question 7 as the page has it (run 148) reaches past the names its choices give: "its parent companies
-    or predecessors (e.g. ...)", "or any of their affiliates or subsidiaries". An employer the profile names may be
-    one of those by another name (Bechtel Nevada ran the site before them; AECOM's government arm is now Amentum), so
-    its N/A is never the profile's: the person's, unless every employer of theirs is one of its choices."""
+    """NNSS's question 7 as the page has it (run 148), a list that takes several, reaches past the names its choices
+    give: "its parent companies or predecessors (e.g. ...)", "or any of their affiliates or subsidiaries". Its N/A is
+    never the profile's, and another employer of theirs may be one of those by another name (Bechtel Nevada ran the
+    site before them; AECOM's government arm is now Amentum): the person's, unless every employer of theirs is one of
+    its choices."""
     def worked(label, *companies):
         data = {"work_history": [{"company": c, "start": "2018-01", "end": "2020-01"} for c in companies]}
-        return _nnss(label, data, kind="combobox", options=NNSS_ORGS)
+        return _nnss(label, data, kind="combobox", options=NNSS_ORGS, multiple=True)
 
     asked = ("7. Have you ever worked for the NNSS, NNSA, Mission Support and Test Services, LLC or its parent "
              "companies or predecessors (e.g. Honeywell International Inc., Jacobs Engineering Group Inc., National "
@@ -4820,21 +4861,6 @@ def test_a_list_of_tools_places_or_customers_is_never_answered_none(label, optio
     for kind in ("radio_group", "checkbox_group"):
         a = resolve_field(f(label, kind, options=options), _worked_at("Intel"), {"company": "Example Fab"})
         assert a is None or a.rule != "work_history", (label, kind, a)
-
-
-@pytest.mark.parametrize("employer, short", [
-    ("BWX Technologies", "BWXT"), ("Lockheed Martin", "LMCO"), ("Northrop Grumman", "NGC"),
-    ("National Security Technologies", "NSTec"), ("Raytheon Technologies", "RTX"), ("General Dynamics", "GDIT"),
-])
-def test_a_choice_by_a_short_name_is_never_said_to_be_none_of_the_profiles(employer, short):
-    """The review of 0.3.227: a choice written as a short name (BWXT, NSTec) may be an employer the profile writes out
-    in full, which no rule here can tell: the N/A is the person's. One the profile's employer surely is is still its
-    choice."""
-    label, options = "Have you ever worked for any of the following companies?", [short, "Acme Widgets", "N/A"]
-    a = resolve_field(f(label, "combobox", options=options), _worked_at(employer), {"company": "Example Fab"})
-    assert a is None, (employer, short, a)
-    a = resolve_field(f(label, "combobox", options=options), _worked_at(short), {"company": "Example Fab"})
-    assert a is not None and a.value == short
 
 
 SERVICE_BOTH = (NNSS_SERVICE, NNSS_SERVICE + " If yes, you must complete the sub-questions below",
@@ -5151,41 +5177,6 @@ def test_a_list_question_with_a_time_or_a_role_is_the_persons(label):
     assert a is not None and a.value == ["Jacobs Engineering Group Inc."]
 
 
-@pytest.mark.parametrize("employer", ["Phoenix VA Health Care System", "Internal Revenue Service", "U.S. Army",
-                                      "Luke Air Force Base", "Intel"])
-def test_a_list_of_agencies_is_none_only_where_the_profile_says_no_federal_service(employer):
-    """The second review of 0.3.227: "Have you ever worked for any of the following agencies?" was "None of the above"
-    for someone at a VA hospital, the IRS, the Army or an Air Force base, whose names aren't the agencies'. Its none
-    only where the profile's history says the person never worked for the federal government nor served."""
-    options = ["Department of Veterans Affairs", "Department of Defense", "Department of the Treasury",
-               "None of the above"]
-    label = "Have you ever worked for any of the following agencies?"
-    federal = Profile({"work_history": [{"company": employer, "start": "2018-01", "end": "2020-01"}],
-                       "history": {"us_government_employee": True}})
-    assert resolve_field(f(label, "combobox", options=options), federal, {"company": "Example Fab"}) is None
-    never = Profile({"work_history": [{"company": "Intel", "start": "2018-01", "end": "2020-01"}],
-                     "history": {"us_government_employee": False, "us_military": False}})
-    assert resolve_field(f(label, "combobox", options=options), never, {"company": "Example Fab"}).value == \
-        "None of the above"
-
-
-@pytest.mark.parametrize("employer, option", [
-    ("National Security Technologies", "NSTec LLC"), ("Raytheon Technologies", "RTX Corporation"),
-    ("BWX Technologies", "BWXT Pantex"), ("General Dynamics Information Technology", "GDIT LLC"),
-])
-def test_a_short_name_with_more_words_is_still_a_short_name(employer, option):
-    """The second review of 0.3.227: "NSTec LLC", "RTX Corporation", "BWXT Pantex" passed for full names, so someone at
-    National Security Technologies got N/A. A short name with its legal words, or first, is still one."""
-    options = [option, "Bechtel Corporation", "N/A"]
-    a = resolve_field(f("Have you ever worked for any of the following companies?", "combobox", options=options),
-                      _worked_at(employer), {"company": "Example Fab"})
-    assert a is None, (employer, option, a)
-    a = resolve_field(f("Have you ever worked for any of the following companies?", "combobox",
-                        options=["Honeywell International", "Bechtel Corporation", "N/A"]), _worked_at("Intel"),
-                      {"company": "Example Fab"})
-    assert a is not None and a.value == "N/A"
-
-
 @pytest.mark.parametrize("label", [
     "Are you a current or former Department of Defense employee (military or civilian)?",
     "Have you ever been employed by the Department of Defense, including military service?",
@@ -5305,19 +5296,30 @@ def test_a_dod_question_about_a_contractor_too_is_the_persons():
     assert _nnss("Are you a current DoD employee or contractor?", never) is None
 
 
-@pytest.mark.parametrize("employer", ["Phoenix Police Department", "Phoenix Sky Harbor International Airport",
-                                      "Arizona Department of Transportation", "Phoenix Union High School District"])
-def test_a_list_of_state_or_local_bodies_is_never_none_for_a_government_employer(employer):
-    """The third review of 0.3.227: "None of the above" among the City of Phoenix, the State of Arizona and Maricopa
-    County for someone at the city's police, its airport or the state's transportation department, whose names aren't
-    the choices'. The none only where no employer of theirs is a government body by its name."""
-    options = ["City of Phoenix", "State of Arizona", "Maricopa County", "None of the above"]
-    history = {"us_government_employee": False, "us_military": False}
-    for label in ("Have you ever worked for any of the following agencies?",
-                  "Have you ever worked for any of the following organizations?"):
-        at = Profile({"work_history": [{"company": employer, "start": "2018-01", "end": "2020-01"}],
-                      "history": history})
-        assert resolve_field(f(label, "combobox", options=options), at, {"company": "Example Fab"}) is None, label
-        intel = Profile({"work_history": [{"company": "Intel", "start": "2018-01", "end": "2020-01"}]})
-        assert resolve_field(f(label, "combobox", options=options), intel, {"company": "Example Fab"}).value == \
-            "None of the above"
+# --- the fourth review of 0.3.227 ----------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("label", [
+    "Are you currently or have you been employed by the federal government?",
+    "Are you currently, or have you in the past been, employed by the federal government?",
+    "Do you currently work for, or have you worked for, the federal government?",
+    "Are you currently a federal employee or have you been one in the past?",
+    "Are you currently or were you once a government employee?",
+    "Are you currently a government employee, or have you been one at some point?",
+    "Have you been a government employee in the last 5 years or before that?",
+    "Are you currently employed by a government agency, or were you in the last 5 years?",
+    "Is this your first time working for a government agency, or are you currently a government employee?",
+    "Have you been a government employee in the last 10 years?",
+    "Have you been a government employee in the past?",
+])
+def test_beside_federal_history_the_background_answers_only_now_or_five_years(label):
+    """The fourth review of 0.3.227: a list of what makes a question about another time kept missing wordings. Beside a
+    history that says the person worked for the federal government, the background's "No" (now or in the last 5
+    years) answers only a question unmistakably about now or a window of 5 years or less; anything else is the
+    person's."""
+    data = {"history": {"us_government_employee": True}, "background": {"government_employee": False}}
+    a = resolve_field(f(label, "radio_group", options=YES_NO), Profile(data), NNSS)
+    assert a is None or a.value != "No", (label, a)
+    for label in ("Are you currently a federal employee?", "Have you been a government employee in the last 5 years?",
+                  "Are you currently a state or local government employee?",
+                  "Have you been a government employee within the past three years?"):
+        assert _nnss(label, data) == "No", label
