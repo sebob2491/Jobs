@@ -4,6 +4,7 @@ live_smoke sets the environment it runs in. Nothing in a role is anyone's."""
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -130,3 +131,68 @@ def test_the_live_checks_throwaway_answers_fit_the_box_and_never_make_up_an_ssn(
     # (and the rounds end at one, never answering it: live_smoke's question rounds read asks_ssn)
     text = (SCRIPTS / "live_smoke.py").read_text(encoding="utf-8")
     assert "if any(asks_ssn(q) for q in run.questions):" in text
+
+
+RUN_WAIT = """
+import asyncio, json, sys, time
+from types import SimpleNamespace
+sys.path.insert(0, "scripts")
+import live_smoke
+
+async def main():
+    run = SimpleNamespace(status="needs_you", need="stuck", code="site_error", reason="502 Bad Gateway.", log=[],
+                          retry_at=time.time() + 0.6)
+
+    async def desk():  # (the desk's try by itself when it's due, and where it ended)
+        await asyncio.sleep(0.6)
+        run.retry_at, run.status, run.site_retries = 0.0, "queued", 1
+        await asyncio.sleep(0.3)
+        run.status = "running"
+        await asyncio.sleep(0.3)
+        run.status, run.need, run.code, run.reason = "ready", "", "", "Ready to submit"
+
+    began = time.monotonic()
+    task = asyncio.ensure_future(desk())
+    kept = []
+
+    async def keep():  # (the first stop's page, kept while it's still there: before the try)
+        kept.append((run.status, bool(run.retry_at)))
+
+    retried = await live_smoke.wait_for_round(run, poll=0.05, on_retry=keep)
+    await task
+    plain = SimpleNamespace(status="needs_you", need="stuck", code="no_step_button", reason="No way on.", log=[])
+    off = SimpleNamespace(status="needs_you", need="stuck", code="site_error", reason="502.", log=[],
+                          retry_at=time.time() + 0.3, site_retries=0)
+
+    async def called_off():  # (its tab changed as the try came due)
+        await asyncio.sleep(0.3)
+        off.retry_at = 0.0
+        off.log.append("I didn't try this job again by itself: its tab was closed")
+
+    task = asyncio.ensure_future(called_off())
+    gone = await live_smoke.wait_for_round(off, poll=0.05)
+    await task
+    return {"retried": retried, "status": run.status, "waited": time.monotonic() - began, "off": gone,
+            "plain": await live_smoke.wait_for_round(plain, poll=0.05, on_retry=keep), "kept": kept,
+            "env": __import__("os").environ["JOB_APPLY_RETRY_AFTER"]}
+
+print("RESULT " + json.dumps(asyncio.run(main())))
+"""
+
+
+def test_a_round_waits_out_the_desks_try_after_the_sites_error():
+    """The live check (live_smoke.wait_for_round): a job stopped on the site's own error that the desk tries again by
+    itself (JOB_APPLY_RETRY_AFTER: a minute in the run) is waited out in its round, and the stop it made first kept for
+    the round's record ("tried again" in the compare's detail), its page kept first (pipeline/<employer>/first-stop);
+    a stop with no try waiting ends the round at once."""
+    out = subprocess.run([sys.executable, "-c", RUN_WAIT], cwd=SERVER, capture_output=True, text=True,
+                         encoding="utf-8", timeout=120, env={k: v for k, v in os.environ.items()
+                                                             if k != "JOB_APPLY_RETRY_AFTER"})
+    line = next((x for x in out.stdout.splitlines() if x.startswith("RESULT ")), None)
+    assert line, out.stdout[-2000:] + out.stderr[-3000:]
+    got = json.loads(line[len("RESULT "):])
+    assert got["retried"] == {"code": "site_error", "reason": "502 Bad Gateway.", "opened": True}, got
+    assert got["off"] == {"code": "site_error", "reason": "502.", "opened": False, "called_off": "its tab was closed"}
+    assert got["status"] == "ready" and got["waited"] >= 1.1, got
+    assert got["plain"] is None and got["env"] == "60", got
+    assert got["kept"] == [["needs_you", True]], got  # (once, at the stop the try comes after)

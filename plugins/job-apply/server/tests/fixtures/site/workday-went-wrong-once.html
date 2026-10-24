@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Field Service Engineer</title></head>
+<body>
+<!-- like Circle K's Workday (run 63): the application's step shows "Something went wrong" and "Please refresh the page
+     and then try again.", and the same again after the desk's one reload; opened again later (the desk's try by itself
+     after the site's error, in the same tab), the application (step1.html). The visits are counted for the browser
+     (localStorage's wwo.visits; the visit a tab is on kept in its sessionStorage): the first N visits (?fail=N, 1 when
+     not given) say it went wrong, at every load. A reload is the same visit, its number lost or not (on CI, under load,
+     its headless browser now and then drops a write a moment before a reload: workday-went-wrong.html); a page opened
+     at this address again is a new one. ?next=<page>.html: where a visit past those goes instead of step1.html (a
+     one-page application: submit-by-hand.html). -->
+<a href="#">Back to Job Posting</a>
+<h2>Field Service Engineer</h2>
+<div>current step 1 of 6 My Information</div>
+<script>
+  const q = new URLSearchParams(location.search);
+  const reloaded = (performance.getEntriesByType('navigation')[0] || {}).type === 'reload';
+  let visit = reloaded ? Number(sessionStorage.getItem('wwo.visit') || 0) : 0;
+  if (!visit) {
+    const visits = Number(localStorage.getItem('wwo.visits') || 0);
+    visit = reloaded && visits ? visits : visits + 1;
+    localStorage.setItem('wwo.visits', String(visit));
+    sessionStorage.setItem('wwo.visit', String(visit));
+  }
+  const next = /^[\w-]+\.html$/.test(q.get('next') || '') ? q.get('next') : 'step1.html';
+  if (visit > Number(q.get('fail') || 1)) location.replace(next);
+  else document.write('<h2>Something went wrong</h2><p>Please refresh the page and then try again.</p>'
+                      + '<p>Error Code: VPS|0000</p>');
+</script>
+</body>
+</html>

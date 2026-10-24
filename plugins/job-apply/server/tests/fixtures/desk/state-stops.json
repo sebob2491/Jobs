@@ -527,6 +527,61 @@
    "not_interested": null
   },
   {
+   "url": "https://careers.example.com/site-error/15",
+   "title": "Equipment Technician",
+   "company": "Example Site Error",
+   "location": "Phoenix, AZ",
+   "posted": "2026-10-10",
+   "posted_days": 8,
+   "pay": null,
+   "ats": "workday",
+   "fit": {
+    "score": 72,
+    "reasons": [
+     "title matches"
+    ],
+    "concerns": [],
+    "blocked": false,
+    "recommended": true,
+    "parts": [
+     {
+      "why": "start",
+      "points": 50
+     },
+     {
+      "why": "title matches",
+      "points": 22
+     }
+    ]
+   },
+   "notes": [],
+   "job_id": 15,
+   "status": "saved",
+   "run": {
+    "job_id": 15,
+    "title": "Equipment Technician",
+    "company": "Example Site Error",
+    "status": "needs_you",
+    "need": "stuck",
+    "reason": "Example Site Error's site said “Something went wrong” again and asked for the page to be refreshed, and I had reloaded once already for this application. That's the site's own trouble: reload the page in the desk's browser window (now, or later if it still says so), then press Carry on. The site had an error, so I'll try this job again by itself at 3:40 PM (once), or press Try now.",
+    "code": "site_went_wrong",
+    "blocking": false,
+    "paused_at": 1005.5,
+    "captcha": false,
+    "left_at_restart": false,
+    "questions": [],
+    "log": [],
+    "log_at": [],
+    "went_in": null,
+    "retry_at": 1792800000.0
+   },
+   "handled": false,
+   "also_on": [],
+   "saved_at": null,
+   "new": false,
+   "not_interested": null
+  },
+  {
    "url": "https://careers.example.com/sent/6",
    "title": "Equipment Technician",
    "company": "Example Not Sent",

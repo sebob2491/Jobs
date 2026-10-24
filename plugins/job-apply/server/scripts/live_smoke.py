@@ -80,13 +80,17 @@ import tempfile
 import time
 import traceback
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 from urllib.parse import urlsplit
 
 os.environ["JOB_APPLY_NEVER_SUBMIT"] = "1"
 # each step of a Workday date said in the log (what the site does with it)
 os.environ.setdefault("JOB_APPLY_DATE_TRACE", "1")
 os.environ["JOB_APPLY_HEADLESS"] = "1"
+# A job the site's own passing error stopped is tried again by itself (pipeline.RETRY_AFTER, 20 minutes on the desk): a
+# minute on here, waited out in its round (check_pipeline), so a run shows what the try does without growing much
+RETRY_AFTER = 60
+os.environ.setdefault("JOB_APPLY_RETRY_AFTER", str(RETRY_AFTER))
 _HOME = Path(tempfile.mkdtemp(prefix="job-apply-live-"))
 os.environ["JOB_APPLY_HOME"] = str(_HOME)
 
@@ -2406,17 +2410,35 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
     rec["rounds"] = []
     run = None
     agreed: set[tuple[str, str, str]] = set()  # (each agreement in the round it was made in: agreed_words)
+
+    async def keep_first_stop() -> None:
+        """The page the site's error stopped on, kept beside the one the run ends on (pipeline/<employer>/first-stop,
+        masked as that one), before the desk's try by itself opens the job afresh in its tab."""
+        try:
+            while run is not None and run.job_id in applier._slots:  # (its stop's page still being saved)
+                await asyncio.sleep(0.2)
+            server.browser.use_tab(run.page if run is not None else None)
+            snap = await server.debug_snapshot(note=f"live pipeline: {company['name']}, its first stop")
+            first = out / "pipeline" / slug(company["name"]) / "first-stop"
+            shutil.copytree(snap["saved_to"], first, dirs_exist_ok=True)
+            if _mask is not _no_mask:
+                live_identity.mask_files(first, _mask)
+            if INBOX_IN_PROFILE:
+                live_identity.drop_images(first)
+            rec["first_stop"] = "first-stop"
+        except Exception as e:  # (the run's record stands without it)
+            rec["first_stop_error"] = f"{type(e).__name__}: {str(e)[:200]}"
+
     try:
         run = applier.enqueue(job["id"])
         rounds = QUESTION_ROUNDS + RESUME_ROUNDS + (MAIL_ROUNDS if TEST_IDENTITY else 0)
         resumes = RESUME_ROUNDS
         for n in range(rounds):
-            start = time.monotonic()
-            while run.status in ("queued", "running"):
-                if time.monotonic() - start > PIPELINE_WAIT:
-                    raise TimeoutError(f"still {run.status} after {PIPELINE_WAIT}s; log: {run.log[-3:]}")
-                await asyncio.sleep(0.5)
+            retried = await wait_for_round(run, on_retry=None if rec.get("first_stop") else keep_first_stop)
             rec["rounds"].append({
+                # the stop the site's error made before the desk's try by itself, where it made one (live_compare's
+                # detail says "tried again")
+                **({"retried": retried} if retried else {}),
                 "status": run.status, "need": run.need, "code": _stop_code(run), "reason": run.reason, "url": run.url,
                 "log": list(run.log),
                 "questions": [{k: q.get(k) for k in ("label", "kind", "required", "options", "error", "account")
@@ -2545,6 +2567,34 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
         await server.close_browser()
 
 
+async def wait_for_round(run: Any, poll: float = 0.5,
+                         on_retry: Callable[[], Awaitable[None]] | None = None) -> dict[str, Any] | None:
+    """Wait out a round of the desk's work on the job: until it stops for the person or is done, within PIPELINE_WAIT.
+    A stop on the site's own passing error that the desk tries again by itself (its retry_at: pipeline.RETRY_AFTER,
+    JOB_APPLY_RETRY_AFTER here) is waited out too, the round's time counted from the try (`on_retry` first: its page
+    kept): the stop it made then ({"code", "reason", "opened": whether the try opened the job again, and where it
+    didn't, "called_off": why}), or None where it made none."""
+    start = time.monotonic()
+    retried: dict[str, Any] | None = None
+    tries = 0
+    while run.status in ("queued", "running") or float(getattr(run, "retry_at", 0) or 0):
+        if run.status == "needs_you" and retried is None:
+            retried = {"code": _stop_code(run), "reason": run.reason}
+            tries = int(getattr(run, "site_retries", 0) or 0)
+            if on_retry is not None:
+                await on_retry()
+            start = time.monotonic() + max(run.retry_at - time.time(), 0.0)
+        if time.monotonic() - start > PIPELINE_WAIT:
+            raise TimeoutError(f"still {run.status} after {PIPELINE_WAIT}s; log: {run.log[-3:]}")
+        await asyncio.sleep(poll)
+    if retried is not None:
+        retried["opened"] = int(getattr(run, "site_retries", 0) or 0) > tries
+        if not retried["opened"]:  # (called off: its tab changed, say, as the try came due)
+            off = [line for line in run.log if line.startswith("I didn't try this job again")]
+            retried["called_off"] = off[-1].split(": ", 1)[-1] if off else ""
+    return retried
+
+
 async def drop_tailored_resume(job: dict[str, Any]) -> dict[str, Any]:
     """--tailored-resume (the weekly probe, scripts/live_probes.py): a clearly marked tailored test resume in the job's
     folder, made as render_document makes one (its Markdown printed to a PDF by render.to_html and render_pdf) from
@@ -2605,8 +2655,11 @@ async def report_inbox(company: str, applier: Any, run: Any) -> None:
 
 
 async def pipeline_main(companies: list[dict[str, Any]], out: Path, fixtures: bool = False) -> int:
+    from job_apply.pipeline import _retry_after
+
     records = []
-    wait = (QUESTION_ROUNDS + RESUME_ROUNDS) * PIPELINE_WAIT + 60 + (MAIL_ROUNDS * MAIL_WAIT if TEST_IDENTITY else 0)
+    wait = ((QUESTION_ROUNDS + RESUME_ROUNDS) * PIPELINE_WAIT + 60 + (MAIL_ROUNDS * MAIL_WAIT if TEST_IDENTITY else 0)
+            + _retry_after() + PIPELINE_WAIT)  # (and one try by itself after a site's error, with its pass)
     for company in [c for c in companies if c.get("search")]:
         started = time.time()
         rec: dict[str, Any] = {"company": company["name"]}

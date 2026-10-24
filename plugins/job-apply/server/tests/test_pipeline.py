@@ -5,6 +5,7 @@ review -> submit)."""
 import asyncio
 import contextlib
 import json
+import re
 import threading
 import time
 from pathlib import Path
@@ -16,7 +17,7 @@ from conftest import browser_available, fixture_url, run
 
 import job_apply.browser as browser_module
 import job_apply.pipeline as pipeline
-from job_apply import config, formjs, mailbox
+from job_apply import config, formjs, history, mailbox
 from job_apply.pipeline import Applier, Run, classify, pick_next, question_key
 
 pytestmark = pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")
@@ -6026,6 +6027,595 @@ def test_a_page_still_empty_after_resume_is_still_said_to_be_the_sites(srv, monk
     else:
         assert "still shows only its header and footer" in r.reason, (r.reason, r.log)
     assert sum("so I reloaded it" in line for line in r.log) == 1, r.log
+
+
+# ------------------------------------------- the site's errors, tried again by itself (the owner's call of Oct 24)
+_TRIED_LATER = "the site had an error; I'll try this job again at"
+_TRYING = "trying this job again after the site's error"
+_NOT_TRIED = "I didn't try it again by itself, as"
+
+
+async def _until_retry_waits(applier, r):
+    """Until the job's first stop says it's tried again later, and its pass has ended (its stop's page saved)."""
+    await until(lambda: r.retry_at and r.job_id not in applier._slots, about=state(r))
+
+
+@pytest.mark.parametrize("fail", [1, 2])
+def test_a_sites_passing_error_is_tried_again_by_itself_once(srv, monkeypatch, job_apply_home, fail):
+    """Circle K's Workday (run 63): "Something went wrong" again after the desk's one reload, and the job waited on a
+    card for the person, as did Mayo Clinic's and BDO's Oracle ("try again later"). The owner's call (Oct 24): the desk
+    tries such a job again by itself a while later (RETRY_AFTER; JOB_APPLY_RETRY_AFTER here), once: its card says when,
+    with Try now; then it's opened afresh in its own tab (the error's, as the stop left it) and goes on (fail=1: the
+    site's trouble had passed). Where the site goes wrong again (fail=2), the card stays for the person, as before, and
+    says it was tried again already. The desk's history keeps the stop without the try's time (the review)."""
+    monkeypatch.setenv("JOB_APPLY_RETRY_AFTER", "3")
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/workday-went-wrong-once.html") + f"?fail={fail}", title="FSE",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await _until_retry_waits(applier, r)
+            first = (r.status, r.need, r.code, r.reason, r.page, r.public())
+            await until(lambda: _TRYING in r.log and r.status not in ("queued", "running") and not r.retry_at,
+                        about=state(r))
+            return r, first
+        finally:
+            await applier.stop()
+
+    r, (status, need, code, reason, first_tab, shown) = run(go())
+    assert (status, need, code) == ("needs_you", "stuck", "site_went_wrong"), (status, need, code, reason)
+    assert "said “Something went wrong” again" in reason, reason
+    assert "The site had an error, so I'll try this job again by itself at " in reason, reason
+    assert reason.endswith("(once), or press Try now."), reason
+    assert shown["retry_at"] > 0 and not {"site_retries", "fresh_retry", "retry_stop", "retry_mark"} & shown.keys()
+    assert sum(_TRIED_LATER in line for line in r.log) == 1 and sum(_TRYING == line for line in r.log) == 1, r.log
+    assert r.page is first_tab and not first_tab.is_closed(), r.log  # (opened afresh in its own tab, never another)
+    assert r.site_retries == 1 and r.public()["retry_at"] == 0, r.public()
+    lines = [e for e in history.read() if e.get("job_id") == job["id"]]
+    assert lines and lines[0]["code"] == "site_went_wrong" and "Something went wrong" in lines[0]["reason"], lines
+    assert not any("Try now" in e.get("reason", "") or "try this job again" in e.get("reason", "") for e in lines)
+    if fail == 1:
+        assert r.seen_form and "went-wrong" not in r.url, (r.status, r.reason, r.log)
+        return
+    assert (r.status, r.need, r.code) == ("needs_you", "stuck", "site_went_wrong"), (r.reason, r.log)
+    assert r.reason.endswith(pipeline._RETRIED_SAYS) and "Try now" not in r.reason, r.reason
+    assert not r.retry_at, r.retry_at
+
+
+@pytest.mark.parametrize("press", ["pause", "skip", "carry_on", "try_now"])
+def test_a_try_after_the_sites_error_waits_for_the_queue_and_ends_with_the_persons_press(srv, monkeypatch,
+                                                                                       job_apply_home, press):
+    """The job's try by itself after the site's error: Pause queue holds it (back in the queue when it's due, it waits
+    there for Carry on with the queue, as any job); Skip ends it, and Carry on (the person's own go in the job's tab,
+    never opened afresh for them, nor tried again by itself after that: their hands are on it); Try now is that try,
+    now."""
+    monkeypatch.setattr(pipeline, "RETRY_AFTER", 2 if press in ("pause", "skip") else 600)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/workday-went-wrong-once.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await _until_retry_waits(applier, r)
+            if press == "pause":
+                applier.pause_queue()
+                await asyncio.sleep(max(r.retry_at - time.time(), 0) + 2)
+                held = (r.status, _TRYING in r.log, job["id"] in applier._slots)
+                applier.resume_queue()
+                await until(lambda: _TRYING in r.log and r.status not in ("queued", "running"), about=state(r))
+                return r, held
+            if press == "skip":
+                await applier.skip(job["id"])
+                gone = r.retry_at
+                await asyncio.sleep(3)
+                return r, gone
+            if press == "carry_on":
+                applier.resume(job["id"])
+                gone = r.retry_at
+                await until(lambda: r.status not in ("queued", "running"), about=state(r))
+                return r, gone
+            applier.retry_now(job["id"])
+            gone = r.retry_at
+            await until(lambda: _TRYING in r.log and r.status not in ("queued", "running"), about=state(r))
+            return r, gone
+        finally:
+            await applier.stop()
+
+    r, seen = run(go())
+    if press == "pause":
+        assert seen == ("queued", False, False), (seen, r.log)
+        assert r.seen_form and r.site_retries == 1, (r.status, r.reason, r.log)
+    elif press == "skip":
+        assert seen == 0 and r.status == "skipped" and _TRYING not in r.log and r.site_retries == 0, (r.status, r.log)
+    elif press == "carry_on":
+        # (gone on with in the tab the error showed in: it says so again there, and stays for the person)
+        assert seen == 0 and _TRYING not in r.log and r.site_retries == 0, (seen, r.log)
+        assert r.hands_on and sum(_TRIED_LATER in line for line in r.log) == 1 and not r.retry_at, r.log
+        assert (r.status, r.code) == ("needs_you", "site_went_wrong") and "Try now" not in r.reason, r.reason
+    else:
+        assert seen == 0 and r.seen_form and r.site_retries == 1, (r.status, r.reason, r.log)
+
+
+@pytest.mark.parametrize("when", ["waiting", "queued"])
+def test_a_tab_the_person_went_on_in_after_the_sites_error_is_never_tried_again_over(srv, monkeypatch, job_apply_home,
+                                                                                    when):
+    """The review of the try after a site's error (its HIGH): the card says to reload the page and press Carry on;
+    the person reloads it, fills the application in and presses the site's own Submit there, and presses nothing on
+    the desk. The try by itself opened the job afresh, closed the tab with the confirmation, and with Submit for me sent
+    it a second time. Now a tab changed since the stop is the person's: the try is called off as it comes due
+    ("waiting"), or as its turn comes in a paused queue ("queued"), the stop's card said again with why (and alerted),
+    the tab left as it is, and nothing sent again."""
+    monkeypatch.setattr(pipeline, "RETRY_AFTER", 6 if when == "waiting" else 3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/workday-went-wrong-once.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+    applier.auto_submit = True
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"], submit=True)
+            await _until_retry_waits(applier, r)
+            stop = r.reason.split(pipeline._RETRY_SAYS)[0]
+            tab = r.page
+            if when == "queued":  # (due while the queue is paused: back in it, waiting its turn)
+                applier.pause_queue()
+                await until(lambda: r.status == "queued", about=state(r))
+            # the person, in the tab the error showed in: on to the application, and the site's own Submit
+            await tab.goto(fixture_url("site/submit-by-hand.html"))
+            for box, value in (("#fn", "Pat"), ("#ln", "Example"), ("#em", "pat@example.com")):
+                await tab.fill(box, value)
+            await tab.click("button[type=submit]")
+            await tab.wait_for_selector("text=Thank you for applying!")
+            if when == "queued":
+                applier.resume_queue()
+            await until(lambda: _NOT_TRIED in r.reason and r.status == "needs_you" and r.job_id not in applier._slots,
+                        about=state(r))
+            await asyncio.sleep(1)
+            return r, stop, tab, await tab.evaluate("localStorage.getItem('submits')")
+        finally:
+            await applier.stop()
+
+    r, stop, tab, submits = run(go())
+    assert submits == "1" and not tab.is_closed() and r.page is tab, (submits, r.log)
+    assert _TRYING not in r.log and r.site_retries == 0 and not r.retry_at and not r.fresh_retry, r.log
+    assert (r.need, r.code) == ("stuck", "site_went_wrong") and r.reason.startswith(stop), r.reason
+    assert r.reason.endswith("as its tab says the application went in.") or \
+        r.reason.endswith("as its tab went on to another page after the site's error."), r.reason
+    # (where its tab says it went in, its card's first button is "I submitted it myself": the review, round 2)
+    assert r.public()["seen_sent"] == r.reason.endswith("went in."), r.reason
+    assert r.public()["retry_at"] == 0 and "Try now" not in r.reason, r.reason
+    assert any(line.startswith("I didn't try this job again by itself: its tab") for line in r.log), r.log
+
+
+@pytest.mark.parametrize("route", ["another_tab", "one_address"])
+def test_an_application_sent_elsewhere_in_the_desks_browser_calls_the_try_off(srv, monkeypatch, job_apply_home, route):
+    """The review of the try after a site's error, round 2: the person applies in another tab of the desk's browser,
+    leaving the error's tab as it was ("another_tab": opened on its site since the stop); or goes on in the error's tab
+    of an application at one address, whose confirmation has no boxes and words the desk doesn't know ("one_address":
+    its whole address, query too, and words changed). The try by itself went, and Submit for me sent it again. Now
+    either calls the try off, saying what's seen, and nothing is sent again."""
+    monkeypatch.setattr(pipeline, "RETRY_AFTER", 6)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    page = "one-address-application.html" if route == "one_address" else "workday-went-wrong-once.html"
+    job = srv.add_job(url=fixture_url(f"site/{page}") + "?fail=1", title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+    applier.auto_submit = True
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"], submit=True)
+            await _until_retry_waits(applier, r)
+            if route == "one_address":
+                tab = r.page  # (the person, in the error's tab: on to the form, and its Submit)
+                await tab.goto(fixture_url(f"site/{page}") + "?step=form")
+                done = "text=All set"
+            else:
+                tab = await r.page.context.new_page()  # (the person's own tab in the desk's browser, Ctrl+T)
+                await tab.goto(fixture_url("site/submit-by-hand.html"))
+                done = "text=Thank you for applying!"
+            for box, value in (("#fn", "Pat"), ("#ln", "Example"), ("#em", "pat@example.com")):
+                await tab.fill(box, value)
+            await tab.click("button[type=submit]")
+            await tab.wait_for_selector(done)
+            await until(lambda: _NOT_TRIED in r.reason and r.job_id not in applier._slots, about=state(r))
+            await asyncio.sleep(1)
+            return r, await tab.evaluate("localStorage.getItem('submits')")
+        finally:
+            await applier.stop()
+
+    r, submits = run(go())
+    assert submits == "1" and _TRYING not in r.log and not r.retry_at and r.status == "needs_you", (submits, r.log)
+    why = ("its tab went on to another page after the site's error" if route == "one_address"
+           else "a tab was opened on its site after the site's error")
+    assert r.reason.endswith(f"{_NOT_TRIED} {why}."), r.reason
+
+
+def test_a_try_the_desk_made_by_itself_never_sends_by_itself(srv, monkeypatch, job_apply_home):
+    """The review of the try after a site's error, round 2 (the structural fix): the person may have applied meanwhile
+    where the desk can't see (their own browser: its "site couldn't be reached" card even said to), so a try the desk
+    made by itself stops on the review page for the person's Submit, Submit for me or not, and says to check first; the
+    person's Submit sends it, once."""
+    monkeypatch.setattr(pipeline, "RETRY_AFTER", 3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/workday-went-wrong-once.html") + "?fail=1&next=submit-by-hand.html",
+                      title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+    applier.auto_submit = True
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"], submit=True)
+            await _until_retry_waits(applier, r)
+            await until(lambda: _TRYING in r.log and r.status not in ("queued", "running"), about=state(r))
+            held = (r.status, r.reason, r.retry_held, await r.page.evaluate("localStorage.getItem('submits')"))
+            applier.submit_now(job["id"])  # (the person's Submit)
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, held, await r.page.evaluate("localStorage.getItem('submits')")
+        finally:
+            await applier.stop()
+
+    r, (status, reason, held, before), after = run(go())
+    assert (status, held, before) == ("ready", True, None), (status, reason)
+    assert reason.endswith(pipeline._RETRY_HELD_SAYS), reason
+    assert r.status == "submitted" and after == "1" and not r.retry_held, (r.status, r.reason, after)
+
+
+def test_a_try_held_for_the_persons_submit_holds_every_send_but_theirs(srv, job_apply_home):
+    """The try the desk made by itself (Run.retry_held): Submit for me's own press holds it on its review page; the
+    person's Submit takes the hold off and goes."""
+    applier = Applier(srv)
+    job = srv.add_job(url="https://careers.example.com/fab/9", title="Technician", company="Example Fab")["job"]
+    r = Run(job["id"], "Technician", "Example Fab", status="ready", submit=True, retry_held=True, started=True)
+    applier.runs[job["id"]] = r
+    run(applier._submit(r, by_person=False))
+    assert r.status == "ready" and r.reason.endswith(pipeline._RETRY_HELD_SAYS), r.reason
+    applier.submit_now(job["id"])
+    assert not r.retry_held and list(applier.tasks) == [("submit", job["id"])]
+
+
+@pytest.mark.parametrize("page", ["email-step-try-later.html", "email-step-then-502.html", "sso-unreachable.html"])
+def test_a_stop_on_a_step_that_may_email_or_one_saying_to_apply_elsewhere_is_never_tried_again(srv, monkeypatch,
+                                                                                                job_apply_home, page):
+    """The review of the try after a site's error, round 2: "We couldn't send the verification code. Please try again
+    later." on an email step (no rate limit's words) was tried again, and another NEXT asked for another code: a stop
+    on a step that may email the person (a sign-in's, an account's, an emailed code's) never is; nor one right after an
+    email step (a 5xx answering its NEXT: another try would ask for another code, the coordinator's call). Nor a page
+    that couldn't be reached, whose card says to apply in the person's own browser."""
+    monkeypatch.setattr(pipeline, "RETRY_AFTER", 2)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url(f"site/{page}"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status == "needs_you" and r.job_id not in applier._slots, about=state(r))
+            await asyncio.sleep(3)  # (past when a try would have come)
+            # (a page that couldn't be reached is Chrome's own: no storage of the site's to read)
+            return r, None if r.code == "site_unreachable" else await r.page.evaluate("localStorage.getItem('nexts')")
+        finally:
+            await applier.stop()
+
+    r, nexts = run(go())
+    assert not r.retry_at and _TRYING not in r.log and "Try now" not in r.reason, (r.code, r.reason, r.log)
+    if page == "sso-unreachable.html":
+        assert r.code == "site_unreachable" and "own browser" in r.reason, (r.code, r.reason)
+    else:
+        code = "site_error" if page == "email-step-then-502.html" else "try_later"
+        assert (r.code, r.email_step, nexts) == (code, True, "1"), (r.code, r.reason, nexts, r.log)
+
+
+def test_a_sites_error_on_the_applications_steps_after_its_sign_in_is_tried_again_and_held(srv, monkeypatch,
+                                                                                         job_apply_home):
+    """The coordinator's call on the review's round 2 (item 4, loosened): Workday signs in at the start of nearly every
+    pass, so a stop on the application's own steps after it (Circle K's "Something went wrong" again after its reload)
+    is tried again by itself; only a stop on a sign-in's, an account's or an emailed code's own page isn't (the email
+    step's "couldn't send the verification code": test_a_stop_on_a_step_that_may_email_...). The try signs in again
+    with the saved password and, opened again by the desk's own try, stops for the person's Submit, Submit for me or
+    not."""
+    saved_password(monkeypatch)
+    monkeypatch.setattr(pipeline, "RETRY_AFTER", 3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/signin-then-went-wrong.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+    applier.auto_submit = True
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"], submit=True)
+            await _until_retry_waits(applier, r)
+            first = (r.code, r.email_step, list(r.log))
+            await until(lambda: _TRYING in r.log and r.status not in ("queued", "running"), about=state(r))
+            return r, first, await r.page.evaluate("localStorage.getItem('submits')"), \
+                await r.page.evaluate("localStorage.getItem('sww.visits')")
+        finally:
+            await applier.stop()
+
+    r, (code, email_step, log), submits, visits = run(go())
+    assert code == "site_went_wrong" and not email_step, (code, log)
+    assert any("Sign In" in line for line in log), log  # (signed in on the way to the step that went wrong)
+    assert visits == "2" and sum("Sign In" in line for line in r.log) >= 2, (visits, r.log)  # (and again for the try)
+    assert r.status == "ready" and r.reason.endswith(pipeline._RETRY_HELD_SAYS) and submits is None, \
+        (r.status, r.reason, r.log)
+
+def test_a_refused_try_now_says_it_wasnt_tried_without_by_itself(srv, monkeypatch, job_apply_home):
+    """The person's Try now, on a job whose tab they went on in meanwhile: not tried, and its card says so in their
+    words ("I didn't try it again, as ..."), not as the desk's own try's."""
+    monkeypatch.setattr(pipeline, "RETRY_AFTER", 600)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/workday-went-wrong-once.html"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await _until_retry_waits(applier, r)
+            await r.page.goto(fixture_url("site/submit-by-hand.html"))  # (the person, in its tab)
+            applier.retry_now(job["id"])
+            await until(lambda: "I didn't try it again" in r.reason and r.job_id not in applier._slots,
+                        about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.reason.endswith("I didn't try it again, as its tab went on to another page after the site's error."), \
+        r.reason
+    assert _TRYING not in r.log and r.site_retries == 0 and not r.retry_held, r.log
+    assert "I didn't try this job again: its tab went on to another page after the site's error" in r.log, r.log
+
+
+def test_one_jobs_trouble_as_its_try_comes_due_never_holds_the_queue(srv, monkeypatch, job_apply_home):
+    """The review's LOW (c): a look at one job's tab that fails as its try comes due calls that try off (its card the
+    person's, said why), and never stops the worker's look at the rest."""
+    applier = Applier(srv)
+    jobs = [srv.add_job(url=f"https://careers.example.com/fab/{i}", title="Technician", company=f"Example {i}")["job"]
+            for i in (1, 2)]
+    runs = []
+    for job in jobs:
+        r = Run(job["id"], "Technician", job["company"], status="needs_you", need="stuck", code="site_error",
+                reason="The site's own." + pipeline._RETRY_SAYS + " 3:40 PM (once), or press Try now.",
+                retry_at=time.time() - 1, retry_stop=("The site's own.", "site_error"), started=True)
+        applier.runs[job["id"]] = r
+        runs.append(r)
+
+    async def looked(r):
+        if r is runs[0]:
+            raise RuntimeError("a tab that hangs")
+        return ""
+
+    monkeypatch.setattr(applier, "_touched_since_stop", looked)
+    run(applier._retry_due())
+    assert not runs[0].retry_at and runs[0].status == "needs_you", runs[0].reason
+    assert runs[0].reason == "The site's own. I didn't try it again by itself, as its tab couldn't be read."
+    assert runs[1].status == "queued" and runs[1].fresh_retry == "desk", runs[1].reason
+
+
+def test_what_changed_in_a_tab_since_its_stop_is_said_for_what_it_is():
+    """The review's LOW: a page that finished drawing by itself after the stop (no box typed in) is said neutrally, "its
+    page changed"; never as if the person went on. Another address, or boxes filled in, say so."""
+    stop = {"url": "https://acme.example/apply?step=1", "title": "Apply", "headings": ["Something went wrong"],
+            "fields": []}
+    words = "Something went wrong. Please refresh the page."
+    was = pipeline._stop_mark(stop, words)
+    assert pipeline._mark_changed(was, pipeline._stop_mark(stop, words)) == ""
+    drawn = {**stop, "headings": ["My Information"], "fields": [{"id": "f1", "label": "First Name", "value": ""}]}
+    assert pipeline._mark_changed(was, pipeline._stop_mark(drawn, "My Information")) == \
+        "its page changed after the site's error"
+    typed = {**drawn, "fields": [{"id": "f1", "label": "First Name", "value": "Pat"}]}
+    assert pipeline._mark_changed(was, pipeline._stop_mark(typed, "My Information")) == \
+        "its boxes were filled in after the site's error"
+    moved = {**stop, "url": "https://acme.example/apply?step=done"}
+    assert pipeline._mark_changed(was, pipeline._stop_mark(moved, "All set")) == \
+        "its tab went on to another page after the site's error"
+    assert pipeline._mark_changed(was, pipeline._stop_mark(stop, "Something else.")) == \
+        "its page changed after the site's error"
+
+
+@pytest.mark.parametrize("page", ["cloudflare-1015.html", "too-many-requests.html", "try-later.html"])
+def test_a_rate_limit_or_a_sign_ups_try_later_is_never_tried_again_by_itself(srv, monkeypatch, job_apply_home, page):
+    """The review of the try after a site's error: Cloudflare's 1015 ("Access denied ... used Cloudflare to restrict
+    access", "You are being rate limited": a bot check, as classify reads it) and a bare "429 Too Many Requests" were
+    stopped as "try again later" and tried again by itself; and so was Oracle's "Too Many Attempts. Try Again Later."
+    on its email step, after its sign-up emails, where another try presses NEXT again for another. A rate limit is the
+    site's defence, and a sign-in's or an account's step asks again: the card stays for the person, as before."""
+    monkeypatch.setattr(pipeline, "RETRY_AFTER", 2)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url(f"site/{page}"), title="FSE", company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running") and r.job_id not in applier._slots,
+                        about=state(r))
+            await asyncio.sleep(3)  # (past when a try would have come)
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert (r.status, r.need, r.code) == ("needs_you", "stuck", "try_later"), (r.reason, r.log)
+    assert r.no_retry and not r.retry_at and _TRIED_LATER not in " ".join(r.log) and _TRYING not in r.log, r.log
+    assert "Leave this job for a while, then press Carry on." in r.reason, r.reason
+    if page == "try-later.html":
+        assert r.log.count("clicked “NEXT”") == 1, r.log
+
+
+def test_a_try_again_later_on_the_applications_own_steps_is_tried_again_and_said_once(srv, monkeypatch,
+                                                                                      job_apply_home):
+    """Mayo Clinic's Oracle (live check): on the application's own steps, "Your attachment couldn't be uploaded. Try
+    again later." That's the site's passing trouble: tried again by itself, and its card says when, never "Leave this
+    job for a while" beside it (the review)."""
+    monkeypatch.setattr(pipeline, "RETRY_AFTER", 3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    job = srv.add_job(url=fixture_url("site/upload-try-later.html") + "?fail=1", title="FSE",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await _until_retry_waits(applier, r)
+            first = (r.code, r.reason)
+            await until(lambda: _TRYING in r.log and r.status not in ("queued", "running"), about=state(r))
+            return r, first
+        finally:
+            await applier.stop()
+
+    r, (code, reason) = run(go())
+    assert code == "try_later" and "says “Your attachment couldn't be uploaded. Try again later.”" in reason, reason
+    assert "Leave this job" not in reason and reason.endswith("(once), or press Try now."), reason
+    assert r.seen_form and "upload" not in r.url and r.site_retries == 1, (r.status, r.reason, r.url, r.log)
+
+
+@pytest.mark.parametrize("need, code, more, retried", [
+    ("stuck", "site_went_wrong", {}, True),
+    ("stuck", "try_later", {}, True),
+    ("stuck", "site_error", {}, True),
+    ("stuck", "blank_page", {}, True),
+    ("stuck", "page_not_loaded", {}, True),
+    # (a page that couldn't be reached: its card says to apply in the person's own browser)
+    ("stuck", "site_unreachable", {}, False),
+    # never: the browser turned away (trying again looks like getting round it), a bot check or CAPTCHA, questions
+    ("stuck", "site_blocks", {}, False),
+    ("bot_check", "bot_check", {}, False),
+    ("captcha", "captcha", {}, False),
+    ("questions", "questions", {"questions": [{"label": "Shift"}]}, False),
+    ("stuck", "page_not_loaded", {"questions": [{"label": "Degree", "error": "no choices"}]}, False),
+    # a sign-in step that didn't load, a notice, the person's Submit, a practice stop
+    ("sign_in", "page_not_loaded", {}, False),
+    ("stuck", "agreement_theirs", {}, False),
+    ("stuck", "notice_theirs", {}, False),
+    ("your_submit", "your_submit", {}, False),
+    ("stuck", "practice_stop", {}, False),
+    ("stuck", "account_step_failed", {}, False),
+    # a Submit pressed for the job (or waiting), a stop that says it's never tried again (a rate limit, a sign-up's
+    # step), or a Submit's own pass
+    ("stuck", "site_error", {"pressed_before": True}, False),
+    ("stuck", "site_error", {"submit_pressed": True}, False),
+    ("stuck", "try_later", {"no_retry": True}, False),
+    ("stuck", "site_error", {"kind": "submit"}, False),
+    # the person's hands on the job: their Carry on, or the queue going on with it after they worked in its tab
+    ("stuck", "site_error", {"hands_on": True}, False),
+    ("stuck", "site_went_wrong", {"in_their_hands": True}, False),
+    # a pass that stood on a step that may email the person (a sign-in, an account's, an emailed code's)
+    ("stuck", "site_error", {"email_step": True}, False),
+    # tried again once already, and the wait turned off
+    ("stuck", "site_error", {"site_retries": 1}, False),
+    ("stuck", "site_error", {"env": "0"}, False),
+])
+def test_only_the_sites_own_passing_errors_are_tried_again(monkeypatch, need, code, more, retried):
+    """Which stops the desk tries again by itself: the site's own passing trouble (SITE_ERRORS) on a card that asks
+    nothing, alone. Never a site that turned the browser away, a bot check or CAPTCHA (never got round: CLAUDE.md), a
+    question, a sign-in, a notice, the person's Submit or a practice stop; nor after a Submit was pressed for it, nor
+    once the person's hands were on the job."""
+    more = dict(more)
+    kind, env = more.pop("kind", "apply"), more.pop("env", None)
+    if env is not None:
+        monkeypatch.setenv("JOB_APPLY_RETRY_AFTER", env)
+    applier = Applier(None)
+    reason = "The site's own." + (pipeline._LEAVE_IT if code == "try_later" else "")
+    r = Run(1, "Technician", "Example Fab", status="needs_you", need=need, code=code, reason=reason, **more)
+    assert code in pipeline.STOP_CODES
+    before = time.time()
+    applier._retry_later(r, kind)
+    if retried:
+        assert before + pipeline.RETRY_AFTER - 1 < r.retry_at < time.time() + pipeline.RETRY_AFTER + 1, r.retry_at
+        assert r.log == [f"{_TRIED_LATER} {pipeline._clock(r.retry_at)}"], r.log
+        assert r.retry_stop == (reason, code), r.retry_stop  # (its card again, should the try be called off)
+        assert r.reason.startswith("The site's own. The site had an error, so") and "Leave this job" not in r.reason
+        return
+    assert not r.retry_at and not r.log, (r.retry_at, r.log)
+    if more.get("site_retries"):
+        assert r.reason == f"{reason} {pipeline._RETRIED_SAYS}", r.reason
+    else:
+        assert r.reason == reason, r.reason
+
+
+def test_a_try_queued_after_the_sites_error_goes_through_the_holds_and_is_counted_when_it_opens(srv, job_apply_home):
+    """The review of the try after a site's error: a try queued (Run.fresh_retry) was dropped by the queueing again of a
+    hold before its tab opens (a cover letter's, a tailored resume's, a maybe-begun job's), and the job went on in the
+    error's tab; and a Carry on pressed on a card left open after the try was queued used the try up, never opening the
+    job afresh. Now the try goes through those holds; the person's Carry on wins (their tab, gone on with as it is) and
+    doesn't count as the try; Skip, I submitted it and Submit end it; and it counts only once it opens."""
+    applier = Applier(srv)
+    job = srv.add_job(url="https://careers.example.com/fab/9", title="Technician", company="Example Fab")["job"]
+    r = Run(job["id"], "Technician", "Example Fab", status="needs_you", need="stuck", code="site_error",
+            reason="The site's own." + pipeline._RETRY_SAYS + " 3:40 PM (once), or press Try now.", started=True,
+            retry_at=time.time() - 1, retry_stop=("The site's own.", "site_error"))
+    applier.runs[job["id"]] = r
+    assert applier._retry(r) and r.fresh_retry and r.site_retries == 0 and r.status == "queued"
+    r.status, r.need = "needs_you", "tailor"  # (held before its tab opens: a tailored resume)
+    applier.enqueue(job["id"], front=True)  # (the resume written: queued again)
+    assert r.fresh_retry and r.site_retries == 0
+    applier.resume(job["id"])  # (Carry on, on a card left open: theirs, in their tab)
+    assert not r.fresh_retry and r.site_retries == 0 and r.hands_on
+    for end in ("skip", "applied", "submit"):
+        r.status, r.fresh_retry, r.retry_at = "needs_you", True, time.time() + 600
+        if end == "skip":
+            run(applier.skip(job["id"]))
+        elif end == "applied":
+            applier.mark_applied(job["id"])
+            r.status = "needs_you"
+        else:
+            r.need = "your_submit"
+            applier.submit_now(job["id"])
+        assert not r.fresh_retry and not r.retry_at, end
+
+
+def test_a_try_after_the_sites_error_never_outlives_a_job_marked_applied_or_a_restart(srv, job_apply_home):
+    """I submitted it ends the wait; and the queue kept for a restart keeps no wait: the job comes back on its card
+    for the person, as any job waiting on them (the desk forgets its try)."""
+    applier = Applier(srv, keep_queue=True)
+    applier._queue_owner = True
+    job = srv.add_job(url="https://careers.example.com/fab/9", title="Technician", company="Example Fab")["job"]
+    r = Run(job["id"], "Technician", "Example Fab", status="needs_you", need="stuck", code="site_error",
+            reason="The site's own.", started=True, retry_at=time.time() + 600)
+    applier.runs[job["id"]] = r
+    assert applier._saved_queue()["jobs"] == [{"id": job["id"], "state": "waiting"}]
+    with pytest.raises(ValueError):
+        Applier(srv).retry_now(job["id"])  # (another desk's run of it: nothing waits there)
+    applier.mark_applied(job["id"])
+    assert not r.retry_at and r.status == "submitted"
+    with pytest.raises(ValueError, match="isn't waiting to be tried again"):
+        applier.retry_now(job["id"])
+
+
+def test_the_sites_errors_tried_again_are_stop_codes_of_its_own():
+    assert pipeline.SITE_ERRORS <= pipeline.STOP_CODES
+    assert not pipeline.SITE_ERRORS & {"site_blocks", "bot_check", "captcha", "account_captcha", "questions",
+                                       "site_unreachable",
+                                       "notice_theirs", "agreement_theirs", "your_submit", "check_submit",
+                                       "practice_stop", "posting_closed"}
+    assert re.fullmatch(r"(?:[1-9]|1[0-2]):[0-5]\d (?:AM|PM)", pipeline._clock(time.time()))
+    for limited in ("429 Too Many Requests", "You are being rate limited", "Too Many Attempts. Try Again Later.",
+                    "Rate-limit exceeded"):
+        assert pipeline._RATE_LIMITED.search(limited), limited
+    assert not pipeline._RATE_LIMITED.search("Your attachment couldn't be uploaded. Try again later.")
+
+
+@pytest.mark.parametrize("said, wait", [(None, 1200.0), ("60", 60.0), ("0", 0.0), ("-5", 0.0), ("soon", 1200.0)])
+def test_the_wait_before_a_try_after_the_sites_error_is_set_in_the_environment(monkeypatch, said, wait):
+    if said is None:
+        monkeypatch.delenv("JOB_APPLY_RETRY_AFTER", raising=False)
+    else:
+        monkeypatch.setenv("JOB_APPLY_RETRY_AFTER", said)
+    assert pipeline._retry_after() == wait
 
 
 @pytest.mark.parametrize("query", ["", "?heal"])
@@ -12262,6 +12852,8 @@ def test_a_site_that_turns_the_browser_away_holds_nothing_up(srv, monkeypatch, p
     r = run(go())
     assert r.need == "stuck" and not r.blocking, (r.need, r.reason)
     assert f"turned the desk's browser away ({said})" in r.reason
+    # (never tried again by itself, as the site's passing errors are: that would look like getting round it)
+    assert not r.retry_at and "try this job again" not in r.reason, (r.reason, r.log)
 
 
 @pytest.mark.parametrize("page", ["ukg-posting-403.html", "forbidden-bare.html"])
@@ -12329,6 +12921,9 @@ def test_a_web_servers_own_error_page_is_said_as_the_sites_trouble(srv, monkeypa
     assert r.need == "stuck" and not r.blocking, (r.need, r.reason)
     assert f"web server's error page ({said})" in r.reason and "site's own trouble" in r.reason, r.reason
     assert "couldn't find the button" not in r.reason, r.reason
+    # (and tried again by itself later, once: the site's own passing trouble)
+    assert r.code == "site_error" and r.retry_at > time.time() + 60, (r.code, r.retry_at)
+    assert "so I'll try this job again by itself at" in r.reason, r.reason
     reloads = [line for line in r.log if "so I reloaded it" in line]
     if reloaded:
         assert len(reloads) == 1 and f"error page ({said})" in reloads[0], r.log

@@ -325,6 +325,122 @@ def test_the_page_alerts_when_a_job_needs_you(srv):
     run(go())
 
 
+
+def test_a_job_the_desk_tries_again_after_the_sites_error_alerts_no_one_until_it_fails_again(srv):
+    """A job stopped by the site's own passing error, waiting to be tried again by itself (its retry_at, the owner's
+    call of Oct 24), isn't the person's yet: no desktop alert. If the site fails it again (its card stays for them, the
+    wait gone), it's announced then, once."""
+    from job_apply.pipeline import Run
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    job = srv.add_job(url=fixture_url("site/posting.html"), title="Field Service Engineer",
+                      company="Example Fab")["job"]
+    fake = """
+      window.__shown = [];
+      class FakeNotification {
+        constructor(title, opts) { window.__shown.push({title, body: (opts || {}).body}); }
+        close() {}
+      }
+      FakeNotification.permission = "granted";
+      FakeNotification.requestPermission = async () => "granted";
+      window.Notification = FakeNotification;
+    """
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await page.add_init_script(fake)
+                await page.goto(desk.url)
+                await page.wait_for_selector("#alerts:text('Alerts on')")
+                r = desk.applier.runs[job["id"]] = Run(job["id"], "Field Service Engineer", "Example Fab",
+                                                       status="needs_you", need="stuck", code="site_error",
+                                                       reason="502 Bad Gateway. I'll try this job again by itself.",
+                                                       retry_at=time.time() + 600)
+                await page.locator("#needs [data-job-act=retry]").wait_for()
+                await asyncio.sleep(2)  # (a refresh or two)
+                waiting = await page.evaluate("window.__shown")
+                r.retry_at, r.reason = 0.0, "502 Bad Gateway. I had already tried this job again."
+                await page.wait_for_function("window.__shown.length > 0", timeout=10000)
+                shown = await page.evaluate("window.__shown")
+                await browser.close()
+                return waiting, shown
+        finally:
+            await desk.stop()
+
+    waiting, shown = run(go())
+    assert waiting == [], waiting
+    assert shown == [{"title": "Example Fab needs you",
+                      "body": "Field Service Engineer: 502 Bad Gateway. I had already tried this job again."}], shown
+
+def test_a_job_the_desk_tried_again_says_to_check_it_didnt_go_in_where_it_is_sent(srv, job_apply_home):
+    """The retry review's round 3 (LOW): a job the desk tried again by itself after the site's error waits for the
+    person's Submit, with "check it didn't go in meanwhile" at the end of its reason. The review round's banner said
+    only "Check the page…, then send it", and the desktop alert cut the reason at 180 characters, the note with it.
+    Both say it now, a plain ready job's neither."""
+    from job_apply.pipeline import _RETRY_HELD_SAYS, Run
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.applier.focus = lambda job_id: asyncio.sleep(0, True)
+    desk.applier.start_round = lambda job_id: None
+    desk.search.update(status="done", at=time.time())
+    title = "Field Service Engineer, Advanced Packaging and Test Equipment (Second Shift, Weekends)"
+    held = srv.add_job(url="https://example.com/held", title=title, company="Example Held")["job"]
+    plain = srv.add_job(url="https://example.com/plain", title="Technician", company="Example Plain")["job"]
+    fake = """
+      window.__shown = [];
+      class FakeNotification {
+        constructor(title, opts) { window.__shown.push({title, body: (opts || {}).body}); }
+        close() {}
+      }
+      FakeNotification.permission = "granted";
+      FakeNotification.requestPermission = async () => "granted";
+      window.Notification = FakeNotification;
+    """
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await page.add_init_script(fake)
+                await page.goto(desk.url)
+                await page.wait_for_selector("#alerts:text('Alerts on')")
+                desk.applier.runs[held["id"]] = Run(held["id"], title, "Example Held", status="ready",
+                                                    reason=f"Filled and waiting on the review page. {_RETRY_HELD_SAYS}",
+                                                    retry_held=True, paused_at=1000.0)
+                desk.applier.runs[plain["id"]] = Run(plain["id"], "Technician", "Example Plain", status="ready",
+                                                     reason="Filled and waiting on the review page.", paused_at=1001.0)
+                await page.wait_for_function("window.__shown.length >= 2", timeout=10000)
+                shown = {n["title"]: n["body"] for n in await page.evaluate("window.__shown")}
+                await page.click("#notices [data-act=review-round]")
+                said = {}
+                for _ in range(2):
+                    await page.wait_for_selector("#notices [data-act=review-next]")
+                    text = await page.inner_text("#notices .waiting")
+                    name = "Example Held" if "Example Held" in text else "Example Plain"
+                    said[name] = text
+                    await page.click("#notices [data-act=review-next]")
+                    await page.wait_for_function(f"!document.querySelector('#notices').innerText.includes("
+                                                 f"'(' + {name!r} + ')')")
+                await browser.close()
+                return shown, said
+        finally:
+            await desk.stop()
+
+    shown, said = run(go())
+    held_body = shown["Example Held ready to submit"]
+    assert held_body.startswith("Field Service Engineer") and len(held_body) <= 180, shown
+    assert "check it didn't go in meanwhile" in held_body and held_body.endswith("before you send it."), shown
+    assert shown["Example Plain ready to submit"] == "Technician: Filled and waiting on the review page.", shown
+    assert "check it didn't go in meanwhile" in said["Example Held"], said
+    assert "didn't go in" not in said["Example Plain"] and "Check the page" in said["Example Plain"], said
+
+
 def test_jobs_added_elsewhere_show_up_ranked(srv):
     """Openings Claude saved from Indeed or LinkedIn join the list, so one button covers them too."""
     added = srv.add_job(url="https://www.indeed.com/viewjob?jk=abc123", title="Field Service Engineer",

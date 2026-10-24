@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Field Service Engineer</title></head>
+<body>
+<!-- like Circle K's Workday (run 63), whose every pass begins with its sign-in: signed in (the saved password), the
+     application's step says "Something went wrong" and "Please refresh the page and then try again.", and the same
+     again after the desk's one reload. The visits to the sign-in are counted for the browser (localStorage's
+     sww.visits, the visit a tab is on kept in its sessionStorage, as workday-went-wrong-once.html): in the first N
+     (?fail=N, 1 when not given) the step goes wrong; later, it's a one-page application (submit-by-hand.html's). -->
+<div id="page"></div>
+<script>
+  const q = new URLSearchParams(location.search);
+  const page = document.getElementById('page');
+  const fail = q.get('fail') || '1';
+  if (q.get('step') !== 'apply') {
+    const visit = Number(localStorage.getItem('sww.visits') || 0) + 1;
+    localStorage.setItem('sww.visits', String(visit));
+    sessionStorage.setItem('sww.visit', String(visit));
+    page.innerHTML = '<h2>Sign In</h2><form id="signin" novalidate>'
+      + '<label for="em">Email Address</label><input id="em" type="email" required>'
+      + '<label for="pw">Password</label><input id="pw" type="password" required>'
+      + '<button type="submit">Sign In</button></form>';
+    document.getElementById('signin').addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (document.getElementById('em').value && document.getElementById('pw').value)
+        location.href = location.pathname + '?fail=' + fail + '&step=apply';
+    });
+  } else {
+    const visit = Number(sessionStorage.getItem('sww.visit') || localStorage.getItem('sww.visits') || 1);
+    if (visit > Number(fail)) location.replace('submit-by-hand.html');
+    else page.innerHTML = '<a href="#">Back to Job Posting</a><h2>Field Service Engineer</h2>'
+      + '<div>current step 2 of 6 My Experience</div><h2>Something went wrong</h2>'
+      + '<p>Please refresh the page and then try again.</p><p>Error Code: VPS|0000</p>';
+  }
+</script>
+</body>
+</html>

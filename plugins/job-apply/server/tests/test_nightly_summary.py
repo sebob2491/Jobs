@@ -637,3 +637,18 @@ def test_the_changes_are_read_from_the_newest_changes_comment_not_a_digest_after
     assert ns.last_comment() == COMMENT and len(pages) > 3
     comments[:] = [{"body": "Looked at it."}] * 100  # (none in the last pages: nothing, never a wrong one)
     assert ns.last_comment() == ""
+
+
+def test_a_rounds_try_after_the_sites_error_is_said_before_where_it_ended():
+    """live_smoke's round of a job the site's own error stopped, tried again by itself: the stop it made first is said
+    before the round's own end."""
+    rec = {"company": "Circle K", "posting": {"title": "Store Manager"},
+           "rounds": [{"retried": {"code": "site_went_wrong", "reason": "Workday said Something went wrong again."},
+                       "status": "ready", "need": "", "reason": "Ready to submit", "log": ["trying this job again"],
+                       "questions": []}]}
+    said = ns.steps(rec).splitlines()
+    at = said.index("  [0] tried again after [site_went_wrong]: Workday said Something went wrong again.")
+    assert said[at + 1] == "  [0] ready : Ready to submit", said
+    rec["rounds"][0]["retried"].update(opened=False, called_off="its tab was closed")  # (a try called off)
+    assert ("  [0] retry called off (its tab was closed) after [site_went_wrong]: Workday said Something went wrong "
+            "again.") in ns.steps(rec).splitlines()

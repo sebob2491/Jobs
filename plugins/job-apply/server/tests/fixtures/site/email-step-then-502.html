@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Job application form</title></head>
+<body>
+<!-- like try-later.html (Oracle's email step), but NEXT on the email step answers with the gateway's bare "502 Bad
+     Gateway" (each NEXT asks for a code: counted for the browser, localStorage's nexts). A try after it would go
+     through the email step again and ask for another code (the coordinator's call on the try after a site's error) -->
+<div id="page"></div>
+<script>
+  const step = new URLSearchParams(location.search).get('step') || 'posting';
+  const go = (s) => { location.href = location.pathname + '?step=' + s; };
+  const page = document.getElementById('page');
+  if (step === 'posting') {
+    page.innerHTML = '<h2>JOB INFO</h2><h1>Field Service Engineer</h1><p>Install and repair wafer fab equipment.</p>'
+      + '<button type="button" id="apply">Apply Now</button>';
+    document.getElementById('apply').addEventListener('click', () => go('email'));
+  } else if (step === 'email') {
+    page.innerHTML = '<h2>Authentication screen. You don\'t need to have an account</h2>'
+      + '<form id="f" novalidate><label for="em">Email Address</label><input id="em" type="email" required>'
+      + '<button type="submit">NEXT</button></form>';
+    document.getElementById('f').addEventListener('submit', (e) => {
+      e.preventDefault();
+      localStorage.setItem('nexts', String(Number(localStorage.getItem('nexts') || 0) + 1));
+      go('gateway');
+    });
+  } else {
+    document.title = '502 Bad Gateway';
+    document.body.innerHTML = '<center><h1>502 Bad Gateway</h1></center><hr><center>nginx</center>';
+  }
+</script>
+</body>
+</html>

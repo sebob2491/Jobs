@@ -619,6 +619,11 @@ def steps(rec: dict[str, Any], log_lines: int = 6) -> str:
         out.append(f"  crash: {rec['crash']}")
     for i, r in enumerate(rec.get("rounds") or []):
         code = f" [{r['code']}]" if r.get("code") else ""
+        if isinstance(r.get("retried"), dict):  # (the site's error first, then the desk's try by itself: live_smoke)
+            was = r["retried"]
+            how = ("tried again after" if was.get("opened", True)
+                   else f"retry called off ({was.get('called_off') or 'no reason said'}) after")
+            out.append(f"  [{i}] {how} [{was.get('code') or ''}]: {str(was.get('reason') or '')[:300]}")
         out.append(f"  [{i}] {r.get('status')} {r.get('need') or ''}{code}: {str(r.get('reason') or '')[:400]}")
         out += [f"      log: {line[:200]}" for line in (r.get("log") or [])[-log_lines:]]
         above = r.get("above") or []

@@ -45,10 +45,10 @@ Day shift
 Travel ≤ 25%
 Entry level
 Not senior
-Any 14
+Any 15
 Bot checks 1
 Questions and sign-ins 8
-Stuck 2
+Stuck 3
 Ready 3
 Add
 Apply to selected
@@ -99,6 +99,11 @@ title matches
 Stuck
 72
 Equipment Technician
+Example Site Error · Phoenix, AZ · YYYY-MM-DD · pay not listed
+title matches
+Stuck
+72
+Equipment Technician
 Example Not Sent · Phoenix, AZ · YYYY-MM-DD · pay not listed
 title matches
 Stuck
@@ -138,7 +143,7 @@ Cover letter to check
 
 ## needs-h
 Needs you
-14
+15
 Equipment Technician · Example Sign In Sign in
 Sign in on Example Sign In's site in the desk's browser window, then press Carry on.
 Show me
@@ -206,6 +211,14 @@ Equipment Technician · Example Stuck Stuck
 I couldn't find the button that moves this application on.
 Show me
 Carry on
+Skip job
+I submitted it myself
+Report a problem
+Equipment Technician · Example Site Error Stuck
+Example Site Error's site said “Something went wrong” again and asked for the page to be refreshed, and I had reloaded once already for this application. That's the site's own trouble: reload the page in the desk's browser window (now, or later if it still says so), then press Carry on. The site had an error, so I'll try this job again by itself at HH:MM PM (once), or press Try now.
+Show me
+Carry on
+Try now
 Skip job
 I submitted it myself
 Report a problem

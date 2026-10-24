@@ -1033,3 +1033,26 @@ def test_setup_asks_the_common_questions_the_profile_doesnt_answer(srv):
     assert {q["id"]: q["answer"] for q in out["questions"]}["shift"] == "Nights"
     assert {q["id"]: q["answer"] for q in config.question_bank()}["shift"] == "Nights"
     assert out["unanswered"] == srv.setup_status()["common_questions_unanswered"] == len(ids) - 1
+
+
+@needs_browser
+def test_claudes_submit_never_sends_unasked_a_job_the_desk_tried_again_by_itself(srv, monkeypatch):
+    """The review of the try after a site's error, round 2: an application the Job Desk opened again by itself after
+    the site's error may have gone in meanwhile (in another tab or the person's own browser), so submit_application
+    presses nothing for it without user_confirmed, settings.auto_submit_ats naming its system or not."""
+    from types import SimpleNamespace
+
+    from job_apply import desk as job_desk
+    from job_apply.pipeline import Run
+
+    sent = routed(srv)
+    job = srv.add_job(url="https://careers.example.com/a", title="Tech", company="Example Fab")["job"]
+    run(srv.open_application(job_id=job["id"]))
+    monkeypatch.setattr(srv, "_submit_policy", lambda ats: "auto")  # (submit_mode auto, its system listed)
+    held = Run(job["id"], "Tech", "Example Fab", status="ready", retry_held=True)
+    monkeypatch.setattr(job_desk, "_desk", SimpleNamespace(applier=SimpleNamespace(hold_submits=False,
+                                                                                   runs={job["id"]: held})))
+    out = run(srv.submit_application(job_id=job["id"]))
+    assert out["submitted"] is False and "tried this job again by itself" in out["reason"] and sent == [], out
+    out = run(srv.submit_application(job_id=job["id"], user_confirmed=True))  # (the person's go-ahead)
+    assert out["submitted"] is True and len(sent) == 1, out

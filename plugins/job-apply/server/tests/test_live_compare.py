@@ -899,3 +899,23 @@ def test_bot_checks_up_at_many_employers_open_the_comment(tmp_path, clock):
     night3 = [pipeline_rec(n) for n in names[:4]] + [pipeline_rec(n, "needs_you", "captcha") for n in names[4:]]
     _, comment, _ = _run(tmp_path, [issue], night3)  # (4 of them: fewer than 5)
     assert "Bot checks up" not in comment
+
+
+def test_a_job_tried_again_after_a_site_error_says_so_in_its_detail():
+    """The desk tries a job the site's own passing error stopped again by itself (pipeline.RETRY_AFTER: a minute in the
+    live check), and live_smoke's round keeps the stop it made first ("retried"): the detail says "tried again", where
+    it went to (the review page, or another stop), never compared."""
+    rec = pipeline_rec("Circle K")
+    rec["rounds"][-1]["retried"] = {"code": "site_went_wrong", "reason": "Something went wrong again."}
+    assert lc.pipeline_outcome(rec) == Result("ready", "Field Service Engineer · tried again after a site error")
+    rec = pipeline_rec("BDO", "needs_you", "stuck", "It went wrong again.")
+    rec["rounds"][-1].update(code="site_error", retried={"code": "try_later", "reason": "Try again later."})
+    assert lc.pipeline_outcome(rec) == Result("needs_you stuck", "Field Service Engineer · tried again after a site "
+                                                                 "error · [site_error] It went wrong again.")
+    assert lc.pipeline_outcome(pipeline_rec("ASM")).detail == "Field Service Engineer"  # (none: as before)
+    # a try called off (its tab changed as it came due): never said to be tried again, and why
+    rec = pipeline_rec("Mayo", "needs_you", "stuck", "Something went wrong.")
+    rec["rounds"][-1].update(code="site_went_wrong", retried={"code": "site_went_wrong", "reason": "x", "opened": False,
+                                                             "called_off": "its tab was closed"})
+    assert lc.pipeline_outcome(rec).detail == ("Field Service Engineer · retry called off: its tab was closed · "
+                                               "[site_went_wrong] Something went wrong."), lc.pipeline_outcome(rec)

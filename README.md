@@ -253,7 +253,16 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
    **Continue Application**) is picked up where it was, and its answers are checked against
    your profile. If the desk changes any, the card's **What went in** lists each one
    ("old → new") and the job waits on its review page for you, even with **Submit for me**
-   on. A page that loads blank is loaded again once or twice before it asks you.
+   on. A page that loads blank is loaded again once or twice before it asks you. A job the
+   employer's site stops with its own passing error (its error page, "Something went wrong"
+   again after a reload, "try again later", a page that never loads) is tried again by itself
+   about 20 minutes later, once, opened afresh in its tab: its card says when, with **Try now**,
+   and **Pause queue** holds it. If that tab changed since, or you opened another on the site,
+   the desk leaves it to you; and if the site fails again, the card stays for you. A job the
+   desk tried again by itself is never sent by itself, even with **Submit for me** on: it waits
+   on its review page for your Submit, in case it went in meanwhile elsewhere. A site that turns
+   the desk's browser away, can't be reached or limits how often it's asked, bot checks, and
+   sign-in or account steps are never tried again by themselves.
 
 #### Cover letters
 
