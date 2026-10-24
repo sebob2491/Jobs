@@ -15603,6 +15603,13 @@ _OFFLINE_PAGE = ("<html><head><title>Temporarily Offline: Security Maintenance U
                  "<a href='https://advisories.example/1' target='_blank'>global security advisory</a>.</p>"
                  "<p>It will be back up as soon as these updates are complete.</p></main></body></html>")
 
+# Workday's page while it's down (run 160, Oct 24), its words as it said them
+_UNAVAILABLE_PAGE = ("<html><head><title>Workday is currently unavailable.</title></head><body><ul><li>English</li>"
+                     "<li>French</li></ul><h1>Workday is currently "
+                     "unavailable.</h1><p>We are experiencing a service interruption. Your service will be restored as "
+                     "quickly as possible. We apologize for the inconvenience.</p><p>Otherwise, please check back "
+                     "later.</p></body></html>")
+
 
 @pytest.mark.parametrize("sent_to, page, said", [
     # a page named for it ("We'll be back.", live, Oct 2026)
@@ -15614,7 +15621,11 @@ _OFFLINE_PAGE = ("<html><head><title>Temporarily Offline: Security Maintenance U
      "https://cdn-static.ats-host.example/maintenance/index.html"),
     # the same page at the job's own address: its words say it
     ("", _OFFLINE_PAGE, "Temporarily Offline: Security Maintenance Underway"),
-], ids=["named", "folder-index", "its-words"])
+    # a file named for it at its host's top (Grand Canyon University's Workday, sent to
+    # static.community.workday.com/maintenance-page.html in run 160: said as a step button not found)
+    ("https://static.community.ats-host.example/maintenance-page.html", _UNAVAILABLE_PAGE,
+     "https://static.community.ats-host.example/maintenance-page.html"),
+], ids=["named", "folder-index", "its-words", "named-file"])
 def test_a_job_sent_to_a_maintenance_page_is_said_down_for_maintenance(srv, monkeypatch, sent_to, page, said):
     """A careers site down for its maintenance sends every job to its maintenance page ("We'll
     be back.", live, Oct 2026): the desk said it couldn't find the button that moves the
@@ -15660,6 +15671,9 @@ def test_a_posting_for_maintenance_work_isnt_a_site_down():
     assert pipeline._maintenance_page({**offline, "url": "https://cdn.ats-host.example/maintenance/index.html",
                                        "title": "", "headings": []})
     assert pipeline._maintenance_page({**offline, "actions": [{"id": "c", "text": "Accept", "cookie": True}]})
+    for top in ("maintenance-page.html", "maintenance.html", "outage.htm"):  # (a file named for it, at its host's top)
+        assert pipeline._maintenance_page({**offline, "url": f"https://static.ats-host.example/{top}", "title": "",
+                                           "headings": []}), top
     for posting in ({"url": "https://careers.acme-fab.example/job/123/maintenance-technician/",
                      "title": "Maintenance Technician", "headings": ["Maintenance Technician", "Maintenance"],
                      "fields": [], "actions": [{"id": "a", "text": "Apply"}]},
@@ -15681,7 +15695,11 @@ def test_a_posting_for_maintenance_work_isnt_a_site_down():
                     {**nothing, "title": "Maintenance Technician", "headings": ["Chat is temporarily offline"]},
                     {**nothing, "headings": ["This posting is temporarily offline"]},
                     {**nothing, "url": "https://careers.acme-fab.example/jobs/maintenance/index.html",
-                     "title": "Maintenance Jobs"}):
+                     "title": "Maintenance Jobs"},
+                    {**nothing, "url": "https://careers.acme-fab.example/jobs/maintenance.html"},
+                    {**nothing, "url": "https://careers.acme-fab.example/maintenance-technician.html"},
+                    {**nothing, "url": "https://careers.acme-fab.example/maintenance.html",
+                     "actions": [{"id": "a", "text": "Apply"}]}):
         assert not pipeline._maintenance_page(posting), posting
     # ...and the job's own title, whatever its words: never the site's notice
     planner = {**nothing, "title": "Under Scheduled Maintenance Planner | Acme Fab Careers",

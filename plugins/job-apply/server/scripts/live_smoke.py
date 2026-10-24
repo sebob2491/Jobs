@@ -1432,6 +1432,17 @@ _SSN = re.compile(r"\bsocial security (?:number|no\b|#)|\bssn\b|\bsocial insuran
 _SCALE = re.compile(r"\bscale (?:of|from) (\d+)\s*(?:-|\u2013|\u2014|to)\s*(\d+)", re.I)
 
 
+# A box that would say who the applicant is: a veteran's classification, a disability, a race or an ethnicity, a gender
+# identity (Mayo Clinic's Oracle "Disabled Veteran" and three more, run 158, all ticked "Yes" and kept with the test
+# identity's profile there): the fake applicant claims none
+_SELF_ID_BOX = re.compile(r"\bveterans?\b|\bdisab|\bhispanic\b|\blatino|\bafrican\b|\bwhite\b|\basian\b|"
+                          r"\bnative (?:american|hawaiian|alaska)|\bpacific islander|\bamerican indian|"
+                          r"\btwo or more races|\btransgender\b|\bnon-?binary\b|\bsexual orientation", re.I)
+
+_CLAIMS = re.compile(r"\bI(?: am|'m| identify| have (?:a |been )?(?:disab|served))\b", re.I)
+_ACKNOWLEDGES = re.compile(r"\backnowledg|\b(?:have )?read\b|\bcertif|\bagree|\bunderstand|\bconsent|\battest", re.I)
+
+
 def asks_ssn(q: dict[str, Any]) -> bool:
     """Does the question ask for a Social Security Number (_SSN)?"""
     return bool(_SSN.search(str(q.get("label") or "")))
@@ -1444,8 +1455,14 @@ def fake_answer(q: dict[str, Any]) -> Any:
         return None
     options = [o for o in q.get("options") or []
                if o and not is_empty_value(o) and not re.match(r"^(select|choose|--|please)", o, re.I)]
-    if q.get("kind") == "checkbox":
-        return "Yes"
+    if q.get("kind") == "checkbox":  # (an acknowledgement naming them, "I have read the EEO statement ...", is ticked;
+        label = str(q.get("label") or "")  # never one that claims one, "I certify that I am a disabled veteran")
+        claims = _SELF_ID_BOX.search(label) and (not _ACKNOWLEDGES.search(label) or _CLAIMS.search(label))
+        return "No" if claims else "Yes"
+    # a list whose choices hadn't drawn when the desk read it: the answer it tried, the profile's (Valley Health's iCIMS
+    # Country and State, run 160: "Test answer" matched nothing, round after round)
+    if not options and (tried := re.search(r"'([^']+)' doesn't match any option: \[\]", str(q.get("error") or ""))):
+        return tried.group(1)
     if options:
         # not a choice the site just refused (a Workday source that opens a list of its own, HonorHealth's and
         # Microchip's, the probe of Oct 12: picked again and again)

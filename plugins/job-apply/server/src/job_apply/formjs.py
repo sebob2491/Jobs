@@ -1078,10 +1078,14 @@ EXTRACT_JS = r"""
                  || (el.parentElement && el.parentElement.closest(OWN)))) continue;
     // without icon-font glyphs (Amkor's "\ue0b1 Invalid email address or password"; an alert
     // that's only an icon says nothing)
-    // (never a button or a link marked aria-live, as BrassRing's "Let's get started" is: probe 81; one that marks itself
-    // as an error still is)
-    if (el.matches('button, a[href], [role="button"], [role="link"]')
-        && !el.matches('[role="alert"], [data-automation-id="errorMessage"], [class*="error" i]')) continue;
+    // (never a button or a link marked aria-live, as BrassRing's "Let's get started" is: probe 81; nor a checkbox's or a
+    // radio's own label, as Oracle's are, "Disabled Veteran": Mayo Clinic, run 158, unless its words say a box is wanted;
+    // a message drawn as a text box's label still is, and one that marks itself as an error, jQuery Validate's
+    // <label class="error" for=…>)
+    const boxLabel = el.matches('label') && el.control && /^(?:checkbox|radio)$/i.test(el.control.type || '');
+    if ((el.matches('button, a[href], [role="button"], [role="link"]') || boxLabel && !SAYS_WANTED.test(txt(el)))
+        && !el.matches('[role="alert"], [data-automation-id="errorMessage"], [data-automation-id="inputAlert"], '
+                       + '[class*="error" i]')) continue;
     const t = txt(el).replace(/[\uE000-\uF8FF]/g, '').trim();
     if (!/[\p{L}\p{N}]/u.test(t)) continue;
     const r = el.getBoundingClientRect();
