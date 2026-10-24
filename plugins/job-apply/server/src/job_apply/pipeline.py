@@ -7691,17 +7691,18 @@ def _maintenance_page(data: dict[str, Any], job_title: str = "") -> str:
     """A site down for maintenance, said in a few words for the person ("it sent the job to <its address>", "its page
     says “...”"), or "" when the page isn't one. The job sent on to a page named for it (Workday's
     community.workday.com/maintenance-page, asml.com/en/maintenance's "We'll be back.", live, Oct 2026); and, on a
-    page with nothing to fill or press, to the index of a folder named for it at its host's top (Edward Jones' careers
-    site, sent to its host's cdn-static.findly.com/maintenance/index.html in run 155: read as a page with no way on,
-    reloaded, then said as a step button not found), or a page whose title or heading says it (_DOWN_WORDS) and isn't
-    `job_title`, the job's own (Run.title), wherever it is."""
+    page with nothing to fill or press, to the index of a folder or a file named for it at its host's top (Edward Jones'
+    careers site, sent to its host's cdn-static.findly.com/maintenance/index.html in run 155: read as a page with no
+    way on, reloaded, then said as a step button not found), or a page whose title or heading says it (_DOWN_WORDS) and
+    isn't `job_title`, the job's own (Run.title), wherever it is."""
     url = data.get("url") or ""
     path = urlparse(url).path.rstrip("/")
     if re.fullmatch(r"maintenance(?:-page)?|outage", path.rsplit("/", 1)[-1], re.I):
         return f"it sent the job to {_bare(url)}"
     if _app_fields(data) or any(not a.get("cookie") for a in data.get("actions") or []):
         return ""  # (something to fill or press: a page of the site's that works, a posting for maintenance work)
-    if re.fullmatch(r"/(?:maintenance(?:-page)?|outage)/(?:index|default)\.\w+", path, re.I):
+    # (or a file named for it there: Workday's static.community.workday.com/maintenance-page.html, run 160)
+    if re.fullmatch(r"/(?:maintenance(?:-page)?|outage)(?:/(?:index|default))?\.\w+", path, re.I):
         return f"it sent the job to {_bare(url)}"  # (never a folder of postings: /jobs/maintenance/index.html)
     said = next((t.strip() for t in (data.get("title"), *(data.get("headings") or []))
                  if isinstance(t, str) and _DOWN_WORDS.search(t) and not _names_job(t, job_title)), "")

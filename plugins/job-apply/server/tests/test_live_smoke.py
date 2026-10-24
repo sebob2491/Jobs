@@ -133,6 +133,44 @@ def test_the_live_checks_throwaway_answers_fit_the_box_and_never_make_up_an_ssn(
     assert "if any(asks_ssn(q) for q in run.questions):" in text
 
 
+def test_the_live_checks_fake_applicant_never_claims_a_self_identification():
+    """Run 158: Mayo Clinic's Oracle form asked its veteran classifications as checkboxes ("Disabled Veteran", ...),
+    and the run's throwaway "Yes" ticked all four. Oracle kept them with the test identity's profile there, so run 160
+    found them ticked again beside "Declines to Self-Identify". A box that would say who the applicant is (a veteran's
+    classification, a disability, a race or an ethnicity) is answered No; any other lone box Yes, as before."""
+    qs = [{"label": label, "kind": "checkbox"} for label in (
+        "Disabled Veteran", "Active Duty Wartime or Campaign Badge Veterans", "Armed Forces Service Medal Veteran",
+        "Recently Separated Veteran", "I am a protected veteran", "I have a disability (or previously had one)",
+        "I am Hispanic or Latino.", "Black or African American", "I identify as transgender",
+        "I certify that I am a disabled veteran",
+        "I certify that the information above is true", "I am at least 18 years of age",
+        "I have read the EEO statement: we hire without regard to race, disability or protected veteran status")]
+    out = subprocess.run([sys.executable, "-c", RUN_FAKE, json.dumps(qs)], cwd=SERVER, capture_output=True, text=True,
+                         encoding="utf-8", timeout=120)
+    line = next((x for x in out.stdout.splitlines() if x.startswith("RESULT ")), None)
+    assert line, out.stdout[-2000:] + out.stderr[-3000:]
+    assert [a for a, _ in json.loads(line[len("RESULT "):])] == ["No"] * 10 + ["Yes"] * 3
+
+
+def test_the_live_checks_answer_for_a_list_not_drawn_yet_is_the_profiles_own():
+    """Run 160: Valley Health's iCIMS Country and State lists hadn't drawn their choices when the desk read them, so it
+    asked them with the profile's answer in their error ("'United States' doesn't match any option: []"); the run's
+    "Test answer" matched nothing, round after round. The answer the desk tried is the one given, where the list had no
+    choices to read."""
+    qs = [{"label": "Country", "kind": "listbox", "options": [],
+           "error": "ValueError: 'United States' doesn't match any option: []"},
+          {"label": "State/Province", "kind": "listbox", "options": [],
+           "error": "ValueError: 'Nevada' doesn't match any option: []"},
+          {"label": "Country", "kind": "listbox", "options": [], "error": None},
+          {"label": "Shift", "kind": "select", "options": ["Days", "Nights"],
+           "error": "ValueError: 'Evenings' doesn't match any option: ['Days', 'Nights']"}]
+    out = subprocess.run([sys.executable, "-c", RUN_FAKE, json.dumps(qs)], cwd=SERVER, capture_output=True, text=True,
+                         encoding="utf-8", timeout=120)
+    line = next((x for x in out.stdout.splitlines() if x.startswith("RESULT ")), None)
+    assert line, out.stdout[-2000:] + out.stderr[-3000:]
+    assert [a for a, _ in json.loads(line[len("RESULT "):])] == ["United States", "Nevada", "Test answer", "Days"]
+
+
 RUN_WAIT = """
 import asyncio, json, sys, time
 from types import SimpleNamespace

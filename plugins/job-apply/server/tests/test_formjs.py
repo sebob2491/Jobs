@@ -709,6 +709,33 @@ def test_a_button_marked_aria_live_is_never_read_as_the_pages_error(srv, tmp_pat
             == ["Your session will expire in 5 minutes"])
 
 
+def test_a_boxs_own_label_marked_aria_live_is_never_read_as_the_pages_error(srv, tmp_path):
+    """Oracle's apply flow (Mayo Clinic, run 158) draws each checkbox's own label as a live region (role="status",
+    aria-live="assertive"), so the form reader read "Disabled Veteran" and the other veteran classifications as the
+    page's errors, and the desk's check before calling the job ready asked them as required questions. A box's own
+    label is never one; a message drawn as a label (jQuery Validate's <label class="error" for=…>) and the page's own
+    alert still are."""
+    page = tmp_path / "apply.html"
+    boxes = "".join(f'<div class="input-row input-row--checkbox"><input type="checkbox" id="v{i}" '
+                    f'aria-labelledby="v{i}-label"><label role="status" aria-live="assertive" for="v{i}">'
+                    f'<span id="v{i}-label">{name}</span></label></div>'
+                    for i, name in enumerate(["Disabled Veteran", "Recently Separated Veteran"]))
+    page.write_text('<!doctype html><html><body><h1>Job application form</h1><form>' + boxes
+                    + '<label for="em">Email</label><input id="em" type="email" aria-invalid="true">'
+                    '<label id="em-error" class="error" for="em">This field is required.</label>'
+                    '<label for="ph">Phone</label><input id="ph" aria-invalid="true">'
+                    '<label aria-live="assertive" for="ph">Please enter a phone number</label>'
+                    '<label for="zp">ZIP code</label><input id="zp" aria-invalid="true">'
+                    '<label aria-live="assertive" for="zp">Passwords don\'t match</label>'
+                    '<div role="alert">Enter a valid number.</div></form></body></html>', encoding="utf-8")
+    run(srv.browser.goto(page.resolve().as_uri()))
+    data = run(srv.browser.inspect(include_dropdown_options=False))
+    # (the review of this change: a message drawn as a text box's label, whatever its words, is still the page's)
+    assert data["errors"] == ["This field is required.", "Please enter a phone number", "Passwords don't match",
+                              "Enter a valid number."], data["errors"]
+    assert not any("Veteran" in w for w in data.get("wanted") or []), data.get("wanted")
+
+
 def test_a_job_alert_sign_up_with_three_boxes_is_beside_the_application(srv, tmp_path):
     """CommonSpirit's careers search (Dignity Health, run 82): its job alert sign-up, "Sign up for Job Alerts", has five
     boxes (an email, a job category, a location, Remote and Job Type) and a spam trap hidden from the eye, more than a
