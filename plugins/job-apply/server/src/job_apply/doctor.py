@@ -439,7 +439,9 @@ def profile_checks(prof: config.Profile, path: Path) -> list[Check]:
         checks.append(Check("profile", PROBLEM, f"Your profile ({path}) still needs {words}", SETUP))
     else:
         checks.append(Check("profile", OK, f"Your profile has its answers ({path})"))
-        gaps = [GAP_WORDS.get(g.split(":")[0], g.split(":")[0]) for g in prof.profile_gaps()]
+        # (a document whose file isn't there has its own check: check_documents)
+        gaps = [GAP_WORDS.get(g.split(":")[0], g.split(":")[0]) for g in prof.profile_gaps()
+                if not g.startswith("documents.")]
         if gaps:
             checks.append(Check("profile_gaps", ADVICE, "Your profile could also hold " + "; ".join(gaps),
                                 'With these the Job Desk stops less often: in Claude, say "ask '
@@ -476,6 +478,32 @@ def check_resume(prof: config.Profile | None) -> Check:
                  f"Run the one-step installer with your resume, or {SAY_SETUP} and give Claude your resume.")
 
 
+def check_documents(prof: config.Profile | None) -> list[Check]:
+    """The transcripts, reference list and certificates the profile names whose file isn't there (never uploaded:
+    a box asking for one waits for the person). Nothing about one it doesn't name: most forms never ask. Which
+    document alone is said, never the file's name (it may be the person's)."""
+    from .autofill import certificate_kind_unsaid  # (autofill reads profiles: imported when asked)
+
+    gone = list(dict.fromkeys(slot for slot, _ in prof.missing_documents())) if prof else []
+    checks = [Check("documents", ADVICE, f"The {config.EXTRA_DOCUMENTS[slot]} file your profile names "
+                    f"(documents.{slot}) isn't there",
+                    f"Put it back, or {SAY_SETUP} and tell Claude where your {config.EXTRA_DOCUMENTS[slot]} file is "
+                    "(or to take it out of your profile).") for slot in gone]
+    # (a certificate whose file's name says what it is goes where a form asks for that: a diploma's, a license's or a
+    # certificate's box; one whose name says nothing goes only into a certificate's box)
+    unsaid = [p for p in prof.document_files("certificates") if certificate_kind_unsaid(p)] if prof else []
+    if unsaid:
+        checks.append(Check("certificate_names", ADVICE,
+                            "A certificate file your profile names (documents.certificates) has a name that doesn't "
+                            "say what it is" if len(unsaid) == 1 else
+                            f"{len(unsaid)} certificate files your profile names (documents.certificates) have names "
+                            "that don't say what they are",
+                            "Name each for what it is (diploma, license or certificate: nursing-license.pdf, "
+                            "diploma.pdf, forklift-certificate.pdf): a form's box asking for a diploma or a license "
+                            "gets only a file whose name says so."))
+    return checks
+
+
 async def run(launch: bool = False) -> Report:
     """Every check, in the order a person would fix them. Creates nothing."""
     checks = [check_python(), check_uv(), *(await check_version())]
@@ -489,6 +517,7 @@ async def run(launch: bool = False) -> Report:
         checks.append(tracked)
     checks.extend(profile_checks)
     checks.append(check_resume(prof))
+    checks.extend(check_documents(prof))
     return Report(checks)
 
 

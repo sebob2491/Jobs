@@ -29,6 +29,25 @@ personal:
 documents:
   resume: ~/.job-apply/resume.pdf      # default resume (PDF or DOCX)
   cover_letter: ~                      # optional default; tailored ones go in the job folder
+  # Optional, for the forms that ask for them (schools, cities, counties and other public employers often do). Each is
+  # one file, or a list of files most recent first: a box that takes one file gets the first. Leave one empty and a box
+  # asking for it waits for you on the desk.
+  transcripts: ~                       # your unofficial transcripts, e.g. ~/Documents/transcript.pdf
+  references: ~                        # a list of your references as a file; or leave it empty and fill in
+                                       # references: below, and the desk makes a one-page list from those
+  certificates: ~                      # certificates, licenses or diplomas, each file named for what it is (a
+                                       # box asking for a license gets only a file whose name says "license"),
+                                       # e.g. [~/Documents/forklift-certificate.pdf, ~/Documents/diploma.pdf]
+
+# The people you'd give as references, each with what you'd tell an employer (all optional but the name). Only
+# yours: the desk never adds or changes one. Used only where a form asks for a reference list and documents.references
+# is empty: the desk puts them on one page with your name and contact line, and uploads that.
+references: []
+#  - name: Jordan Example
+#    relationship: Former supervisor
+#    company: Example Fab
+#    phone: 480-555-0100
+#    email: jordan.example@example.com
 
 work_authorization:
   authorized_to_work: ~       # true/false — legally authorized to work in the US

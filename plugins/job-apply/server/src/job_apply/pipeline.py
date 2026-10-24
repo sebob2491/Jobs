@@ -41,8 +41,8 @@ from . import config, history, mailbox, report
 from .search import every_employer
 from .tracker import city_key, title_key
 from .ats import ATS_NAMES, JOB_BOARDS, detect_ats, host_of, shared_system
-from .autofill import (_OTHER_DOCUMENT, clean_label, entry_list_unloaded, _CHOICE_KINDS, is_empty_value,
-                       kept_documents, norm,
+from .autofill import (_OTHER_DOCUMENT, clean_label, documents_asked, documents_named, entry_list_unloaded,
+                       _CHOICE_KINDS, is_empty_value, kept_documents, norm,
                        profile_entries, unset_choice, polarity, tailored_document, works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
                       confirmations, declines_cookies, final_text, may_accept_cookies, questions_shown)
@@ -316,6 +316,37 @@ _ONLY_IF = re.compile(r"^\W*(?:if|in case|should|when)\b|\b(?:may|might|could) b
 _PROFILE_FILE = re.compile(r"\b(?:resume|résumé|cv|curriculum|cover)", re.I)
 _OTHER_FILE = re.compile(_OTHER_DOCUMENT.pattern + r"|\b(?:additional|supporting|other|veterans?'?)\s+"
                          r"(?:documents?|files?|attachments?)\b", re.I)
+
+
+def _slots_said(files: list[dict[str, Any]], last: bool, folder: Path | None = None) -> str:
+    """Required file boxes for the profile's other documents (autofill.documents_asked) that it has none of, as a
+    stop says them: what each asks for and its words, then the slot to fill in the profile, or the person's attach
+    ("your transcripts (“Please upload your Unofficial Transcripts”): add documents.transcripts to your profile, or
+    attach it in the desk's browser window"); `last`, the stop's own sentence, ending in its Carry on. A slot naming a
+    file that isn't there says so. A reference list's names the references: entries the desk makes a page of; where
+    the profile has them, why there's no page of them (in the job's `folder`: one that ran past a page, or one the
+    desk couldn't make just now, which the next fill makes again)."""
+    prof = config.Profile.load()
+    wanted = " and ".join(f"your {' or '.join(config.EXTRA_DOCUMENTS[s] for s in documents_asked(f))} "
+                          f"(“{clean_label(f.get('label') or '').rstrip(' .')}”)" for f in files)
+    slots = list(dict.fromkeys(s for f in files for s in documents_asked(f)))
+    add = " and ".join(dict.fromkeys(" or ".join(f"documents.{s}" for s in documents_asked(f)) for f in files))
+    too_long = folder is not None and any(folder.glob("*References.too-long"))
+    entries = "references" in slots and not prof.document_paths("references") and bool(prof.references())
+    refs = (" (or your references under references:, which the desk makes a page of)"
+            if "references" in slots and not prof.document_paths("references") and not entries else "")
+    why = ("" if not entries else
+           " (the references in your profile run past one page, so the desk's page of them isn't sent: shorten "
+           "them)" if too_long else
+           " (the desk couldn't make its page of the references in your profile just now: Carry on tries again)")
+    gone = [s for s in slots if prof.document_paths(s) and not prof.document_files(s)]
+    gone_said = (" (the file your profile names for " + " and ".join(f"documents.{s}" for s in gone)
+                 + f" {'is' if len(gone) == 1 else 'are'}n't there)" if gone else "")
+    them = "it" if len(files) == 1 else "them"
+    return (f"{wanted}: add {add}{refs} to your profile{gone_said}{why}, or attach {them} in the desk's browser "
+            "window" + (", then press Carry on." if last else ""))
+
+
 _PASSWORD_USED = re.compile(r"\bpasswords?\b[^.!?\n]{0,40}?\b(?:(?:recently|previously) used|used (?:recently|before|"
                             r"previously)|(?:already )?been used|can(?:not|'t|\u2019t| not) be re-?used|"
                             r"same as (?:your |the |a |any of your )?(?:current|old|previous|last|recent)|"
@@ -2874,21 +2905,40 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         unfilled, pending = _unfilled(pending)
         couldnt = f" {_couldnt_fill(unfilled)}" if unfilled else ""
         them = "it" if len(pending) == 1 else "them"
+        # a file for one of the profile's other documents (transcripts, a reference list, certificates: NSHE's Workday
+        # and Las Vegas Valley Water District's, the live check) that it has none of: the slot to fill is named, or the
+        # person attaches it
+        slotted = [f for f in missing_files if documents_asked(f)]
+        folder = None
+        if slotted:
+            with contextlib.suppress(Exception):  # (the job's folder: why its references page isn't there)
+                folder = Path((self.srv.tracker().get(run.job_id) or {})["folder"])
         # a file the profile has no place for (only a resume and a cover letter: NSU's Workday "Reference Contact
-        # Information", live run 144) is the person's to attach, named; never "set documents.resume" for it
-        others = [f for f in missing_files if _OTHER_FILE.search(f.get("label") or "")
-                  and not _PROFILE_FILE.search(f.get("label") or "")]
-        documents = [f for f in missing_files if f not in others]
+        # Information", live run 144) is the person's to attach, named; never "set documents.resume" for it. So is one
+        # whose words name one of its other documents but that the desk doesn't give it to (a "Reference Release
+        # Form", an "Attach" under "Reference Information"): where the profile has that document, it isn't said to have
+        # no place for it
+        prof = config.Profile.load()
+        others = [f for f in missing_files if f not in slotted and not _PROFILE_FILE.search(f.get("label") or "")
+                  and (_OTHER_FILE.search(f.get("label") or "") or documents_named(f))]
+        documents = [f for f in missing_files if f not in others and f not in slotted]
         named = " and ".join(f"“{clean_label(f.get('label') or '').rstrip(' .')}”" for f in others)
         attach = f"attach {'it' if len(others) == 1 else 'them'} in the desk's browser window"
+        held = any(prof.document_files(s) or s == "references" and prof.references()
+                   for f in others for s in documents_named(f))
+        noplace = "a file the desk doesn't attach by itself" if held else "a file your profile has no place for"
         if missing_files:
             self._pause(run, "stuck", ("The form wants a file (" + ", ".join(f["label"] for f in documents)
                                        + ") and the profile doesn't say where yours is: ask Claude to set "
                                        "documents.resume (or documents.cover_letter) in profile.yaml, then press Carry "
-                                       "on." + (f" It also wants a file your profile has no place for: {named}: "
-                                                f"{attach}." if others else "")
+                                       "on." + (f" It also wants {_slots_said(slotted, False, folder)}." if slotted
+                                                else "")
+                                       + (f" It also wants {noplace}: {named}: {attach}." if others else "")
                                        if documents else
-                                       f"The form wants a file your profile has no place for: {named}. "
+                                       f"The form wants {_slots_said(slotted, True, folder)}"
+                                       + (f" It also wants {noplace}: {named}: {attach}." if others else "")
+                                       if slotted else
+                                       f"The form wants {noplace}: {named}. "
                                        f"{attach[0].upper()}{attach[1:]}, then press Carry on.")
                         + (f" {gaps}" if gaps else "")
                         + (f" It also has {_count(len(pending), 'question')} your profile doesn't answer."
@@ -4827,7 +4877,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                 # answer, once a page; a box already showing it is typed again below
                 ps.redone_pages.add(looked)
                 ids = {f["id"] for f in wrong}
-                redone = (await srv.autofill(job_id=run.job_id, redo=sorted(ids))).get("filled") or []
+                redone = (await self._profile_fill(run, redo=sorted(ids))).get("filled") or []
                 run.did("", redone, seen_now)
                 _went_in(run, redone, seen_now)
                 given = {f.get("id") for f in redone if f.get("id") in ids}
@@ -4875,7 +4925,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                        and re.search(rf"\b{re.escape(norm(clean_label(f.get('label') or '')))}\b", said)]
             if emptied and looked not in ps.refilled_pages:
                 ps.refilled_pages.add(looked)
-                refill = (await srv.autofill(job_id=run.job_id)).get("filled") or []
+                refill = (await self._profile_fill(run)).get("filled") or []
                 run.did("", refill, seen_now)
                 _went_in(run, refill, seen_now)
                 again_filled = [f for f in refill if f.get("id") in {e["id"] for e in emptied}]
@@ -4976,7 +5026,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             elif deleted == "deleted":
                 # (the resume's box, empty again: its file goes up again)
                 run.did("uploaded", "the resume's upload")
-                _went_in(run, (await srv.autofill(job_id=run.job_id)).get("filled") or [], data)
+                _went_in(run, (await self._profile_fill(run)).get("filled") or [], data)
                 state = ""
                 for _ in range(20):  # (the page takes a moment to keep it)
                     await asyncio.sleep(0.5)
@@ -5454,7 +5504,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             # live run 13): the profile's answer, once a job (never again after the person has had the page), then
             # the page is read again
             run.invalid_redone = True
-            redone = (await srv.autofill(job_id=run.job_id, redo=invalid)).get("filled") or []
+            redone = (await self._profile_fill(run, redo=invalid)).get("filled") or []
             run.did("", redone, data)
             _went_in(run, redone, data)
             again = [f for f in redone if f.get("id") in invalid]
@@ -7705,8 +7755,12 @@ _CHOSEN = {"select", "radio_group", "checkbox_group", "checkbox", "listbox"}
 def _went_value(box: dict[str, Any], value: Any, rule: str) -> tuple[str, str]:
     """An answer as the panel shows it: ("file", its file's name) for a document put up, else ("answer", the words),
     a tick said in words, a long text's start alone."""
-    if isinstance(value, str) and (box.get("kind") == "file" or rule.startswith("documents.")):
-        return "file", re.split(r"[\\/]", value.strip())[-1]
+    if box.get("kind") == "file" or rule.startswith("documents."):
+        # (several files into one box that takes several, autofill's transcripts and certificates: each by its name)
+        if isinstance(value, str) or isinstance(value, (list, tuple)) and value \
+                and all(isinstance(v, str) for v in value):
+            return "file", ", ".join(re.split(r"[\\/]", v.strip())[-1] for v in ([value] if isinstance(value, str)
+                                                                                 else value))
     if isinstance(value, bool):
         return "answer", "ticked" if value else "not ticked"
     said = ", ".join(str(v) for v in value) if isinstance(value, (list, tuple)) else "" if value is None else str(value)
@@ -7725,10 +7779,19 @@ def _box_said(box: dict[str, Any]) -> dict[str, str]:
     return {"section": _short(str(box.get("section") or "")), "label": label}
 
 
-# the profile's, by autofill's rule
+# the profile's, by autofill's rule (its other documents' by _document_said: "documents.transcripts+certificates")
 _DOCUMENTS = {"documents.resume": "Resume", "documents.cover_letter": "Cover letter"}
 _DOCUMENT_KINDS = {"documents.resume": "resume", "documents.cover_letter": "cover_letter"}  # (Run.kept_replaced's)
 _DOCUMENT_SAID = {"resume": "resume", "cover_letter": "cover letter"}
+
+
+def _document_said(rule: str) -> str:
+    """The profile's other documents a file box got, by autofill's rule ("documents.transcripts+certificates":
+    "transcripts and certificates"), as config.EXTRA_DOCUMENTS says each; "" for any other rule."""
+    slots = rule.removeprefix("documents.").split("+") if rule.startswith("documents.") else []
+    if not slots or any(s not in config.EXTRA_DOCUMENTS for s in slots):
+        return ""
+    return " and ".join(config.EXTRA_DOCUMENTS[s] for s in slots)
 
 
 def _read_back(box: dict[str, Any] | None, secrets: set[str]) -> Any:
@@ -7775,7 +7838,7 @@ def _went_in(run: Run, filled: list[dict[str, Any]], *pages: dict[str, Any],
             kind = "choice"  # (one of a list's own choices: nothing typed, and no report keeps it out: _report_hidden)
         named = _box_said(box)
         if kind == "file":  # (said as the document it is: an upload's own words can be "Accepted file format: .pdf")
-            named["label"] = _DOCUMENTS.get(rule) or named["label"]
+            named["label"] = _DOCUMENTS.get(rule) or _document_said(rule).capitalize() or named["label"]
         key = run.went_in.key_for(url, fid, bases.get(fid) or f"{url} | {placed_key(box)} | 1", page)
         run.went_in.put(key, {"page": page, **named, "value": said, "kind": kind})
 

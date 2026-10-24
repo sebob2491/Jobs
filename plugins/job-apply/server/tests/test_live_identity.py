@@ -139,6 +139,33 @@ def test_the_fake_profile_has_a_test_cover_letter_too(tmp_path):
     assert Path(profile["documents"]["resume"]).name == li.RESUME_NAME
 
 
+def test_the_fake_profile_has_a_test_transcript_and_a_made_up_reference(tmp_path):
+    """NSHE's Workday questionnaires (UNLV's, Nevada State University's, College of Southern Nevada's) require an
+    unofficial transcript and a reference list, and Las Vegas Valley Water District's asks for transcripts, diplomas
+    or certificates: the check stopped there (profile_gap). The fake profile gets a test transcript made for the run,
+    saying what it is, and a made-up reference the desk lays out on a page, as it would a person's."""
+    profile = li.with_test_resume(BASE, tmp_path)
+    transcript = Path(profile["documents"]["transcripts"])
+    assert transcript == tmp_path / li.TRANSCRIPT_NAME and "transcripts" not in BASE["documents"]
+    pdf = transcript.read_bytes()
+    assert count_pages(pdf) == 1 and li.TRANSCRIPT_NOTE.encode("cp1252") in pdf and b"(Testy McTestface)" in pdf
+    # (its schools, with no course and no grade)
+    assert b"(Arizona State University, Electrical Engineering (2016 to 2020): no courses listed)" in pdf.replace(
+        b"\\(", b"(").replace(b"\\)", b")")
+    from job_apply.config import Profile
+    from job_apply.fixtures import REPLAY_PROFILE, personal_strings
+
+    lp = importlib.util.spec_from_file_location("live_profile", SCRIPTS / "live_profile.py")
+    live_profile = importlib.util.module_from_spec(lp)
+    lp.loader.exec_module(live_profile)
+    [ref] = Profile(live_profile.FAKE_PROFILE).references()
+    assert ref == REPLAY_PROFILE["references"][0]  # (the replay's applicant is the live check's)
+    assert "555" in ref["phone"] and ref["email"].endswith("@example.com") and "test" in ref["relationship"]
+    # (each word of a reference's name comes out of the run's saved pages: none of them a page's own word)
+    taken = {str(s) for s in personal_strings(Profile(live_profile.FAKE_PROFILE))}
+    assert {"Refy", "McReferenceface"} <= taken and not {"Example", "Jordan"} & taken
+
+
 def test_the_broad_check_gives_the_test_inbox_only_where_example_com_is_refused():
     """Onto Innovation's and Robert Half's Workday refuse the broad check's example.com address (live
     run 19): there, and only there, it gives the test identity's inbox (the owner's call, Oct 11)."""

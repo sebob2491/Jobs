@@ -64,6 +64,19 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     employer alone; one whose words may name another organization's ID ("Microchip Employee ID" on
     Intel's form) is never filled by itself, only asked, its answer for that application only. A box the page wouldn't let the desk fill (it timed out) isn't a question: the
     card says "I couldn't fill …";
+  - a file the form requires that the profile doesn't hold. Besides the resume and the cover letter,
+    the profile's `documents:` can name the user's unofficial transcripts (`transcripts`), a reference
+    list (`references`) and certificates, licenses or diplomas (`certificates`), each one file or a list.
+    A box asking for one of them gets it (in a box that takes several files, every one the profile has
+    of what it names), and never one of these in a box for something else (a resume, a writing sample,
+    a letter of reference, a form to sign, a proof of citizenship, eligibility or identity, a DD-214, a
+    driver's license); the job's log says each upload. A box asking for a diploma, a license or a
+    particular certificate gets only a file whose name says so (suggest naming them for what they are).
+    With no reference list file but `references:` entries, the desk lays those out on one page in the
+    job's folder and uploads that, only while it holds the entries as they are. Missing one, the card
+    names the slot to fill ("add documents.transcripts to your profile, or attach it in the desk's
+    browser window"): set it in profile.yaml once the user says where the file is (references only as
+    the user gives them, never made up), and they press Carry on;
   - a dialog open over a form, which the user answers in the desk's browser window before pressing
     Carry on (the boxes behind it are filled after that). With `settings.accept_notices` (on
     unless the user turns it off; never in practice mode) the desk agrees for the user to an

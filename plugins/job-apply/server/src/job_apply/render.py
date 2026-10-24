@@ -1,4 +1,4 @@
-"""Render a Markdown resume or cover letter to a print-ready PDF."""
+"""Render a Markdown resume, cover letter or reference list to a print-ready PDF."""
 
 from __future__ import annotations
 
@@ -13,7 +13,10 @@ from playwright.async_api import Error as PlaywrightError, async_playwright
 from . import config
 from .browser import UNAVAILABLE_HELP, BrowserUnavailable, launch_attempts
 
-KINDS = ("resume", "cover_letter")
+KINDS = ("resume", "cover_letter", "references")
+# Each kind's file name after the person's name (<First>_<Last>_References.pdf), and the most pages it may run to
+NAMES = {"resume": "Resume", "cover_letter": "Cover_Letter", "references": "References"}
+PAGES = {"resume": 2, "cover_letter": 1, "references": 1}
 
 _BASE_CSS = """
 @page { size: Letter; margin: 0; }
@@ -45,7 +48,48 @@ h1 { font-size: 16pt; margin: 0 0 2pt; }
 h1 + p { color: #444; margin-bottom: 18pt; }
 p { margin: 0 0 10pt; }
 """,
+    "references": _BASE_CSS + """
+body { font-size: 11pt; line-height: 1.4; padding: 0.9in 1in; }
+h1 { font-size: 16pt; margin: 0 0 2pt; }
+h1 + p { color: #444; margin-bottom: 16pt; }
+h2 { font-size: 12pt; text-transform: uppercase; letter-spacing: 0.8pt; margin: 0 0 10pt;
+     padding-bottom: 2pt; border-bottom: 1px solid #999; }
+p { margin: 0 0 12pt; break-inside: avoid; }
+""",
 }
+
+
+def _plain(text: str) -> str:
+    """A value of the person's as Markdown shows it as written: never emphasis, a link or code ("J_Doe", "[x]")."""
+    return re.sub(r"([\\`*_\[\]])", r"\\\1", " ".join(str(text).split()))
+
+
+def _line(text: str) -> str:
+    """A line of the person's words as written where it starts a line: never a list's item, a quote or a heading
+    ("- coworker", "> manager", "# 1 fan", "1. supervisor")."""
+    return re.sub(r"^(?:([-+*>#])|(\d+)([.)]))", lambda m: f"\\{m[1]}" if m[1] else f"{m[2]}\\{m[3]}", text)
+
+
+def references_markdown(prof: config.Profile) -> str:
+    """The person's reference list as render_document lays one out: `# Name`, their contact line, a "References"
+    heading, and each of the profile's references: entries (config.Profile.references), its name, then its
+    relationship and company, then its phone and email, as the person wrote them, never one added or changed. "" with
+    no entries."""
+    entries = prof.references()
+    if not entries:
+        return ""
+    name = prof.full_name or "Applicant"
+    where = ", ".join(str(p) for p in (prof.get("personal.address.city"), prof.get("personal.address.state")) if p)
+    contact = _line(" · ".join(_plain(p) for p in (prof.get("personal.email"), prof.get("personal.phone"), where)
+                               if p))
+    parts = [f"# {_plain(name)}", contact, "## References"] if contact else [f"# {_plain(name)}", "## References"]
+    for entry in entries:
+        lines = [f"**{_plain(entry['name'])}**"]
+        lines += [_line(between.join(_plain(entry[k]) for k in keys if entry.get(k)))
+                  for keys, between in ((("relationship", "company"), ", "), (("phone", "email"), " · "))
+                  if any(entry.get(k) for k in keys)]
+        parts.append("  \n".join(lines))
+    return "\n\n".join(parts) + "\n"
 
 
 def _as_written(markdown_text: str) -> str:

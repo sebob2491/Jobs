@@ -15284,25 +15284,161 @@ def test_what_a_filled_page_still_needs_is_said_the_same_way_on_each_path(srv):
 
 
 def test_a_file_the_profile_has_no_place_for_is_named_as_the_persons(srv):
-    """NSU's Workday (live run 144) requires a "Reference Contact Information" file: the profile has no place for one,
-    but the pause told the person to set documents.resume or documents.cover_letter, as for a missing resume. It names
-    the box and says it's theirs to attach; a resume or cover letter still says where the profile points to one."""
+    """NSU's Workday (live run 144) requires a "Reference Contact Information" file, and the pause told the person to
+    set documents.resume or documents.cover_letter, as for a missing resume. A file the profile has no place for (a
+    writing sample) is named, and said to be theirs to attach; a resume or cover letter still says where the profile
+    points to one."""
     applier = Applier(srv)
-    refs = {"label": "Please upload your Reference Contact Information.*", "kind": "file",
-            "section": "Application Questions 1 of 3"}
+    sample = {"label": "Please upload a writing sample.*", "kind": "file", "section": "Application Questions 1 of 3"}
     cover = {"label": "Please upload your Letter of Application/Cover Letter.*", "kind": "file"}
     only = Run(1)
-    assert applier._stop_for_what_is_left(only, "", [], [refs])
+    assert applier._stop_for_what_is_left(only, "", [], [sample])
     assert only.need == "stuck" and only.code == "profile_gap" and only.reason == (
-        "The form wants a file your profile has no place for: “Please upload your Reference Contact Information”. "
+        "The form wants a file your profile has no place for: “Please upload a writing sample”. "
         "Attach it in the desk's browser window, then press Carry on."), only.reason
     both = Run(2)
-    assert applier._stop_for_what_is_left(both, "", [], [cover, refs])
+    assert applier._stop_for_what_is_left(both, "", [], [cover, sample])
     assert both.reason == (
         "The form wants a file (Please upload your Letter of Application/Cover Letter.*) and the profile doesn't say "
         "where yours is: ask Claude to set documents.resume (or documents.cover_letter) in profile.yaml, then press "
-        "Carry on. It also wants a file your profile has no place for: “Please upload your Reference Contact "
-        "Information”: attach it in the desk's browser window."), both.reason
+        "Carry on. It also wants a file your profile has no place for: “Please upload a writing sample”: attach it in "
+        "the desk's browser window."), both.reason
+
+
+def test_a_file_for_another_document_of_the_profiles_names_the_slot_to_fill(srv, job_apply_home):
+    """NSHE's Workday (UNLV, Nevada State University, College of Southern Nevada) requires an unofficial transcript
+    and a reference list, and Las Vegas Valley Water District's asks for transcripts, diplomas or certificates: with
+    none in the profile, the stop said "your profile has no place for" them. It names the slot to fill now
+    (documents.transcripts, .references, .certificates), or the person attaches it."""
+    applier = Applier(srv)
+    transcripts = {"label": "Please upload your Unofficial Transcripts.*", "kind": "file",
+                   "section": "Application Questions 1 of 3"}
+    refs = {"label": "Please upload your Reference Contact Information.*", "kind": "file",
+            "section": "Application Questions 1 of 3"}
+    lvvwd = {"label": "If available, please attach a copy of your transcript(s), diploma(s), and/or certificate(s) "
+                      "here.*", "kind": "file"}
+    one = Run(1)
+    assert applier._stop_for_what_is_left(one, "", [], [transcripts])
+    assert one.need == "stuck" and one.code == "profile_gap" and one.reason == (
+        "The form wants your transcripts (“Please upload your Unofficial Transcripts”): add documents.transcripts to "
+        "your profile, or attach it in the desk's browser window, then press Carry on."), one.reason
+    nshe = Run(2)
+    assert applier._stop_for_what_is_left(nshe, "", [], [transcripts, refs])
+    assert nshe.reason == (
+        "The form wants your transcripts (“Please upload your Unofficial Transcripts”) and your reference list "
+        "(“Please upload your Reference Contact Information”): add documents.transcripts and documents.references (or "
+        "your references under references:, which the desk makes a page of) to your profile, or attach them in the "
+        "desk's browser window, then press Carry on."), nshe.reason
+    either = Run(3)
+    assert applier._stop_for_what_is_left(either, "", [], [lvvwd])
+    assert either.reason.startswith(
+        "The form wants your transcripts or certificates (“If available, please attach a copy of your transcript(s), "
+        "diploma(s), and/or certificate(s) here”): add documents.transcripts or documents.certificates to your "
+        "profile, or attach it"), either.reason
+    # beside a missing resume, and a file named in the profile that isn't there
+    data = yaml.safe_load((job_apply_home / "profile.yaml").read_text(encoding="utf-8"))
+    data["documents"]["transcripts"] = str(job_apply_home / "gone.pdf")
+    (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
+    with_resume = Run(4)
+    assert applier._stop_for_what_is_left(with_resume, "", [], [{"label": "Resume/CV*", "kind": "file"}, transcripts])
+    assert with_resume.reason == (
+        "The form wants a file (Resume/CV*) and the profile doesn't say where yours is: ask Claude to set "
+        "documents.resume (or documents.cover_letter) in profile.yaml, then press Carry on. It also wants your "
+        "transcripts (“Please upload your Unofficial Transcripts”): add documents.transcripts to your profile (the "
+        "file your profile names for documents.transcripts isn't there), or attach it in the desk's browser "
+        "window."), with_resume.reason
+
+
+def _with_profile(home: Path, **changes) -> None:
+    data = yaml.safe_load((home / "profile.yaml").read_text(encoding="utf-8"))
+    (home / "profile.yaml").write_text(yaml.safe_dump({**data, **changes}), encoding="utf-8")
+
+
+def _drive_documents(srv, monkeypatch) -> tuple[Run, str]:
+    """tests/fixtures/site/workday-documents.html (NSHE's Workday step: an unofficial transcript and a reference list
+    required) driven by the desk until the job stops or is ready: the run, and what its review page says each box was
+    given (the files' names), or ""."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/workday-documents.html"), title="Lab Technician",
+                      company="Example College")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        r = applier.enqueue(job["id"])
+        r.seen_form = True  # (filled My Information and My Experience)
+        applier.start()
+        try:
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            sent = ""
+            with contextlib.suppress(Exception):
+                sent = await r.page.evaluate("() => (document.getElementById('sent') || {}).textContent || ''")
+            return r, sent
+        finally:
+            await applier.stop()
+
+    return run(go())
+
+
+def test_a_transcript_and_a_reference_list_go_up_from_the_profile(srv, job_apply_home, monkeypatch, tmp_path):
+    """NSHE's Workday step stopped the live check (profile_gap): "Please upload your Unofficial Transcripts." and
+    "Please upload your Reference Contact Information.", required, and no place in the profile for either. With
+    documents.transcripts (two, in a box that takes several) and documents.references, both go up, each said in the
+    job's log, and the job goes on to the review page."""
+    transcript, older, refs = (tmp_path / "transcript-2024.pdf", tmp_path / "transcript-2019.pdf",
+                               tmp_path / "my-references.pdf")
+    for path in (transcript, older, refs):
+        path.write_bytes(b"%PDF-1.4\n% made up\n")
+    _with_profile(job_apply_home, documents={"resume": str(job_apply_home / "resume.pdf"),
+                                             "transcripts": [str(transcript), str(older)], "references": str(refs)})
+    r, sent = _drive_documents(srv, monkeypatch)
+    assert r.status == "ready", (r.status, r.need, r.reason, r.log)
+    assert sent == "transcripts: transcript-2024.pdf, transcript-2019.pdf | references: my-references.pdf", sent
+    assert any(line.startswith("uploaded your transcripts (2 files) to “Please upload your Unofficial Transcripts")
+               for line in r.log), r.log
+    assert any(line == "uploaded your reference list to “Please upload your Reference Contact Information”"
+               for line in r.log), r.log
+    # the "What went in" panel names each document and its files, never their folders
+    files = (r.went_in.public() or {}).get("files")
+    assert {"label": "Transcripts", "name": "transcript-2024.pdf, transcript-2019.pdf"} in files, files
+    assert {"label": "Reference list", "name": "my-references.pdf"} in files, files
+    assert str(tmp_path) not in json.dumps(files)
+
+
+def test_a_reference_list_is_made_from_the_profiles_references_and_goes_up(srv, job_apply_home, monkeypatch,
+                                                                           tmp_path):
+    """With references: entries and no file for a reference list, the desk lays them out on one page in the job's
+    folder (render_document's "references") and uploads that."""
+    made = []
+
+    async def fake_render(page_html, dest):
+        made.append((dest.name, page_html))
+        dest.write_bytes(b"%PDF-1.4\n% the references page\n")
+        return 1
+
+    monkeypatch.setattr(srv, "render_pdf", fake_render)
+    transcript = tmp_path / "transcript.pdf"
+    transcript.write_bytes(b"%PDF-1.4\n% made up\n")
+    _with_profile(job_apply_home, documents={"resume": str(job_apply_home / "resume.pdf"),
+                                             "transcripts": str(transcript)},
+                  references=[{"name": "Morgan Quillby", "relationship": "Former supervisor",
+                               "company": "Tarnwell Systems", "phone": "602-555-0177"}])
+    r, sent = _drive_documents(srv, monkeypatch)
+    assert r.status == "ready", (r.status, r.need, r.reason, r.log)
+    assert [name for name, _ in made] == ["Sam_Rivera_References.pdf"]
+    assert "Morgan Quillby" in made[0][1] and "Tarnwell Systems" in made[0][1]
+    assert sent == "transcripts: transcript.pdf | references: Sam_Rivera_References.pdf", sent
+    assert any(line == "uploaded your reference list (a page the desk made from the references in your profile) to "
+               "“Please upload your Reference Contact Information”" for line in r.log), r.log
+    assert not any("Morgan" in line or "Quillby" in line for line in r.log)  # (never a reference's details)
+
+
+def test_with_neither_a_file_nor_entries_the_stop_names_the_slots(srv, job_apply_home, monkeypatch):
+    r, sent = _drive_documents(srv, monkeypatch)
+    assert r.status == "needs_you" and r.code == "profile_gap" and not sent, (r.status, r.need, r.reason, r.log)
+    assert r.reason.startswith(
+        "The form wants your transcripts (“Please upload your Unofficial Transcripts”) and your reference list "
+        "(“Please upload your Reference Contact Information”): add documents.transcripts and documents.references"), \
+        r.reason
 
 
 def test_a_button_gone_as_it_was_clicked_is_looked_at_again(srv, monkeypatch):

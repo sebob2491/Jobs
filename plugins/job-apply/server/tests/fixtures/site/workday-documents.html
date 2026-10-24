@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+<!-- NSHE's Workday (UNLV's, Nevada State University's, College of Southern Nevada's: the live check): an Application
+     Questions step that requires an unofficial transcript and a reference list, each in a questionnaire's file box
+     (its "...-FileUpload" wrapper labelled by the question's rich text, a "multiple" file input: test_formjs's
+     WORKDAY_UPLOAD). Save and Continue goes on to the review only with a file in each, and the review names the files
+     each box was given. -->
+<ol aria-label="Application Progress">
+  <li>My Information</li><li>My Experience</li>
+  <li data-automation-id="progressBarActiveStep">current step 3 of 5 Application Questions 1 of 1</li>
+  <li>Voluntary Disclosures</li><li>Review</li>
+</ol>
+<h2>Lab Technician</h2>
+<h2>Application Questions 1 of 1</h2>
+<p>* Indicates a required field</p>
+<div aria-labelledby="sec" role="group"><h3 id="sec">Application Questions</h3>
+  <div data-automation-id="formField-" data-fkit-id="primaryQuestionnaire--a201">
+    <div id="rich-label201"><div data-automation-id="richText"><p><b>Please upload your Unofficial Transcripts.</b><abbr class="requiredAsterisk" title="required">*</abbr></p></div></div>
+    <div><div style="width: 100%"><div aria-labelledby="rich-label201" data-automation-id="a201-FileUpload"><div>
+      <div data-automation-id="file-upload-drop-zone"><div>Drop files here</div><div><div>or</div>
+        <button type="button" data-automation-id="select-files"><span>Select files</span></button></div></div>
+      <input data-automation-id="file-upload-input-ref" multiple type="file" id="transcripts">
+    </div></div></div></div>
+  </div>
+  <div data-automation-id="formField-" data-fkit-id="primaryQuestionnaire--a202">
+    <div id="rich-label202"><div data-automation-id="richText"><p><b>Please upload your Reference Contact Information.</b><abbr class="requiredAsterisk" title="required">*</abbr></p></div></div>
+    <div><div style="width: 100%"><div aria-labelledby="rich-label202" data-automation-id="a202-FileUpload"><div>
+      <div data-automation-id="file-upload-drop-zone"><div>Drop files here</div><div><div>or</div>
+        <button type="button" data-automation-id="select-files"><span>Select files</span></button></div></div>
+      <input data-automation-id="file-upload-input-ref" multiple type="file" id="references">
+    </div></div></div></div>
+  </div>
+</div>
+<div id="footer">
+  <button type="button">Back</button>
+  <button type="button" id="next">Save and Continue</button>
+</div>
+<script>
+  document.getElementById('next').onclick = () => {
+    const boxes = [...document.querySelectorAll('input[type="file"]')];
+    if (boxes.some((b) => !b.files.length)) {
+      if (!document.getElementById('errors')) {
+        const said = document.createElement('div');
+        said.id = 'errors';
+        said.setAttribute('role', 'alert');
+        said.textContent = 'Errors Found: a file is required in each upload';
+        document.body.prepend(said);
+      }
+      return;
+    }
+    const sent = boxes.map((b) => b.id + ': ' + [...b.files].map((f) => f.name).join(', ')).join(' | ');
+    document.body.innerHTML = '<div>current step 5 of 5</div><h2>Review</h2><p id="sent"></p>'
+      + '<form onsubmit="return false"><button type="submit">Submit</button></form>';
+    document.getElementById('sent').textContent = sent;
+  };
+</script>
+</body>
+</html>
