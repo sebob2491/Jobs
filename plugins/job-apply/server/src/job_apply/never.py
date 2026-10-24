@@ -98,6 +98,28 @@ _AT_WILL_WORDS = (r"(?:with or without (?:cause|notice|reason)|without cause|ter
 _EMPLOYED = (r"(?:employ\w*|jobs?|positions?|hir(?:e|ed|ing)|dismiss\w*|discharg\w*|"
              r"(?:end|terminat)\w* (?:the |this |our |my |your |their )?(?:employment |working )?relationship)")
 
+# A non-compete or a non-solicitation agreement, however it's spelled: "non-compete", "noncompete", "non compete",
+# with a non-breaking hyphen or a dash, "non-competition", "non-solicitation"; never inside a word ("Shannon solicits",
+# "Lebanon competes") nor "noncompetitive" (a federal job's "noncompetitive appointment"): the review of
+# fix-notice-source
+_RESTRICTS = r"\bnon[-\u2010\u2011\u2012\u2013\u2014\s]?(?:compet(?:es?|itions?)\b|solicit\w*)"
+# A promise not to compete with an employer or solicit its people or business, in other words ("You agree not to
+# solicit Example Corp's customers", "You will not solicit our clients", "a covenant not to solicit employees", "refrain
+# from competing with Example Corp", "Employees may not compete with Example Corp"); never a privacy policy's or a fraud
+# warning's ("We will not solicit personal information from children", "Example Corp will not solicit payment from
+# applicants", "Recruiters must not solicit fees") nor a sweepstakes' ("... may not compete in this sweepstakes"): the
+# reviews of fix-notice-source. ("not to compete" alone was main's, and stays.)
+_DIRECTLY = r"(?:,?\s+(?:either\s+)?directly\s+or\s+indirectly,?)?"
+_PROMISE_NOT = rf"(?:\bnot\s+to|\b(?:will|shall|may|must)\s+not|\brefrain\w*\s+from){_DIRECTLY}"
+_WHEN = r"(?:current|former|existing|past|prospective)"
+_SOLICITED = (r"(?:any\s+(?:of\s+)?)?(?:(?:our|its|their|your|[\w.&-]+(?:\s+[\w.&-]+){0,3}?['\u2019]s)\s+)?"
+              rf"(?:{_WHEN}\s+(?:or\s+{_WHEN}\s+)?)?"
+              r"(?:employees?|customers?|clients?|staff|personnel|business|accounts?|vendors?|suppliers?)\b")
+_NOT_TO = (rf"\bnot to compete\b|{_PROMISE_NOT}\s+compet\w*{_DIRECTLY}\s+(?:with|against)\b|"
+           rf"{_PROMISE_NOT}\s+solicit\w*(?:\s+(?:or|and(?:/or)?)\s+\w+)?{_DIRECTLY}\s+{_SOLICITED}")
+# An abbreviation's stop, which ends no clause ("hold Example Inc. harmless", "Example L.L.C.", "Example U.S.")
+_ABBREVIATED = r"\b(?:inc|corp|co|ltd|llc|l\.l\.c|u\.s|no|e\.g|i\.e|etc)\."
+
 # By kind, in the order a match is named. Every word each path's own list held before is here (the tests keep those
 # lists, word for word, and check each path still refuses them)
 NEVER: dict[str, re.Pattern[str]] = {kind: re.compile(words, re.I | re.S) for kind, words in {
@@ -108,8 +130,12 @@ NEVER: dict[str, re.Pattern[str]] = {kind: re.compile(words, re.I | re.S) for ki
     # of perjury, is no waiver
     "arbitration": r"arbitrat",
     # (and a release from liability, a class or collective action given up, an agreement not to compete, a shorter
-    # time to sue: the review of fix-accept-gates)
-    "waiver": r"\bwaive|\bjury\b|non-?compete|non-?solicit|\bnot to compete\b|\bhold(?:s|ing)? harmless\b|"
+    # time to sue: the review of fix-accept-gates; and a restrictive covenant, an indemnity given ("agree to
+    # indemnify", never "professional indemnity insurance"), and someone held harmless in so many words within one
+    # clause, "hold Example Inc. harmless", "shall be held harmless": the review of fix-notice-source)
+    "waiver": rf"\bwaive|\bjury\b|{_RESTRICTS}|{_NOT_TO}|\brestrictive covenants?\b|"
+              r"\bindemnif(?:y|ies|ied|ying|ication)\b|"
+              rf"\b(?:holds?|holding|held)\b(?:{_ABBREVIATED}|[^.;:!?]){{0,80}}?\bharmless\b|"
               r"\breleas\w*\b[^.]{0,80}\b(?:from|of) (?:any |all )?(?:and all )?(?:liabilit\w*|claims?)\b|"
               r"\bclass(?: or collective)? actions?\b|\bclass[- ]wide\b|\bcollective actions?\b|"
               r"\b(?:lawsuits?|suits?|claims?|actions?)\b[^.]{0,60}\b(?:filed|brought|commenced)\b[^.]{0,30}\bwithin\b|"

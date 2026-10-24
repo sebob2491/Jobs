@@ -2753,11 +2753,23 @@ _READS_QUESTION = {_relatives, _government, _travel, _previously_employed, _no_s
                    _clearance_said, _us_service, _military, _work_proof, _dod_employee}
 
 HOW_HEARD = (r"(how|where) did you (first )?(hear|find|learn (about|of|that))|"
+             r"\bhow you (first )?(heard|found out|learned|learnt) (about|of) (us|(this|the|our) (job|position|"
+             r"opening|role|opportunity|posting|vacancy|company|organization)s?)\b|"
              r"source of (application|referral)|^source$")
 # ("Where did you learn to weld?" is no source: the review of Oct 15)
+# A list's how-heard question in words that need its choices to say so: those words about something they don't name
+# ("Please indicate how you heard"; "Explain how you learned of our safety culture" asks something else), or the source
+# by its name (Clark County School District's Taleo "Source Type . Required" under "Source Tracking Please indicate how
+# you heard about this job.", live run 158). Never a text box's ("Referral Source", "Candidate Source": a referrer's or
+# a recruiter's words), nor another source ("Source of income", "Source type of income"): the review of
+# fix-notice-source
+HOW_HEARD_LIST = (r"\bhow you (first )?(heard|found out|learned|learnt) (about|of)\b|"
+                  r"^source (type|tracking)$|^(recruitment|referral|applicant|candidate|hiring) source$")
+_SOURCE_LISTS = {"select", "listbox", "radio_group", "combobox"}
 # (rule name, label regex, getter, max label length or None, allowed kinds or None)
 RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("how_heard", HOW_HEARD, _p("preferences.how_did_you_hear"), None, None),
+    ("how_heard", HOW_HEARD_LIST, _p("preferences.how_did_you_hear"), None, _SOURCE_LISTS),
     # contact details: short labels only, so long questions that merely mention
     # "state" or "name" don't match
     ("email", r"^(confirm |re ?enter |re ?type |verify )?e ?mail( address)?( again)?$|"
@@ -3620,6 +3632,43 @@ def _without_notes(label: str) -> str:
 
 _METRO_SECTION = re.compile(r"\b(metropolitan|metro area|(closest|nearest) (major )?city)\b")
 _METRO_PART = re.compile(r"region|area|city|metro(politan)?( area| city)?")
+# A list whose own label says no more than that it's a choice ("Type", "Select one"), under words that ask how the
+# person heard of the job ("Source Tracking", "How did you hear about us?": never a bare "Source", nor "Source of
+# funds", the review of fix-notice-source): that question's
+_BARE_CHOICE = re.compile(r"type|(please )?(select|choose)( one)?")
+_HEARD_SECTION = re.compile(r"(how|where) did you (first )?(hear|find|learn (about|of|that))|"
+                            r"\bhow you (first )?(heard|found out|learned|learnt) (about|of)\b|"
+                            r"^source (tracking|of (application|referral))\b")
+# A source's own words that name a referral ("Referral Source", "Source of Referral"), which make it no one else's
+_SOURCE_REFERRAL = re.compile(r"\breferral source\b|\bsource of referral\b")
+
+
+def _someone_elses_source(label: str, section: str) -> bool:
+    """Is a source by its name ("Referral Source", or a bare "Type" under the words that ask) about someone else, a
+    referrer's or a recruiter's details, by its section ("Employee Referral") or its own words beyond a source's?"""
+    return bool(_SOMEONE_ELSE.search(_SOURCE_REFERRAL.sub(" ", f"{label} | {section}"))
+                or _ROLE_SECTION.search(section))
+
+
+# A section that asks for a referrer's or a recruiter's details ("Referrer Name and Email", "Recruiter Contact"), and a
+# box's words that ask for a person ("If referred, please list the employee's name"; never an email, a way people hear
+# of a job too): never "Referral Information", "Source / Referral" or "Referrals", whose how-heard question is the
+# person's (the reviews of fix-notice-source)
+_REFERRER_DETAILS = re.compile(r"\b(referr\w*|recruit\w*)\b.{0,30}\b(names?|e ?mail|phone|contact|details)\b|"
+                               r"\b(names?|e ?mail|phone|contact|details)\b.{0,30}\b(referr\w*|recruit\w*)\b")
+_ASKS_A_PERSON = re.compile(r"\b(names?|who|whom)\b")
+
+
+def _not_how_heard_here(listed: bool, label: str, kind: str, section: str) -> bool:
+    """Is a box whose words ask how the person heard of the job (`listed`: by a source's name, HOW_HEARD_LIST) about
+    someone else instead? A source by its name, where its label or section names someone else (_someone_elses_source);
+    the question in so many words (HOW_HEARD) only where its section asks for a referrer's or a recruiter's details, or
+    it's a box to type in that asks for a person too. A list's "How did you hear about this position? If referred by an
+    employee, please include their name." is still how the person heard, as before."""
+    if listed:
+        return _someone_elses_source(label, section)
+    return bool(_REFERRER_DETAILS.search(section) or _ROLE_SECTION.search(section)
+                or kind in ("text", "textarea") and _ASKS_A_PERSON.search(label))
 
 
 # A box that declines to answer the question it names ("I decline to say Gender")
@@ -3733,6 +3782,13 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
         if not city:
             return None  # (never the state the rules below would give: the list is cities)
         ans = Answer(city, "personal.address.city")
+    if ans is None and kind in _SOURCE_LISTS and _BARE_CHOICE.fullmatch(label) and _HEARD_SECTION.search(section) \
+            and not _someone_elses_source(label, section):
+        # (how the person heard of the job, asked by the words over its list: the profile's, as its label would)
+        heard = prof.get("preferences.how_did_you_hear")
+        if not heard:
+            return None
+        ans = Answer(heard, "how_heard")
     if ans is None and kind in _CHOICE_KINDS - {"checkbox"} and (none := _plans_none(field, prof)):
         return Answer(none, "background.plans")  # (one of its own choices, as it reads)
     if ans is None and kind in _CHOICE_KINDS - {"checkbox"} and field.get("options") and not someone_else:
@@ -3846,6 +3902,11 @@ def _rule_answer(field: dict, prof: Profile, job: dict, kind: str, asked: str, r
     for name, pattern, getter, max_len, kinds in ([own] if own else RULES):
         if someone_else and (name in _CONTACT_RULES or name == "employee_id"):
             continue  # a reference's or an emergency contact's name, phone or email; a referrer's ID
+        if name == "how_heard" and _not_how_heard_here(pattern == HOW_HEARD_LIST, label, kind,
+                                                        norm(field.get("section"))):
+            if pattern == HOW_HEARD and re.search(pattern, label):
+                return True, None  # (asked how they heard, and a person too: theirs, never another rule's answer)
+            continue  # (a referrer's or a recruiter's details, beside how the person heard)
         if name in _EEO_RULES and _FAMILY.search(label):
             continue  # "Are you the spouse of a veteran?", "Gender of your spouse": not the person's own
         if max_len is not None and len(label) > max_len:
@@ -4169,8 +4230,9 @@ def _own_website(value: Any, options: list[str], job: dict) -> str | None:
     # one site: the employer's, or any but another source's ("Indeed Website", "University Career Site": the review
     # of issue #112, note 27). Robert Half's "Website / Job Board Posting" is a group holding "Company Career Site"
     named = bool(employer & set(norm(sites[0]).split()))
+    # (nor the person's own site: "Personal Website", "Portfolio Website")
     other = re.search(r"\b(indeed|linkedin|glassdoor|monster|ziprecruiter|handshake|university|college|school|"
-                      r"other|agency|recruiter|referral)\b", sites[0], re.I)
+                      r"other|agency|recruiter|referral|personal|portfolio)\b", sites[0], re.I)
     return sites[0] if named or not other else None
 
 
@@ -4188,8 +4250,14 @@ _NAME_FILLER = {"the", "inc", "incorporated", "corp", "corporation", "co", "comp
 
 def is_how_heard(rule: str, label: str) -> bool:
     """The question of how the person heard of the job, answered from the profile or from an answer they
-    remembered for it."""
-    return rule == "how_heard" or rule.startswith("answers[") and bool(re.search(HOW_HEARD, norm(label)))
+    remembered for it (a list's: its source by its name too)."""
+    return rule == "how_heard" or rule.startswith("answers[") and _asks_how_heard(label, listed=True)
+
+
+def _asks_how_heard(label: str, listed: bool) -> bool:
+    """Do a box's words ask how the person heard of the job (HOW_HEARD; and a list's, HOW_HEARD_LIST)?"""
+    said = norm(clean_label(_without_notes(label)))
+    return bool(re.search(HOW_HEARD, said) or listed and re.search(HOW_HEARD_LIST, said))
 
 
 def answer_to_remember(label: str, answer: Any, company: str) -> Any | None:
@@ -4208,7 +4276,7 @@ def answer_to_remember(label: str, answer: Any, company: str) -> Any | None:
             return answer
     elif words[0] not in said:
         return answer
-    if re.search(HOW_HEARD, norm(label)) and _WEBSITE.search(str(answer)):
+    if _asks_how_heard(label, listed=True) and _WEBSITE.search(str(answer)):
         return "Company Website"
     return None
 
