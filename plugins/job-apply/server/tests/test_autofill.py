@@ -1344,6 +1344,178 @@ def test_how_did_you_first_hear():
     assert resolve_field(f("Where did you first learn of this job?"), prof()).value == "Company Website"
 
 
+# A school district's Taleo list of sources, as Clark County School District's (live run 158; the employer made up):
+# its own site named by the employer's initials, beside a business card that names them too
+SOURCES = ["Select One...", "Ads/Billboards", "EVSD Business Card", "EVSD Website", "Career Fair", "Direct Mail",
+           "Magazines and Trade Publications", "Programs", "Referral", "Social network service",
+           "University/Conference Recruiting"]
+DISTRICT = {"company": "Example Valley School District"}
+
+
+@pytest.mark.parametrize("field", [
+    f("Source Type . Required", "select", options=SOURCES, required=True),
+    f("Recruitment Source", "select", options=SOURCES),
+    f("Please indicate how you heard about this job.", "select", options=SOURCES),
+    f("Please tell us how you found out about this position", "radio_group", options=SOURCES),
+    # (its own label saying no more than that it's a choice, under the words that ask)
+    f("Type", "select", options=SOURCES, section="Source Tracking"),
+    f("Select one", "select", options=SOURCES, section="How did you hear about us?"),
+], ids=["source-type", "recruitment-source", "how-you-heard", "how-you-found-out", "under-source-tracking",
+        "under-how-did-you-hear"])
+def test_a_source_asked_by_its_name_or_the_words_over_it_is_how_the_person_heard(field):
+    """Clark County School District's Taleo (live run 158) asks "Source Type . Required" under "Source Tracking Please
+    indicate how you heard about this job.", and the desk asked the person: the how-heard rule read only "how (or
+    where) did you hear". It's that question, by its label or the words over its list, and the profile's "Company
+    Website" is the list's one website: the employer's own, named by its initials, never its business card."""
+    p = prof()
+    p.data["preferences"] = {**p.data.get("preferences", {}), "how_did_you_hear": "Company Website"}
+    ans = resolve_field(field, p, DISTRICT)
+    assert ans is not None and (ans.value, ans.rule) == ("EVSD Website", "how_heard"), ans
+
+
+def test_another_source_or_a_list_without_the_employers_own_site_is_no_how_heard():
+    """A "Source of income" isn't how the person heard of the job, nor a referrer's name; and a list whose websites are
+    two other sources' ("Indeed Website", "University Website") has no employer's site for "Company Website", nor one
+    whose only one is its business card. A "Type" list under another heading is no source."""
+    p = prof()
+    p.data["preferences"] = {**p.data.get("preferences", {}), "how_did_you_hear": "Company Website"}
+    income = ["Select One...", "Employment", "Online business / Website", "Other"]
+    assert resolve_field(f("Source of income", "select", options=income), p, DISTRICT) is None
+    assert resolve_field(f("Source of Income"), p, DISTRICT) is None
+    assert resolve_field(f("Referral Source Name"), p, DISTRICT) is None
+    two = ["Select One...", "Indeed Website", "University Website", "Referral"]
+    assert resolve_field(f("Source Type . Required", "select", options=two), p, DISTRICT) is None
+    card = [o for o in SOURCES if o != "EVSD Website"]
+    assert resolve_field(f("Source Type . Required", "select", options=card), p, DISTRICT) is None
+    assert resolve_field(f("Type", "select", options=SOURCES, section="Phone Numbers"), p, DISTRICT) is None
+
+
+@pytest.mark.parametrize("field", [
+    f("Referral Source"), f("Referral Source", section="Employee Referral"), f("Candidate Source"),
+    f("Hiring Source"), f("Source Tracking"),
+    f("Referral Source", "select", options=SOURCES, section="Employee Referral"),
+    f("Lead Source", "select", options=SOURCES),
+    f("Source type of income", "select", options=["Select One...", "Employment", "Online business / Website", "Other"]),
+    f("Describe how you learned about statistical process control and how you used it", "textarea"),
+    f("Tell us about a time you made a mistake at work, how you found out about it, and what you did", "textarea"),
+    f("Explain how you learned of our safety culture"),
+    f("Type", "select", options=["Select one", "Savings", "Loan", "Website"], section="Source"),
+    f("Type", "select", options=["Select one", "Savings", "Loan", "Gift"], section="Source of funds"),
+    f("Type", "select", options=["Mobile", "Home", "Work"], section="How did you hear about us?"),
+    f("Select one", "radio_group", options=["Yes", "No"], section="How did you hear about this job?"),
+    f("Type", "select", options=["Personal Website", "Portfolio", "LinkedIn Profile"],
+      section="How did you hear about us?"),
+    f("Type", "checkbox_group", options=SOURCES, section="Source Tracking"),
+    f("Type", section="Source Tracking"),
+], ids=["referral-source-box", "referral-source-box-in-employee-referral", "candidate-source-box", "hiring-source-box",
+        "source-tracking-box", "referral-source-list-in-employee-referral", "lead-source", "source-type-of-income",
+        "learned-about-spc", "found-out-about-a-mistake", "learned-of-safety-culture", "type-under-source",
+        "type-under-source-of-funds", "phone-type-under-how-heard", "yes-no-under-how-heard",
+        "personal-website-under-how-heard", "type-ticks-under-source-tracking", "type-box-under-source-tracking"])
+def test_a_source_by_its_name_is_a_lists_alone_and_never_someone_elses(field):
+    """The review of fix-notice-source: "Referral Source", "Candidate Source", "Hiring Source" and "Source Tracking" as
+    text boxes (a referrer's or a recruiter's words, even under "Employee Referral") took "Company Website", and so did
+    "Source type of income", "Explain how you learned of our safety culture" and a "Type" list under a bare "Source". A
+    source by its name, and "how you learned of" something the words don't name, are a list's question alone; a list
+    in a referral's section is someone else's; the words over a list must ask how the person heard; and a list whose
+    one website is the person's own ("Personal Website") has no employer's site."""
+    p = prof()
+    p.data["preferences"] = {**p.data.get("preferences", {}), "how_did_you_hear": "Company Website"}
+    ans = resolve_field(field, p, DISTRICT)
+    assert ans is None or ans.rule != "how_heard", ans
+
+
+HEARD = ["Select One...", "Company Website", "Employee Referral", "Indeed", "LinkedIn", "Other"]
+
+
+@pytest.mark.parametrize("field", [
+    f("How did you hear about this position? If referred by an employee, please include their name.", "select",
+      options=HEARD),
+    f("How did you hear about us? (e.g. LinkedIn, Employee Referral, Job Board)", "select", options=HEARD),
+    f("How did you learn about this opportunity? If referred, who referred you?", "radio_group", options=HEARD),
+    f("How did you hear about this role? Did a hiring manager contact you?", "select", options=HEARD),
+    f("How did you hear about this job?", "select", options=HEARD, section="Referral Information"),
+    f("How did you hear about us?", "select", options=HEARD, section="Source / Referral"),
+    f("How did you hear about us?", "combobox", options=HEARD, section="Referrals"),
+    f("How did you hear about us? (e.g. LinkedIn, Employee Referral)"),
+], ids=["if-referred-include-name", "eg-employee-referral", "who-referred-you", "hiring-manager-contact",
+        "section-referral-information", "section-source-referral", "section-referrals", "box-eg-employee-referral"])
+def test_a_how_heard_question_that_mentions_a_referral_is_still_the_persons(field):
+    """The second review of fix-notice-source: its someone-else check left lists asking "How did you hear about this
+    position? If referred by an employee, please include their name." and the like, or under "Referral Information",
+    to the person. A question that asks how the person heard in so many words is answered as before; only a box to
+    type in that asks for a person too, or a section asking for a referrer's or a recruiter's details, is theirs."""
+    p = prof()
+    p.data["preferences"] = {**p.data.get("preferences", {}), "how_did_you_hear": "Company Website"}
+    ans = resolve_field(field, p, {"company": "Example Corp"})
+    assert ans is not None and (ans.value, ans.rule) == ("Company Website", "how_heard"), ans
+
+
+@pytest.mark.parametrize("field", [
+    f("How did you hear about us? If referred, please list the employee's name"),
+    f("How did you hear about us? Who referred you?", "textarea"),
+    f("How did you hear about us?", "select", options=HEARD, section="Referrer Name and Email"),
+    f("How did you hear about us?", "select", options=HEARD, section="Recruiter Contact Details"),
+    f("Referral Source", "select", options=HEARD, section="Referral"),
+], ids=["box-list-the-employees-name", "box-who-referred-you", "section-referrer-name", "section-recruiter-contact",
+        "referral-source-in-referral"])
+def test_a_how_heard_box_that_asks_for_a_person_is_theirs(field):
+    """A box to type in that asks for the referrer too, a section asking for a referrer's or a recruiter's details,
+    and a source by its name in a referral's section are the person's."""
+    p = prof()
+    p.data["preferences"] = {**p.data.get("preferences", {}), "how_did_you_hear": "Company Website"}
+    ans = resolve_field(field, p, {"company": "Example Corp"})
+    assert ans is None or ans.rule != "how_heard", ans
+
+
+@pytest.mark.parametrize("label", [
+    "How did you hear about this job? (LinkedIn, Indeed, or referral - please include their name)",
+    "How did you hear about us? If referred, who referred you? (e.g. LinkedIn, employee name)",
+    "How did you hear about us? (website, job board, or the name of the person who referred you)",
+    "How did you hear about this position? Please provide the name of the job board or website.",
+    "Who referred you, or how did you hear about us? (name or website)",
+    # (short enough for the LinkedIn and website rules, which took them)
+    "How did you hear about us? Name, or LinkedIn?",
+    "How did you hear? Name or website"])
+def test_a_how_heard_box_that_asks_for_a_person_too_is_left_to_them_whole(label):
+    """The third review of fix-notice-source: a box to type in that asks how the person heard and for a person too
+    was passed over by the how-heard rule and then taken by a later one (the profile's LinkedIn or website): it's the
+    person's, and no other rule answers it."""
+    p = prof()
+    p.data["preferences"] = {**p.data.get("preferences", {}), "how_did_you_hear": "Company Website"}
+    p.data["personal"] = {**p.data["personal"], "website": "https://sam.example.com"}
+    assert resolve_field(f(label), p, {"company": "Example Corp"}) is None, label
+
+
+def test_a_how_heard_box_that_names_an_email_among_its_sources_is_answered():
+    """An email is a way people hear of a job, never a person: "How did you hear about us? (e.g., email, LinkedIn, job
+    board)" is answered from the profile, as before."""
+    p = prof()
+    p.data["preferences"] = {**p.data.get("preferences", {}), "how_did_you_hear": "Company Website"}
+    ans = resolve_field(f("How did you hear about us? (e.g., email, LinkedIn, job board)"), p,
+                        {"company": "Example Corp"})
+    assert ans is not None and (ans.value, ans.rule) == ("Company Website", "how_heard"), ans
+
+
+def test_a_source_list_by_its_name_and_a_question_that_names_the_job_are_how_the_person_heard():
+    """A list named for the referral source, one under "Source of Referral", and a box asking how the person learned
+    about the position are still how the person heard; and a remembered answer to "Source Type" is kept as the
+    employer's site, as for "How did you hear about us?"."""
+    from job_apply.autofill import answer_to_remember, is_how_heard
+
+    p = prof()
+    p.data["preferences"] = {**p.data.get("preferences", {}), "how_did_you_hear": "Company Website"}
+    for field in (f("Referral Source", "select", options=SOURCES),
+                  f("Type", "select", options=SOURCES, section="Source of Referral")):
+        ans = resolve_field(field, p, DISTRICT)
+        assert ans is not None and (ans.value, ans.rule) == ("EVSD Website", "how_heard"), field
+    ans = resolve_field(f("Explain how you learned about this position"), p, DISTRICT)
+    assert ans is not None and (ans.value, ans.rule) == ("Company Website", "how_heard"), ans
+    assert answer_to_remember("Source Type . Required", "Acme Website", "Acme") == "Company Website"
+    assert is_how_heard("answers[0]", "Source Type . Required")
+    assert not is_how_heard("answers[0]", "Source type of income")
+
+
 def test_a_preferred_full_name():
     """American Express's Oracle form (live, Oct 2026) requires a "Preferred Full Name", which
     the desk asked for: the name the person goes by, then their last name."""

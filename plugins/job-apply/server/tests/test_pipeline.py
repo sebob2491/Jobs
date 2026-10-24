@@ -2688,14 +2688,18 @@ def test_a_data_privacy_statement_is_the_persons_without_accept_notices(srv, mon
     assert not any("agreed to" in line for line in r.log), r.log
 
 
-def test_a_data_privacy_statement_that_also_signs_up_for_marketing_is_the_persons(srv, monkeypatch, job_apply_home):
+@pytest.mark.parametrize("why", ["marketing", "records"])
+def test_a_data_privacy_statement_that_also_signs_up_for_marketing_is_the_persons(srv, monkeypatch, job_apply_home,
+                                                                                   why):
     """Never a newsletter, job alerts or marketing: a statement whose opening says that accepting it
     also signs the person up for marketing emails and job alerts is opened but not accepted, left open
-    for them to read, and Create Account is not pressed."""
+    for them to read, and Create Account is not pressed. So is one whose list of the personal data it collects
+    names non-compete agreements (records: IGT's, run 158): any mention of one is a waiver, never agreed to for the
+    person (decided after the reviews of fix-notice-source)."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     saved_password(monkeypatch)
     manage_accounts(job_apply_home)
-    r, kept, _ = create_account_on_sf(srv, "?marketing", watch=3)  # (it stays paused, the statement open)
+    r, kept, _ = create_account_on_sf(srv, f"?{why}", watch=3)  # (it stays paused, the statement open)
     assert (r.status, r.need) == ("needs_you", "sign_in"), (r.status, r.reason, r.log)
     assert "asks you to read and accept its data privacy statement" in r.reason, r.reason
     assert "I tried to open it and accept it for you, and couldn't." in r.reason, r.reason

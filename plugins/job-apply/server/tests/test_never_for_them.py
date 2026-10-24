@@ -627,6 +627,95 @@ def test_waivers_the_terms_of_employment_and_more_than_a_background_check_in_oth
         assert not pipeline._agreeable_notice(POLICY, POLICY_TEXT * 5 + words, False)[0]
 
 
+# A job applicant privacy notice shaped like IGT's (its Data Privacy Consent Statement on a SuccessFactors Create
+# Account, live run 158; the words made up): its list of the personal data it collects names non-compete agreements
+# among an applicant's records
+RECORDS = "Employment history, professional memberships and professional references, and non-compete agreements."
+RECORDS_HEADING = "Data Privacy Consent Statement"
+RECORDS_NOTICE = (
+    "Job Applicant Privacy Notice. This notice describes how Example Gaming collects and uses your personal data "
+    "during and after the application process. We may collect the following types of personal data about job "
+    "applicants: Names, date of birth and contact details. Education information including academic history and "
+    f"qualifications held. {RECORDS} Information about your right to work in the country in which you are applying. "
+    "We use your personal data to assess your qualifications for the role and to contact you about your application.")
+
+
+@pytest.mark.parametrize("records", [RECORDS, RECORDS.replace("non-compete", "non-solicitation"),
+                                     RECORDS.replace(", and non-compete", ", and\nnon‑compete")])
+def test_a_privacy_notice_that_lists_non_compete_agreements_among_its_records_is_still_the_persons(records):
+    """Run 158: IGT's data privacy statement, which its Create Account makes no account without, lists among the
+    personal data it collects "... and non-compete agreements.". An exemption for such a list was tried and dropped
+    (the reviews of fix-notice-source: each round found binding words it let through, in a rule the product keeps): any
+    mention of a non-compete in what the desk would agree to is a waiver, so the statement stays the person's, for the
+    test identity too, and so does a gate on a page with it."""
+    notice = RECORDS_NOTICE.replace(RECORDS, records)
+    assert _never_for_them(notice, only=ANYWHERE) == "waiver"
+    assert _never_for_them(notice, only=GATE_PAGE) == "waiver"
+    for test_identity in (False, True):
+        assert not pipeline._agreeable_notice(RECORDS_HEADING, notice, test_identity)[0], test_identity
+    assert not pipeline._agreeable_notice(STATEMENT, notice, True)[0]
+    assert not pipeline._agreeable_notice(POLICY, POLICY_TEXT * 5 + notice, False)[0]
+    assert not _gate(["Privacy Agreement"], notice)
+
+
+# A waiver in other spellings and words (the review of fix-notice-source)
+WAIVERS = [
+    "You agree to sign a non compete agreement.",
+    "You agree to sign a non-competition agreement.",
+    "You agree to sign a non‑compete agreement.",
+    "You agree to sign a non–compete agreement.",
+    "You agree to be bound by a restrictive covenant.",
+    "You agree not to solicit Example Corp's customers or employees for 12 months.",
+    "You will not solicit our clients after you leave.",
+    "This offer includes a covenant not to solicit employees.",
+    "You agree to refrain from competing with Example Corp for one year.",
+    "Employees may not compete with Example Corp.",
+    "You agree not to solicit or hire any of our current employees.",
+    "You shall not, directly or indirectly, solicit the Company's customers.",
+    "You agree not to compete.",
+    "You agree to indemnify Example Corp against all claims.",
+    "You agree to hold Example Corp harmless and to indemnify it.",
+    "Example Corp shall be held harmless from all claims arising from your use of the site.",
+    "You agree to hold Example Inc. harmless from all claims.",
+    "You agree to hold Example L.L.C. harmless from all claims.",
+    "You agree to hold Example U.S. Holdings harmless from all claims.",
+    "You agree to hold Example Corp. and its affiliates harmless.",
+]
+
+
+@pytest.mark.parametrize("words", WAIVERS)
+def test_a_waiver_in_other_spellings_and_words_is_one_on_every_path(words):
+    """"non compete", "non-competition", a non-breaking hyphen or a dash, a restrictive covenant, a promise not to
+    solicit or compete in other words, an indemnity given, and someone held harmless (within one clause, past an
+    abbreviation's stop) are each a waiver, refused by every path that reads one."""
+    assert _never_for_them(words) == "waiver", words
+    for path, (agreed, refuses) in PATHS.items():
+        if "waiver" in refuses:
+            assert not agreed(words), (path, words)
+
+
+@pytest.mark.parametrize("words", ["Please hold on while we check; this is harmless.",
+                                   "Veterans may be eligible for a noncompetitive appointment.",
+                                   "Our recruiter Shannon solicits feedback from every candidate.",
+                                   "We hire in Canada, Lebanon competes for talent too.",
+                                   "The role requires knowledge of professional indemnity insurance.",
+                                   "We will not solicit personal information from children under 13.",
+                                   "It is our policy not to solicit or collect personal information from children.",
+                                   "Example Corp will not solicit payment from applicants.",
+                                   "Recruiters must not solicit fees from candidates.",
+                                   "Employees and their families may not compete in this sweepstakes."])
+def test_words_that_only_look_like_a_waiver_are_none(words):
+    """Held harmless is read within one clause; a non-compete's words begin a word ("Shannon solicits", "Lebanon
+    competes" aren't one), and a noncompetitive appointment (a federal job's) is none; an indemnity is one given, never
+    the insurance named; and a promise not to solicit is one only about an employer's people or business, not to
+    compete one only with someone (a privacy policy's "We will not solicit personal information from children", a fraud
+    warning's "Recruiters must not solicit fees", a sweepstakes' rules: the third review of fix-notice-source). A
+    privacy notice or a gate's page with them is still agreed to."""
+    assert _never_for_them(words, only={"waiver"}) is None, words
+    assert pipeline._agreeable_notice(POLICY, POLICY_TEXT * 5 + words, False)[0], words
+    assert _gate(["Privacy Agreement"], "Please read our privacy agreement. " + words), words
+
+
 @pytest.mark.parametrize("words", ["We may update this Privacy Policy at any time with or without notice.",
                                    "Your account may be terminated for any reason or no reason under these Terms of "
                                    "Use.",
