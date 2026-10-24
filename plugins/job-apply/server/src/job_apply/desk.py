@@ -613,6 +613,8 @@ class Desk:
         try:
             if action == "resume":
                 a.resume(job_id)
+            elif action == "retry":  # Try now, on a job waiting to be tried again after the site's error
+                a.retry_now(job_id)
             elif action == "later":
                 a.later(job_id)
             elif action == "skip":

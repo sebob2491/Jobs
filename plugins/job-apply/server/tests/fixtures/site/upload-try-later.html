@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Field Service Engineer</title></head>
+<body>
+<!-- like Mayo Clinic's Oracle (live check): on the application's own steps, the step after My Information says "Your
+     attachment couldn't be uploaded. Try again later." The visits to this address are counted for the browser
+     (localStorage's utl.visits; the visit a tab is on kept in its sessionStorage, as workday-went-wrong-once.html): in
+     the first N (?fail=N, 1 when not given) that step says so; later, it goes on to step2.html. -->
+<div id="page"></div>
+<script>
+  const q = new URLSearchParams(location.search);
+  const page = document.getElementById('page');
+  if (q.get('step') !== 'upload') {
+    const visit = Number(localStorage.getItem('utl.visits') || 0) + 1;
+    localStorage.setItem('utl.visits', String(visit));
+    sessionStorage.setItem('utl.visit', String(visit));
+    page.innerHTML = '<h2>My Information</h2><form id="f" novalidate>'
+      + '<label for="fn">First Name *</label><input id="fn" required>'
+      + '<label for="ln">Last Name *</label><input id="ln" required>'
+      + '<button type="submit">Save and Continue</button></form>';
+    document.getElementById('f').addEventListener('submit', (e) => {
+      e.preventDefault();
+      location.href = location.pathname + '?fail=' + (q.get('fail') || '1') + '&step=upload';
+    });
+  } else {
+    const visit = Number(sessionStorage.getItem('utl.visit') || localStorage.getItem('utl.visits') || 1);
+    if (visit > Number(q.get('fail') || 1)) location.replace('step2.html');
+    else page.innerHTML = '<h2>Resume</h2><div role="alert">Your attachment couldn\'t be uploaded. Try again later.</div>';
+  }
+</script>
+</body>
+</html>

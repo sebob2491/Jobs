@@ -132,12 +132,18 @@ def pipeline_outcome(rec: dict[str, Any]) -> Result:
     last = rounds[-1]
     code = last.get("code") if isinstance(last.get("code"), str) and _CODE.fullmatch(last["code"]) else ""
     reason = f"[{code}] {last.get('reason') or ''}".strip() if code else last.get("reason")
+    # (stopped by the site's own error on the way, and tried again by itself: live_smoke's round says so; or that try
+    # called off, and why)
+    retries = [r["retried"] for r in rounds if isinstance(r, dict) and isinstance(r.get("retried"), dict)]
+    tried = ("tried again after a site error" if any(x.get("opened", True) for x in retries)
+             else _short(f"retry called off: {retries[-1].get('called_off') or 'no reason said'}", 90) if retries
+             else "")
     if code == "site_down" or last.get("need") == "stuck" and _DOWN.search(last.get("reason") or ""):
-        return Result(SITE_DOWN, _join(title, reason))
+        return Result(SITE_DOWN, _join(title, tried, reason))
     outcome = " ".join(p for p in (last.get("status") or "unknown", last.get("need") or "") if p)
     if outcome == "ready":  # the review page: its one sentence says what the outcome says, on two hundred rows
-        return Result(outcome, title)
-    return Result(outcome, _join(title, reason))
+        return Result(outcome, _join(title, tried))
+    return Result(outcome, _join(title, tried, reason))
 
 
 _PARTLY = re.compile(r"\(\d+ of \d+ searches failed\)")  # server.search_company_jobs: others answered

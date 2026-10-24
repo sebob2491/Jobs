@@ -1,0 +1,41 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Field Service Engineer</title></head>
+<body>
+<!-- an application at one address, its steps in the query (as Taleo's and iCIMS' are): the first visit says "Something
+     went wrong" (again after a reload), later ones go to the form; its Submit counted for the browser (localStorage's
+     submits), and its confirmation says "sent", in words the desk's confirmations() doesn't know, with no boxes (the
+     review of the try after a site's error, round 2) -->
+<div id="page"></div>
+<script>
+  const q = new URLSearchParams(location.search);
+  const step = q.get('step');
+  const page = document.getElementById('page');
+  if (step === 'done') {
+    page.innerHTML = '<h1>All set</h1><p>Your application has been sent. We will be in touch.</p>';
+  } else if (step === 'form') {
+    page.innerHTML = '<h1>Application Form</h1><form id="app" novalidate>'
+      + '<label for="fn">First name *</label><input id="fn" required>'
+      + '<label for="ln">Last name *</label><input id="ln" required>'
+      + '<label for="em">Email *</label><input id="em" type="email" required>'
+      + '<button type="submit">Submit application</button></form>';
+    document.getElementById('app').addEventListener('submit', (e) => {
+      e.preventDefault();
+      localStorage.setItem('submits', String(Number(localStorage.getItem('submits') || 0) + 1));
+      location.href = location.pathname + '?step=done';
+    });
+  } else {
+    const reloaded = (performance.getEntriesByType('navigation')[0] || {}).type === 'reload';
+    let visit = reloaded ? Number(sessionStorage.getItem('oaa.visit') || 0) : 0;
+    if (!visit) {
+      const visits = Number(localStorage.getItem('oaa.visits') || 0);
+      visit = reloaded && visits ? visits : visits + 1;
+      localStorage.setItem('oaa.visits', String(visit));
+      sessionStorage.setItem('oaa.visit', String(visit));
+    }
+    if (visit > Number(q.get('fail') || 1)) location.replace(location.pathname + '?step=form');
+    else page.innerHTML = '<h2>Something went wrong</h2><p>Please refresh the page and then try again.</p>';
+  }
+</script>
+</body>
+</html>

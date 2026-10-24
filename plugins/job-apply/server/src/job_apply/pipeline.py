@@ -76,6 +76,17 @@ BLANK_RELOADS = 2
 SIGN_IN_STEP_WAIT = 25  # Workday's sign-in step can take longer to draw its buttons (Applied's)
 LEFT_SIGN_IN_SETTLE = 3  # seconds before a sign-in page that led elsewhere is taken for one with no sign-in
 ACCOUNT_DRAW_WAIT = 4  # for the application below a Create Account form to be drawn (Qorvo's)
+# A job stopped by the site's own passing trouble (SITE_ERRORS: its error page, "Something went wrong" again after its
+# reload, "try again later", a page that never loaded) is tried again by itself this many seconds later, opened afresh
+# in its own tab, once a job in a run of the desk; its card says when, with Try now (Applier._retry_later, the owner's
+# call of Oct 24). Never a site that turned the browser away (site_blocks: trying again would look like getting round
+# it), a rate limit, a bot check or CAPTCHA, a sign-in or account, a question, a notice, a Submit or a practice stop;
+# never once the person's hands were on the job, nor where its tab changed since the stop (they may have gone on, even
+# sent it, there). A try the desk made by itself never sends by itself: Submit for me waits for the person's Submit
+# (Run.retry_held: they may have applied meanwhile in another tab or their own browser).
+# JOB_APPLY_RETRY_AFTER (seconds) sets it for a test or the live check; 0 turns it off
+RETRY_AFTER = 20 * 60
+SITE_RETRIES = 1
 HANDS_ON = {"sign_in", "email_code"}
 # The stops after which a saved draft's answers are still re-checked (Run.draft_off): what the person answers without
 # the application's own boxes (a questions card, an emailed code, a sign-in, a bot check). After any other, or a Resume,
@@ -1064,6 +1075,38 @@ STOP_CODES = frozenset({
     "your_submit", "submit_not_allowed", "account_as_you_apply", "review_errors", "not_submitted", "submit_failed",
     "check_submit", "restarted",
 })
+# The stops that are the site's own passing trouble, not the person's nor the desk's: tried again by itself once
+# (RETRY_AFTER), where the card asks nothing and no Submit was pressed. Never site_blocks, nor a person's stop
+# (never site_unreachable: its card says to apply in the person's own browser, which a try after it could send twice)
+SITE_ERRORS = frozenset({"try_later", "site_error", "site_went_wrong", "site_down", "blank_page", "page_not_loaded"})
+# Said on the card of a job whose site went wrong again after that one try (and how it begins: _retry_later's words)
+_RETRIED_SAYS = "I had already tried this job again by itself once, after the site's earlier error."
+_RETRY_SAYS = " The site had an error, so I'll try this job again by itself at"
+# What a "try again later" stop says the person does (the card of one tried again by itself says when instead)
+_LEAVE_IT = " Leave this job for a while, then press Carry on."
+# A site's words that it limits how often it's asked (a bare "429 Too Many Requests", Cloudflare's 1015 "You are being
+# rate limited", Oracle's "Too Many Attempts" after its sign-up emails): its defence, never tried again by itself
+_RATE_LIMITED = re.compile(r"\btoo many\b|\brate[- ]limit", re.I)
+# Why a try is called off, where the job's tab says it went in (its card then offers "I submitted it myself" first)
+_WENT_IN_SAYS = "its tab says the application went in"
+# Said on the review page of a job the desk tried again by itself: Submit for me waits for the person's Submit
+_RETRY_HELD_SAYS = ("Tried again by itself after the site's error: check it didn't go in meanwhile (in another tab or "
+                    "your own browser), then press Submit.")
+
+
+def _retry_after() -> float:
+    """How long a job stopped by the site's own passing trouble waits before it's tried again by itself (seconds):
+    JOB_APPLY_RETRY_AFTER where it's set (0: never), else RETRY_AFTER."""
+    said = os.environ.get("JOB_APPLY_RETRY_AFTER", "").strip()
+    try:
+        return max(float(said), 0.0) if said else float(RETRY_AFTER)
+    except ValueError:
+        return float(RETRY_AFTER)
+
+
+def _clock(at: float) -> str:
+    """A time of day by this computer's clock, as the person reads one: "3:40 PM"."""
+    return time.strftime("%I:%M %p", time.localtime(at)).lstrip("0")
 
 
 @dataclass
@@ -1177,6 +1220,29 @@ class Run:
     # that form alone, used once, never remembered, logged, nor shown anywhere (never in public())
     account_answers: dict[str, Any] = field(default_factory=dict)
     try_later: bool = False  # left on a "Try Again Later" page: only the person's Resume goes on from it
+    # Stopped by the site's own passing trouble (SITE_ERRORS): when it's tried again by itself (time.time(); 0 for no
+    # try waiting: Skip, I submitted it, Carry on, Submit and Try now end the wait, Applier._cancel), the times it was
+    # (opened afresh for it: once a job in a run of the desk), whether its next pass opens it afresh for that (until
+    # it has, through the holds before its tab opens: Skip, I submitted it, Submit and Carry on end it), what the
+    # stop said and its code (its card again, where the try is called off: _leave_for_person), and its tab as it was
+    # at the stop (_tab_mark: changed since, it's the person's). no_retry: a stop of those codes that's never tried
+    # again by itself (a rate limit, a sign-in's or an account's step: the try_later stop's), set after its _pause
+    retry_at: float = 0.0
+    site_retries: int = 0
+    fresh_retry: str = ""  # ("desk": its own try; "person": their Try now)
+    retry_stop: tuple[str, str] = ("", "")
+    retry_mark: tuple = ()
+    no_retry: bool = False
+    # the tabs open as it stopped (one opened since, from its tab or on its site, calls the try off); the page this lap
+    # is on is a step that may email the person (a sign-in, an account's, a reset, an emailed code: _may_email), whose
+    # stop is never tried again (another try asks for a code again: never one merely after a sign-in earlier in the
+    # pass, as Workday's nearly every pass begins with, the coordinator's call); its tab said it went in when the try
+    # was called off (its card's "I submitted it myself" first); and its application was opened again by the desk's own
+    # try: never sent by Submit for me, nor by Claude's submit_application unasked, until the person's Submit
+    retry_tabs: list[Any] = field(default_factory=list)
+    email_step: bool = False
+    seen_sent: bool = False
+    retry_held: bool = False
     active_at: float = 0.0  # when its paused tab last changed: someone at work in it
     captcha: bool = False  # paused on a bot check or CAPTCHA (the person's to solve): marked so on the desk
     tab_mark: int = 0  # what its paused tab looked like then (address and box values)
@@ -1293,7 +1359,13 @@ class Run:
                                 "employer_mail", "others_mail", "went_in", "agreed", "draft_pages", "submit_pressed",
                                 "sending", "cut_short", "started", "pass_steps", "rounds", "resumes", "marked",
                                 "maybe_shown", "kept_replaced", "once_left", "opened_tabs", "letter_tried",
-                                "letter_text", "letter_wait", "asked_once", "skipped_on")},
+                                "letter_text", "letter_wait", "asked_once", "skipped_on", "site_retries",
+                                "fresh_retry", "retry_stop", "retry_mark", "no_retry", "retry_tabs", "email_step",
+                                "seen_sent")},
+                # (its try by itself after the site's error, on its card alone: Try now; and a try called off where its
+                # tab said it went in: I submitted it myself first)
+                "retry_at": self.retry_at if self.status == "needs_you" else 0.0,
+                "seen_sent": self.seen_sent and self.status == "needs_you",
                 # (the first cover letter's text, on its card alone)
                 "letter_text": self.letter_text if self.status == "needs_you" and self.need == "cover_letter" else "",
                 # (only for the cards that show it: a job queued or under way has none, and 30 of them made the
@@ -1363,6 +1435,10 @@ class _Pass:
     # when the pass began (time.monotonic()), later by the waits that are no part of its own time: PASS_SECONDS from it
     began: float
     stalls: int = 0
+    # the lap's page asked for an email or a code (a step that may email the person, but a sign-in with its password):
+    # a stop on the next lap is never tried again by itself either (a 5xx right after the email step's NEXT: another
+    # try would go through the email step again and ask for another code, the coordinator's call)
+    email_lap: bool = False
     entries_done: set[tuple[Any, ...]] = field(default_factory=set)
     refilled: set[tuple[Any, ...]] = field(default_factory=set)
     dismissed: set[str] = field(default_factory=set)
@@ -1863,6 +1939,9 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         if run is not None:
             run.hands_on = True  # (on any card: a questions card's Resume is for answers typed into the page itself)
             self._draft_off(run)  # (and a saved draft's boxes are theirs too from here on)
+            # (and a try after the site's error, queued as a card left open still offered Carry on: theirs instead, in
+            # their tab, never opened afresh over it; not counted, as it never opened)
+            run.fresh_retry = ""
         run = self.enqueue(job_id, submit=bool(run and run.submit), front=True)
         run.resumes += 1  # (for its lines in the desk's history)
         self.go_on_for(run)
@@ -1905,6 +1984,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         if run.status not in ("ready", "needs_you"):
             raise ValueError(f"Job {job_id} isn't waiting on a review page")
         run.status, run.reason = "queued", "Submitting…"
+        # (no try after a site's error: the person's Submit goes, one the desk tried again by itself too)
+        run.retry_at, run.fresh_retry, run.retry_held = 0.0, "", False
         run.submit_pressed, run.submit_unsent = True, False  # (pressed again, after a restart that didn't send it)
         self.tasks.appendleft(("submit", job_id))
         self._wake.set()
@@ -1984,6 +2065,18 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         self.pressed.add(job_id)  # (the person's own press: it goes even while the queue is paused)
         return run
 
+    def retry_now(self, job_id: int) -> Run:
+        """The person's Try now on a job waiting to be tried again by itself after the site's error (_retry_later): it
+        goes now, opened afresh, as the one try (even while the queue is paused: their own press)."""
+        run = self.runs.get(job_id)
+        if run is None or run.status != "needs_you" or not run.retry_at:
+            raise ValueError("That job isn't waiting to be tried again any more.")
+        if not self._retry(run, "person"):
+            raise ValueError(f"{run.title or 'That job'} can't be tried again now: {run.reason}")
+        self.go_on_for(run)
+        self.pressed.add(job_id)
+        return run
+
     def tailoring(self) -> list[Run]:
         """The jobs waiting for a resume written for them."""
         return [r for r in self.runs.values() if r.status == "needs_you" and r.need == "tailor"]
@@ -2012,6 +2105,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         _forget_draft_changes(self.srv, job_id)  # (gone in: a draft's changes kept for it go)
         run = self.runs.get(job_id)
         if run is not None:
+            run.fresh_retry = ""  # (nor tried again after a site's error: it's in)
             was = run.status
             run.status, run.need, run.blocking, run.reason = "submitted", "", False, "Marked as applied."
             run.left = run.submit_unsent = run.left_at_restart = False
@@ -2036,6 +2130,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         run = run or Run(job_id)
         self.runs[job_id] = run
         self._cancel(job_id)
+        run.fresh_retry = ""  # (a try after the site's error, queued: gone with it)
         run.status, run.need, run.blocking, run.reason = "skipped", "", False, "Skipped. Undo puts it back."
         run.closed_skipped = bool(closed)
         if closed:
@@ -2128,6 +2223,10 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         return True
 
     def _cancel(self, job_id: int) -> None:
+        if job_id in self.runs:  # (and its wait for a try by itself after the site's error: Skip, I submitted it,
+            # Carry on and Try now end it. A try queued already goes on through a hold's own queueing again: a cover
+            # letter's, a tailored resume's, a maybe-begun job's)
+            self.runs[job_id].retry_at = 0.0
         if ("submit", job_id) in self.tasks and job_id in self.runs:
             self.runs[job_id].submit_pressed = False  # (the person's Submit, waiting its turn, is gone with its task)
         self.tasks = deque(t for t in self.tasks if t[1] != job_id)
@@ -2140,6 +2239,149 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         run.reason += " (" + why + ": finish it in its tab and the desk carries on with it, or press Carry on)"
         self._log(run, why)
         self._wake.set()
+
+    # ------------------------------------------ the site's errors, tried again
+    @staticmethod
+    def _site_error(run: Run, kind: str = "apply") -> bool:
+        """Did this pass stop on the site's own passing trouble (SITE_ERRORS), on a card that asks nothing, with no
+        Submit pressed for the job? Never a Submit's pass, a stop that says it's never tried again (Run.no_retry: a rate
+        limit, a page read as a bot check), nor one that stopped on a step that may email the person (Run.email_step:
+        a sign-in's, an account's, a reset's, an emailed code's page) or on the page right after one that asked for an
+        email or a code, nor a job the person's hands were on (their Carry on, or the queue going on with it after they
+        worked in its tab)."""
+        return (kind != "submit" and run.status == "needs_you" and run.need == "stuck" and run.code in SITE_ERRORS
+                and not run.questions and not run.pressed_before and not run.submit_pressed and not run.no_retry
+                and not run.email_step and not run.hands_on and not run.in_their_hands)
+
+    def _retry_later(self, run: Run, kind: str) -> None:
+        """A pass that stopped on the site's own passing trouble (_site_error): its job is tried again by itself
+        _retry_after() seconds on (_retry_due), once a job in a run of the desk, its card saying when (with Try now).
+        The second time, the card stays for the person as ever, and says it was tried again. Said with the stop, as
+        the pass ends (nothing awaited between: the card never shows without it); its tab as it was then is looked at
+        next (_mark_stop_tab)."""
+        if not self._site_error(run, kind):
+            return
+        run.seen_sent = False
+        if run.site_retries >= SITE_RETRIES:
+            run.reason = f"{run.reason} {_RETRIED_SAYS}"
+            return
+        wait = _retry_after()
+        if wait <= 0:
+            return
+        run.retry_stop = (run.reason, run.code)
+        run.retry_at = time.time() + wait
+        at = _clock(run.retry_at)
+        said = run.reason[:-len(_LEAVE_IT)] if run.reason.endswith(_LEAVE_IT) else run.reason
+        run.reason = f"{said}{_RETRY_SAYS} {at} (once), or press Try now."
+        self._log(run, f"the site had an error; I'll try this job again at {at}")
+        self._wake.set()
+
+    async def _mark_stop_tab(self, run: Run) -> None:
+        """Its tab as the stop left it (Run.retry_mark: its whole address, title, headings, boxes and words), and the
+        tabs open then (Run.retry_tabs): a change since calls the try off. One that can't be read: no try by itself."""
+        try:
+            if run.page is None or self.srv.browser.lost(run.page):
+                raise TabClosed("its tab is gone")
+            data, text = await self.srv.browser.peek(run.page)
+            run.retry_mark = _stop_mark(data, text)
+            run.retry_tabs = [t for t in run.page.context.pages if not t.is_closed()]
+        except Exception:
+            self._leave_for_person(run, "its tab couldn't be read")
+
+    async def _touched_since_stop(self, run: Run) -> str:
+        """Why a job stopped on the site's error is left for the person instead of tried again: its tab closed, on a
+        page that says it went in, showing a bot check, or changed since the stop (another address, boxes filled in, or
+        another page drawn: the person may have gone on there, even sent it); or a tab opened since from its tab or on
+        its site (they may be applying there); "" when all is as the stop left it. A false change only costs the try."""
+        page = run.page
+        if page is None or self.srv.browser.lost(page):
+            return "its tab was closed"
+        try:
+            data, text = await self.srv.browser.peek(page)
+        except Exception:
+            return "its tab couldn't be read"
+        job = self.srv.tracker().get(run.job_id, with_description=False) or {}
+        if _sent_already(data, text, True, run.title or str(job.get("title") or ""), str(job.get("location") or "")):
+            return _WENT_IN_SAYS
+        if classify(data, text) == "bot_check":
+            return "its tab shows a bot check"
+        if changed := _mark_changed(run.retry_mark, _stop_mark(data, text)):
+            return changed
+        browser = self.srv.browser
+        others = [t for r in self.runs.values() if r is not run for t in [r.page, *r.opened_tabs] if t is not None]
+        for tab in [t for t in page.context.pages if t not in run.retry_tabs and not t.is_closed()]:
+            line = browser.lineage(tab)
+            if any(t in others or browser.tab_jobs.get(t, run.job_id) != run.job_id for t in line):
+                continue  # (another job's, the desk's own: jobs filled at once)
+            if page in line or self._own_place(run, tab.url):
+                return "a tab was opened on its site after the site's error"
+        return ""
+
+    def _leave_for_person(self, run: Run, why: str, person: bool = False) -> None:
+        """Call a job's try after the site's error off: its card the stop's own again, for the person (alerted now),
+        saying why where there is one (`person`: the try was their Try now). Where its tab says it went in, its card
+        offers "I submitted it myself" first (never marked so by itself). Its tab is never touched."""
+        run.retry_at = 0.0
+        run.fresh_retry = ""
+        run.seen_sent = why == _WENT_IN_SAYS
+        how = "" if person else " by itself"
+        if run.status == "needs_you":
+            run.reason = run.retry_stop[0] or run.reason.split(_RETRY_SAYS)[0]
+            if why:
+                run.reason += f" I didn't try it again{how}, as {why}."
+        if why:
+            self._log(run, f"I didn't try this job again{how}: {why}")
+
+    def _stop_again(self, run: Run, why: str, person: bool = False) -> None:
+        """The stop a try after the site's error came after, said again as it was (its words and code: no stop of its
+        own, nor noted again), with why it wasn't tried (the person has been at its tab meanwhile): theirs."""
+        run.status, run.need = "needs_you", "stuck"
+        run.reason, run.code = run.retry_stop[0] or run.reason, run.retry_stop[1] or run.code
+        run.questions, run.blocking, run.left = [], False, False
+        run.paused_at = run.active_at = time.time()
+        run.no_retry = True
+        self._leave_for_person(run, why, person)
+
+    async def _retry_due(self) -> None:
+        """Between jobs: the jobs whose try after the site's error is due, each tab still as the stop left it, go back
+        in the queue, first (a paused queue holds them as any job, until the person's Carry on with the queue); one
+        whose tab the person has been at is left for them (_touched_since_stop). One whose pass hasn't ended yet
+        waits."""
+        now = time.time()
+        for run in [r for r in self.runs.values() if r.retry_at and r.retry_at <= now and r.job_id not in self._slots]:
+            try:
+                why = await self._touched_since_stop(run)
+                if not run.retry_at:  # (ended meanwhile: Skip, Carry on)
+                    continue
+                if why:
+                    self._leave_for_person(run, why)
+                else:
+                    self._retry(run)
+            except Exception:  # (one job's trouble never holds the queue: its card is the person's, as before)
+                logging.getLogger(__name__).warning("couldn't try job %s again", run.job_id, exc_info=True)
+                self._leave_for_person(run, "its tab couldn't be read")
+
+    def _retry(self, run: Run, by: str = "desk") -> bool:
+        """Put a job stopped on the site's error back in the queue, first, to be opened afresh in its tab
+        (Run.fresh_retry: `by` the desk itself, or the "person"'s Try now), as its one try. False when it can't go (gone
+        on meanwhile, no longer one tried again, or the queue refuses it now): its card stays, the wait taken off it."""
+        run.retry_at = 0.0
+        if not self._site_error(run):
+            self._leave_for_person(run, "")
+            return False
+        try:
+            self.enqueue(run.job_id, submit=run.submit, front=True)
+        except (KeyError, ValueError):  # (marked applied, skipped or Not interested since: never tried again)
+            self._leave_for_person(run, "")
+            return False
+        run.fresh_retry = by
+        return True
+
+    def _retry_wait(self) -> float:
+        """Seconds until the next try after a site's error is due (30 at most: the worker's longest sleep). One whose
+        pass hasn't ended yet isn't counted: its end wakes the worker."""
+        due = [r.retry_at for r in self.runs.values() if r.retry_at and r.job_id not in self._slots]
+        return min(30.0, max(min(due) - time.time(), 0.05)) if due else 30.0
 
     async def _pick_up_left(self) -> None:
         """Between jobs: carry on with any the queue went on without whose tab the person has
@@ -2464,6 +2706,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             return
         self._resume_tailored()
         self._letters_retry()
+        await self._retry_due()  # (a job stopped on the site's error, its try by itself due: back in the queue)
         await self._front_next()
         # the person at a job in a round (a bot check, a review page): nothing else started over it, a solved check
         # noticed; a Submit they pressed (the round's own "Submit this one") still goes
@@ -2526,9 +2769,10 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             self._wake.clear()
             # with a job left waiting on the person, look at its tab again soon
             left = [r for r in self.runs.values() if r.left and r.status == "needs_you"]
-            # (and, while another desk keeps the queue, back in time to look again: _retry_queue_lock)
+            # (and, while another desk keeps the queue, back in time to look again: _retry_queue_lock; and for the next
+            # try after a site's error)
             await self._sleep(min(self._poll_for(left) if left else 30,
-                                  QUEUE_LOCK_RETRY if self.queue_elsewhere else 30))
+                                  QUEUE_LOCK_RETRY if self.queue_elsewhere else 30, self._retry_wait()))
             return
         # paused: only what the person pressed for a job goes (its Submit, its Resume, its answers on its card)
         pressed = (next((t for t in self.tasks if t[1] in self.pressed), None)
@@ -2625,6 +2869,9 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                             # this job's from its start until then (the review of jobs at once)
                             await self._take_inbox(run, step=False)
                     await self._strict(self._submit(run) if kind == "submit" else self._drive_again_if_redrawn(run))
+                    self._retry_later(run, kind)  # (the site's passing error: tried again later)
+                    if run.retry_at:
+                        await self._mark_stop_tab(run)
                     ended_as = (run.status, run.need, run.reason, run.code)
                     await self._strict(self._save_stop(run))
                 except asyncio.CancelledError:
@@ -2686,6 +2933,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                 outcome, need, reason, code = ended_as  # (queued again as its stop's page was saved: a Resume then)
             if outcome == "submitted" and run.marked:
                 outcome = "marked_applied"
+            if isinstance(reason, str) and _RETRY_SAYS in reason:  # (the try's time and Try now: the card's alone)
+                reason = reason.split(_RETRY_SAYS)[0]
             if outcome in history.OUTCOMES:
                 self._note_history(run, outcome, began, kind, at_once, need, reason, code)
             self._wake.set()
@@ -3050,8 +3299,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         link opened, while its page settles: the re-check of jobs at once, the person taken to be at that tab). Its code
         box holding another code than the desk's is the person's, settled or not (one the site turned down, the right
         one put in by them: the final check of jobs at once)."""
-        mark = hash((_bare(data.get("url") or ""),
-                     tuple((f.get("id"), str(f.get("value"))) for f in data.get("fields") or [])))
+        mark = _tab_mark(data)
         settling = time.time() - run.desk_at <= DESK_SETTLE
         if settling and run.desk_code:
             typed = "".join(str(f.get("value") or "") for f in data.get("fields") or [] if _code_box(f))
@@ -3173,6 +3421,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         run.pause_sig = _page_sig(seen) if seen else None
         run.entries_told = {}  # (the card that says a section is short sets it again, after this)
         run.status, run.need, run.reason, run.code = "needs_you", need, reason, code
+        run.no_retry = run.seen_sent = False  # (a stop that's never tried again by itself says so after this)
         run.questions = questions or []
         if not any(q.get("account") for q in run.questions):
             run.account_answers = {}  # (answers from an account form's card go into that form alone, on the way back)
@@ -3237,8 +3486,13 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         data["challenge"] = await self.srv.browser.challenge_showing()
         return data, said
 
-    async def _open(self, run: Run) -> bool:
+    async def _open(self, run: Run, fresh: bool = False) -> bool:
+        """Open the job's application: in its own tab as it is, or opened again in a new one. `fresh`: tried again
+        after the site's error, its own tab (as the stop left it: _touched_since_stop) opened afresh at the posting."""
         srv = self.srv
+        if fresh and run.page is not None and not srv.browser.lost(run.page) and srv.browser.use_tab(run.page):
+            srv.browser.current_job_id = run.job_id
+            return await self._open_here(run)
         # its own tab, while that still shows this job's application: carried on with as it is,
         # with what's filled in and uploaded there. One taken on to another posting meanwhile (by
         # the person, or by Claude's tools) is no longer this job's: filling it would put this
@@ -3268,10 +3522,15 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             if why == "crashed":
                 with contextlib.suppress(Exception):
                     await run.page.close()  # its "Aw, Snap!" page: the new tab takes its place
+        run.page = await srv.browser.new_tab()
+        return await self._open_here(run)
+
+    async def _open_here(self, run: Run) -> bool:
+        """The job's application opened afresh in the tab the browser's tools are on (a new one, or its own)."""
+        srv = self.srv
         # a form begun afresh: what went into one before is gone with it (an account made there is still there)
         # (and a draft's answers changed)
         run.went_in = WentIn(accounts=run.went_in.accounts, changed=run.went_in.changed)
-        run.page = await srv.browser.new_tab()
         srv.forget_presets(run.job_id)  # (a fresh form: the country lists it presets are the site's again)
         opened = await srv.open_application(job_id=run.job_id)
         run.page = srv.browser.current_tab or run.page
@@ -3385,16 +3644,38 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         # (the first cover letter the desk writes waits for the person's say, before its tab opens)
         if self.letters and await self._held_for_first_letter(run):
             return
+        fresh = False
+        if run.fresh_retry:
+            # tried again by itself after the site's error (_retry_later), or the person's Try now: its tab opened
+            # afresh at the job's posting, as the first time, its reloads for a page that asked or didn't load each had
+            # once more. Only where the tab is still as the stop left it (it may have waited in the queue meanwhile):
+            # one the person has been at is theirs, the stop said again. The desk's own try never sends by itself
+            # (Run.retry_held): the person may have applied meanwhile in another tab or their own browser
+            by, run.fresh_retry = run.fresh_retry, ""
+            why = await self._touched_since_stop(run)
+            if why:
+                return self._stop_again(run, why, by == "person")
+            run.site_retries += 1
+            run.retry_held = run.retry_held or by != "person"
+            fresh = True
+            self._log(run, "trying this job again after the site's error")
+            run.refreshed = run.start_reloaded = run.load_reloaded = run.list_reloaded = False
+            run.came_back_empty = False
         # left on a "Try Again Later" page, on its own tab still: the person has waited and pressed
-        # Resume. Any other way back here (the queue carrying on after an emailed code, say) isn't that.
-        waited_out = run.try_later and run.page is not None and not run.page.is_closed()
+        # Resume. Any other way back here (the queue carrying on after an emailed code, say, or the desk's own try after
+        # the site's error) isn't that.
+        waited_out = not fresh and run.try_later and run.page is not None and not run.page.is_closed()
         run.try_later = False
         run.started = True  # (its application begins: after a restart it's left on a card, never queued by itself)
-        if not await self._open(run):
+        # (fresh only for a try after the site's error: a stand-in for _open, a test's, takes the job alone)
+        if not await (self._open(run, fresh=True) if fresh else self._open(run)):
             return
         ps = _Pass(began=time.monotonic())  # what this pass has done so far, lap by lap
         while ps.steps < MAX_STEPS + ps.more:
             ps.steps += 1
+            # (this lap's page a step that may email the person, or the last one's one that asked for an email or a
+            # code: _may_email, below)
+            run.email_step, ps.email_lap = ps.email_lap, False
             # (filled at once with others: while the person is at another job's tab for the desk, or another job got to
             # this one's site first, nothing is done here; a wait that's no part of the pass's own time)
             ps.began += await self._hold_for_site(run)
@@ -3447,9 +3728,17 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                 # its Continue goes back to the posting, and pressing on only goes round again.
                 # Where the person pressed Resume on it, they've waited: carry on from there.
                 await self._bring_forward(run)
-                self._pause(run, "stuck", f"{_site(run, data)} says \u201c{limited}\u201d Leave this job for a "
-                            "while, then press Carry on.", code="try_later")
+                self._pause(run, "stuck", f"{_site(run, data)} says \u201c{limited}\u201d" + _LEAVE_IT,
+                            code="try_later")
                 run.try_later = run.status == "needs_you"
+                # (tried again by itself only where its words are the site's passing trouble: never a rate limit, the
+                # site's defence (a bare 429, Cloudflare's 1015), nor a page read as a bot check; and never on a step
+                # that may email the person (a sign-in's, an account's, an emailed code's: Run.email_step), where
+                # another try asks again (Oracle's "Too Many Attempts" after its sign-up emails, "We couldn't send the
+                # verification code": the review of the try after a site's error)
+                run.no_retry = kind == "bot_check" or bool(_RATE_LIMITED.search(limited))
+                run.email_step = (run.email_step or _may_email(run, data, kind, None, None)
+                                  or any(f.get("kind") == "password" for f in data.get("fields") or []))
                 return
             actions = data.get("actions") or []
             entry_here = any(_way_in(final_text(a["text"])) and not a.get("disabled") for a in actions)
@@ -3638,6 +3927,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             again = (", even after I reloaded it" if run.start_reloaded and run.opened_fresh and not ps.pressed
                      else "")
             await self._bring_forward(run)
+            run.email_step = run.email_step or _may_email(run, lap.data, lap.kind, lap.view, lap.finish)
             self._pause(run, "stuck", f"{site}'s page came back as its web server's error page ({words}), "
                         f"without the application{again}. That's the site's own trouble: reload the page in "
                         "the desk's browser window (now, or later if it still says so), then "
@@ -3649,6 +3939,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             self._pause(run, "bot_check", _BOT_CHECK_SAYS, seen=lap.data, code="bot_check")
             return _Then.STOP
         if _may_email(run, lap.data, lap.kind, lap.view, lap.finish):
+            run.email_step = True  # (a stop on this page is never tried again by itself: Run.email_step)
+            ps.email_lap = lap.kind != "sign_in"  # (nor on the next, but after a sign-in with its password)
             # one job under way at a time in the steps that may email the person (the inbox is one)
             if inbox_wait := await self._take_inbox(run):
                 ps.began += inbox_wait
@@ -5523,9 +5815,10 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             return self._pause(run, "captcha", "Filled. The form has a CAPTCHA: tick it in the desk's browser window, "
                                "then press Submit here." + (f" {SUBMIT_UNSENT}" if run.submit_unsent else ""),
                                code="captcha")
-        sends = run.submit and self.auto_submit and not self.hold_submits
+        sends = run.submit and self.auto_submit and not self.hold_submits and not run.retry_held
         # (jobs or schools left off, and a saved draft whose answers the desk changed to the profile's: the person's to
-        # check, and to send: issue #112, note 38's review)
+        # check, and to send: issue #112, note 38's review; and an application the desk opened again by itself after
+        # the site's error, which may have gone in meanwhile elsewhere: Run.retry_held)
         if sends and not run.entries_short and not run.draft_changed:
             return await self._submit(run, by_person=False)
         srv._mark_ready(job, "filled by the Job Desk")
@@ -5548,6 +5841,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         # (the person's Submit from before a restart is never carried over: theirs to press again)
         if run.submit_unsent:
             run.reason += f" {SUBMIT_UNSENT}"
+        if run.retry_held:
+            run.reason += f" {_RETRY_HELD_SAYS}"
         self._log(run, "checked the review page: no required box is left empty, and it shows no error")
         self._log(run, "reached the review page")
 
@@ -5594,6 +5889,11 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         # Submit for me: once more, as the job that may be this one could have been begun since it was filled (a Submit
         # the person pressed is theirs to send)
         if not by_person and self._held_for_maybe_same(run):
+            return
+        if not by_person and run.retry_held:  # (opened again by the desk's own try: the person's Submit alone sends it)
+            run.status, run.need, run.blocking = "ready", "", False
+            run.reason = f"Filled and waiting on the review page. {_RETRY_HELD_SAYS}"
+            self._log(run, run.reason)
             return
         if run.page is not None and not run.page.is_closed() and not self._own_place(run, run.page.url):
             # its tab was taken on to another posting: Submit there would send that one as this job
@@ -7252,6 +7552,33 @@ def _code_only_submit(data: dict[str, Any]) -> dict[str, Any] | None:
 def _error_said(e: BaseException) -> str:
     """An error, as the job's log says it: its kind and its first line (a browser's has a call log after)."""
     return f"{type(e).__name__}: " + (str(e).strip().splitlines() or [""])[0][:200]
+
+
+def _stop_mark(data: dict[str, Any], text: str) -> tuple:
+    """A tab as a stop left it, for a try after the site's error: its whole address (query and fragment too), title,
+    headings, boxes (each with its value, and whether it's empty) and a digest of its words."""
+    return (str(data.get("url") or ""), str(data.get("title") or ""), tuple(str(h) for h in data.get("headings") or []),
+            tuple((f.get("id"), str(f.get("value")), is_empty_value(f.get("value"))) for f in data.get("fields") or []
+                  if isinstance(f, dict)),
+            hashlib.sha1(" ".join((text or "").split()).encode("utf-8", "surrogatepass")).hexdigest()[:16])
+
+
+def _mark_changed(was: tuple, now: tuple) -> str:
+    """How a tab changed since its stop (_stop_mark), in words that say no more than what's seen; "" for not at all."""
+    if was == now:
+        return ""
+    if not was or was[0] != now[0]:
+        return "its tab went on to another page after the site's error"
+    before = {(f[0], f[1]) for f in was[3]}
+    if any(not empty and (fid, value) not in before for fid, value, empty in now[3]):
+        return "its boxes were filled in after the site's error"
+    return "its page changed after the site's error"
+
+
+def _tab_mark(data: dict[str, Any]) -> int:
+    """A tab as looked at, its address and what's in its boxes: another mark later is someone at work in it."""
+    return hash((_bare(data.get("url") or ""),
+                 tuple((f.get("id"), str(f.get("value"))) for f in data.get("fields") or [])))
 
 
 def _page_sig(data: dict[str, Any]) -> tuple:

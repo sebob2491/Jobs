@@ -502,6 +502,10 @@ let preflightSeen = "";  // what Apply last said would stop the ticked jobs, and
 // this are searched again, also on a desk left open; never while the queue is paused
 const STALE_SEARCH = 12 * 3600;
 const MIN_PAY_MOST = 10000000;  // dollars a year: the most "Pay at least" takes (desk.MIN_PAY_MOST)
+// A job the desk tried again by itself after the site's error (its retry_held): said where it's sent from, the review
+// round's banner and its desktop alert, as its reason's own note can be missed or cut
+const HELD_SAYS = "Tried again by itself after the site's error, so check it didn't go in meanwhile (in another tab "
+  + "or your own browser) before you send it.";
 
 // The person looking at the openings (the page loading, or coming to the front, and now and then while it's in front),
 // told to the desk (/api/seen), which keeps the time (desk.json's last_seen): an opening first saved after the visit
@@ -1184,6 +1188,8 @@ function jobButtons(r, which) {
   const b = (act, text, cls = "", tip = "") => `<button class="${cls}" data-job="${r.job_id}" data-job-act="${act}"${tip
     ? ` title="${esc(tip)}"` : ""}>${text}</button>`;
   const out = [];
+  // (first, where its tab says it went in: a try after the site's error called off for that)
+  if (which.includes("applied_first")) out.push(b("applied", "I submitted it myself", "primary"));
   if (which.includes("show")) out.push(b("show", "Show me"));
   if (which.includes("fill")) out.push(b("fill", "Fill these in", "primary"));
   if (which.includes("apply_anyway")) out.push(b("apply_anyway", "Apply anyway", "primary"));
@@ -1191,6 +1197,8 @@ function jobButtons(r, which) {
   // (one label wherever it is: the person sent it on the site, their own press)
   if (which.includes("applied")) out.push(b("applied", "I submitted it myself", "primary"));
   if (which.includes("resume")) out.push(b("resume", "Carry on"));
+  // (a job the site's error stopped, waiting to be tried again by itself: now instead, opened afresh)
+  if (which.includes("retry")) out.push(b("retry", "Try now", "", "Open this job again now, afresh, instead of waiting for the desk to try it again"));
   if (which.includes("usual_resume")) out.push(b("usual_resume", "Use my usual resume"));
   if (which.includes("letter_ok")) out.push(b("letter_ok", "Use it", "primary",
     "This letter goes into the application, and each job's from now on goes in without asking"));
@@ -1326,7 +1334,10 @@ function renderSide() {
       + jobButtons(r, ["letter_ok", "letters_off", "skip"]);
     // may be a job begun or applied to on another site: nothing opened until the person says
     else if (r.need === "maybe_duplicate") body = jobButtons(r, ["apply_anyway", "skip"]);
-    else body = jobButtons(r, ["show", "resume", "skip", "already"]);
+    // (stopped by the site's own error, tried again by itself at the time its words say: Try now beside Carry on; that
+    // try called off as its tab says it went in: I submitted it myself first)
+    else if (r.seen_sent) body = jobButtons(r, ["applied_first", "show", "resume", "skip"]);
+    else body = jobButtons(r, ["show", "resume", ...(r.retry_at ? ["retry"] : []), "skip", "already"]);
     const key = `${r.job_id}:${r.need}:${(r.questions || []).map((q) => q.label).join("|")}`;
     return {key, html: `<div class="task ${r.blocking ? "hands" : ""}" data-code="${esc(r.code || "")}">${head}${wentPanel(r)}${body}</div>`};
   });
@@ -1518,7 +1529,7 @@ function renderHeader() {
   const shownJob = reviewRound ? toSend.find((r) => r.job_id === reviewShown) : null;
   if (!botRound && !s.troubleshoot && (toSend.length || reviewRound)) notes.push({cls: "waiting", html: reviewRound && shownJob
     ? `<strong>Reviewing ${esc(shownJob.title)} (${esc(shownJob.company)}).</strong>
-       <span>${shownJob.need === "captcha" && shownJob.status !== "ready" ? "Tick its CAPTCHA in the desk's browser window and check the page, then send it, or leave it for later." : shownJob.status === "ready" ? "Check the page in the desk's browser window, then send it, or leave it for later." : shownJob.need === "check_submit" ? "Its Submit was pressed and no confirmation showed, so it may have gone in: check the page in the desk's browser window, or your email, first. If it went in, press I submitted it myself here; if not, leave it for later and see its card under Needs you." : "This site's Submit is yours: check the page in the desk's browser window, press it there, then press I submitted it myself here."} ${toSend.length - 1} more after this one. No other job starts meanwhile.</span>
+       <span>${shownJob.retry_held ? HELD_SAYS + " " : ""}${shownJob.need === "captcha" && shownJob.status !== "ready" ? "Tick its CAPTCHA in the desk's browser window and check the page, then send it, or leave it for later." : shownJob.status === "ready" ? "Check the page in the desk's browser window, then send it, or leave it for later." : shownJob.need === "check_submit" ? "Its Submit was pressed and no confirmation showed, so it may have gone in: check the page in the desk's browser window, or your email, first. If it went in, press I submitted it myself here; if not, leave it for later and see its card under Needs you." : "This site's Submit is yours: check the page in the desk's browser window, press it there, then press I submitted it myself here."} ${toSend.length - 1} more after this one. No other job starts meanwhile.</span>
        ${sendable(shownJob) ? `<button class="primary" data-act="review-submit" data-review="${shownJob.job_id}">Submit this one</button>` : ""}
        <button class="${sendable(shownJob) ? "" : "primary"}" data-act="review-applied" data-review="${shownJob.job_id}">I submitted it myself</button>
        <button data-act="review-next">Next</button> <button data-act="review-stop">Stop</button>`
@@ -1659,14 +1670,17 @@ function renderAlerts() {
 }
 
 function announce() {
-  const due = allRuns().filter((r) => r.status === "needs_you" || r.status === "ready");
+  // (not a job the site's error stopped that the desk tries again by itself: alerted if the site fails it again)
+  const due = allRuns().filter((r) => r.status === "needs_you" && !r.retry_at || r.status === "ready");
   const keys = new Set(due.map((r) => `${r.job_id}:${r.status}:${r.need || ""}`));
   if (announced !== null && alertsOn()) {
     for (const r of due) {
       if (announced.has(`${r.job_id}:${r.status}:${r.need || ""}`)) continue;
       const head = r.status === "ready" ? "ready to submit" : r.need === "bot_check" ? "has a bot check to solve" : stopMark(r) ? "has a CAPTCHA to solve" : "needs you";
+      // (one the desk tried again by itself: its "check it didn't go in" first, as the cut at 180 would drop it)
+      const body = r.status === "ready" && r.retry_held ? `${r.title.slice(0, 178 - HELD_SAYS.length)}: ${HELD_SAYS}` : `${r.title}: ${r.reason || ""}`;
       try {
-        const n = new Notification(`${r.company || "A job"} ${head}`, {body: `${r.title}: ${r.reason || ""}`.slice(0, 180),
+        const n = new Notification(`${r.company || "A job"} ${head}`, {body: body.slice(0, 180),
                                                                      tag: `jobdesk-${r.job_id}`});
         n.onclick = () => { window.focus(); n.close(); };
       } catch (e) { /* some browsers only allow notifications from a service worker */ }

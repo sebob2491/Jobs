@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Submit application for Field Service Engineer</title></head>
+<body>
+<!-- an application the person fills in and sends by hand, in the tab a site's error showed in (the review of the desk's
+     try after a site's error): its Submit counted for the browser (localStorage's submits), and a confirmation shown -->
+<h1>Application Form</h1>
+<form id="app" novalidate>
+  <h2>Contact Information</h2>
+  <label for="fn">First name *</label><input id="fn" name="fn" required>
+  <label for="ln">Last name *</label><input id="ln" name="ln" required>
+  <label for="em">Email *</label><input id="em" name="em" type="email" required>
+  <button type="submit">Submit application</button>
+</form>
+<script>
+  document.getElementById('app').addEventListener('submit', (e) => {
+    e.preventDefault();
+    localStorage.setItem('submits', String(Number(localStorage.getItem('submits') || 0) + 1));
+    document.body.innerHTML = '<h1>Thank you for applying!</h1><p>Your application has been submitted.</p>';
+  });
+</script>
+</body>
+</html>

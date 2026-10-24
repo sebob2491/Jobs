@@ -366,3 +366,43 @@ def test_an_optional_id_left_empty_on_its_card_goes_with_its_remember(srv, job_a
     assert [(a["question"], a["answer"], a["at"]) for a in config.saved_answers() if a["question"] == wwid] == [
         (wwid, "12345678", "Example Litho"), (wwid, None, "Example Fab")]
     assert desk.applier.runs[ops].asked_once  # (Carry on: for that job alone)
+
+
+def test_try_now_on_a_job_the_sites_error_stopped_tries_it_again_at_once(srv):
+    """A job stopped by the site's own passing error waits to be tried again by itself (the owner's call of Oct 24): its
+    card has Try now beside Carry on, which puts it back in the queue now, first, to be opened afresh, as its one try
+    (the wait gone), even while the queue is paused (the person's own press). A stuck job with no such wait has no Try
+    now; and a press the page sends once the wait is gone is refused with why (a stale page)."""
+    desk, jobs = _stopped_desk(srv, {
+        "Example Fab": dict(status="needs_you", need="stuck", code="site_went_wrong", retry_at=time.time() + 600),
+        "Example Litho": dict(status="needs_you", need="stuck", code="no_step_button"),
+        # (a try called off as its tab said it went in: I submitted it myself first, the review's round 2)
+        "Example Sent": dict(status="needs_you", need="stuck", code="site_went_wrong", seen_sent=True)})
+    fab, litho = jobs["Example Fab"], jobs["Example Litho"]
+    a = desk.applier
+    a.paused = True
+
+    async def go():
+        async with _desk_page(desk) as (page, calls):
+            card = page.locator("#needs .task", has_text="Example Fab")
+            await card.locator("[data-job-act=retry]").wait_for()
+            others = await page.locator(f"#needs [data-job='{litho}'][data-job-act=retry]").count()
+            buttons = await card.locator("button").all_inner_texts()
+            sent = await page.locator("#needs .task", has_text="Example Sent").locator("button").all_inner_texts()
+            await card.locator("[data-job-act=retry]").click()
+            await card.wait_for(state="detached")
+            stale = await page.evaluate(f"""async () => {{
+                try {{ await api('/api/job/{fab}/retry', {{}}); return 'sent'; }}
+                catch (e) {{ return `${{e.status}} ${{e.message}}`; }} }}""")
+            return calls, others, buttons, stale, sent
+
+    calls, others, buttons, stale, sent = run(go())
+    assert sent[:2] == ["I submitted it myself", "Show me"] and "Try now" not in sent, sent
+    assert calls[0] == ("POST", f"/api/job/{fab}/retry", {}), calls
+    assert others == 0 and buttons[:3] == ["Show me", "Carry on", "Try now"], (others, buttons)
+    r = a.runs[fab]
+    # (counted as the try once its tab opens afresh: the worker isn't running here)
+    assert (r.status, r.retry_at, r.site_retries, r.fresh_retry) == ("queued", 0.0, 0, "person")
+    assert list(a.tasks) == [("apply", fab)] and fab in a.pressed
+    assert stale == "400 That job isn't waiting to be tried again any more.", stale
+    assert a.runs[litho].status == "needs_you"

@@ -185,6 +185,19 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   starts no other until **Carry on with the queue**. A Submit the user presses still goes, and jobs waiting on them are still
   watched. A paused queue stays paused after a restart. To stop the queue, never close the desk's browser window: that
   breaks the job in progress (it says so, and its **Carry on** opens the application again).
+- **The site's own passing errors** (its web server's error page, Workday's "Something went wrong" again after the
+  desk's reload, "try again later", a page that never loaded or came up blank): the job is tried again by itself about
+  20 minutes later, once a job while the desk runs, opened afresh in its own tab. Its card says when, with **Try now**
+  beside **Carry on**; Pause queue holds the try, and Skip, I submitted it myself, Submit and Carry on end it. If that
+  tab changed since (another page, boxes filled in, a page drawn), a tab was opened on the site, or it was closed, the
+  try is called off and the card says why (where the tab says it went in, I submitted it myself comes first). A try
+  the desk made by itself never sends by itself: even with Submit for me on, it stops on the review page for the
+  user's Submit, saying to check it didn't go in meanwhile, and Claude's submit_application presses nothing for it
+  without user_confirmed. If the site fails again, the card stays for the user and says it was tried again. Never for
+  a site that turned the browser away or couldn't be reached, a rate limit, a bot check or CAPTCHA, a stop on a
+  sign-in's, an account's or an emailed code's step or right after an email step (one on the application's steps after
+  a sign-in is tried again), a question, a notice or a Submit, nor once the user pressed Carry on for the job; a
+  restart of the desk forgets the try (the job's card stays).
 - **A restart** (of the Claude app, a crash, a plugin update) doesn't lose the queue. The desk keeps it in
   `~/.job-apply/desk-queue.json` (each job's number and where it was: nothing the user typed or a page said). Once
   it's open again, the jobs it hadn't begun are back in the queue in their order, **paused** (one waiting for a

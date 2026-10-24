@@ -1665,6 +1665,13 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
         return {"submitted": False, "reason": f"Not pressed: this {MAYBE_SAME_SAYS} ({said}).", "maybe_same": maybe}
     if policy == "after_user_confirms" and not user_confirmed:
         return {"submitted": False, "reason": "Show the user the review page and get an explicit go-ahead first."}
+    # a job the Job Desk opened again by itself after the site's error (pipeline's Run.retry_held): it may have gone in
+    # meanwhile, in another tab or the person's own browser, so never sent unasked, settings.auto_submit_ats or not
+    held = job_desk._desk.applier.runs.get(job["id"]) if job_desk._desk is not None else None
+    if held is not None and held.retry_held and not user_confirmed:
+        return {"submitted": False, "reason": "Not pressed: the Job Desk tried this job again by itself after the "
+                "site's error, so it may have gone in meanwhile (in another tab or the person's own browser). Ask "
+                "the person to check, and submit only on their go-ahead (user_confirmed=true)."}
     empty_required = [f["label"] for f in page["fields"]
                       if f.get("required") and is_empty_value(f.get("value")) and f["kind"] != "password"]
     if empty_required and not user_confirmed:
