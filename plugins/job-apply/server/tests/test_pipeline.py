@@ -14996,7 +14996,27 @@ def test_without_manage_accounts_an_email_first_sites_account_steps_stay_the_per
     assert not any(line.startswith("created your account") for line in r.log), r.log
 
 
-def test_a_job_sent_to_a_maintenance_page_is_said_down_for_maintenance(srv, monkeypatch):
+# Edward Jones' careers site during its security maintenance (the accounts check's run 155, Oct 21: every job sent on
+# to its host's cdn-static.findly.com/maintenance/index.html), its words as it said them
+_OFFLINE_PAGE = ("<html><head><title>Temporarily Offline: Security Maintenance Underway</title></head><body><main>"
+                 "<h1>Temporarily offline due to a global security issue</h1><h2>Security Maintenance Underway.</h2>"
+                 "<p>We've taken this site offline proactively to address critical security updates following a "
+                 "<a href='https://advisories.example/1' target='_blank'>global security advisory</a>.</p>"
+                 "<p>It will be back up as soon as these updates are complete.</p></main></body></html>")
+
+
+@pytest.mark.parametrize("sent_to, page, said", [
+    # a page named for it ("We'll be back.", live, Oct 2026)
+    ("https://www.acme-fab.example/en/maintenance", "<html><body><h1>We'll be back.</h1><p>Our site is being "
+     "updated.</p><a href='/careers'>Careers</a></body></html>", "https://www.acme-fab.example/en/maintenance"),
+    # the index of a folder named for it, on its host's own server (run 155: the desk reloaded it, then said it
+    # couldn't find the button that moves the application on)
+    ("https://cdn-static.ats-host.example/maintenance/index.html", _OFFLINE_PAGE,
+     "https://cdn-static.ats-host.example/maintenance/index.html"),
+    # the same page at the job's own address: its words say it
+    ("", _OFFLINE_PAGE, "Temporarily Offline: Security Maintenance Underway"),
+], ids=["named", "folder-index", "its-words"])
+def test_a_job_sent_to_a_maintenance_page_is_said_down_for_maintenance(srv, monkeypatch, sent_to, page, said):
     """A careers site down for its maintenance sends every job to its maintenance page ("We'll
     be back.", live, Oct 2026): the desk said it couldn't find the button that moves the
     application on."""
@@ -15007,13 +15027,11 @@ def test_a_job_sent_to_a_maintenance_page_is_said_down_for_maintenance(srv, monk
 
     async def go():
         async def handler(route):
-            if route.request.url.split("?")[0] == url:  # (sent on as the site's own script does)
+            if sent_to and route.request.url.split("?")[0] == url:  # (sent on as the site's own script does)
                 await route.fulfill(status=200, content_type="text/html", body="<html><head><script>location.replace("
-                                    "'https://www.acme-fab.example/en/maintenance')</script></head></html>")
+                                    f"'{sent_to}')</script></head></html>")
             else:
-                await route.fulfill(status=200, content_type="text/html",
-                                    body="<html><body><h1>We'll be back.</h1><p>Our site is being updated.</p>"
-                                         "<a href='/careers'>Careers</a></body></html>")
+                await route.fulfill(status=200 if sent_to else 503, content_type="text/html", body=page)
 
         await srv.browser.page()
         await srv.browser._ctx.route("https://**.example/**", handler)
@@ -15026,8 +15044,136 @@ def test_a_job_sent_to_a_maintenance_page_is_said_down_for_maintenance(srv, monk
             await applier.stop()
 
     r = run(go())
-    assert r.need == "stuck" and "down for maintenance" in r.reason, (r.status, r.need, r.reason, r.log)
-    assert "https://www.acme-fab.example/en/maintenance" in r.reason
+    assert r.need == "stuck" and r.code == "site_down" and "down for maintenance" in r.reason, \
+        (r.status, r.need, r.code, r.reason, r.log)
+    assert said in r.reason, r.reason
+    assert not any("reloaded" in line for line in r.log), r.log  # (nothing to load again: it's down)
+
+
+def test_a_posting_for_maintenance_work_isnt_a_site_down():
+    """A maintenance page is told by its address (a page, or a folder's index, named for it) or by its own words as its
+    title or a heading on a page with nothing to fill or press. Never a posting for maintenance work: technicians'
+    jobs say "maintenance" in their addresses and titles, and their pages have an Apply."""
+    offline = {"url": "https://careers.acme-fab.example/job/1", "title": "Temporarily Offline", "fields": [],
+               "actions": [], "headings": ["Security Maintenance Underway."]}
+    assert pipeline._maintenance_page(offline)
+    assert pipeline._maintenance_page({**offline, "title": "", "headings": ["We're down for scheduled maintenance"]})
+    assert pipeline._maintenance_page({**offline, "url": "https://cdn.ats-host.example/maintenance/index.html",
+                                       "title": "", "headings": []})
+    assert pipeline._maintenance_page({**offline, "actions": [{"id": "c", "text": "Accept", "cookie": True}]})
+    for posting in ({"url": "https://careers.acme-fab.example/job/123/maintenance-technician/",
+                     "title": "Maintenance Technician", "headings": ["Maintenance Technician", "Maintenance"],
+                     "fields": [], "actions": [{"id": "a", "text": "Apply"}]},
+                    {"url": "https://careers.acme-fab.example/jobs/maintenance/index.html?q=1",
+                     "title": "Maintenance jobs", "headings": ["Preventive Maintenance Technician"], "fields": [],
+                     "actions": [{"id": "a", "text": "Apply"}]},
+                    {**offline, "actions": [{"id": "a", "text": "Apply"}]},
+                    {**offline, "fields": [{"id": "e", "label": "Email", "kind": "text"}]},
+                    {**offline, "title": "Maintenance Technician", "headings": ["Equipment Maintenance"]}):
+        assert not pipeline._maintenance_page(posting), posting
+    # (the review of 5d4aee6) a posting's own words, before its Apply has drawn: its title, a word between "under" and
+    # "maintenance" that isn't a kind of maintenance, a line shut down, a part of the page that's offline, a folder of
+    # postings for maintenance work
+    nothing = {"url": "https://careers.acme-fab.example/job/1", "title": "", "fields": [], "actions": [],
+               "headings": []}
+    for posting in ({**nothing, "title": "Under Car Maintenance Technician"},
+                    {**nothing, "headings": ["Under Carriage Maintenance Technician - Phoenix"]},
+                    {**nothing, "headings": ["Line shut down for maintenance planning"]},
+                    {**nothing, "title": "Maintenance Technician", "headings": ["Chat is temporarily offline"]},
+                    {**nothing, "headings": ["This posting is temporarily offline"]},
+                    {**nothing, "url": "https://careers.acme-fab.example/jobs/maintenance/index.html",
+                     "title": "Maintenance Jobs"}):
+        assert not pipeline._maintenance_page(posting), posting
+    # ...and the job's own title, whatever its words: never the site's notice
+    planner = {**nothing, "title": "Under Scheduled Maintenance Planner | Acme Fab Careers",
+               "headings": ["Under Scheduled Maintenance Planner"]}
+    assert pipeline._maintenance_page(planner)  # (a kind of maintenance, by its words alone)
+    assert not pipeline._maintenance_page(planner, "Under Scheduled Maintenance Planner")
+    titled = {**planner, "headings": []}  # (nothing drawn but its title: a blank page, unless that's the notice)
+    assert not pipeline._nothing_drawn(titled, "") and pipeline._nothing_drawn(titled, "", "under scheduled "
+                                                                               "maintenance  planner")
+    assert pipeline._maintenance_page(offline, "Field Service Engineer")  # (another title: the notice)
+    # the page's words said short
+    said = pipeline._maintenance_page({**nothing, "title": "Temporarily offline " + "for a while " * 30})
+    assert said.startswith("its page says “Temporarily offline for a while") and len(said) < 110, said
+
+
+_UNDRAWN_APPLY = "https://careers.acme-auto.example/apply/42"
+
+
+@pytest.mark.parametrize("title, busy", [
+    ("Under Car Maintenance Technician", False),  # its Apply drawn only on the reload of the posting
+    ("Under Car Maintenance Technician", True),  # ...the posting still loading, reloaded
+    ("Under Scheduled Maintenance Planner", False),  # words a notice might say, as the job's own title
+])
+def test_a_posting_for_maintenance_work_whose_apply_draws_late_is_reloaded_not_said_down(srv, monkeypatch,
+                                                                                       job_apply_home, title, busy):
+    """The review of 5d4aee6: a posting whose title said "under ... maintenance" (an under-car maintenance technician's)
+    and whose Apply hadn't drawn yet was taken for the site's maintenance notice and said down, where the desk reloads
+    the posting once and goes on (the State of Arizona's, runs 61-63; Wells Fargo's still loading, run 57)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    monkeypatch.setattr(pipeline, "STEP_LOAD_WAIT", 2)
+    base = "https://careers.acme-auto.example"
+    posting = f"{base}/job/42"
+    head = f"<html><head><title>{title} | Acme Auto Careers</title></head><body><h1>{title}</h1><p>Phoenix, AZ</p>"
+    first = head + ("<div aria-busy='true' style='width:50px;height:20px'>x</div>" if busy else "<div id=apply></div>")
+    pages = {posting: [first + "</body></html>", head + f"<a href='{_UNDRAWN_APPLY}'>Apply now</a></body></html>"],
+             _UNDRAWN_APPLY: _BLANK_FORM, f"{base}/review": _BLANK_REVIEW}
+    gets: dict[str, int] = {}
+    posts: list[str] = []
+    job = srv.add_job(url=posting, title=title, company="Acme Auto")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _serve_counted(srv, pages, gets, posts)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert r.status == "ready" and r.seen_form, (r.status, r.need, r.code, r.reason, r.log)
+    assert gets.get(posting) == 2 and sum("so I reloaded it" in line for line in r.log) == 1, (gets, r.log)
+    assert posts == []
+
+
+@pytest.mark.parametrize("words", ["", "Acme Fab careers. Copyright 2026 Acme Fab, Inc. All rights reserved."])
+def test_a_maintenance_notice_drawn_between_looks_is_said_down(srv, monkeypatch, words):
+    """The review of 5d4aee6: a page with nothing drawn on it is looked at again after its wait, and only that later
+    look had the site's notice ("Temporarily Offline", its title set by its script): the desk read the first look's
+    for it, and said the page blank, or went on looking for a way on, where the site is down."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "LATE_BUTTONS_WAIT", 1)
+    monkeypatch.setattr(pipeline, "BLANK_PAGE_WAIT", 4)
+    base = "https://careers.acme-fab.example"
+    posting, apply = f"{base}/careers/job/1", f"{base}/careers/apply?pid=1"
+    pages = {posting: '<html><head><title>Careers</title></head><body><h1>Equipment Technician</h1><p>Chandler, AZ.'
+                      '</p><a href="/careers/apply?pid=1">Apply Now</a></body></html>',
+             apply: f"<html><head><title></title></head><body><p>{words}</p><script>setTimeout(() => {{ "
+                    "document.title = 'Temporarily Offline: Security Maintenance Underway'; }, 2500)</script>"
+                    "</body></html>"}
+    gets: dict[str, int] = {}
+    posts: list[str] = []
+    job = srv.add_job(url=posting, title="Equipment Technician", company="Acme Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        await _serve_counted(srv, pages, gets, posts)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r
+        finally:
+            await applier.stop()
+
+    r = run(go())
+    assert (r.need, r.code) == ("stuck", "site_down"), (r.status, r.need, r.code, r.reason, r.log)
+    assert "its page says “Temporarily Offline: Security Maintenance Underway”" in r.reason, r.reason
 
 
 @pytest.mark.parametrize("tab_url, boxes, gone", [

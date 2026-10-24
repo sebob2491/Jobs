@@ -4180,7 +4180,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             ps.waited.add((_page_key(lap.data), run.logged))
             # (a page a press led to with nothing drawn on it, its shell's words and all: the
             # blank page's wait, note 40)
-            empty_now = bool(ps.pressed) and _nothing_drawn(lap.data, lap.text)
+            empty_now = bool(ps.pressed) and _nothing_drawn(lap.data, lap.text, run.title)
             wait = SIGN_IN_STEP_WAIT if sign_in_step else BLANK_PAGE_WAIT if blank or empty_now else LATE_BUTTONS_WAIT
             if await self._wait_for_progress(wait, lap.data):
                 return _Then.AGAIN
@@ -4202,7 +4202,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         reloadable = loading and _agreement_button(lap.data) is None and not lap.data.get("captcha") \
             and not _BOT_BADGE.search(
                 " ".join([lap.text[:3000], *(a.get("text") or "" for a in lap.data.get("actions") or [])])) \
-            and not _closed_notice(lap.data, lap.text) and not _maintenance_page(lap.data) \
+            and not _closed_notice(lap.data, lap.text) and not _maintenance_page(lap.data, run.title) \
             and not _account_step(lap.data) \
             and not any(g.startswith(f"{_page_key(lap.data)} ") for g in ps.agreed) \
             and not any(_errorish(e) for e in lap.data.get("errors") or []) \
@@ -4474,12 +4474,14 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         # nothing pressed (that one's said below, reloaded once first): Eightfold's apply page after its Apply
         # Now (issue #112, note 40) came up blank white, the app shell with no headings, boxes or buttons, and
         # the form came once the person reloaded it. It didn't load
-        empty = not (run.opened_fresh and not ps.pressed) and _nothing_drawn(data, text)
+        empty = not (run.opened_fresh and not ps.pressed) and _nothing_drawn(data, text, run.title)
+        now, now_text = data, text  # (the page as last looked at)
         if blank or empty:  # still, after the wait? (it was read before it)
             now, now_text = await self._look()
+            # (never a page whose notice was drawn since: the site down, said below, the review of 5d4aee6)
             blank = blank and not (_app_fields(now) or now.get("actions") or now.get("headings")) \
-                and len(now_text.strip()) < 40
-            empty = empty and _nothing_drawn(now, now_text)
+                and len(now_text.strip()) < 40 and not _maintenance_page(now, run.title)
+            empty = empty and _nothing_drawn(now, now_text, run.title)
         if empty and now.get("busy") and (_page_key(now), "busy", run.logged) not in ps.waited:
             # turned busy on this look (a loading indicator drawn since the first): waited out as a blank page is,
             # then looked at again, and loaded again as any other if it still has nothing on it (the review)
@@ -4487,7 +4489,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             if await self._wait_for_progress(BLANK_PAGE_WAIT, now):
                 return _Then.AGAIN
             now, now_text = await self._look()
-            if not _nothing_drawn(now, now_text):
+            if not _nothing_drawn(now, now_text, run.title):
                 return _Then.AGAIN  # (something drawn since: the page read again from the top)
         if empty:
             site, where = _site(run, now), _bare(now.get("url") or "")
@@ -4582,10 +4584,10 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             # skipped by itself, said among the jobs done, and the queue goes on. Undo puts it back
             await self.skip(run.job_id, closed=said)
             return _Then.STOP
-        if _maintenance_page(data):
-            self._pause(run, "stuck", f"{_site(run, data)} is down for maintenance (it sent the job to "
-                        f"{_bare(data.get('url') or '')}). Try again in a few hours: press Carry on once "
-                        "it's back.", code="site_down")
+        # (on the page as last looked at too: its notice drawn after the first look, the review of 5d4aee6)
+        if down := _maintenance_page(now, run.title) or _maintenance_page(data, run.title):
+            self._pause(run, "stuck", f"{_site(run, data)} is down for maintenance ({down}). Try again in a few "
+                        "hours: press Carry on once it's back.", code="site_down")
             return _Then.STOP
         here = f"{_page_key(data)} "
         held = next((g[len(here):] for g in ps.agreed if g.startswith(here)), "")
@@ -7259,7 +7261,7 @@ def _turned_away_page(data: dict[str, Any], text: str) -> str:
     return ""
 
 
-def _nothing_drawn(data: dict[str, Any], text: str) -> bool:
+def _nothing_drawn(data: dict[str, Any], text: str, job_title: str = "") -> bool:
     """A page with nothing drawn on it: no headings, boxes (but its own language picker) or buttons (Eightfold's apply
     page, issue #112, note 40: its app shell, and no form), and nothing in its words that says why. Never a bot check
     or a CAPTCHA (the person's), nor a page whose words are its own message: a posting closed, an error the page shows
@@ -7270,7 +7272,7 @@ def _nothing_drawn(data: dict[str, Any], text: str) -> bool:
         return False
     said = (text or "")[:3000]
     return not (_BOT_BADGE.search(said) or _BOT_TEXT.search(said) or _ROBOT.search(said) or _closed_notice(data, said)
-                or _maintenance_page(data) or _ERROR_PAGE.search(said) or _SPENT_PAGE.search(said)
+                or _maintenance_page(data, job_title) or _ERROR_PAGE.search(said) or _SPENT_PAGE.search(said)
                 or _REFRESH_ASKED.search(said) or _CONTENT_MISSING.search(said) or confirmations(said)
                 or _applied_before(data, said))
 
@@ -7286,11 +7288,47 @@ async def _load_again(page: Any) -> None:
             await page.goto(page.url, wait_until="load")
 
 
-def _maintenance_page(data: dict[str, Any]) -> bool:
-    """A site down for maintenance: the job sent on to a page named for it (Workday's
-    community.workday.com/maintenance-page, asml.com/en/maintenance's "We'll be back.", live, Oct 2026)."""
-    return bool(re.fullmatch(r"maintenance(?:-page)?|outage", urlparse(data.get("url") or "").path.rstrip("/")
-                             .rsplit("/", 1)[-1], re.I))
+# A maintenance page's own words, as its title or a heading: Edward Jones' careers site's "Temporarily Offline: Security
+# Maintenance Underway" (the accounts check's run 155, Oct 21), "We're down for scheduled maintenance". Read only on a
+# page with nothing to fill or press, never as a posting's words (the review of 5d4aee6): a kind of maintenance from
+# this list only ("Under Car Maintenance Technician" is a job), no line shut down for it, and offline as the page's
+# own first words or the site's
+_DOWN_KIND = (r"(?:(?:scheduled|planned|routine|system|site|emergency|security|unscheduled|technical|server|essential)"
+              r" )?")
+_DOWN_WORDS = re.compile(
+    rf"(?:(?<!shut )\bdown for {_DOWN_KIND}|\bunder(?:going)? {_DOWN_KIND})maintenance\b"
+    r"|\bmaintenance (?:is )?(?:underway|in progress)\b"
+    r"|^\s*temporarily offline\b|\b(?:(?:this |our )?(?:web)?site is|we(?:'re|\u2019re| are)) (?:currently )?"
+    r"temporarily offline\b", re.I)
+
+
+def _names_job(said: str, job_title: str) -> bool:
+    """Whether a page's title or heading is the job's own title, holds it (a posting's "<its title> | <employer>
+    Careers") or is held in it, whatever the case and spacing: the posting's words, never the site's notice."""
+    own, said = (" ".join(x.casefold().split()) for x in (job_title, said))
+    return bool(own and said) and bool(re.search(rf"(?<!\w){re.escape(own)}(?!\w)", said)
+                                       or re.search(rf"(?<!\w){re.escape(said)}(?!\w)", own))
+
+
+def _maintenance_page(data: dict[str, Any], job_title: str = "") -> str:
+    """A site down for maintenance, said in a few words for the person ("it sent the job to <its address>", "its page
+    says “...”"), or "" when the page isn't one. The job sent on to a page named for it (Workday's
+    community.workday.com/maintenance-page, asml.com/en/maintenance's "We'll be back.", live, Oct 2026); and, on a
+    page with nothing to fill or press, to the index of a folder named for it at its host's top (Edward Jones' careers
+    site, sent to its host's cdn-static.findly.com/maintenance/index.html in run 155: read as a page with no way on,
+    reloaded, then said as a step button not found), or a page whose title or heading says it (_DOWN_WORDS) and isn't
+    `job_title`, the job's own (Run.title), wherever it is."""
+    url = data.get("url") or ""
+    path = urlparse(url).path.rstrip("/")
+    if re.fullmatch(r"maintenance(?:-page)?|outage", path.rsplit("/", 1)[-1], re.I):
+        return f"it sent the job to {_bare(url)}"
+    if _app_fields(data) or any(not a.get("cookie") for a in data.get("actions") or []):
+        return ""  # (something to fill or press: a page of the site's that works, a posting for maintenance work)
+    if re.fullmatch(r"/(?:maintenance(?:-page)?|outage)/(?:index|default)\.\w+", path, re.I):
+        return f"it sent the job to {_bare(url)}"  # (never a folder of postings: /jobs/maintenance/index.html)
+    said = next((t.strip() for t in (data.get("title"), *(data.get("headings") or []))
+                 if isinstance(t, str) and _DOWN_WORDS.search(t) and not _names_job(t, job_title)), "")
+    return f"its page says \u201c{_short(said)}\u201d" if said else ""
 
 
 def _sent_already(data: dict[str, Any], text: str, moved: bool, title: str = "", place: str = "") -> str:
