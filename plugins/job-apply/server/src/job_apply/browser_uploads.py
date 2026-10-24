@@ -181,6 +181,27 @@ class UploadsMixin:
             await page.wait_for_timeout(500)
         return f"uploaded {path.name} (its dialog's \u201c{pressed}\u201d pressed; the dialog is still open)"
 
+    async def _upload_several(self, page: Page, box: Locator, paths: list[Path]) -> str:
+        """Several files into one file box that takes several (`multiple`: Workday's questionnaire upload, given the
+        transcripts and the certificates a box asks for together), all at once, as a person choosing them in the file
+        dialog would. Once a page, as one file is (_fill_one's mark on the box, or every name shown on the page). Only
+        a real file box that takes several, on the page itself: never a site's own upload button, which takes one file
+        at a time, a box in a site's own upload dialog (whose Upload sends one: _send_dialog_upload), nor an iCIMS box
+        that sends its form as a file is given (its "<name>_File" box, which keeps one file's name): those are the
+        person's, and nothing is said to have gone up."""
+        names = ", ".join(p.name for p in paths)
+        if await box.evaluate("(el, ns) => el.__jaUploaded === ns.join(', ') || ns.every((n) => "
+                              "(el.ownerDocument.body.innerText || '').includes(n))", [p.name for p in paths]):
+            return "already uploaded on this page"
+        if not await box.evaluate("el => el.tagName === 'INPUT' && el.type === 'file' && el.multiple "
+                                  "&& !el.closest('[role=\"dialog\"], [role=\"alertdialog\"], dialog') "
+                                  "&& !(el.id && el.id.endsWith('_File'))"):
+            raise ValueError("this upload takes one file at a time; attach them in the desk's browser window")
+        await box.set_input_files([str(p) for p in paths])
+        with contextlib.suppress(PlaywrightError, PlaywrightTimeout):  # (a box drawn afresh at once is gone)
+            await box.evaluate("(el, k) => { el.__jaUploaded = k; }", names, timeout=1500)
+        return f"uploaded {names}"
+
     async def _upload_through(self, page: Page, button: Locator, path: Path) -> str:
         """A file given through the button that opens the site's own upload (the older SuccessFactors site's
         "Upload a Resume", which opens a dialog: APS's, the live check's plus probe Oct 11). Pressed, the file

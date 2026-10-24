@@ -157,7 +157,7 @@ class FillingMixin:
                 out.append((box, old, f.get("value")))
             return out
         if not checking or page in run.draft_pages:
-            result = await self.srv.autofill(job_id=run.job_id)
+            result = await self._profile_fill(run)
             run.did("", result.get("filled"), data)
             if checking and (others := replaced(result.get("filled") or [])):
                 self._draft_changes(run, others, data)
@@ -165,7 +165,7 @@ class FillingMixin:
         run.draft_pages.add(page)
         keep = [str(f["id"]) for f in data.get("fields") or [] if f.get("id") is not None
                 and (pipeline.placed_key(f) in run.once or pipeline.question_key(f.get("label") or "") in run.once)]
-        result = await self.srv.autofill(job_id=run.job_id, refresh=True, keep=keep)
+        result = await self._profile_fill(run, refresh=True, keep=keep)
         run.did("", result.get("filled"), data)
         changed = [f for f in result.get("filled") or [] if f.get("refreshed")]
         refused = [f for f in result.get("failed") or [] if f.get("refreshed")]
@@ -210,6 +210,30 @@ class FillingMixin:
                       "your profile's answer" + (f"; as they are now: {named(kept)}" if kept else "")
                       + (f"; {len(emptied)} left empty, so they're asked" if emptied else ""))
         return result
+
+    async def _profile_fill(self, run: Run, **how: Any) -> dict[str, Any]:
+        """The profile's answers into the job's page (srv.autofill, with `how`: redo, refresh, keep), and the profile's
+        other documents it uploaded said in the job's log (_said_uploads): every fill of the desk's comes here."""
+        result = await self.srv.autofill(job_id=run.job_id, **how)
+        self._said_uploads(run, result)
+        return result
+
+    def _said_uploads(self, run: Run, result: dict[str, Any]) -> None:
+        """The profile's other documents a fill uploaded (its transcripts, reference list or certificates: autofill's
+        documents_asked), each said in the job's log with the box it went into ("uploaded your transcripts to “Please
+        upload your Unofficial Transcripts”"), and a reference list the desk made from the profile's references:
+        entries said as that. Never a file's name (it may hold the person's name or more), nor a reference's details."""
+        for f in result.get("filled") or []:
+            what = pipeline._document_said(str(f.get("from") or ""))
+            if not f.get("uploaded") or not what:
+                continue
+            value = f.get("value")
+            count = len(value) if isinstance(value, (list, tuple)) else 1
+            # (a reference list, with no file of the profile's for one, is the page the desk made: document_files)
+            made = "references" in str(f.get("from")) and not config.Profile.load().document_files("references")
+            self._log(run, f"uploaded your {what}" + (f" ({count} files)" if count > 1 else "")
+                      + (" (a page the desk made from the references in your profile)" if made else "")
+                      + f" to “{pipeline._short(clean_label(f.get('label') or '').rstrip(' .') or 'a file box')}”")
 
     def _draft_changes(self, run: Run, changes: list[tuple[dict[str, Any], Any, Any]], page: dict[str, Any]) -> None:
         """A saved draft's answers the desk changed: never sent by Submit for me (the person checks them first:

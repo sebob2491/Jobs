@@ -552,6 +552,10 @@ const PROFILE_FIELDS = {
 const profileField = (k) => {
   const gone = /^documents\.resume \(file not found: (.*)\)$/.exec(k);
   if (gone) return `your resume file (nothing is at ${gone[1]})`;
+  // a transcript, reference list or certificate the profile names, whose file isn't there (never uploaded)
+  const doc = /^documents\.(transcripts|references|certificates) \(file not found: (.*)\)$/.exec(k);
+  if (doc) return `your ${{transcripts: "transcripts", references: "reference list", certificates: "certificates"}[doc[1]]} `
+    + `file where documents.${doc[1]} says (nothing is at ${doc[2]})`;
   const undated = /^work_history dates: (.*)$/.exec(k);
   if (undated) return `the start and end months of your jobs (${undated[1]}): ask Claude to "add the start and end months `
     + `of my jobs from my resume to my profile"`;

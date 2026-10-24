@@ -138,15 +138,27 @@ def _repository() -> str:
     return str(repo).rstrip("/") or "https://github.com/sebob2491/Jobs"
 
 
+# Where a reference works, in words a page uses too: never taken out of a report (_PAGE_WORDS' and _COMMON_WORDS' too)
+_EVERYDAY_PLACES = {"retired", "self", "employed", "freelance", "freelancer", "none", "n", "a", "na", "unemployed",
+                    "student", "various", "independent", "volunteer", "homemaker", "personal", "friend", "family",
+                    "neighbor", "neighbour", "former", "consultant", "contractor", "church", "school", "same", "other",
+                    "private", "business", "owner", "small", "local"} | _PAGE_WORDS | _COMMON_WORDS
+
+
 def report_strings(prof: config.Profile) -> list[str]:
-    """What a report takes out: the personal details fixtures take out, plus the person's
-    city, schools and employers, which a test fixture keeps but a public issue mustn't."""
+    """What a report takes out: the personal details fixtures take out (their references' names, phones and emails
+    among them), plus the person's city, schools and employers, and their references' employers, which a test fixture
+    keeps but a public issue mustn't."""
     more: list[Any] = [prof.get("personal.address.city"), prof.get("education.school"),
                        prof.get("experience.current_company"), *(prof.get("history.previous_employers") or [])]
     for key, field in (("work_history", "company"), ("education_history", "school")):
         more += [e.get(field) for e in prof.get(key) or [] if isinstance(e, dict)]
     # (and the cities of the places they'd like to work, which the desk puts in a form's "Preferred location")
     more += [_city(place) for place in config.listed(prof.get("preferences.locations"))]
+    # (and where the people they gave as references work, but a word a page uses too: "Retired", "Self-employed",
+    # "City"; their names, phones and emails are personal_strings')
+    more += [company for ref in prof.references() if (company := ref.get("company"))
+             and not all(w in _EVERYDAY_PLACES for w in re.findall(r"[a-z0-9]+", company.lower()))]
     extra = {str(v).strip() for v in more if v and not isinstance(v, (dict, list)) and len(str(v).strip()) >= 3}
     return sorted(set(personal_strings(prof)) | extra, key=len, reverse=True)
 

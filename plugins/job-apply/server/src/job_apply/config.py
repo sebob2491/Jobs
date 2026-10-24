@@ -507,7 +507,8 @@ class Profile:
         without a start or end month, which Workday asks for every job (someone who doesn't
         remember an old job's months can still apply where they aren't asked); the schools
         without a degree written ("Some college (no degree)" where none was finished: Workday's
-        Degree box asks); and the background questions not answered yet."""
+        Degree box asks); the background questions not answered yet; and the transcripts, reference
+        list or certificates it names whose file isn't there."""
         from .autofill import undated_jobs  # (autofill reads profiles: imported when asked)
 
         gaps = []
@@ -525,7 +526,53 @@ class Profile:
         unsaid = [k for k in SERVICE_KEYS if self.get(f"history.{k}") is None]
         if unsaid:
             gaps.append("history: " + ", ".join(unsaid))
+        # (and a transcript, reference list or certificate it names that isn't there: never uploaded, so said. One it
+        # doesn't name isn't: most forms never ask, and the desk says the slot where one does)
+        gaps += [f"documents.{slot} (file not found: {path})" for slot, path in self.missing_documents()]
         return gaps
+
+    def document_paths(self, slot: str) -> list[Path]:
+        """documents.<slot> as written (one path, or a list of them), each with ~ and $VARS expanded, each once; never
+        anything that isn't a path (a number, an entry with keys of its own)."""
+        out: list[Path] = []
+        written = self.get(f"documents.{slot}")
+        for raw in [] if isinstance(written, dict) else listed(written):
+            path = expand(raw.strip()) if isinstance(raw, str) else None
+            if path is not None and path not in out:
+                out.append(path)
+        return out
+
+    def document_files(self, slot: str) -> list[Path]:
+        """documents.<slot>'s files that are there, in the order written (most recent first, as the template asks): the
+        ones a form's box for that document gets. Never one named that isn't there (missing_documents says those)."""
+        return [p for p in self.document_paths(slot) if p.is_file()]
+
+    def missing_documents(self) -> list[tuple[str, Path]]:
+        """The files documents.transcripts, .references and .certificates name that aren't there, each with its slot."""
+        return [(slot, p) for slot in EXTRA_DOCUMENTS for p in self.document_paths(slot) if not p.is_file()]
+
+    def references(self) -> list[dict[str, str]]:
+        """The profile's references: list, the person's own entries as they wrote them: each its name and whatever
+        else it gives of REFERENCE_KEYS (relationship, company, phone, email), as text on one line. An entry with no
+        name is no reference, and nothing is ever added to one."""
+        raw = self.get("references")
+        out = []
+        for entry in raw if isinstance(raw, list) else []:
+            if not isinstance(entry, dict):
+                continue
+            said = {k: " ".join(str(entry[k]).split()) for k in REFERENCE_KEYS
+                    if entry.get(k) not in (None, "") and not isinstance(entry.get(k), (dict, list, bool))}
+            if said.get("name"):
+                out.append({k: v for k, v in said.items() if v})
+        return out
+
+
+# The documents beyond a resume and a cover letter that the profile may name under documents: (each optional: one file,
+# or a list of files), each as the desk says it. A form's file box asking for one gets the person's own (autofill's
+# documents_asked), never another document, and never one of these in a box for another
+EXTRA_DOCUMENTS = {"transcripts": "transcripts", "references": "reference list", "certificates": "certificates"}
+# What an entry of the profile's references: list gives (all of it the person's own): the desk's references page says it
+REFERENCE_KEYS = ("name", "relationship", "company", "phone", "email")
 
 
 # The yes/no questions many employers ask, answered once in the profile's background: section

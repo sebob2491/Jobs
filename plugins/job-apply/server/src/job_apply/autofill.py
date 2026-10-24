@@ -3248,9 +3248,9 @@ def remembered_ids(prof: Profile) -> list[str]:
 
 
 def tailored_document(job: dict, kind: str) -> str | None:
-    """A resume or cover letter made for this job, in its folder."""
+    """A resume, cover letter or reference list ("references") made for this job, in its folder."""
     folder = Path(job["folder"]) if job.get("folder") else None
-    stem = "cover_letter" if kind == "cover_letter" else "resume"
+    stem = kind if kind in ("cover_letter", "references") else "resume"
     if folder and folder.exists():
         for ext in (".pdf", ".docx", ".doc"):
             # resume.pdf, Sam_Rivera_Resume.pdf, Sam_Rivera_Cover_Letter.pdf ...
@@ -3593,6 +3593,174 @@ _FILE_IS_RESUME = re.compile(r"^\s*(?:this )?document is (?:a|the|your) (?:resum
 _OTHER_DOCUMENT = re.compile(r"\b(degree|diploma|transcripts?|certificat\w*|licen[cs]e|"
                              r"passport|portfolio|writing sample|"
                              r"work sample|recommendation|references?|identification|photo\w*|dd ?214)\b")
+# The documents beyond a resume and a cover letter that a file box may ask for, each the profile's documents.<slot>
+# (config.EXTRA_DOCUMENTS), and the kinds of each a box may name: the words naming the kind (normalised: "transcript(s)"
+# reads "transcript s"), and the words of a file's name that say a file is one. Unofficial transcripts; a reference list
+# ("Reference Contact Information": NSHE's Workday, run 144); certificates, which hold three kinds: diplomas (a degree's
+# too), licenses and certificates proper, told apart by their files' names (_extra_document)
+_SLOT_KINDS: dict[str, list[tuple[re.Pattern[str], re.Pattern[str]]]] = {
+    "transcripts": [(re.compile(r"\btranscripts?\b"), re.compile(r""))],
+    "references": [(re.compile(r"\breferences?\b"), re.compile(r""))],
+    # (a degree, a GED, a high school equivalency: a diploma's kind; "certificate" beside one is that diploma's noun,
+    # "GED certificate", "Certificate of Degree": _certificate_kinds)
+    # (a file's name says a kind only in whole words, digits beside them or not: GED_2015.pdf, diploma2019.pdf,
+    # CPR_cert.pdf; never "ged" in managed-services or Acknowledged, "diploma" in diplomat, "cert" in Concert)
+    "certificates": [(re.compile(r"\b(diplomas?|degrees?|ged|equivalency)\b"),
+                      re.compile(r"(?<![a-z])(diplomas?|degrees?|ged)(?![a-z])")),
+                     (re.compile(r"\b(licen[cs]es?|licensure)\b"),
+                      re.compile(r"(?<![a-z])(licen[cs]es?|licen[cs]ed|licensure)(?![a-z])")),
+                     (re.compile(r"\bcertificat\w*"),
+                      re.compile(r"(?<![a-z])(certs?|certificates?|certifications?|certified)(?![a-z])"))],
+}
+_SLOT_WORDS = {slot: re.compile("|".join(words.pattern for words, _ in kinds)) for slot, kinds in _SLOT_KINDS.items()}
+# ...and the words of a box that asks for something else beside them or instead, which never gets one of them:
+#   - a resume or a cover letter, a writing or work sample, a portfolio;
+#   - a letter someone else wrote: a letter of reference or recommendation ("Letter(s) of Reference", "Letters from your
+#     references"), never the person's list of references;
+#   - a form to sign or fill, named so beside the document's word: a reference release, waiver, authorization,
+#     consent, questionnaire, request, verification, form or check form, a transcript request, release or
+#     authorization ("Reference Release Form", "Reference Forms", "Transcript request form", "Request transcripts"),
+#     an authorization or consent to contact references or release transcripts, a waiver of, anything to sign with a
+#     release, a waiver, an authorization, a consent or a form ("References: please sign the attached release"); never
+#     a box that only says these words elsewhere ("Reference checks will be conducted", "you consent to us contacting
+#     your references", "transcripts with the application form"), but for "Reference Checks" as the box's whole subject;
+#   - a job's own reference, or a number: its requisition or posting's ("Job Reference: R12345", "Reference Code 4421"),
+#     a license's or a certificate's number ("Professional License Number"; never "include license numbers");
+#   - a military transcript or training record (a JST, AARTS, CCAF or SMART transcript: never the college transcript
+#     the profile holds; "Military transcripts (JST) or college transcripts" is the person's);
+#   - proof of eligibility, status or identity: service (a DD-214, a discharge, a veteran's preference), tribal
+#     enrollment or Indian blood (a CIB or CDIB, an Indian or Native American preference), a driver's license or CDL,
+#     an ID (never "ID number must be visible"), a passport, a photo, a Social Security card, an I-9's, a visa, a work
+#     permit, wherever said; and citizenship, naturalization, Schedule A, a disability, health, a vaccination or an
+#     immunization (TB), a physical, a drug screen, a medical or insurance certificate, a marriage, birth or death
+#     certificate, fingerprints, a background check, police or good conduct, good standing, a clearance or eligibility
+#     as what a certificate, a card, a letter or a proof is of ("Certificate of Citizenship", "Certificate of
+#     Vaccination", "Certificate of Good Standing", "Disability certification", "proof of eligibility")
+_PROOF_OF = (r"(citizenship|naturali[sz]ation|schedule a|disability|medical|health|vaccinations?|vaccines?|"
+             r"immuniz\w*|(tb|tuberculosis)( skin)?( test| screening)?|physical( exam\w*)?|drug( test| screen)?|"
+             r"insurance|marriage|birth|death|"
+             r"fingerprint( clearance)?|clearance|good standing|good conduct|conduct|police( clearance)?|"
+             r"background( check)?|eligibility|employment eligibility|immigration|residency)")
+_PROOF = r"(certificates?|certifications?|cards?|letters?|proof|verifications?|documentation|evidence)"
+_FORM = r"(releases?|waivers?|authorizations?|authorize|consents?|questionnaires?|requests?|forms?|verifications?)"
+_NOT_A_SLOT = re.compile(r"\b(resume|cv|curriculum|cover|writing samples?|work samples?|portfolios?|"
+                         r"recommendations?|letters?( s)? (of|from)|reference letters?|"
+                         r"references? " + _FORM + r"|references? checks? (forms?|consents?|authorizations?)|"
+                         r"references? checks?$|" + _FORM + r" (form )?(for |of )?references?|"
+                         r"transcripts? (requests?|releases?|authoriz\w*)|requests? (for )?(official |unofficial |"
+                         r"your )?transcripts?|release (of )?(your )?(references?|transcripts?)|"
+                         r"(authoriz\w*|consents?|permission) (to|for) (contact|release|obtain|check|verify|request)|"
+                         r"waivers? of|verification forms?|sign(ed|ature|ing)?\b.*\b(releases?|waivers?|authoriz\w*|"
+                         r"consents?|forms?)|(releases?|waivers?|authoriz\w*|consents?|forms?)\b.*\bsign(ed|ature)?|"
+                         r"(licen[cs]e|licensure|certificate|certification|employment) verifications?|"
+                         r"(job|vacancy|requisition|req|posting|position) references?|"
+                         r"references? (number|no|code|id)|(licen[cs]e|certificate|certification) (number|no)|"
+                         r"dd ?214|discharge|veterans?|military|jst|joint services|aarts|ccaf|smart transcripts?|"
+                         r"indian|tribal|cib|cdib|native american|cdl|drivers?|driver s|"
+                         r"driving|identification|id(?! numbers?\b)|passport|photo\w*|social security|i ?9|visas?|"
+                         r"work permits?|green card|"
+                         + _PROOF_OF + r" " + _PROOF + r"|" + _PROOF + r" of " + _PROOF_OF + r")\b")
+# A section that is about the person's references as people: the one place a section alone (a box named "Attach" in
+# it) picks the reference list. Never a "Reference Information" or "Job Reference" heading, which may be the job's
+_REFERENCES_SECTION = re.compile(r"^((professional|personal|work|character|employment) )?references?"
+                                 r"( (list|contacts?|contact information))?$|\blist of (your )?references\b|"
+                                 r"\b(professional|personal|work|character|employment) references\b|"
+                                 r"\breferences? contact information\b")
+# Words that name a document the profile holds (a box whose label has them is named by its label alone: _file_words)
+_NAMES_DOCUMENT = re.compile(r"resume|\bcv\b|curriculum|cover|" + "|".join(p.pattern for p in _SLOT_WORDS.values()))
+# The words of a certificate box that say nothing of which certificate it is: what's left names one ("Food Handler
+# Certificate", "Nursing license", "Equipment certifications (e.g., forklift)"), which only a file whose name says so
+# goes into (_extra_document)
+_ANY_CERTIFICATE = {
+    "please", "upload", "uploads", "attach", "attached", "attachment", "attachments", "copy", "copies", "scan",
+    "scanned", "image", "file", "files", "document", "documents", "documentation", "proof", "of", "your", "my", "a",
+    "an", "the", "any", "all", "or", "and", "if", "available", "applicable", "here", "required", "require", "requires",
+    "for", "this", "position", "job", "role", "professional", "current", "currently", "valid", "active", "official",
+    "unofficial", "relevant", "include", "including", "includes", "other", "additional", "supporting", "with", "in",
+    "to", "from", "as", "be", "must", "may", "optional", "front", "back", "both", "sides", "side", "latest", "most",
+    "recent", "held", "hold", "have", "has", "you", "issued", "state", "high", "school", "eg", "e", "g", "etc", "such",
+    "list", "below", "above", "one", "more", "related", "completed", "completion", "training", "earned", "obtained",
+    "provide", "submit", "possess", "need", "needed", "s", "verification", "pdf", "doc", "docx", "jpg", "png", "max",
+    "mb", "kb", "size", "format", "formats", "accepted", "select", "drop", "drag", "browse", "choose", "that",
+    "are", "is", "we", "us", "on", "at", "by", "these", "those", "each", "every", "per", "up", "it", "them", "their",
+    "certified", "true", "legible", "clear", "attaching", "uploading", "where",
+    # (and the words that say what sort of certificates, never which one: "Industry certifications", "Equipment
+    # certifications (e.g., forklift)")
+    "industry", "equipment", "technical", "trade", "trades", "national", "recognized", "accredited", "specialized",
+    "special", "listed", "work",
+    # (and what a certificate of something general is of: "Certificate of Completion", "…of Achievement")
+    "achievement", "attendance", "participation", "recognition", "excellence", "merit", "appreciation",
+    "accomplishment", "course", "courses", "program", "programs",
+    # (and what a degree is, said in general: "Highest degree earned", "College degree")
+    "highest", "college", "university", "academic", "postsecondary", "secondary", "final",
+}
+
+
+def _file_words(label: str, section: str) -> str:
+    """A file box's own words (both normalised): its label where that names a document the profile holds
+    ("Transcripts" in a section "Cover Letter and Other Documents" is a transcript's box, "Resume" in a section
+    "Cover letter and resume" a resume's), else its label and its section ("Attach" under "Transcripts")."""
+    return label if _NAMES_DOCUMENT.search(label) else f"{label} {section}".strip()
+
+
+def _box_words(field: dict) -> tuple[str, str, str]:
+    """A file box's words as documents_asked reads them: its label and its section (each normalised), and its own
+    words (_file_words)."""
+    label = norm(clean_label(_without_notes(field.get("label") or field.get("name") or "")))
+    section = norm(field.get("section"))
+    return label, section, _file_words(label, section)
+
+
+def documents_asked(field: dict) -> list[str]:
+    """The documents of config.EXTRA_DOCUMENTS (transcripts, references, certificates) a file box asks for, by its own
+    words (_file_words), in the order it names them: Las Vegas Valley Water District's "...a copy of your
+    transcript(s), diploma(s), and/or certificate(s) here" asks for transcripts, then certificates. Empty where it
+    names none of them, or names something else too (_NOT_A_SLOT: a resume, a letter of reference, a form to sign, a
+    job's reference number, a proof of eligibility or identity), which is never given one of these. A reference list
+    only by the box's own label, or by a section about references as people (_REFERENCES_SECTION)."""
+    if field.get("kind", "file") != "file":
+        return []
+    label, section, words = _box_words(field)
+    if _NOT_A_SLOT.search(words):
+        return []
+    found = sorted((m.start(), slot) for slot, pattern in _SLOT_WORDS.items() if (m := pattern.search(words)))
+    return [slot for _, slot in found
+            if slot != "references" or _SLOT_WORDS["references"].search(label) or _REFERENCES_SECTION.search(section)]
+
+
+def documents_named(field: dict) -> list[str]:
+    """The documents of config.EXTRA_DOCUMENTS a file box's words (its label and its section) name at all, whether it
+    asks for one or not (documents_asked: "Reference Release Form" names the reference list, and asks for a form)."""
+    label, section, _ = _box_words(field)
+    return [slot for slot, words in _SLOT_WORDS.items() if words.search(f"{label} {section}")]
+
+
+def references_page_current(prof: Profile, path: str | Path) -> bool:
+    """Is this the page the desk made of the profile's references: entries as they are now (its Markdown, kept beside
+    it, the same as render.references_markdown makes of them)? Never with no entries: one made before they were taken
+    out, or changed since (a render that then failed), is no longer theirs to send."""
+    from .render import references_markdown  # (render drives a browser: imported when asked)
+
+    markdown = references_markdown(prof)
+    if not markdown:
+        return False
+    try:
+        return Path(path).with_suffix(".md").read_text(encoding="utf-8") == markdown
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
+def document_files(prof: Profile, job: dict | None, slot: str) -> list[str]:
+    """The files for one of config.EXTRA_DOCUMENTS: the profile's own (documents.<slot>, the ones there); for a
+    reference list with none, the page the desk made for this job from the profile's references: entries (its folder's
+    <Name>_References.pdf: server's references_page), only while it's made of them as they are now."""
+    files = [str(p) for p in prof.document_files(slot)]
+    if not files and slot == "references":
+        made = tailored_document(job or {}, "references")
+        files = [made] if made and references_page_current(prof, made) else []
+    return files
+
+
 # A date box asking when something else happened, not the date a form is signed
 _OTHER_EVENT = re.compile(r"\b(conviction|criminal|offen[cs]e|incident|violation|accident|military|service|discharge|"
                           r"availability|available|employment|education|experience|history|"
@@ -3832,13 +4000,18 @@ def _resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inp
 
 
 def _resolve_file(field: dict, prof: Profile, job: dict, file_inputs_on_page: int, label: str) -> Answer | None:
-    """A file box's answer: the resume or the cover letter, or SKIP for a box that reads the resume to fill the form
-    in (`label`: the box's own, normalised)."""
-    where = f"{label} {norm(field.get('section'))}"
+    """A file box's answer: the resume or the cover letter, the profile's transcripts, reference list or certificates
+    for a box asking for those (_extra_document), or SKIP for a box that reads the resume to fill the form in (`label`:
+    the box's own, normalised). A box whose label names a document is answered by its label alone (_file_words)."""
+    if documents_asked(field):
+        return _extra_document(field, prof, job)
+    where = _file_words(label, norm(field.get("section")))
     # A box that reads the resume to fill the form in ("Import your profile from resume" on
     # TI's and onsemi's Oracle), beside the one that attaches it: the site would refill the
     # form from its own reading while the desk fills it, so only the attachment gets it
-    if file_inputs_on_page > 1 and re.search(r"\b(import|autofill|auto fill|parse|populate)\b", where):
+    # (by its label or its section: a "Resume" box under "Autofill your application with your resume")
+    if file_inputs_on_page > 1 and re.search(r"\b(import|autofill|auto fill|parse|populate)\b",
+                                             f"{label} {norm(field.get('section'))}"):
         return Answer(SKIP, "documents.resume")
     # (a page's one upload, in a section for both, "Resume/CV and Cover Letter": the resume goes in it, as a
     # person would put it there: Arizona State University's Workday, the full run of Oct 12)
@@ -3857,6 +4030,101 @@ def _resolve_file(field: dict, prof: Profile, job: dict, file_inputs_on_page: in
         path = _document(prof, job, "resume")
         return Answer(path, "documents.resume") if path else None
     return None
+
+
+def _file_says(path: str, words: re.Pattern[str]) -> bool:
+    """Does a file's name say it's of a kind (its words in the name: "cert.pdf", "Food_Handler_Card.pdf")?"""
+    return bool(words.search(re.sub(r"[^a-z0-9]+", " ", Path(path).stem.lower())))
+
+
+def _extra_document(field: dict, prof: Profile, job: dict) -> Answer | None:
+    """A box asking for the profile's transcripts, reference list or certificates (documents_asked): the files of
+    what it names, each kind in the order it names them, each list most recent first. A box that takes several files
+    (`multiple`: Workday's) gets every one; one that takes one, the first.
+    Certificates hold three kinds (diplomas, licenses, certificates proper: _certificate_kinds, where "certificate"
+    beside a diploma's word is that diploma's noun: "GED certificate", "Certificate of Degree"):
+      - a box naming a diploma (a degree, a GED) or a license anywhere takes only a file whose name says it's that
+        ("High school diploma or GED certificate" takes diploma.pdf, never cert.pdf nor OSHA30.pdf); where it names a
+        certificate as a kind of its own too ("Degree or certificate", "Licenses/Certifications"), a box that takes
+        several also takes the files whose names say they're certificates, never one whose name says no kind;
+      - a box for certificates alone takes a file whose name says it's one, or says no kind at all (OSHA30.pdf, a
+        certificate proper): in a box that takes one file, the first whose name says it's a certificate, else the one
+        whose name says nothing, if it's the only such.
+    A box that names which one it wants, in the words beside its kind's ("Food Handler Certificate", "Nursing license",
+    "Certificate of Achievement in Welding"), takes only a file whose name says that too. Its rule names the documents
+    given ("documents.transcripts", "documents.transcripts+certificates"). None where none fits: the person's, the stop
+    naming the slot to fill (pipeline's _stop_for_what_is_left)."""
+    asked = documents_asked(field)
+    if not asked:
+        return None
+    words = _box_words(field)[2]
+    named: list[tuple[int, str, int, re.Pattern[str] | None]] = [  # (where, document, certificates' kind, which one)
+        (m.start(), slot, -1, None) for slot in asked if slot != "certificates"
+        for m in [_SLOT_WORDS[slot].search(words)] if m]
+    if "certificates" in asked:
+        named += [(at, "certificates", kind, which) for at, kind, which in _certificate_kinds(words)]
+    named.sort(key=lambda found: found[0])
+    kinds = {kind for _, slot, kind, _ in named if slot == "certificates"}
+    proper_only = not kinds & {0, 1}  # (a box for certificates alone, naming no diploma and no license)
+    multiple = bool(field.get("multiple"))
+    found: list[tuple[str, str]] = []  # (file, its document)
+    for _, slot, kind, which in named:
+        files = document_files(prof, job, slot)
+        if slot == "certificates":
+            files = [f for f in files if which is None or _file_says(f, which)]
+            fits = [f for f in files if _file_says(f, _SLOT_KINDS["certificates"][kind][1])]
+            if kind == 2 and proper_only:  # (a certificate's own box: one whose name says no kind too)
+                unsaid = [f for f in files if certificate_kind_unsaid(f)]
+                fits += unsaid if multiple or not fits and len(unsaid) == 1 else []
+            elif kind == 2 and not multiple:  # (beside a diploma or a license, in a box that takes one: theirs only)
+                fits = []
+            files = fits
+        found += [(f, slot) for f in files]
+    chosen = list(dict.fromkeys(found))
+    if not chosen:
+        return None
+    if not multiple:
+        chosen = chosen[:1]
+    files = list(dict.fromkeys(f for f, _ in chosen))
+    return Answer(files if len(files) > 1 else files[0],
+                  "documents." + "+".join(dict.fromkeys(slot for _, slot in chosen)))
+
+
+def certificate_kind_unsaid(path: str | Path) -> bool:
+    """Does a certificate's file name say none of the kinds (diploma or degree, license, certificate: "OSHA30.pdf",
+    "scan2.pdf")? Such a file goes only into a box for a certificate proper (_extra_document); doctor says so."""
+    return not any(_file_says(str(path), says) for _, says in _SLOT_KINDS["certificates"])
+
+
+_TOKEN = re.compile(r"[a-z0-9+]+")
+
+
+def _certificate_kinds(words: str) -> list[tuple[int, int, re.Pattern[str] | None]]:
+    """Each of the certificates' kinds a box's words name: where, which (0: a diploma, a degree, a GED; 1: a license;
+    2: a certificate proper), and the words naming which one it wants, from the few words right before it ("Food
+    Handler Certificate": food, handler; "IPC-A-610 certification": ipc, 610; "Copy of your Nursing License": nursing)
+    and right after its "of" ("Certificate of Achievement in Welding": welding), never the box's other words ("Upload
+    certifications listed in your application", "Industry certifications (e.g., CompTIA A+)"), nor everyday words
+    alone (_ANY_CERTIFICATE: "Certificate of Completion"). A certificate's word beside a diploma's is that diploma's
+    noun, never a certificate of its own: right after it ("GED certificate", "Degree certification", "Diploma/GED
+    Certificate") or with it after its "of" ("Certificate of Degree", "Certification of degree completion",
+    "certificate of high school equivalency"); one after "or" stays its own ("Degree or certificate")."""
+    diploma = _SLOT_KINDS["certificates"][0][0]
+    out: list[tuple[int, int, re.Pattern[str] | None]] = []
+    for kind, (kind_words, _) in enumerate(_SLOT_KINDS["certificates"]):
+        for m in kind_words.finditer(words):
+            before = _TOKEN.findall(words[:m.start()])[-3:]
+            after = _TOKEN.findall(words[m.end():])
+            of = after[1:4] if after[:1] == ["of"] else []
+            if kind == 2 and (before[-1:] and diploma.fullmatch(before[-1]) or any(diploma.fullmatch(w) for w in of)):
+                continue
+            which = list(dict.fromkeys(w.rstrip("+") for w in before + of
+                                       if len(w.rstrip("+")) >= 2 and w.rstrip("+") not in _ANY_CERTIFICATE
+                                       and not any(slot_words.fullmatch(w.rstrip("+"))
+                                                   for slot_words in _SLOT_WORDS.values())))
+            out.append((m.start(), kind, re.compile(r"\b(" + "|".join(map(re.escape, which)) + r")") if which
+                        else None))
+    return out
 
 
 def _resolve_checkbox(field: dict, prof: Profile, job: dict, raw_label: str) -> Answer | None:

@@ -38,6 +38,10 @@ RESUME_NAME = "jobdesk-test-resume.pdf"
 # check there, as the profile had none
 COVER_LETTER_NOTE = "Automated test cover letter for the Job Desk live check — not a real applicant"
 COVER_LETTER_NAME = "jobdesk-test-cover-letter.pdf"
+# and a test unofficial transcript: the questionnaires of UNLV's, Nevada State University's and College of Southern
+# Nevada's Workday require one, and Las Vegas Valley Water District's asks for transcripts, diplomas or certificates
+TRANSCRIPT_NOTE = "Automated test transcript for the Job Desk live check — not a real record"
+TRANSCRIPT_NAME = "jobdesk-test-transcript.pdf"
 EMPLOYERS_FILE = Path(__file__).with_name("test_identity_employers.yaml")
 # The broad check's employers whose sites refuse its example.com address (their Workday, live run 19):
 # there it gives the test identity's inbox instead, so the check sees how far it gets. Only the
@@ -170,15 +174,39 @@ def broad_email(company: str, env: Mapping[str, str]) -> str | None:
     return email if email and company in INBOX_AT else None
 
 
+def transcript_pdf(profile: Mapping[str, Any]) -> bytes:
+    """A one-page unofficial transcript for the live check's applicant, made at run time as resume_pdf is: who it is,
+    that it's a test with nothing in it true, and the profile's schools, with no course and no grade."""
+    personal = profile.get("personal") or {}
+    lines: list[tuple[int, str]] = [
+        (18, f"{personal.get('first_name', FIRST_NAME)} {personal.get('last_name', LAST_NAME)}"),
+        (12, "Unofficial transcript"),
+        (10, ""),
+        (12, TRANSCRIPT_NOTE + "."),
+        (10, "Made by the Job Desk plugin's live check (scripts/live_smoke.py). Nothing in it is true,"),
+        (10, "and no school issued it. It stands in for an applicant's own, so the check goes on past"),
+        (10, "a form's \"upload your transcripts\". Please disregard it."),
+        (10, ""),
+    ]
+    for school in profile.get("education_history") or []:
+        said = ", ".join(str(school[k]) for k in ("school", "major") if school.get(k) not in (None, ""))
+        lines.append((10, f"{said} ({school.get('start')} to {school.get('end')}): no courses listed"))
+    return tiny_pdf(lines)
+
+
 def with_test_resume(profile: Mapping[str, Any], folder: Path) -> dict[str, Any]:
-    """The profile with a test resume and a test cover letter of its own: resume_pdf and cover_letter_pdf written into
-    `folder` (the run's home) and the profile's documents pointing to them, so the live check reaches the steps past a
-    form's "upload your resume" (and a required "upload your cover letter": CSN's and NSU's Workday, run 144)."""
-    resume, letter = folder / RESUME_NAME, folder / COVER_LETTER_NAME
+    """The profile with a test resume, a test cover letter and a test transcript of its own: resume_pdf,
+    cover_letter_pdf and transcript_pdf written into `folder` (the run's home) and the profile's documents pointing to
+    them, so the live check reaches the steps past a form's "upload your resume" (and a required "upload your cover
+    letter": CSN's and NSU's Workday, run 144; and "upload your unofficial transcripts": NSHE's Workday). Its
+    references (live_profile.FAKE_PROFILE's made-up one) the desk lays out on a page itself, as it would a person's."""
+    resume, letter, transcript = folder / RESUME_NAME, folder / COVER_LETTER_NAME, folder / TRANSCRIPT_NAME
     own: dict[str, Any] = copy.deepcopy(dict(profile))
-    own["documents"] = {**(own.get("documents") or {}), "resume": str(resume), "cover_letter": str(letter)}
+    own["documents"] = {**(own.get("documents") or {}), "resume": str(resume), "cover_letter": str(letter),
+                        "transcripts": str(transcript)}
     resume.write_bytes(resume_pdf(own))
     letter.write_bytes(cover_letter_pdf(own))
+    transcript.write_bytes(transcript_pdf(own))
     return own
 
 

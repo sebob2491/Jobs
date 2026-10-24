@@ -70,6 +70,16 @@ def personal_strings(prof: Profile) -> list[str]:
     phone = re.sub(r"\D", "", str(prof.get("personal.phone") or ""))
     if len(phone) >= 7:
         values.append(phone)
+    # the people the person gave as references (references:): their phones and their emails, as the person's own are
+    # taken out, and their names (reference_strings: never each word of one everywhere, which a page's own words and
+    # attributes share: "formField-…", "street_address", "May", "Grace")
+    for ref in prof.references():
+        digits = re.sub(r"\D", "", ref.get("phone") or "")
+        values += [digits] if len(digits) >= 7 else []
+        ref_email = (ref.get("email") or "").strip()
+        values += [ref_email] if ref_email else []
+        ref_local = ref_email.split("@")[0] if "@" in ref_email else ""
+        values += [ref_local] if _identifying(ref_local) else []
     from .autofill import remembered_ids  # (autofill reads profiles; it never reads this module)
 
     ids = prof.get("history.employee_ids")  # an employer's ID for the person
@@ -80,8 +90,105 @@ def personal_strings(prof: Profile) -> list[str]:
     spelled = {w for v in values for w in _spellings(v)}
     # names of two letters ("Al Wu") are kept too: they're matched as whole words only
     names = {str(prof.get(k)) for k in NAME_KEYS if prof.get(k)}
+    kept: set[str] = {v for v in spelled if len(v) >= 3 or v in names and len(v) >= 2}
     # longest first so "Sam Rivera" is replaced before "Sam"
-    return sorted({v for v in spelled if len(v) >= 3 or v in names and len(v) >= 2}, key=len, reverse=True)
+    return sorted(kept | set(reference_strings(prof)), key=len, reverse=True)
+
+
+class _Narrow(str):
+    """A secret taken out in one way only (its subclasses'), and never the same as the plain secret of the same
+    letters, nor as one taken out another way: a set of secrets keeps each (a surname both only as written and as a
+    whole value)."""
+
+    def __eq__(self, other: object) -> bool:
+        return type(other) is type(self) and str.__eq__(self, other)
+
+    def __ne__(self, other: object) -> bool:
+        return not self.__eq__(other)
+
+    def __hash__(self) -> int:
+        return hash((type(self).__name__, str(self)))
+
+
+class OnlyAsWritten(_Narrow):
+    """A secret taken out only as written (its case too), as a word of its own, and only from a page's words and its
+    words for a person (_HUMAN_ATTRS, a box's value): never from an id, a class, a name or a data-* attribute, nor
+    inside another word. A reference's surname alone ("Quillby")."""
+
+
+class WholeValue(_Narrow):
+    """A secret taken out only where it is the whole of a text or an attribute's value, any case: a reference's first or
+    last name as a split First/Last box shows it ("Jo"), never as a word in a sentence."""
+
+
+# Titles and suffixes beside a name, never a name's own word ("Dr. Grace Field", "Pat Lee Jr.")
+_TITLES = {"dr", "mr", "mrs", "ms", "miss", "mx", "prof", "professor", "rev", "sir", "dame", "phd", "md", "dds", "dvm",
+           "jd", "rn", "esq", "jr", "sr", "ii", "iii", "iv"}
+# Everyday words that are surnames too: a page uses them as words ("Contact us in May", "Field Service Engineer",
+# "Street Address", "Will you relocate?"), so a reference's surname that is one is never taken out alone (their whole
+# name still is)
+_EVERYDAY_SURNAMES = {
+    "may", "will", "grace", "field", "fields", "street", "young", "white", "black", "brown", "green", "gray", "grey",
+    "rose", "hill", "hills", "wood", "woods", "park", "parks", "king", "page", "case", "long", "hope", "lane", "ford",
+    "price", "rich", "best", "hunt", "cook", "mark", "marks", "bell", "stone", "star", "little", "hall", "wells",
+    "west", "north", "south", "east", "love", "joy", "faith", "frank", "bill", "april", "june", "august", "march",
+    "summer", "winter", "spring", "day", "knight", "law", "rice", "lee", "banks", "bank", "church", "miller", "smith",
+    "baker", "carter", "turner", "cooper", "fisher", "hunter", "mason", "porter", "walker", "ward", "watts", "webb",
+    "wise", "strong", "sharp", "short", "small", "snow", "storm", "swift", "glass", "gold", "silver", "lake", "pool",
+    "marsh", "moore", "moor", "bush", "berry", "cross", "duke", "earl", "fox", "friend", "gay", "good", "hart",
+    "head", "holmes", "house", "jordan", "key", "keys", "land", "light", "lord", "major", "mayor", "noble", "new",
+    "power", "powers", "pride", "read", "reed", "right", "root", "sage", "salt", "service", "shepherd",
+    "summers", "temple", "town", "travis", "vale", "wall", "waters", "well", "wolf", "worth", "wright",
+    "york", "state", "states", "contact", "email", "phone", "date", "name", "address", "city", "country", "post",
+    "office", "work", "job", "jobs", "apply", "next", "back", "review", "submit", "reference", "references",
+}
+
+
+def reference_strings(prof: Profile) -> list[str]:
+    """How the people the person gave as references (references:) are taken out of a page or a report, by name:
+    each one's whole name as written, and without its titles ("Dr. Grace Field", "Grace Field": any case, as the
+    person's own name is); their surname alone only as written (OnlyAsWritten: "Field" is a page's word too, so not
+    an everyday word's, and never a page's attributes); and each word of the name only where it's a box's whole value
+    (WholeValue: a split First/Last box's "Jo"; never one that's a list's choice too, a month, a weekday, a state or a
+    country: "May", "Jordan", "Georgia"). The surname alone also in capitals ("QUILLBY, MORGAN"). Their phones and
+    emails are personal_strings' own."""
+    from .autofill import US_STATES  # (autofill reads profiles; it never reads this module)
+
+    choices = _CHOICE_WORDS | {w.casefold() for name in US_STATES.values() for w in name.split()}
+    out: list[str] = []
+    for ref in prof.references():
+        name = " ".join(str(ref.get("name") or "").split())
+        words = [w for w in re.findall(r"[^\W\d_][\w'’-]*", name) if w.casefold().strip(".") not in _TITLES]
+        out += [WholeValue(w) for w in words if len(w) >= 2 and w.casefold() not in choices]
+        if len(words) >= 2:
+            # (and as a list or a review page writes it, surname first: "Washington, Denise", "WASHINGTON DENISE")
+            wholes = {name, " ".join(words), " ".join([words[-1], *words[:-1]])}
+            out += [w for whole in wholes for w in _spellings(whole) if len(w) >= 3]
+        # (the surname alone, or a name of one word: as written, and in capitals; never an everyday word, nor a list's
+        # choice: a reference named Georgia leaves a State list's "Georgia" as it is)
+        last = words[-1] if words else ""
+        if len(last) >= 3 and last.casefold() not in _EVERYDAY_SURNAMES and last.casefold() not in choices:
+            out += [OnlyAsWritten(last[:1].upper() + last[1:]), OnlyAsWritten(last.upper())]
+    return list(dict.fromkeys(out))
+
+
+# A list's choices that are names too: never taken out as a box's whole value (a reference named May Jordan leaves a
+# Month list's "May" and a Country list's "Jordan" as they are)
+_CHOICE_WORDS = {
+    "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november",
+    "december", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "afghanistan", "albania", "algeria", "argentina", "armenia", "australia", "austria", "bahamas", "bangladesh",
+    "belgium", "belize", "bolivia", "brazil", "bulgaria", "cambodia", "canada", "chad", "chile", "china", "colombia",
+    "cuba", "cyprus", "denmark", "ecuador", "egypt", "england", "eritrea", "ethiopia", "fiji", "finland", "france",
+    "gabon", "gambia", "georgia", "germany", "ghana", "greece", "grenada", "guatemala", "guinea", "guyana", "haiti",
+    "holland", "honduras", "hungary", "iceland", "india", "indonesia", "iran", "iraq", "ireland", "israel", "italy",
+    "jamaica", "japan", "jordan", "kenya", "korea", "kuwait", "laos", "latvia", "lebanon", "liberia", "libya", "malawi",
+    "malaysia", "mali", "malta", "mexico", "monaco", "mongolia", "morocco", "nepal", "netherlands", "nicaragua",
+    "niger", "nigeria", "norway", "oman", "pakistan", "panama", "paraguay", "peru", "philippines", "poland",
+    "portugal", "qatar", "romania", "russia", "rwanda", "samoa", "scotland", "senegal", "serbia", "singapore", "spain",
+    "sudan", "sweden", "switzerland", "syria", "taiwan", "tanzania", "thailand", "togo", "tonga", "tunisia", "turkey",
+    "uganda", "ukraine", "uruguay", "venezuela", "vietnam", "wales", "yemen", "zambia", "zimbabwe", "america",
+}
 
 
 _LETTER = r"[^\W\d_]"
@@ -150,6 +257,13 @@ def redact(text: str, secrets: list[str]) -> str:
     "REDACTED_Resume.pdf" for a surname "Doe", and "samrivera87" "REDACTED87" for "Rivera", while
     "custom_field" keeps a name "Tom" and "Problem" keeps "Rob"."""
     for s in secrets:
+        if isinstance(s, WholeValue):  # (only the whole of the text: a box's value, a pill's words)
+            if text.strip() and text.strip().casefold() == s.casefold():
+                text = text.replace(text.strip(), REDACTED)
+            continue
+        if isinstance(s, OnlyAsWritten):  # (as written, a word of its own)
+            text = re.sub(rf"(?<!\w){re.escape(s)}(?!\w)", REDACTED, text)
+            continue
         # a two-letter name only as written ("Al", "Do"): not "all", nor "do" in a question
         text = re.sub(_pattern(s), REDACTED, text, flags=0 if len(s) < 3 else re.I)
         inside = _pattern(s, inside=True)
@@ -228,7 +342,11 @@ _URL_ATTRS = {"src", "href", "action", "formaction", "poster", "data", "cite", "
 
 def _scrub_value(attr: str, value: str, secrets: list[str]) -> str:
     """An attribute's value without the profile's strings or anyone else's details: in one that ties the page's parts
-    together, only an email or a token, so the ties hold."""
+    together, only an email or a token, so the ties hold. A secret only as written, or only as a whole value
+    (OnlyAsWritten, WholeValue: a reference's names), only from words for a person (_HUMAN_ATTRS) and a box's value:
+    never an id, a class, a name or a data-* attribute's ("formField-…", "street_address")."""
+    if attr not in _HUMAN_ATTRS and attr != "value":
+        secrets = [s for s in secrets if not isinstance(s, _Narrow)]
     value = redact(value, secrets)
     if attr in _TIES:
         return _EMAIL.sub("someone@example.com", _JWT.sub(REDACTED, value))
@@ -590,6 +708,7 @@ DECISION_SUFFIX = ".decision.json"
 # The keys compared (the "run" entry is what the live run itself said there, kept to read, not decided again)
 DECISION_KEYS = ("page", "next", "captcha", "security_asked", "account_and_application", "job_search", "fields")
 REPLAY_RESUME = "jobdesk-test-resume.pdf"  # (live_identity.RESUME_NAME: the run's own test resume's name)
+REPLAY_TRANSCRIPT = "jobdesk-test-transcript.pdf"  # (live_identity.TRANSCRIPT_NAME: its test transcript's)
 # The applicant the decisions are made for: the live check's technician (scripts/live_profile.py's FAKE_PROFILE, which
 # tests/test_live_fixtures.py keeps this the same as) with a fixed address and a test resume of its own
 REPLAY_PROFILE: dict[str, Any] = {
@@ -618,19 +737,23 @@ REPLAY_PROFILE: dict[str, Any] = {
                   "degrees_earned": [{"level": "high_school"},
                                      {"level": "bachelor", "field": "Electrical Engineering"}]},
     "history": {"us_government_employee": False, "us_military": False},
+    "references": [{"name": "Refy McReferenceface", "relationship": "Former supervisor (a made-up test reference)",
+                    "company": "Example Fab", "phone": "480-555-0100",
+                    "email": "refy.mcreferenceface@example.com"}],
     "settings": {"submit_mode": "dry_run", "browser_channel": "chromium", "headless": True, "accept_cookies": True},
 }
 
 
 def replay_profile(folder: Path) -> Profile:
-    """REPLAY_PROFILE, with its test resume written into `folder` (the rules answer a file box only with a file
-    that's there)."""
-    resume = folder / REPLAY_RESUME
-    if not resume.exists():
-        folder.mkdir(parents=True, exist_ok=True)
-        resume.write_bytes(b"%PDF-1.4\n% a test resume for replaying the desk's decisions\n")
+    """REPLAY_PROFILE, with its test resume and its test transcript written into `folder`, as the live check makes
+    them for its run (live_identity.with_test_resume): the rules answer a file box only with a file that's there."""
+    resume, transcript = folder / REPLAY_RESUME, folder / REPLAY_TRANSCRIPT
+    for path, what in ((resume, b"resume"), (transcript, b"transcript")):
+        if not path.exists():
+            folder.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"%PDF-1.4\n% a test " + what + b" for replaying the desk's decisions\n")
     data = copy.deepcopy(REPLAY_PROFILE)
-    data["documents"] = {"resume": str(resume)}
+    data["documents"] = {"resume": str(resume), "transcripts": str(transcript)}
     return Profile(data)
 
 

@@ -1739,12 +1739,22 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
             # (but an emailed code drawn in a password box, SuccessFactors' "*Passcode:", is no password)
             raise PermissionError("Passwords are only filled with fill_secret")
         if kind == "file":
-            path = config.expand(str(value))
-            if not path or not path.exists():
-                raise FileNotFoundError(f"No file at {value}")
-            if _desk_file(path):
-                raise PermissionError(f"{path.name} is one of the desk's own files (settings, passwords, answers), "
-                                      "not a document to upload")
+            # (one file, or several for a box that takes several: autofill's transcripts and certificates in Workday's
+            # "multiple" box, each checked as one is, and sent together)
+            paths = []
+            for each in value if isinstance(value, (list, tuple)) else [value]:
+                path = config.expand(str(each))
+                if not path or not path.exists():
+                    raise FileNotFoundError(f"No file at {each}")
+                if _desk_file(path):
+                    raise PermissionError(f"{path.name} is one of the desk's own files (settings, passwords, "
+                                          "answers), not a document to upload")
+                paths.append(path)
+            if not paths:
+                raise FileNotFoundError("No file to upload")
+            if len(paths) > 1:
+                return await self._upload_several(page, loc, paths)
+            path = paths[0]
             # Once a page: UKG Pro (Nikon's, live run 13) empties its upload box once it has the file, so it read as
             # never uploaded, and each upload set its resume reading going again, which emptied Address 1 and Zip
             # after they were filled. Remembered on the box, so a reloaded page (its form reset) gets it again

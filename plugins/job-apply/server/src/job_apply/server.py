@@ -32,13 +32,13 @@ from . import places as towns
 from . import workplace as wplace
 from .ats import ATS_NAMES, detect_ats, greenhouse_form_url, host_of, shared_system, workday_parts
 from .autofill import common_questions as bank_questions
-from .autofill import (is_eeo_rule, is_empty_value, is_how_heard, is_name_rule, is_school_rule, norm, place_words,
-                       plan_autofill, profile_entries, resolve_field)
+from .autofill import (documents_asked, is_eeo_rule, is_empty_value, is_how_heard, is_name_rule, is_school_rule, norm,
+                       place_words, plan_autofill, profile_entries, resolve_field)
 from .browser import BrowserSession, BrowserUnavailable, SiteDown, SubmitBlocked
 from .mailbox import MailboxError, site_domain
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .recommend import avoided_title
-from .render import KINDS, render_pdf, to_html
+from .render import KINDS, NAMES, PAGES, references_markdown, render_pdf, to_html
 from .search import (ICIMS_FRAME, companies_path, eightfold_page_url, employer_lists, every_employer,
                      icims_search, icims_state, infor_search, keep_listings, load_companies, location_terms,
                      parse_eightfold, paycom_search, rmk_search, search_companies, set_search_area, sfclassic_search,
@@ -805,7 +805,7 @@ def _forget_old_name(folder: Path, prof: config.Profile, kind: str, name: str) -
     gone once it's written under today's: else it sorted first and was uploaded, or its too-long marker held the job for
     ever (the review of 0.3.189). Only in a job's own folder, and only that one name."""
     old_stem = "_".join(str(p) for p in [prof.get("personal.first_name"), prof.get("personal.last_name")] if p)
-    old = f"{old_stem}_{'Resume' if kind == 'resume' else 'Cover_Letter'}" if old_stem else kind
+    old = f"{old_stem}_{NAMES[kind]}" if old_stem else kind
     if old == name:
         return
     for ext in (".pdf", ".md", ".too-long"):
@@ -815,6 +815,52 @@ def _forget_old_name(folder: Path, prof: config.Profile, kind: str, name: str) -
                 path.unlink()
 
 
+def _document_name(prof: config.Profile, kind: str) -> str:
+    """A document's file name, without its extension: the person's name, then the kind's (render.NAMES:
+    "Sam_Rivera_Cover_Letter"), or the kind alone with no name in the profile."""
+    # (a name as a file's name: words joined by "_", never a character a file system refuses or reads as a folder,
+    # "Ana/Luisa" or "O'Brien: Jr", the review of Oct 15; accented letters kept)
+    stem = "_".join(part for p in [prof.get("personal.first_name"), prof.get("personal.last_name")] if p
+                    for part in [re.sub(r"[^\w-]+", "_", str(p)).strip("_")] if part)
+    return f"{stem}_{NAMES[kind]}" if stem else kind
+
+
+async def references_page(fields: list[dict[str, Any]], prof: config.Profile, job: dict[str, Any] | None) -> bool:
+    """The person's reference list as a one-page PDF in the job's folder (render_document's "references", from the
+    profile's references: entries: render.references_markdown), where a file box on this page asks for one
+    (autofill.documents_asked) and the profile names no file for it (documents.references): what autofill then uploads
+    there. Laid out again only when the entries changed (its Markdown kept beside it, as render_document keeps it).
+    True when it made one now. Never without entries (nothing is ever made up), a job's folder, or such a box; a page
+    that won't lay out (whatever went wrong: the fill goes on without it), or runs past a page (render_document marks
+    it too long, and no upload takes it), leaves the box the person's, as before. One that won't lay out takes the page
+    made before with it (it holds the entries as they were: a reference taken off since would go up), and the next fill
+    tries again; autofill sends a made page only while it holds the entries as they are (references_page_current)."""
+    if not job or not job.get("folder") or not job.get("id") or prof.document_files("references"):
+        return False
+    if not any(f.get("kind") == "file" and not f.get("aside") and is_empty_value(f.get("value"))
+               and "references" in documents_asked(f) for f in fields):
+        return False
+    markdown = references_markdown(prof)
+    if not markdown:
+        return False
+    folder, name = Path(job["folder"]), _document_name(prof, "references")
+    with contextlib.suppress(OSError, UnicodeDecodeError):
+        if (folder / f"{name}.pdf").is_file() and (folder / f"{name}.md").read_text(encoding="utf-8") == markdown:
+            return False
+    try:
+        out = await render_document("references", markdown, job["id"])
+    except Exception as e:  # (a page of references is never the fill's trouble; said by its kind alone, no details)
+        logging.getLogger(__name__).warning("the references page for job %s wasn't laid out (%s)", job["id"],
+                                            type(e).__name__)
+        out = {}
+    if not out.get("path") or out.get("error"):
+        for ext in (".pdf", ".md"):  # (the page made before, of the entries as they were, never goes up now)
+            with contextlib.suppress(OSError):
+                (folder / f"{name}{ext}").unlink(missing_ok=True)
+        return False
+    return not out.get("warning")
+
+
 @tool()
 async def render_document(kind: str, markdown: str, job_id: int | None = None, default: bool = False) -> dict[str, Any]:
     """Turn a tailored resume or cover letter written in Markdown into a PDF in the job's
@@ -822,10 +868,14 @@ async def render_document(kind: str, markdown: str, job_id: int | None = None, d
     With default=true (no job), it writes the user's default document into ~/.job-apply
     instead, for setup; then point documents.resume / documents.cover_letter at it.
 
-    kind: "resume" or "cover_letter".
+    kind: "resume", "cover_letter" or "references".
     Resume layout: `# Full Name`, a contact line, `## Section` headings,
     `### Job Title — Company, City *Mar 2021 – Present*` (the *italic* dates sit on the
     right) and bullet lists. Cover letter: `# Full Name`, a contact line, then paragraphs.
+    References: the desk makes this one page itself from the profile's `references:` entries
+    where a form asks for a reference list and documents.references names no file, and sends it
+    only while it holds those entries as they are; don't write one by hand (to change it,
+    change `references:` in the profile).
     Only reorder, trim and rephrase what the user's real resume says. For a job whose first
     cover letter waits on the desk's card (its draft is cover_letter_draft.md in the job's
     folder), a cover letter goes into that draft instead (`draft` in the answer), if it fits on
@@ -837,11 +887,7 @@ async def render_document(kind: str, markdown: str, job_id: int | None = None, d
     job = None if default else _job(job_id)  # (the current job, when none is named)
     job_id = job["id"] if job else None
     prof = config.Profile.load()
-    # (a name as a file's name: words joined by "_", never a character a file system refuses or reads as a folder,
-    # "Ana/Luisa" or "O'Brien: Jr", the review of Oct 15; accented letters kept)
-    stem = "_".join(part for p in [prof.get("personal.first_name"), prof.get("personal.last_name")] if p
-                    for part in [re.sub(r"[^\w-]+", "_", str(p)).strip("_")] if part)
-    name = f"{stem}_{'Resume' if kind == 'resume' else 'Cover_Letter'}" if stem else kind
+    name = _document_name(prof, kind)
     if kind == "cover_letter" and job is not None and desk.first_letter_waits(job):
         # (never a letter to upload before the person's say: a PDF here was uploaded, and sent by Submit for me, after
         # their Turn cover letters off, or a restart, the review of the cover letters). Laid out once first: one longer
@@ -872,7 +918,7 @@ async def render_document(kind: str, markdown: str, job_id: int | None = None, d
         pages = await render_pdf(to_html(markdown, kind, title=name.replace("_", " ")), folder / f"{name}.pdf")
     except BrowserUnavailable as e:
         return {"error": str(e), "source": str(source)}
-    limit = 2 if kind == "resume" else 1
+    limit = PAGES[kind]
     out: dict[str, Any] = {"path": str(folder / f"{name}.pdf"), "pages": pages, "source": str(source)}
     too_long = folder / f"{name}.too-long"  # a job the desk holds for this resume waits for the next render
     if pages > limit:
@@ -1068,7 +1114,9 @@ async def autofill(job_id: int | None = None, overwrite: bool = False, redo: lis
                    refresh: bool = False, keep: list[str] | None = None) -> dict[str, Any]:
     """Fill every field on the current page that the profile answers with confidence
     (contact details, address, work authorization, sponsorship, EEO choices, resume upload,
-    saved answers). Returns what was filled and the fields still needing a decision —
+    saved answers; the profile's transcripts, reference list and certificates where a file
+    box asks for them, a reference list made from its `references:` entries where it names no
+    file: `made`). Returns what was filled and the fields still needing a decision —
     draft those from the profile/resume and confirm anything subjective with the user.
     `refresh`: on an application saved earlier (a draft), also put the profile's answer into
     boxes that show a different one (never a box the profile doesn't answer, nor one holding
@@ -1076,6 +1124,8 @@ async def autofill(job_id: int | None = None, overwrite: bool = False, redo: lis
     job = _job_here(job_id) if (job_id is not None or browser.current_job_id is not None) else {}
     data = await browser.inspect(include_dropdown_options=True)
     prof = config.Profile.load()
+    # (a box asking for a reference list, with no file for one in the profile: the page made from its references:)
+    made = await references_page(data["fields"], prof, job)
     seen = _PRESETS_SEEN.setdefault(job.get("id") or data.get("url"), set())
     plan = plan_autofill(data["fields"], prof, job, overwrite=overwrite, redo=set(redo or []), presets_done=seen,
                          refresh=refresh, keep=set(keep or []))
@@ -1156,6 +1206,7 @@ async def autofill(job_id: int | None = None, overwrite: bool = False, redo: lis
         # (the boxes the plan leaves empty on purpose: a current job's end date)
         **({"skipped": plan["skipped"]} if plan.get("skipped") else {}),
         **({"countries_corrected": corrected} if corrected else {}),  # (the page may now draw that country's boxes)
+        **({"made": ["references"]} if made else {}),  # (a references page laid out from the profile, just now)
         "already_filled": len(plan["already_filled"]),
         "errors": after["errors"],
         "actions": [a for a in after["actions"] if not a.get("disabled")][:25],

@@ -121,6 +121,8 @@ class AccountsMixin:
 
         async def _fill_once(self, run: Run, data: dict[str, Any]) -> dict[str, dict[str, Any]]: ...
 
+        async def _profile_fill(self, run: Run, **how: Any) -> dict[str, Any]: ...
+
         def _note_skipped(self, run: Run, result: dict[str, Any]) -> None: ...
 
         def _entry_gaps(self, run: Run, data: dict[str, Any],
@@ -1245,7 +1247,7 @@ class AccountsMixin:
         srv = self.srv
         run.seen_form = True
         once_failed = await self._fill_once(run, data)
-        result = await srv.autofill(job_id=run.job_id)
+        result = await self._profile_fill(run)
         if result["filled"]:
             self._log(run, f"filled {len(result['filled'])} field(s) on {pipeline._where(data)}")
         run.did("", result.get("filled"), data)

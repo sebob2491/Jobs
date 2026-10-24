@@ -46,6 +46,12 @@ FAKE_PROFILE: dict[str, Any] = {
     # (U.S. service, as setup asks it: never in the federal government or the military, for each role alike, so
     # "Have you ever worked for the U.S. Government ... or served in the U.S. Military?" is No: NNSS's, run 148)
     "history": {"us_government_employee": False, "us_military": False},
+    # (a made-up reference, plainly no one: NSHE's Workday requires a reference list, and the check stopped there. The
+    # desk lays it out on a page as it would a person's. Named so no word of it is a page's own, as the
+    # scrubber takes each word of a reference's name out of the run's saved pages: not a country, nor "Example")
+    "references": [{"name": "Refy McReferenceface", "relationship": "Former supervisor (a made-up test reference)",
+                    "company": "Example Fab", "phone": "480-555-0100",
+                    "email": "refy.mcreferenceface@example.com"}],
     # (accept_cookies, as a person may set it: a banner with no way to decline, Texas Instruments' Oracle one, is
     # accepted, so the check sees past it; one that can be declined still is: the owner asked, Oct 13)
     "settings": {"submit_mode": "dry_run", "browser_channel": "chromium", "headless": True, "accept_cookies": True},

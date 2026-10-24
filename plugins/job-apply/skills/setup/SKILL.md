@@ -72,6 +72,20 @@ soon, with the least answered that it needs:
    and `education_history` from it. Use only what the resume says; if a date or
    location is missing, ask rather than guess.
 
+   **Other documents (optional).** Next to the resume, ask in one AskUserQuestion whether they
+   have any of these as files, saying that schools, cities, counties and other public employers
+   often ask for them and the desk uploads them where a form does: unofficial transcripts,
+   a list of references, and certificates, licenses or diplomas. For each they have, ask where
+   the file is and set `documents.transcripts`, `documents.references` or
+   `documents.certificates` (one path, or a list of paths, most recent first). A box asking for
+   a diploma, a license or a particular certificate takes only a file whose name says so: where a
+   certificate's file name doesn't say what it is (`scan2.pdf`), suggest renaming it
+   (`nursing-license.pdf`). Without a
+   reference list file, offer once (their call; skipping is fine) to note their references in
+   `references:` (each `name`, and as they like `relationship`, `company`, `phone`, `email`):
+   the desk then makes a one-page reference list from them where a form asks for one. Write
+   only the people and details they give; never add or guess one.
+
    **Confirm every degree before writing it.** A resume, an Indeed one especially,
    can list a degree that was never finished. Ask "Did you complete the <degree>?"
    for each one. If it wasn't completed, record that school in `education_history`

@@ -436,7 +436,20 @@ Everything personal stays on your machine in `~/.job-apply/`. Set
 | `desk-queue.json` | The Job Desk's queue, kept for a restart: each job's number and where it was, never your answers |
 | `runs.jsonl` | The Job Desk's history: a line each time it's done with a job for now (when, how long, how it ended and why), with your answers, codes and passwords kept out as far as the desk can tell. The newest 4000 lines or so are kept. |
 | `browser/` | The desk's browser's profile, which keeps your sign-ins |
-| `applications/<id>-<company>-<title>/` | Tailored resume and cover letter, screenshots, submission record, `debug/` snapshots |
+| `applications/<id>-<company>-<title>/` | Tailored resume and cover letter, a reference list made for the job, screenshots, submission record, `debug/` snapshots |
+
+Documents in `profile.yaml`: `documents.resume` (and, optionally, `documents.cover_letter`) go up where a form
+asks for a resume or a cover letter. Three more are optional, each one file or a list of files, for the forms that
+ask for them (schools, cities, counties and other public employers often do): `documents.transcripts` (unofficial
+transcripts), `documents.references` (a reference list) and `documents.certificates` (certificates, licenses or
+diplomas). Only a box asking for one of them gets it: never a box for something else (a letter of reference, a form
+to sign, a proof of citizenship, eligibility or identity, a driver's license). Name each certificate's file for what
+it is (`nursing-license.pdf`, `diploma.pdf`): a box asking for a diploma, a license or a particular certificate gets
+only a file whose name says so. A box that takes several files gets every one you have of what it names. With no
+reference list file, the Job Desk lays out the people under `references:` (each one's name, and as you like their
+relationship, company, phone and email: only what you write) on one page in the job's folder, and uploads that,
+only while it holds them as they are. A required box for one you haven't added waits for you, its card naming the
+line to add. Your references' names, phones and emails are kept out of problem reports like your own details.
 
 Settings in `profile.yaml`:
 
@@ -492,7 +505,7 @@ plugins/job-apply/
 | `screenshot`, `page_text` | See the page |
 | `debug_snapshot` | Save the page (HTML of every frame, a screenshot, the extracted fields). This also happens automatically when a field fails; a job's folder keeps the newest 20. |
 | `forget_saved_pages` | Delete the saved pages, screenshots and problem reports' pages (a job's, or every job's): they show the page as it was, your details on it among them. The pictures taken before and after a Submit stay, as the record of what was sent. |
-| `render_document` | Markdown resume or cover letter → PDF in the job folder |
+| `render_document` | Markdown resume, cover letter or reference list → PDF in the job folder |
 | `tailoring_queue` | The Job Desk's jobs waiting for a tailored resume, with each posting, the resume and the rules |
 | `report_problem` | A problem report for a job, scrubbed, to file as an issue (`anonymous=True` leaves out which job it was) |
 | `submit_application` | Final submit, enforcing the rules above, and record the result |
