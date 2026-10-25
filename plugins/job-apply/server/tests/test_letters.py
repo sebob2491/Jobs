@@ -1284,6 +1284,56 @@ def test_common_letter_wordings_of_the_company_the_role_and_the_work_are_no_clai
             check(_body(said))
 
 
+def test_a_credential_the_role_offers_or_the_applicant_would_earn_is_no_claim(job_apply_home):
+    """A real letter from the desk's own writer (a Field Service Engineer posting, Oct 25) was refused: "I am eager to
+    keep learning Lam's products through the training and certification the role offers" read as a certification
+    claimed. One the role offers, or one the applicant hopes to earn or is now working toward, claims nothing; one
+    earned (in any tense: "proud to earn my A+"), brought, held as the role offers it, or claimed beside it ("studying
+    for my CCNA and hold an A+") is still held to the resume, here one with no certification at all (the review of
+    0.3.241). And a resume line pursuing a certification never backs a letter holding it."""
+    prof = _some_college(job_apply_home)
+    no_certificate = HELPER_RESUME.replace("- OSHA 10\n", "")
+
+    def check(body: str, resume: str = no_certificate) -> None:
+        letters.check_claims(letters.clean_body(body), prof, resume, JOB, ASKS_OF_A_COMPANY)
+
+    for said in ("I am eager to keep learning Example Litho's products through the training and certification the "
+                 "role offers.",
+                 "I would welcome the certification training this position provides.",
+                 "I would welcome the certification program the role offers.",
+                 "I am eager to earn the IPC J-STD-001 certification.",
+                 "I hope to pursue a CompTIA A+ certification.",
+                 "I would welcome the opportunity to earn a CompTIA A+ certification.",
+                 "I look forward to earning the IPC J-STD-001 certification.",
+                 "I am working toward my CompTIA A+ certification.",
+                 "I am currently pursuing a CompTIA A+ certification."):
+        check(_body(said))
+    for said in ("I earned my CompTIA A+ certification at night school.",
+                 "After earning my CompTIA A+ certification, I moved to etch.",
+                 "I am eager to bring my CompTIA A+ certification to the team.",
+                 "I hold the CompTIA A+ certification the role requires.",
+                 "I was proud to earn my CompTIA A+ certification.",
+                 "I returned to school to complete my A+ certification in 2020.",
+                 "I worked hard to obtain my journeyman electrician license.",
+                 "I went back to school to earn my CDL.",
+                 "It took me a year to earn my forklift certification.",
+                 "After pursuing and earning my CCNA, I moved to tool networking.",
+                 "I'm studying for my CCNA and hold an A+.",
+                 "I'm pursuing my CCNA and am a licensed electrician.",
+                 "I am pursuing this opportunity as a licensed electrician.",
+                 "I am eager to pursue this role as a certified technician.",
+                 "I hope to gain more experience as a licensed electrician.",
+                 "My CDL matters because the job includes driving.",
+                 "I hold the forklift license the job includes.",
+                 "I already hold the forklift certification this role includes.",
+                 "I hold the A+ certification my employer provides to every technician."):
+        with pytest.raises(letters.Refused, match=r"(?:certification|license)"):
+            check(_body(said))
+    pursuing = no_certificate.replace("## Other\n", "## Other\n- Pursuing CompTIA A+ certification\n")
+    with pytest.raises(letters.Refused, match=r"certification \(CompTIA A\+"):
+        check(_body("I hold a CompTIA A+ certification."), pursuing)
+
+
 def test_a_span_of_years_is_the_applicants_unless_its_clause_is_someone_elses(job_apply_home):
     """The review's fifth round: round four took a span as the applicant's only beside I or my, so "Ten years of
     hands-on work taught me how a fab runs" passed for a person of 3 years (and its number, in words, was never read).
