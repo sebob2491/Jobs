@@ -383,9 +383,11 @@ _NO_DEGREE = re.compile(r"\bno degree\b|\bsome college\b|\bcoursework\b|\bcourse
 # a value or a resume's line that says it isn't held now: eligible for one, one pending, interim, inactive, expired or
 # held before, one still to come (the review's third round: "Eligible for a Secret clearance" is no clearance)
 _NOT_HELD = re.compile(r"\b(?:eligib\w*|inactive|expired?|lapsed|pending|interim|previous(?:ly)?|former(?:ly)?|"
-                       r"in progress|in process|expected|pursuing|working towards?|studying for|preparing for|"
-                       r"able to obtain|"
+                       r"in progress|in process|expected|working towards?|studying for|preparing for|able to obtain|"
                        r"can obtain|obtainable|willing to|not (?:held|active|current))\b", re.I)
+# ... and on a resume's or profile's line, one being pursued ("Pursuing CompTIA A+ certification"): never on a letter's
+# own sentence, where "pursuing this role" says nothing of a credential (the review of 0.3.241)
+_NOT_HELD_LINE = re.compile(_NOT_HELD.pattern + r"|\bpursuing\b", re.I)
 DEGREES = {
     "a bachelor's degree": r"\bbachelor'?s?\b|\bb\.?\s?[sa]\b\.?|\bbs(?:ee|me|ce|cs|c|e)\b|\bb\.?\s?eng\b|"
                            r"\bb\.?\s?tech\b|\bb\.?\s?a\.?\s?sc\b|\bb\.?\s?sc\b",
@@ -473,13 +475,15 @@ _ASKED = re.compile(r"\b(?:requires?|required|requiring|requirements?|asks?\s+fo
 # a credential the applicant hopes to earn or is now working toward ("eager to earn the IPC certification", "I look
 # forward to earning it", "I'm pursuing my CCNA": its verb after a word of hope or plan, or in the present), never one
 # earned in any tense ("proud to earn my A+", "went back to school to earn my CDL") nor one claimed beside it ("studying
-# for my CCNA and hold an A+", "pursuing this role as a licensed electrician"): the review of 0.3.241. A real letter of
+# for my CCNA and hold an A+", "pursuing this role as a licensed electrician"), nor a hope gone by ("I was eager to earn
+# my A+ and did"): the reviews of 0.3.241. A real letter of
 # the desk's own writer was refused for one the role offers, Oct 25
 _GAINED = re.compile(
-    r"(?:\b(?:hope|hoping|plan|planning|intend|intending|aim|aiming|want|wanting|eager|keen|"
+    r"(?:(?<!\bwas\s)(?<!\bwere\s)\b(?:hope|hoping|plan|planning|intend|intending|aim|aiming|want|wanting|eager|keen|"
     r"would\s+(?:like|love|welcome|value)|'d\s+(?:like|love|welcome)|look(?:ing)?\s+forward)\s+"
     r"(?:\w+\s+){0,2}?to\s+(?:earn|pursue|obtain|gain|attain|complete|work\s+towards?|study\s+for|prepare\s+for)|"
-    r"\blook(?:ing)?\s+forward\s+to\s+(?:earning|pursuing|obtaining|gaining|attaining|completing)|"
+    r"(?<!\bwas\s)(?<!\bwere\s)\blook(?:ing)?\s+forward\s+to\s+(?:earning|pursuing|obtaining|gaining|attaining|"
+    r"completing)|"
     r"\b(?:i'm|am|currently|now|actively)\s+(?:also\s+|currently\s+|now\s+|actively\s+)?"
     r"(?:pursuing|working\s+towards?|studying\s+for|preparing\s+for))"
     r"\s+(?:(?:my|an?|the|any|this|that|your)\s+)?"
@@ -629,11 +633,11 @@ def _affirms(prof: config.Profile, resume: str) -> dict[str, Any]:
             attended.append(school)
         values.append(named)
     cleared = _affirmed(prof.get("work_authorization.security_clearance"))
-    cleared = "" if _NOT_HELD.search(cleared) else cleared
+    cleared = "" if _NOT_HELD_LINE.search(cleared) else cleared
     driving = "driver's license" if prof.get("personal.drivers_license") is True else ""
     lines = [f"{heading}: {line}" if heading else line for heading, line in sections]
     lines += [line for value in [*values, *degrees, cleared, driving] for line in value.splitlines()]
-    held = [line for line in lines if line.strip() and not _NOT_HELD.search(line)]
+    held = [line for line in lines if line.strip() and not _NOT_HELD_LINE.search(line)]
     about = [line for line in held if _CLEAR_HELD.search(line) or _CLEAR_SAID.search(line) or re.search(
         r"\bclearance|\bcleared\b", line, re.I) and any(re.search(level, line, re.I) for level in _LEVELS.values())]
     return {"all": spelled("\n".join([resume, *values, *degrees, cleared, driving])), "lines": held,

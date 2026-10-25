@@ -1326,8 +1326,15 @@ def test_a_credential_the_role_offers_or_the_applicant_would_earn_is_no_claim(jo
                  "My CDL matters because the job includes driving.",
                  "I hold the forklift license the job includes.",
                  "I already hold the forklift certification this role includes.",
-                 "I hold the A+ certification my employer provides to every technician."):
+                 "I hold the A+ certification my employer provides to every technician.",
+                 "I was eager to earn my CompTIA A+ certification and did so in 2021.",
+                 "I was looking forward to completing my CompTIA A+ certification, which I did in 2021."):
         with pytest.raises(letters.Refused, match=r"(?:certification|license)"):
+            check(_body(said))
+    # (a letter's own "pursuing", of the role, never makes its clearance one that isn't held: only a resume line's does)
+    for said in ("I am pursuing this role with a Top Secret clearance.",
+                 "With my Secret clearance, I am pursuing this position."):
+        with pytest.raises(letters.Refused, match="security clearance"):
             check(_body(said))
     pursuing = no_certificate.replace("## Other\n", "## Other\n- Pursuing CompTIA A+ certification\n")
     with pytest.raises(letters.Refused, match=r"certification \(CompTIA A\+"):
