@@ -385,6 +385,9 @@ _NO_DEGREE = re.compile(r"\bno degree\b|\bsome college\b|\bcoursework\b|\bcourse
 _NOT_HELD = re.compile(r"\b(?:eligib\w*|inactive|expired?|lapsed|pending|interim|previous(?:ly)?|former(?:ly)?|"
                        r"in progress|in process|expected|working towards?|studying for|preparing for|able to obtain|"
                        r"can obtain|obtainable|willing to|not (?:held|active|current))\b", re.I)
+# ... and on a resume's or profile's line, one being pursued ("Pursuing CompTIA A+ certification"): never on a letter's
+# own sentence, where "pursuing this role" says nothing of a credential (the review of 0.3.241)
+_NOT_HELD_LINE = re.compile(_NOT_HELD.pattern + r"|\bpursuing\b", re.I)
 DEGREES = {
     "a bachelor's degree": r"\bbachelor'?s?\b|\bb\.?\s?[sa]\b\.?|\bbs(?:ee|me|ce|cs|c|e)\b|\bb\.?\s?eng\b|"
                            r"\bb\.?\s?tech\b|\bb\.?\s?a\.?\s?sc\b|\bb\.?\s?sc\b",
@@ -469,6 +472,29 @@ _THINGS = {"lab", "labs", "laboratory", "laboratories", "facility", "facilities"
 # years"): no claim of the applicant's
 _ASKED = re.compile(r"\b(?:requires?|required|requiring|requirements?|asks?\s+for|asking\s+for|calls?\s+for|seeks?|"
                     r"seeking|looking\s+for|prefers?|preferred|must\s+have|minimum\s+of)\b", re.I)
+# a credential the applicant hopes to earn or is now working toward ("eager to earn the IPC certification", "I look
+# forward to earning it", "I'm pursuing my CCNA": its verb after a word of hope or plan, or in the present), never one
+# earned in any tense ("proud to earn my A+", "went back to school to earn my CDL") nor one claimed beside it ("studying
+# for my CCNA and hold an A+", "pursuing this role as a licensed electrician"), nor a hope gone by ("I was eager to earn
+# my A+ and did"): the reviews of 0.3.241. A real letter of
+# the desk's own writer was refused for one the role offers, Oct 25
+_GAINED = re.compile(
+    r"(?:(?<!\bwas\s)(?<!\bwere\s)\b(?:hope|hoping|plan|planning|intend|intending|aim|aiming|want|wanting|eager|keen|"
+    r"would\s+(?:like|love|welcome|value)|'d\s+(?:like|love|welcome)|look(?:ing)?\s+forward)\s+"
+    r"(?:\w+\s+){0,2}?to\s+(?:earn|pursue|obtain|gain|attain|complete|work\s+towards?|study\s+for|prepare\s+for)|"
+    r"(?<!\bwas\s)(?<!\bwere\s)\blook(?:ing)?\s+forward\s+to\s+(?:earning|pursuing|obtaining|gaining|attaining|"
+    r"completing)|"
+    r"\b(?:i'm|am|currently|now|actively)\s+(?:also\s+|currently\s+|now\s+|actively\s+)?"
+    r"(?:pursuing|working\s+towards?|studying\s+for|preparing\s+for))"
+    r"\s+(?:(?:my|an?|the|any|this|that|your)\s+)?"
+    r"(?:(?!(?:and|or|but|plus|as|with|while|hold|have|am|is)\b)[\w'+/.-]+\s+){0,3}$", re.I)
+# ... or one the role offers ("the training and certification the role offers"), unless the clause holds it ("I hold
+# the forklift license the job includes", "my CDL matters because the job includes driving")
+_OFFERED = re.compile(r"^\s+(?:(?:training|programs?|opportunit(?:y|ies)|courses?|classes|paths?)\s+)?"
+                      r"(?:that\s+|which\s+)?(?:the|this|your|our)\s+(?:role|position|job|team|program|programme|"
+                      r"employer|company)\s+(?:offers?|provides?|includes?)\b", re.I)
+_HOLDS = re.compile(r"\b(?:my|hold|holds|holding|held|have|has|had|bring|possess\w*|earned|obtained|completed|"
+                    r"already)\b", re.I)
 # a clause's subject of the applicant's own (I, my, me), and one of someone else's
 _FIRST_PERSON = re.compile(r"(?-i:\bI\b)|\b(?:i'm|i've|i'd|my|me|myself|mine)\b", re.I)
 _OTHER_SUBJECT = re.compile(r"\b(?:its|their|your|his|her|the\s+(?:company|team|firm|group|role|position|job|posting|"
@@ -607,11 +633,11 @@ def _affirms(prof: config.Profile, resume: str) -> dict[str, Any]:
             attended.append(school)
         values.append(named)
     cleared = _affirmed(prof.get("work_authorization.security_clearance"))
-    cleared = "" if _NOT_HELD.search(cleared) else cleared
+    cleared = "" if _NOT_HELD_LINE.search(cleared) else cleared
     driving = "driver's license" if prof.get("personal.drivers_license") is True else ""
     lines = [f"{heading}: {line}" if heading else line for heading, line in sections]
     lines += [line for value in [*values, *degrees, cleared, driving] for line in value.splitlines()]
-    held = [line for line in lines if line.strip() and not _NOT_HELD.search(line)]
+    held = [line for line in lines if line.strip() and not _NOT_HELD_LINE.search(line)]
     about = [line for line in held if _CLEAR_HELD.search(line) or _CLEAR_SAID.search(line) or re.search(
         r"\bclearance|\bcleared\b", line, re.I) and any(re.search(level, line, re.I) for level in _LEVELS.values())]
     return {"all": spelled("\n".join([resume, *values, *degrees, cleared, driving])), "lines": held,
@@ -683,8 +709,9 @@ def _credentials(text: str) -> list[tuple[int, str, str, list[str], str]]:
         for pattern in (_CUE_BEFORE, _CUE_AFTER, _CREDENTIAL):
             for m in pattern.finditer(sentence):
                 before, after, said = sentence[:m.start()], sentence[m.end():], m.group(0)
-                if _theirs(before, said, after) or _ASKED.search(_clause(before)):
-                    continue  # (someone else's, a thing's, what was done, or what the role asks for)
+                if (_theirs(before, said, after) or _ASKED.search(_clause(before)) or _GAINED.search(_clause(before))
+                        or _OFFERED.match(after) and not _HOLDS.search(_clause(before))):
+                    continue  # (someone else's, a thing's, what was done, what the role asks or offers, one to earn)
                 if pattern is _CUE_BEFORE and (whose := _names(after)) and whose[-1].lower() in _THINGS:
                     continue  # (an ISO 17025 accredited lab, certified tools)
                 kind = "license" if _LICENSE_KIND.search(said) else "certification"
