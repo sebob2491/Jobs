@@ -223,6 +223,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
     <button class="link" id="notes-btn" data-act="notes" title="Notes the desk took where it stopped on something it most likely got wrong, for you to file" hidden>Notes</button>
     <button class="link" id="alerts" data-act="alerts" hidden>Alert me</button>
     <button id="pause-btn" data-act="pause" title="The job under way finishes what it is doing; no other job starts until you press Carry on with the queue" hidden>Pause queue</button>
+    <button id="clear-queue-btn" data-act="clear-queue" title="Take the jobs not started yet out of the queue, back to the openings (not skipped); jobs already begun keep their cards" hidden>Clear the queue</button>
     <button class="link" id="week-btn" data-act="week" title="What the desk did in the last 7 days: jobs filled and sent, where it stopped for you, and how long each job took">This week</button>
     <button class="link" id="safety-btn" data-act="safety" title="What the desk does in your name, and what it never does: each setting as it is now, and where to change it">Safety</button>
     <button id="area-btn" data-act="area" title="What and where Find jobs searches: the job titles, places and employer lists">What and where</button>
@@ -269,6 +270,9 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
         <button data-chip="requirements" data-value="no_clearance" aria-pressed="false" title="Hides a job whose posting has a line labelled with the clearance it asks and its level (Clearance Type: Secret), held now or to be obtained. One that only says it in its text (may need a security clearance), or isn't read yet, always stays.">No clearance needed</button><button data-chip="requirements" data-value="degree" aria-pressed="false" id="degree-chip" title="Hides a job whose posting has a line labelled with the education it requires (Minimum Education: Bachelor's Degree), with no way around it. One that only says it in its text, or isn't read yet, always stays.">No degree required</button><button data-chip="requirements" data-value="day_shift" aria-pressed="false" title="Hides a job whose posting's Shift or Schedule line says nights, evenings, swing, rotating, or a 2nd or 3rd shift. One that only mentions a shift in its text, or doesn't say, always stays.">Day shift</button><button data-chip="requirements" data-value="travel_25" aria-pressed="false" title="Hides a job whose posting says it travels more than 25% of the time. One that doesn't say, or isn't read yet, always stays.">Travel ≤ 25%</button><button data-chip="requirements" data-value="entry_level" aria-pressed="false" title="Hides a job whose title says senior, lead, staff, principal, manager, supervisor or director, or level II and up. One whose title doesn't say always stays.">Entry level</button><button data-chip="requirements" data-value="not_senior" aria-pressed="false" title="Hides a job whose title says senior, lead, staff, principal, manager, supervisor or director, or level III and up. One whose title doesn't say always stays.">Not senior</button></span>
       <!-- the job systems of the openings listed (desk.system_of), drawn by renderSystems -->
       <span class="group" role="group" aria-label="Job system" id="system-chips" title="Shows only the jobs applied for on the job systems pressed: the site you apply on, such as Workday or an employer's own site." hidden></span>
+      <!-- the companies chosen (desk.json's companies), drawn by renderCompanies; the box suggests the employers listed -->
+      <span class="group" role="group" aria-label="Company" id="company-group" title="Shows only the openings of the companies chosen. Type any part of a company's name, or pick one, and press Enter; press a company again to let go of it.">Company
+        <span id="company-chips"></span><input type="text" id="company-add" list="company-names" placeholder="type a company" aria-label="Show only this company's openings" autocomplete="off"><datalist id="company-names"></datalist></span>
     </div>
     <div class="stops openings-only" id="stops" role="group" aria-label="Show the jobs by where they stand" hidden></div>
     <div class="stop-hint openings-only" id="stop-hint" hidden></div>
@@ -282,8 +286,10 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
       <span class="hint" id="apply-hint"></span>
       <label><input type="checkbox" id="auto"> Submit for me when nothing needs me</label>
       <span class="hint" id="auto-hint"></span>
-      <span class="at-once" role="group" aria-label="Jobs at once" title="How many applications the desk fills at the same time, each in its own tab of the desk's browser window. Never two at one employer's site, and one at a time signs in, makes an account or waits on an emailed code. While a sign-in or code needs you, no other job starts and no other tab comes to the front.">Jobs at once
-        <button data-at-once="1" aria-pressed="false">1</button><button data-at-once="2" aria-pressed="false">2</button><button data-at-once="3" aria-pressed="false">3</button></span>
+      <span class="at-once" role="group" aria-label="Jobs at once" title="How many applications the desk fills at the same time, each in its own tab of the desk's browser window. Never two at one employer's site, and one at a time signs in, makes an account or waits on an emailed code. While a sign-in or code needs you, no other job starts and no other tab comes to the front, unless Don't wait for me is on (then only while the desk reads a code from your inbox, or Claude from your Gmail).">Jobs at once
+        <button data-at-once="1" aria-pressed="false">1</button><button data-at-once="2" aria-pressed="false">2</button><button data-at-once="3" aria-pressed="false">3</button><button data-at-once="4" aria-pressed="false">4</button><button data-at-once="5" aria-pressed="false">5</button></span>
+      <label title="For a desk left to go through the list: a sign-in, or an emailed code only you can read, waits on its card and the other jobs go on, as if you'd pressed Later on each (never another job at the same site). A code the desk reads itself (from your inbox, or Claude from your Gmail) still holds them while it's looked for, a minute as a rule: one code at a time, so it never goes to another job"><input type="checkbox" id="dont-wait"> Don't wait for me</label>
+      <span class="hint" id="dont-wait-hint"></span>
       <label><input type="checkbox" id="tailor"> Tailor my resume for each job</label>
       <span class="hint" id="tailor-hint"></span>
       <label title="Claude writes each one through your own Claude Code sign-in (your Claude plan; no key needed), from your resume, your profile and the job's posting, using only what they say. The first one waits for your OK on its card."><input type="checkbox" id="letters"> Write a cover letter for each job</label>
@@ -502,6 +508,7 @@ let preflightSeen = "";  // what Apply last said would stop the ticked jobs, and
 // this are searched again, also on a desk left open; never while the queue is paused
 const STALE_SEARCH = 12 * 3600;
 const MIN_PAY_MOST = 10000000;  // dollars a year: the most "Pay at least" takes (desk.MIN_PAY_MOST)
+const COMPANIES_MOST = 30;  // the most companies the Company box takes (desk.COMPANIES_MOST)
 // A job the desk tried again by itself after the site's error (its retry_held): said where it's sent from, the review
 // round's banner and its desktop alert, as its reason's own note can be missed or cut
 const HELD_SAYS = "Tried again by itself after the site's error, so check it didn't go in meanwhile (in another tab "
@@ -1039,6 +1046,7 @@ function renderRows() {
   if (mine) { renderApps(); return; }
   $("app-groups").hidden = true;
   renderSystems();
+  renderCompanies();
   // links the person added (here, or through Claude) always show: they picked those themselves
   const onlyHandled = !!(state.settings && state.settings.handled_only);
   const troubleshooting = !!(state.settings && state.settings.troubleshoot);
@@ -1099,12 +1107,14 @@ function renderRows() {
     const msg = stopFilter !== "any" && listed.some(shown) ? "None here right now. Press Any to see them all."
       : state.search.status === "running" ? "Searching employers' career sites…"
       : onlyHandled && listed.length ? "Nothing here from the employers where the desk goes all the way. Turn off that switch to see the rest."
-      : (state.settings.min_pay || state.settings.posted_within) && !state.settings.within_miles && !chipsOn() && listed.length
+      : (state.settings.min_pay || state.settings.posted_within) && !state.settings.within_miles && !chipsOn() && !companiesOn() && listed.length
         ? "Nothing here at that pay or posting date. Empty Pay at least, or press Posted: Any, to see the rest."
-      : state.settings.within_miles && !state.settings.min_pay && !state.settings.posted_within && !chipsOn() && listed.length
+      : state.settings.within_miles && !state.settings.min_pay && !state.settings.posted_within && !chipsOn() && !companiesOn() && listed.length
         ? "Nothing here that near your home. Press Within: Any, or a farther one, to see the rest."
-      : (state.settings.min_pay || state.settings.posted_within || state.settings.within_miles || chipsOn()) && listed.length
-        ? "Nothing here with the filters above. Empty Pay at least, press Posted: Any or Within: Any, or press a pressed filter again to see the rest."
+      : companiesOn() && !state.settings.min_pay && !state.settings.posted_within && !state.settings.within_miles && !chipsOn() && listed.length
+        ? "Nothing here from the companies chosen. Press a company to let go of it, or press Find jobs to search again."
+      : (state.settings.min_pay || state.settings.posted_within || state.settings.within_miles || chipsOn() || companiesOn()) && listed.length
+        ? "Nothing here with the filters above. Empty Pay at least, press Posted: Any or Within: Any, or press a pressed filter or company again to see the rest."
       : troubleshooting ? "Nothing here yet from the employers where the desk doesn't go all the way. Press Find jobs: troubleshooting searches every list's employers."
       : (state.listings || []).length ? "Nothing recommended. Switch to All to see every opening."
       : "Press Find jobs to search every employer's career site for openings that fit your profile.";
@@ -1441,6 +1451,7 @@ function renderHeader() {
   $("pause-btn").hidden = !state.paused && !lineWaits && !lined.some((r) => r.status === "running");
   $("pause-btn").dataset.act = state.paused ? "resume" : "pause";
   $("pause-btn").textContent = state.paused ? `Carry on with the queue${lineWaits ? ` (${lineWaits} waiting)` : ""}` : "Pause queue";
+  $("clear-queue-btn").hidden = !state.clearable;  // (the jobs not started yet: taken out, back to the openings)
   const fresh = (state.listings || []).filter((r) => isNew(r) && (r.added || (r.fit && r.fit.recommended))).length;
   $("searched").textContent = sr.status === "running"
     ? (sr.auto ? "Searching by itself (the openings were over 12 hours old), started " : "Searching, started ") + ago(sr.started)
@@ -1453,6 +1464,11 @@ function renderHeader() {
   auto.disabled = s.dry_run;
   $("auto-hint").textContent = s.dry_run ? "Off in practice mode (settings.submit_mode: dry_run)." : s.auto_submit ? "On: complete applications are submitted without asking." : "Off: you press Submit for each one.";
   document.querySelectorAll("[data-at-once]").forEach((b) => b.setAttribute("aria-pressed", String(Number(b.dataset.atOnce) === s.jobs_at_once)));
+  const dontWait = $("dont-wait");
+  if (document.activeElement !== dontWait) dontWait.checked = !!s.dont_wait;
+  $("dont-wait-hint").textContent = s.dont_wait
+    ? "On: a sign-in, or a code only you can read, waits on its card while the rest go on."
+    : "Off: a sign-in or emailed code holds the other jobs until you're done, or 5 minutes pass.";
   const tailor = $("tailor");
   if (document.activeElement !== tailor) tailor.checked = !!s.tailor_resumes;
   const letters = $("letters");
@@ -1543,7 +1559,8 @@ function renderHeader() {
   // the jobs back in the queue after a restart of the desk wait for the person's Carry on with the queue; and why the queue isn't
   // kept here, if it isn't (another desk keeps it, or the folder allows no lock)
   if (state.restored) notes.push({cls: "waiting", html: `<strong>${esc(state.restored)}</strong>
-    <button class="primary" data-act="resume">Carry on with the queue</button>`});
+    <button class="primary" data-act="resume">Carry on with the queue</button>${state.clearable
+      ? ` <button data-act="clear-queue">Clear the queue</button>` : ""}`});
   if (state.queue_note) notes.push(state.queue_note_problem ? {cls: "notice bad", html: problemSaid(esc(state.queue_note))}
     : {cls: "notice info", html: esc(state.queue_note)});
   if (state.tailoring) notes.push({cls: "waiting", html: `<strong>${state.tailoring} job${state.tailoring === 1 ? "" : "s"} waiting for a tailored resume.</strong>
@@ -1863,7 +1880,7 @@ function shown(r) {
   const s = state.settings || {};
   return (s.handled_only ? kept(r) : s.troubleshoot ? keptElse(r) : true)
     && (theirs(r) || (paysEnough(r, s.min_pay) && postedWithin(r, s.posted_within) && withinMiles(r, s.within_miles)
-                      && fitsChips(r, s)));
+                      && fitsChips(r, s) && ofCompanies(r, s.companies)));
 }
 // "Within __ miles" hides only an opening surely farther from home (places.away: every place it names is a town the
 // desk knows); one whose place it doesn't know, or that names others it can't place, stays, as does a remote one (any
@@ -1943,10 +1960,36 @@ function renderSystems() {
   });
 }
 const chipsOn = () => Object.keys(CHIP_TESTS).some((name) => ((state.settings || {})[name] || []).length > 0);
+// The Company box (the owner, Oct 24): only the openings of the companies chosen show, each matched by any part of its
+// name, whatever the case and spacing. Its suggestions are the employers listed, drawn again only when they change and
+// not while it's typed in; its chips, the companies chosen, each let go of when pressed
+const sameName = (x) => String(x || "").split(/\s+/).filter(Boolean).join(" ").toLowerCase();
+const ofCompanies = (r, chosen) => !(chosen || []).length || chosen.some((c) => sameName(r.company).includes(sameName(c)));
+const companiesOn = () => ((state.settings || {}).companies || []).length > 0;
+let companiesDrawn = "";
+function renderCompanies() {
+  const chosen = (state.settings || {}).companies || [];
+  const names = [...new Set((state.listings || []).map((r) => r.company).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  if (JSON.stringify(names) !== companiesDrawn && document.activeElement !== $("company-add")) {
+    companiesDrawn = JSON.stringify(names);
+    $("company-names").innerHTML = names.map((n) => `<option value="${esc(n)}"></option>`).join("");
+  }
+  const box = $("company-chips");
+  if (box.dataset.drawn !== JSON.stringify(chosen)) {
+    box.dataset.drawn = JSON.stringify(chosen);
+    box.innerHTML = chosen.map((c) => `<button data-company="${esc(c)}" aria-pressed="true" title="Showing ${esc(c)}'s openings: press to let go of it">${esc(c)} \u00d7</button>`).join("");
+  }
+}
+function chooseCompanies(chosen) {
+  state.settings.companies = chosen;  // (shown at once; kept in desk.json)
+  renderRows();
+  act(() => api("/api/settings", {companies: chosen}));
+}
 // (only a pay said on its pay line, or in the posting's own data, is "sure": one read from the text never hides a job)
 const paysEnough = (r, floor) => !floor || !r.pay || !r.pay.sure || r.pay.top == null || r.pay.top >= floor;
 const postedWithin = (r, days) => !days || r.posted_days == null || r.posted_days <= days;
-const theirs = (r) => !!(r.added || r.run || (r.job_id != null && r.status && r.status !== "skipped"));
+// (not one saved only by the desk's Apply and never begun: a job Clear the queue took out is an opening again)
+const theirs = (r) => !!(r.added || r.run || (r.job_id != null && r.status && r.status !== "skipped" && !r.desk_saved));
 const kept = (r) => !!r.handled || theirs(r);
 const keptElse = (r) => !r.handled || theirs(r);
 
@@ -1988,6 +2031,10 @@ function makeReport(job, again = false) {
 document.addEventListener("click", (e) => {
   const t = e.target.closest("button");
   if (!t) return;
+  if (t.dataset.company !== undefined && state) {  // a company chosen in the Company box: let go of
+    chooseCompanies((state.settings.companies || []).filter((c) => c !== t.dataset.company));
+    return;
+  }
   if (t.dataset.areaDrop && areaDraft) {  // × on a title, a title to leave out or a place in the What and where window
     areaDraft[t.dataset.areaDrop].splice(Number(t.dataset.i), 1);
     renderAreaDraft();
@@ -2094,6 +2141,13 @@ document.addEventListener("click", (e) => {
   if (a === "area-place-add") { areaAdd("places", $("area-place-new").value); $("area-place-new").value = ""; }
   if (a === "area-avoid-add") { areaAdd("avoid_titles", $("area-avoid-new").value); $("area-avoid-new").value = ""; }
   if (a === "pause" || a === "resume") act(() => api(`/api/queue/${a}`, {}));
+  if (a === "clear-queue") {
+    const n = state.clearable || 0;
+    if (n && confirm(`Take the ${n === 1 ? "job" : `${n} jobs`} not started yet out of the queue? They go back to the `
+                     + "openings, not skipped, and you can apply to them again. Jobs already begun keep their cards.")) {
+      act(() => api("/api/queue/clear", {}));
+    }
+  }
   // (a review round given way to: its hold is replaced by the bot round's, never ended after it)
   if (a === "bot-round") { reviewRound = false; reviewShown = null; reviewPassed.clear(); botRound = true; botShown = null; botPassed.clear(); botStep(); renderHeader(); }
   if (a === "bot-next" && botShown !== null) { botPassed.add(botShown); botStep(); renderHeader(); }
@@ -2281,8 +2335,21 @@ $("pw-form").addEventListener("submit", (e) => {
   act(async () => { await api("/api/password", {name, value}); box.value = ""; });
 });
 
+// a company typed into the Company box (Enter, or leaving it) or picked from its suggestions: chosen, once
+function addCompany(box) {
+  const said = box.value.split(/\s+/).filter(Boolean).join(" ");
+  box.value = "";
+  const chosen = state.settings.companies || [];
+  if (!said || chosen.some((c) => sameName(c) === sameName(said))) return;
+  if (chosen.length >= COMPANIES_MOST) { toast(`The Company box takes up to ${COMPANIES_MOST} companies. Press one to let go of it first.`); return; }
+  chooseCompanies([...chosen, said]);
+}
+document.addEventListener("input", (e) => {
+  if (e.target.id === "company-add" && state && e.inputType === "insertReplacementText") addCompany(e.target);
+});
 document.addEventListener("change", (e) => {
   const t = e.target;
+  if (t.id === "company-add" && state) addCompany(t);
   if (t.dataset.pick) { t.checked ? selected.add(t.dataset.pick) : selected.delete(t.dataset.pick); renderRows(); }
   if (t.id === "auto") {
     if (t.checked && !confirm("Submit complete applications without asking you first? You can turn this off any time.")) { t.checked = false; return; }
@@ -2291,6 +2358,7 @@ document.addEventListener("change", (e) => {
   if (t.id === "tailor") act(() => api("/api/settings", {tailor_resumes: t.checked}));
   if (t.id === "letters") act(() => api("/api/settings", {cover_letters: t.checked}));
   if (t.id === "auto-search") act(() => api("/api/settings", {auto_search: t.checked}));
+  if (t.id === "dont-wait") act(() => api("/api/settings", {dont_wait: t.checked}));
   if (t.id === "min-pay" && state) {
     // "60000", "$60,000", "60k": dollars a year; empty (or 0) for any pay
     const said = t.value.trim().replace(/[$,\s]/g, "").replace(/\/?(yr|year)$/i, "");

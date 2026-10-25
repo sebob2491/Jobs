@@ -49,6 +49,7 @@ Employer's own site
 Greenhouse
 iCIMS
 Workday
+Company
 Any 3
 New 1
 Not started 3
@@ -62,6 +63,10 @@ Jobs at once
 1
 2
 3
+4
+5
+Don't wait for me
+Off: a sign-in or emailed code holds the other jobs until you're done, or 5 minutes pass.
 Tailor my resume for each job
 Off: your usual resume goes with every application.
 Write a cover letter for each job

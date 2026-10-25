@@ -241,7 +241,7 @@ def _on_unless_off(raw: Any, malformed: bool, default: bool) -> bool:
 # How many jobs the Job Desk fills at once, each in its own tab (settings.jobs_at_once), where the profile doesn't say,
 # and the most it takes
 JOBS_AT_ONCE_DEFAULT = 2
-JOBS_AT_ONCE_MAX = 3
+JOBS_AT_ONCE_MAX = 5  # (the owner, Oct 24: a desk left to go through the whole list)
 
 
 # How many days an application sent in waits with no reply before the desk's My applications marks it for a follow-up

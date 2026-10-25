@@ -248,7 +248,7 @@ soon, with the least answered that it needs:
      the desk then says it can't find `claude` or it isn't signed in, they run `claude` in a
      terminal and sign in.
    - Jobs at once: tell them the Job Desk fills two applications at the same time, each in its
-     own tab of its browser window (`settings.jobs_at_once`, 1 to 3, default 2), which takes a
+     own tab of its browser window (`settings.jobs_at_once`, 1 to 5, default 2), which takes a
      long queue in about half the time. Never two at one employer's site; one at a time signs
      in, makes an account or waits on an emailed code; and while a sign-in or code needs them,
      or they're in one of the desk's rounds, no new job starts and none comes to the front. Ask

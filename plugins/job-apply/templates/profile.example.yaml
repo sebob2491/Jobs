@@ -216,9 +216,10 @@ settings:
   # answer them yourself.
   accept_notices: true
   # How many applications the Job Desk fills at the same time, each in its own tab of its browser
-  # window (1 to 3). Never two at one employer's site; one at a time signs in, makes an account or
+  # window (1 to 5). Never two at one employer's site; one at a time signs in, makes an account or
   # waits on an emailed code; and while a sign-in or code needs you, no other job starts and no
-  # other tab comes to the front. 1 fills them one after another. The desk's "Jobs at once"
+  # other tab comes to the front (unless the desk's "Don't wait for me" is on: then only while the
+  # desk reads a code itself, from your inbox or through Claude's Gmail). 1 fills them one after another. The desk's "Jobs at once"
   # buttons change it there.
   jobs_at_once: 2
   # The days an application you sent in waits with no reply (not even a "we received it" email)

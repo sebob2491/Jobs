@@ -375,6 +375,17 @@ card says so. A job whose Submit was being pressed, or showed no confirmation, m
 gone in: its card asks you to check. A desk page you left open has to be opened again (ask
 Claude to open the job desk): its key is new each time the desk starts.
 
+**Clear the queue** (beside Carry on, and on that notice) takes out every job the desk hasn't
+begun, after asking: they go back to the openings, not skipped, to apply to again. Jobs it had
+begun keep their cards, and a Submit you pressed still goes. **Find jobs** searches again
+whether or not a queue is waiting. To leave the desk going through a long list, turn on
+**Don't wait for me** (beside Jobs at once, now up to 5): a sign-in, or an emailed code only you
+can read, then waits on its card while the other jobs go on (never another job at the same
+site). A code the desk reads itself (from your inbox, or Claude from your Gmail) still holds
+them while it's looked for, usually a minute: one code at a time, so it never goes to another job. The **Company** box above
+the openings shows only the companies you choose (type any part of a name, or pick one it
+suggests).
+
 Each line of a job's log on the desk shows the time it happened. Each time the desk is done
 with a job for now (at its review page, sent, stopped for you, failed, skipped, cut short by
 the desk stopping, or marked as applied), it writes a line in `~/.job-apply/runs.jsonl`: the

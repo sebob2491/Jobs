@@ -45,6 +45,7 @@ Day shift
 Travel ≤ 25%
 Entry level
 Not senior
+Company
 Any 15
 Bot checks 1
 Questions and sign-ins 8
@@ -58,6 +59,10 @@ Jobs at once
 1
 2
 3
+4
+5
+Don't wait for me
+Off: a sign-in or emailed code holds the other jobs until you're done, or 5 minutes pass.
 Tailor my resume for each job
 Off: your usual resume goes with every application.
 Write a cover letter for each job

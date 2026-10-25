@@ -500,6 +500,11 @@ def test_a_posting_from_indeed_and_the_employers_site_is_one_row_also_on_indeed(
     rows = desk.state()["listings"]
     assert [(r["url"], r["job_id"]) for r in rows] == [(INTEL_JOB, saved["id"]), (other, None)]
     assert rows[0]["also_on"] == [{"site": "Indeed", "url": INDEED_JOB}]
+    # both taken out by Clear the queue: the job Claude saved is still the person's own (no filter hides it), the one
+    # only the desk's Apply saved an opening again (the review of 0.3.240)
+    assert desk.apply(urls=[other], job_ids=[], submit=False)[0]
+    assert len(desk.applier.clear_queue()) == 2
+    assert [r["desk_saved"] for r in desk.state()["listings"]] == [False, True]
     # applied to (on the employer's site): Indeed's posting, pasted or found again, is never queued
     srv.update_job(saved["id"], status="applied")
     assert desk.apply(urls=[INDEED_JOB], job_ids=[], submit=True) == ([], ["Equipment Technician"])
@@ -1116,7 +1121,8 @@ def test_the_tailoring_switch_is_kept_and_its_waiting_jobs_listed(srv, job_apply
                             "troubleshoot": False,
                             "min_pay": None, "posted_within": None, "within_miles": None, "requirements": [],
                             "workplace": [], "job_types": [], "systems": [],
-                            "auto_search": False, "jobs_at_once": 1})  # (the tests' profile: one at a time)
+                            "auto_search": False, "jobs_at_once": 1,  # (the tests' profile: one at a time)
+                            "dont_wait": False, "companies": []})
                 await desk.applier.stop()  # hold the queue still while the waiting job is set up
                 desk.applier.runs[job["id"]] = Run(job["id"], "FSE", "Example Fab", status="needs_you", need="tailor")
                 state = (await c.get("/api/state", headers=h)).json()
@@ -1196,10 +1202,56 @@ def test_the_pause_button_pauses_and_resumes_the_queue(srv):
     run(go())
 
 
+def test_dont_wait_for_me_lets_the_queue_go_on_past_a_sign_in_or_code(srv, job_apply_home):
+    """The owner, Oct 24: the desk left to go through the whole list sat with one job open and 76 queued, held by an
+    emailed code at onsemi until someone came back (or nothing happened in its tab for 5 minutes). "Don't wait for me"
+    (beside Jobs at once, kept in desk.json) lets no sign-in or code hold the queue: its card waits, its tab watched
+    (an emailed code still read from the inbox) and carried on once past, as with Later. Turned on, it lets go of a job
+    holding the queue now; turned off, the next one holds it again."""
+    from job_apply.pipeline import Run
+
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    a = desk.applier
+    ids = [srv.add_job(url=f"https://careers.example.com/fab/{i}", title=f"Technician {i}",
+                       company="Example Fab")["job"]["id"] for i in range(3)]
+    holding, later, after = (Run(i, "Technician", "Example Fab", status="running", started=True) for i in ids)
+    for r in (holding, later, after):
+        a.runs[r.job_id] = r
+    a._pause(holding, "email_code", "The site emailed you a code.", code="email_code")
+    assert holding.blocking and a._blocker() is holding
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("#dont-wait-hint:has-text('Off')")  # (drawn from the desk's state)
+                async with page.expect_response("**/api/settings"):
+                    await page.check("#dont-wait")
+                await page.wait_for_selector("#dont-wait-hint:has-text('On')")
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert a.dont_wait and not holding.blocking and holding.left and a._blocker() is None
+    assert json.loads((job_apply_home / "desk.json").read_text(encoding="utf-8"))["dont_wait"] is True
+    a._pause(later, "sign_in", "Sign in on Workday.", code="sign_in")
+    assert not later.blocking and later.left and a._blocker() is None  # (none holds it while it's on)
+    assert Desk(srv).applier.dont_wait  # (kept)
+    a.dont_wait = False
+    a._pause(after, "sign_in", "Sign in on Workday.", code="sign_in")
+    assert after.blocking and a._blocker() is after
+
+
 def test_jobs_at_once_is_set_on_the_desk_kept_and_given_way_to_a_newer_profile_setting(srv, job_apply_home):
-    """The desk's Jobs at once (1 to 3) is profile.yaml's settings.jobs_at_once until it's pressed: then it's kept in
-    desk.json as the other switches are, and the queue takes it at once. A later change to profile.yaml is the newer
-    choice. Anything but 1, 2 or 3 is turned away and changes nothing."""
+    """The desk's Jobs at once (1 to 5: the owner, Oct 24, for a desk left to go through the whole list) is
+    profile.yaml's settings.jobs_at_once until it's pressed: then it's kept in desk.json as the other switches are, and
+    the queue takes it at once. A later change to profile.yaml is the newer choice. Anything but 1 to 5 is turned away
+    and changes nothing."""
     import yaml
 
     desk = Desk(srv)
@@ -1213,12 +1265,14 @@ def test_jobs_at_once_is_set_on_the_desk_kept_and_given_way_to_a_newer_profile_s
             h = {"x-desk-token": desk.token}
             async with _client(desk) as c:
                 assert (await c.get("/api/state", headers=h)).json()["settings"]["jobs_at_once"] == 1  # the profile's
-                for bad in (0, 4, "2", True, None, 2.0):
+                for bad in (0, 6, "2", True, None, 2.0):
                     r = await c.post("/api/settings", headers=h, json={"jobs_at_once": bad})
                     assert r.status_code == 400, (bad, r.text)
                 assert desk.applier.at_once() == 1 and not woken
+                r = await c.post("/api/settings", headers=h, json={"jobs_at_once": 5})
+                assert r.json()["jobs_at_once"] == 5 and desk.applier.at_once() == 5 and woken
                 r = await c.post("/api/settings", headers=h, json={"jobs_at_once": 3})
-                assert r.json()["jobs_at_once"] == 3 and desk.applier.at_once() == 3 and woken
+                assert r.json()["jobs_at_once"] == 3 and desk.applier.at_once() == 3
                 assert (await c.get("/api/state", headers=h)).json()["settings"]["jobs_at_once"] == 3
         finally:
             await desk.stop()
@@ -2035,6 +2089,83 @@ def test_the_chip_settings_refuse_what_isnt_one(srv, job_apply_home):
             await desk.stop()
 
     run(go())
+
+
+def test_the_company_box_shows_only_the_openings_of_the_companies_chosen(srv, job_apply_home):
+    """The owner, Oct 24: "We should also be able to filter by company". The filter row's Company box suggests the
+    employers of the openings listed; each one chosen (typed, any part of its name, any case) is a chip, and only the
+    openings of the companies chosen show. A chip pressed lets go of it. Nothing hidden is picked; the choice is kept in
+    desk.json, and the desk takes nothing but a short list of names."""
+    desk = Desk(srv)
+
+    def opening(title, company, score):
+        return {**_facts_opening(title, score), "company": company}
+
+    desk.listings = [opening("Process Technician", "Intel Corporation", 95),
+                     opening("Equipment Technician", "Microchip Technology", 90),
+                     opening("Field Service Engineer", "Example Fab", 85),
+                     opening("Maintenance Technician", "Intel Corporation", 80)]
+    from job_apply.desk import _companies as desk_companies
+    # (Example Fab's applied to, then taken out by Clear the queue: saved by the desk's Apply, never begun, an opening
+    # again)
+    srv.tracker().upsert({"url": desk.listings[2]["url"], "title": "Field Service Engineer", "company": "Example Fab",
+                          "source": "job desk"})
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+    every = ["Process Technician", "Equipment Technician", "Field Service Engineer", "Maintenance Technician"]
+
+    async def choose(page, typed, titles):
+        async with page.expect_response("**/api/settings"):
+            await page.fill("#company-add", typed)
+            await page.press("#company-add", "Enter")
+        wanted = json.dumps(json.dumps(titles, separators=(",", ":")))
+        await page.wait_for_function(f"JSON.stringify([...document.querySelectorAll('li.row a.title')]"
+                                     f".map((a) => a.innerText)) === {wanted}")
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await page.goto(desk.url)
+                await page.wait_for_selector("text=Maintenance Technician")
+                names = await page.eval_on_selector_all("#company-names option", "os => os.map((o) => o.value)")
+                assert names == ["Example Fab", "Intel Corporation", "Microchip Technology"], names
+                await choose(page, "  intel ", ["Process Technician", "Maintenance Technician"])
+                assert await page.input_value("#company-add") == ""
+                await choose(page, "Microchip Technology", ["Process Technician", "Equipment Technician",
+                                                            "Maintenance Technician"])
+                chips = await page.locator("[data-company]").all_inner_texts()
+                assert [c.replace("\u00d7", "").strip() for c in chips] == ["intel", "Microchip Technology"], chips
+                await page.fill("#company-add", "INTEL")  # (one already chosen: once)
+                await page.press("#company-add", "Enter")
+                await page.wait_for_function("document.querySelector('#company-add').value === ''")
+                assert await page.locator("[data-company]").count() == 2
+                async with page.expect_response("**/api/settings"):
+                    await page.click("[data-company='intel']")
+                await page.wait_for_function("document.querySelectorAll('li.row a.title').length === 1")
+                assert await _shown_titles(page) == ["Equipment Technician"]
+                await page.click("text=Select recommended")
+                picked = await page.evaluate("() => [...selected].filter(selectable)")
+                assert picked == [desk.listings[1]["url"]], picked
+                assert desk.companies == ["Microchip Technology"]
+                await page.reload()
+                await page.wait_for_selector("text=Equipment Technician")
+                assert await _shown_titles(page) == ["Equipment Technician"]
+                async with page.expect_response("**/api/settings"):
+                    await page.click("[data-company='Microchip Technology']")
+                await page.wait_for_function("document.querySelectorAll('li.row a.title').length === 4")
+                assert await _shown_titles(page) == every
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert json.loads((config.home() / "desk.json").read_text(encoding="utf-8"))["companies"] == []
+    for bad in ("Intel", [""], ["x" * 101], [3], ["a"] * 31):
+        assert desk_companies(bad) is None, bad
+    assert desk_companies(None) == [] and desk_companies([" Intel ", "intel", "ASML"]) == ["Intel", "ASML"]
+    assert desk_companies(["ASML", "Intel", "asml"]) == ["ASML", "Intel"]
 
 
 def test_the_system_chips_show_only_the_jobs_on_the_systems_pressed(srv, job_apply_home):
@@ -3823,7 +3954,8 @@ def test_the_openings_bar_shows_where_each_job_stands_and_troubleshooting_ticks_
 def test_select_recommended_where_the_desk_goes_all_the_way_ticks_only_those_employers(srv, job_apply_home):
     """The review of 0.3.195: with "Only where the desk goes all the way" on, Select recommended ticked a job of the
     person's own (tracked, saved) at another employer too. It ticks the recommended openings at those employers only,
-    as before; the person's own still show, and they tick them themselves."""
+    as before; the person's own still show, and they tick them themselves. One saved only by the desk's Apply and never
+    begun (Clear the queue took it out: the review of 0.3.240) is an opening again, which the switch hides as any."""
     from job_apply import config as cfg
 
     handled = sorted(cfg.handled_employers())[0]
@@ -3831,10 +3963,14 @@ def test_select_recommended_where_the_desk_goes_all_the_way_ticks_only_those_emp
     desk = Desk(srv)
     desk.handled_only = True
     desk.listings = [{"company": handled, "title": "Technician", "url": "https://example.com/handled", "fit": good},
-                     {"company": "Example Fab", "title": "Technician", "url": "https://example.com/saved", "fit": good}]
+                     {"company": "Example Fab", "title": "Technician", "url": "https://example.com/saved", "fit": good},
+                     {"company": "Example Litho", "title": "Technician", "url": "https://example.com/cleared",
+                      "fit": good}]
     desk.applier.start = lambda: None
     desk.search.update(status="done", at=time.time())
     srv.add_job(url="https://example.com/saved", title="Technician", company="Example Fab")
+    srv.tracker().upsert({"url": "https://example.com/cleared", "title": "Technician", "company": "Example Litho",
+                          "source": "job desk"})
 
     async def go():
         await desk.start(port=0, open_browser=False)
@@ -3843,6 +3979,7 @@ def test_select_recommended_where_the_desk_goes_all_the_way_ticks_only_those_emp
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("[data-pick='https://example.com/saved']")
+                assert await page.locator("[data-pick='https://example.com/cleared']").count() == 0
                 await page.click("[data-act='select-recommended']")
                 ticked = await page.eval_on_selector_all("[data-pick]:checked", "bs => bs.map((b) => b.dataset.pick)")
                 assert ticked == ["https://example.com/handled"], ticked

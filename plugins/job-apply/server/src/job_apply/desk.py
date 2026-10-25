@@ -172,6 +172,9 @@ class Desk:
         # and its chips (CHIP_FILTERS: the requirements an opening may not ask), each hiding an opening only for a fact
         # it says and that fails it ([]: none pressed)
         self.chips: dict[str, list[str]] = {name: [] for name in CHIP_FILTERS}
+        # and its Company box (the owner, Oct 24): the companies whose openings alone show, each any part of a name as
+        # the person typed it or picked it ([]: every company's)
+        self.companies: list[str] = []
         # Troubleshooting (the owner, Oct 12, to get the desk going at more employers): Find jobs searches every
         # list's employers, for the profile's titles and HR ones, and the page shows only the openings where the desk
         # doesn't go all the way yet, whatever their fit. Nothing is sent meanwhile (Applier.hold_submits)
@@ -227,7 +230,9 @@ class Desk:
             self.posted_within = saved.get("posted_within") if saved.get("posted_within") in POSTED_WITHIN else None
             self.within_miles = saved.get("within_miles") if saved.get("within_miles") in WITHIN_MILES else None
             self.chips = {name: _chips(name, saved.get(name)) or [] for name in CHIP_FILTERS}
+            self.companies = _companies(saved.get("companies")) or []
             self.auto_search = saved.get("auto_search") is True
+            self.applier.dont_wait = saved.get("dont_wait") is True
             self.troubleshoot = saved.get("troubleshoot") is True and not self.handled_only
             self.applier.hold_submits = self.troubleshoot
             # "Jobs at once" as chosen on the desk, while profile.yaml's settings.jobs_at_once is still as it was
@@ -252,8 +257,10 @@ class Desk:
                                                 "handled_only": self.handled_only,
                                                 "min_pay": self.min_pay, "posted_within": self.posted_within,
                                                 "within_miles": self.within_miles, **self.chips,
+                                                "companies": self.companies,
                                                 "troubleshoot": self.troubleshoot,
                                                 "auto_search": self.auto_search,
+                                                "dont_wait": self.applier.dont_wait,
                                                 "jobs_at_once": self.applier.jobs_at_once,
                                                 "jobs_at_once_profile": self._at_once_profile,
                                                 "last_seen": self.last_seen, "seen_since": self.seen_since}))
@@ -680,10 +687,13 @@ class Desk:
         return FileResponse(found, media_type="application/pdf", headers={"Cache-Control": "no-store"})
 
     async def queue_view(self, request: Request) -> Response:
-        """Pause queue / Resume queue: the job under way finishes its pass, and no other starts while paused."""
+        """Pause queue / Resume queue: the job under way finishes its pass, and no other starts while paused. Clear the
+        queue: the jobs never begun are taken out (Applier.clear_queue), back in the openings."""
         if not self._allowed(request, api=True):
             return self._forbidden()
         action = request.path_params["action"]
+        if action == "clear":
+            return JSONResponse({"cleared": len(self.applier.clear_queue()), "paused": self.applier.paused})
         if action not in ("pause", "resume"):
             return JSONResponse({"error": f"unknown action {action!r}"}, status_code=404)
         (self.applier.pause_queue if action == "pause" else self.applier.resume_queue)()
@@ -730,9 +740,14 @@ class Desk:
                                             "(an empty list, or null, for none)" if choices else
                                             f"{name} should be a list of job systems' keys, such as workday or "
                                             "oracle_hcm (an empty list, or null, for none)"))
+        if "companies" in body and _companies(body["companies"]) is None:
+            return self._bad(ValueError(f"companies should be a list of up to {COMPANIES_MOST} company names, each up "
+                                        f"to {COMPANY_LONGEST} characters (an empty list, or null, for every company)"))
         for name in CHIP_FILTERS:
             if name in body:
                 self.chips[name] = _chips(name, body[name]) or []
+        if "companies" in body:
+            self.companies = _companies(body["companies"]) or []
         if "min_pay" in body:
             self.min_pay = _min_pay(body["min_pay"])
         if "posted_within" in body:
@@ -756,6 +771,8 @@ class Desk:
             self.troubleshoot = self.troubleshoot and not self.handled_only
         if "auto_search" in body:
             self.auto_search = body["auto_search"] is True
+        if "dont_wait" in body:
+            self.applier.set_dont_wait(body["dont_wait"] is True)
         if "troubleshoot" in body:
             was, self.troubleshoot = self.troubleshoot, body["troubleshoot"] is True
             self.handled_only = self.handled_only and not self.troubleshoot
@@ -765,15 +782,16 @@ class Desk:
                 self._forget_openings()
         self.applier.hold_submits = self.troubleshoot
         if any(k in body for k in ("auto_submit", "tailor_resumes", "cover_letters", "handled_only", "troubleshoot",
-                                   "auto_search", "jobs_at_once", "min_pay", "posted_within", "within_miles",
-                                   *CHIP_FILTERS)):
+                                   "auto_search", "dont_wait", "jobs_at_once", "min_pay", "posted_within",
+                                   "within_miles", "companies", *CHIP_FILTERS)):
             self._save_settings()
         return JSONResponse({"auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor,
                              "cover_letters": self.applier.letters,
                              "handled_only": self.handled_only, "troubleshoot": self.troubleshoot,
                              "min_pay": self.min_pay, "posted_within": self.posted_within,
-                             "within_miles": self.within_miles, **self.chips,
-                             "auto_search": self.auto_search, "jobs_at_once": self.applier.at_once()})
+                             "within_miles": self.within_miles, **self.chips, "companies": self.companies,
+                             "auto_search": self.auto_search, "dont_wait": self.applier.dont_wait,
+                             "jobs_at_once": self.applier.at_once()})
 
     def _forget_openings(self) -> None:
         """The openings found so far cleared, for Find jobs to search again (where or how it searches changed). A
@@ -1276,6 +1294,10 @@ class Desk:
                                      (job or {}).get("location")) if home else None,
                 "fit": item.get("fit") if said else fit_for(item.get("fit"), item.get("company"), employers),
                 "notes": item.get("notes") or [], "job_id": jid, "status": job["status"] if job else None,
+                # (saved only by the desk's Apply, never begun: Clear the queue took it out, say. An opening as any,
+                # which the filters hide; never the person's own, as one Claude saved for them is, made one with it)
+                "desk_saved": bool(job and job.get("status") == "saved" and job.get("source") == "job desk"
+                                   and not also.get(jid)),
                 "run": run,
                 "handled": str(item.get("company") or "").strip().casefold() in handled,
                 "also_on": _also_on(([copy["url"]] if copy else []) + (also.get(jid, []) if jid is not None else [])),
@@ -1338,8 +1360,9 @@ class Desk:
                          "cover_letters_approved": self.applier.letters_approved,
                          "handled_only": self.handled_only, "troubleshoot": self.troubleshoot,
                          "min_pay": self.min_pay, "posted_within": self.posted_within,
-                         "within_miles": self.within_miles, **self.chips,
-                         "auto_search": self.auto_search, "jobs_at_once": self.applier.at_once(),
+                         "within_miles": self.within_miles, **self.chips, "companies": self.companies,
+                         "auto_search": self.auto_search, "dont_wait": self.applier.dont_wait,
+                         "jobs_at_once": self.applier.at_once(),
                          "follow_up_days": settings.follow_up_days},
             "tailoring": len(self.applier.tailoring()),
             # why no cover letter is being written (the switch on), said once at the top of the page
@@ -1372,6 +1395,7 @@ class Desk:
             # the jobs back in the queue after a restart, waiting for Resume queue; and why the queue isn't kept here,
             # if it isn't (another desk keeps it, or the folder allows no lock)
             "restored": self.applier.restored_notice(),
+            "clearable": len(self.applier.clearable()),  # (the jobs never begun, for Clear the queue)
             "queue_note": self.applier.queue_note(),
             # (a queue this folder can't keep is a problem, said in red; one another desk keeps is only so)
             "queue_note_problem": self.applier.queue_note() == QUEUE_NO_LOCK,
@@ -1775,6 +1799,23 @@ def system_of(item: dict[str, Any] | None, job: dict[str, Any] | None) -> dict[s
         said = next((s for s in map(detect_ats, urls) if s not in _OWN_SITE), "company_site")
     key = said if _SYSTEM_KEY.fullmatch(said) else "company_site"
     return {"key": key, "name": SYSTEM_NAMES.get(key) or key.replace("_", " ").title()}
+
+
+COMPANIES_MOST, COMPANY_LONGEST = 30, 100  # (the Company box's: how many names, and how long each)
+
+
+def _companies(value: Any) -> list[str] | None:
+    """The Company box's names as saved or sent: each a name or part of one, trimmed, once whatever its case, in the
+    order chosen; [] for none (None, or an empty list); None when it isn't such a list."""
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > COMPANIES_MOST or not all(
+            isinstance(v, str) and 0 < len(v.strip()) <= COMPANY_LONGEST for v in value):
+        return None
+    names: dict[str, str] = {}
+    for v in value:
+        names.setdefault(" ".join(v.split()).casefold(), " ".join(v.split()))
+    return list(names.values())
 
 
 def _min_pay(value: Any) -> int | None:
