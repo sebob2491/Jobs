@@ -142,8 +142,10 @@ The goal is a short, deduplicated list of real openings saved to the tracker
    50%"), or its title. A posting not read yet, or a degree or clearance its sentences state
    (under any heading: a posting's sections can't be told apart surely), never hides one: it
    shows as "asks a Bachelor's, read from the text" or "may need a security clearance". So
-   read the posting before telling the user a job needs a degree or a clearance. The `apply`
-   skill takes it from there.
+   read the posting before telling the user a job needs a degree or a clearance. Its Company
+   box shows only the openings of the companies chosen (any part of a name, suggested from
+   the employers listed; a company's chip pressed lets go of it). The `apply` skill takes it
+   from there.
 
 7. **Each morning.** Offer once: "each morning: search, then whats_new". After a search
    (this skill's, or the Job Desk's Find jobs), `whats_new()` lists the openings first

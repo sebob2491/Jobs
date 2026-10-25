@@ -139,6 +139,8 @@ MAIL_SETTLE = 60
 # seconds with nothing done in a tab holding the queue before the person's press on another job lets that one go
 RELEASE_IDLE = 60
 DESK_SETTLE = 30  # seconds a paused tab may go on changing after the desk typed its emailed code or opened its link
+# (a queued job's card, its end, while a job left on its site waits on the person: Applier._site_free)
+_HELD_AT_SITE = "on the same site waits for you on its card. This one goes once that's done."
 # A password reset asked for with the inbox watched: when no email has come by then, the email most
 # likely has no account there (most sites won't say), so the desk makes one instead
 RESET_MAIL_WAIT = 3 * 60
@@ -1753,6 +1755,11 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         # but those they pressed Resume on, or answered on their card (pressed)
         self.paused = False
         self.pressed: set[int] = set()
+        # (paused only by a restart's jobs back in the queue, not by the person's Pause queue: Clear the queue ends it)
+        self._restore_held = False
+        # "Don't wait for me" (desk.json, the owner, Oct 24: the desk left to go through the whole list): no sign-in or
+        # emailed code holds the queue for the person's hands; each waits on its card, watched, as after Later
+        self.dont_wait = False
         self.jobs_at_once: int | None = None  # the desk's own "Jobs at once" (desk.json); None: the profile's setting
         # the jobs under way, each in a task of its own (_run_task), and how many have begun (their order: Run.began)
         self._slots: dict[int, asyncio.Task] = {}
@@ -1864,7 +1871,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         self._driving = [] if job_id is None else [job_id]
 
     def at_once(self) -> int:
-        """How many jobs are filled at once: the desk's own choice, else settings.jobs_at_once (1 to 3)."""
+        """How many jobs are filled at once: the desk's own choice, else settings.jobs_at_once (1 to 5)."""
         if self.jobs_at_once is not None:
             return min(max(self.jobs_at_once, 1), config.JOBS_AT_ONCE_MAX)
         try:
@@ -2002,14 +2009,54 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         Code, which broke the job in progress). A Submit they press still goes, and the tabs left waiting
         are still watched. Kept with the queue: a restarted desk is still paused."""
         self.paused = True
+        self._restore_held = False  # (the person's own pause now)
         self._save_queue()
 
     def resume_queue(self) -> None:
-        self.paused = False
+        self.paused = self._restore_held = False
         self._restored_ids.clear()  # (the jobs back from before a restart go on: said no more)
         self._letters_next()  # (and their cover letters are written now)
         self._wake.set()
         self._save_queue()
+
+    def clearable(self) -> list[int]:
+        """The jobs Clear the queue takes out: each the desk never began, waiting its turn or held before its tab opens
+        (for its tailored resume, its first cover letter's say, or a check that it may be begun elsewhere), none under
+        way. A job begun (in this run of the desk, or before a restart) keeps its card, and a Submit the person pressed
+        goes on."""
+        return [job_id for job_id, run in self.runs.items()
+                if not run.started and run.status in ("queued", "needs_you") and not run.submit_pressed
+                and job_id not in self._slots and job_id not in self._driving]
+
+    def clear_queue(self) -> list[int]:
+        """The person's Clear the queue (the owner, Oct 24: 58 jobs back after a restart, and no way to empty the queue
+        to search again but Carry on or a Skip on each): the jobs never begun (clearable) are taken out, never skipped,
+        back in the openings as they were before Apply, to apply to again; before the person's OK on the first cover
+        letter, their letters being written, or a first one waiting for their say, dropped. A pause that came only with
+        a restart's jobs back ends with them; the person's own Pause queue stays. Which jobs went."""
+        dropped = self.clearable()
+        gone = set(dropped)
+        self.tasks = deque(t for t in self.tasks if not (t[0] == "apply" and t[1] in gone))
+        for job_id in dropped:
+            # (after the person's OK a letter goes into the job's folder, kept for a later Apply: one they just said Use
+            # it to among them)
+            if not self.letters_approved and (task := self._letter_tasks.get(job_id)) is not None:
+                task.cancel()
+            if job_id in self._drafts() or self.runs[job_id].letter_text:
+                self._drop_draft(job_id)
+            del self.runs[job_id]
+            for held in (self.pressed, self._first, self._restored_ids, self._behind):
+                held.discard(job_id)
+        # (the restart's jobs still held, as restored_notice counts them: none once some left by a Skip, I submitted it
+        # or a Resume and the rest were cleared)
+        if self._restore_held and not any(kind == "apply" and job_id in self._restored_ids
+                                          for kind, job_id in self.tasks):
+            self.paused = self._restore_held = False
+        if dropped and self.letters and not self.letters_approved:
+            self._letters_next()  # (the first letter, its job gone: the next job's)
+        self._wake.set()
+        self._save_queue()
+        return dropped
 
     def restored_notice(self) -> str | None:
         """Said on the desk while jobs queued again after a restart (or picked up from a desk that has ended) wait for
@@ -2097,6 +2144,16 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         run.blocking = False
         self._wake.set()
         return run
+
+    def set_dont_wait(self, on: bool) -> None:
+        """Don't wait for me, turned on or off. On, a job holding the queue for the person now lets go of it (Later),
+        but one whose emailed code the desk is reading itself: that one once its code is in, or no longer looked for
+        (_tick)."""
+        self.dont_wait = on
+        if on:
+            for run in [r for r in self.runs.values() if r.blocking and not self._desk_reads_code(r)]:
+                self.later(run.job_id)
+        self._wake.set()
 
     def mark_applied(self, job_id: int) -> None:
         """The person (or Claude) says this job is applied to: it leaves the queue, and any
@@ -2523,7 +2580,9 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         self._restored_days = int(max(time.time() - saved["since"], 0.0) // 86400)
         self._taken_over = takeover and self._restored_ids != held_before
         if not takeover:
+            held = not (self.paused or saved["paused"]) and bool(self._restored_ids)
             self.paused = self.paused or saved["paused"] or bool(self._restored_ids)
+            self._restore_held = self._restore_held or held
         self._wake.set()
         self._save_queue()
 
@@ -2754,6 +2813,9 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                     self.pressed.add(blocker.job_id)
                 except ValueError:  # marked applied meanwhile
                     pass
+            elif self.dont_wait and not self._desk_reads_code(blocker):
+                # (Don't wait for me: held only while the desk read its code itself; in now, or no longer looked for)
+                self._go_on_without(blocker, "Don't wait for me is on, so the other jobs went ahead")
             elif (time.time() - max(blocker.active_at, blocker.desk_at) > HANDS_ON_IDLE
                   and blocker.job_id not in self._behind):
                 # (its idle wait begins as its tab is brought up: never while it waits its turn behind another's; and
@@ -3020,15 +3082,29 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
 
     def _site_free(self, job_id: int) -> bool:
         """May this job begin now: no job under way is at its employer or on its sites (one at a time on a site: its
-        sign-ins, accounts, password resets and emailed codes are the site's own)?"""
+        sign-ins, accounts, password resets and emailed codes are the site's own), nor one the queue went on without
+        that waits on its site (not just its employer) for the person's sign-in or emailed code (Don't wait for me,
+        Later: another job there would try the same refused password, or bring on another code; the review of 0.3.240),
+        unless the person pressed for this one (their Carry on, their answers, a check solved in the round). One held
+        so says why on its card."""
         run = self.runs.get(job_id)
         if run is None or job_id in self._slots:
             return run is None
         under_way = self._under_way()
-        if not under_way:
-            return True
-        mine = self._sites(run)
-        return not any(mine & self._sites(other) for other in under_way)
+        left = ([r for r in self.runs.values() if r is not run and r.left and r.status == "needs_you"
+                 and r.need in HANDS_ON] if job_id not in self.pressed and job_id not in self._first else [])
+        mine = self._sites(run) if under_way or left else set()
+        if any(mine & self._sites(other) for other in under_way):
+            return False
+        here = {key for key in mine if not key.startswith("employer:")}
+        holder = next((other for other in left if here & self._sites(other)), None)
+        if holder is not None:
+            what = "sign-in" if holder.need == "sign_in" else "emailed code"
+            run.reason = f"Waiting: {holder.company or 'another job'}'s {what} {_HELD_AT_SITE}"
+            return False
+        if run.reason.endswith(_HELD_AT_SITE):
+            run.reason = ""
+        return True
 
     def _submit_free(self, job_id: int) -> bool:
         """May the Submit the person pressed go now? It presses Submit in its own tab alone: never while another job
@@ -3082,10 +3158,26 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         """Another job under way in a step that may email the person (Run.inbox), if any."""
         return next((o for o in self._under_way() if o is not run and o.inbox and o.status == "running"), None)
 
+    def _reads_mail(self, run: Run) -> bool:
+        """Can the desk read this job's emailed code itself: from the inbox (the email app password), or Claude from
+        the person's Gmail (settings.email_codes, while it watches; never a password reset's email)?"""
+        return self.mail_login() is not None or (not run.resetting and self._email_codes_on()
+                                                  and self.claude_watching())
+
+    def _desk_reads_code(self, run: Run) -> bool:
+        """Is the desk reading this job's emailed code itself (_reads_mail), the code not in yet and its window not
+        over, or just typed by the desk, its page still settling (DESK_SETTLE: it carries on from there, at the front)?
+        Then "Don't wait for me" holds the queue for it still (_pause), and the inbox stays its own (_hands_on)."""
+        looking = not run.mail_done and _mail_waited(run) <= MAIL_WINDOW
+        settling = run.mail_done and time.time() - run.desk_at <= DESK_SETTLE
+        return run.need == "email_code" and (looking or settling) and self._reads_mail(run)
+
     def _hands_on(self, run: Run) -> Run | None:
         """Another job holding the queue for the person's sign-in or emailed code (an email step of theirs, in its
-        tab), if any."""
-        return min((r for r in self.runs.values() if r is not run and r.blocking and r.need in HANDS_ON),
+        tab), or one the queue went on without whose code the desk reads itself (_desk_reads_code: its reader come
+        since, say; its code, come late, would be the next job's newest), if any."""
+        return min((r for r in self.runs.values() if r is not run and r.need in HANDS_ON and (
+                    r.blocking or r.left and r.status == "needs_you" and self._desk_reads_code(r))),
                    key=lambda r: r.paused_at, default=None)
 
     async def _take_inbox(self, run: Run, step: bool = True) -> float:
@@ -3427,14 +3519,20 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             run.account_answers = {}  # (answers from an account form's card go into that form alone, on the way back)
         # (paused for their hands while they're at another job's tab, filled at once with it: its turn comes next, its
         # tab brought up then; one brought up as it paused, before this, isn't behind)
-        if need in HANDS_ON and self._person_at(run) is not None:
+        # ("Don't wait for me": its card waits, the queue goes on; but not past an emailed code the desk reads itself,
+        # which holds it while it's looked for, a minute as a rule: the inbox is one, and a later job's code step could
+        # take this one's code, come late from the same sender, as its own: the review of 0.3.240)
+        lets_go = need in HANDS_ON and self.dont_wait and not (need == "email_code" and self._reads_mail(run))
+        held = need in HANDS_ON and not lets_go
+        if held and self._person_at(run) is not None:
             self._behind.add(run.job_id)
-        run.blocking = need in HANDS_ON
+        run.blocking = held
         # a sign-in's or Create Account's own picture check (Edwards', live) counts too: the page it paused on shows it
         run.captcha = need in ("bot_check", "captcha") or bool(seen and (seen.get("captcha") or seen.get("challenge")))
         run.paused_at = run.active_at = time.time()
-        # (a bot check: watched)
-        run.tab_mark, run.left, run.moved_since, run.desk_at = 0, need == "bot_check", 0.0, 0.0
+        # (a bot check: watched; and with Don't wait for me, a sign-in or code, as after Later)
+        run.tab_mark, run.moved_since, run.desk_at = 0, 0.0, 0.0
+        run.left = need == "bot_check" or lets_go
         run.mail_checked, run.mail_done, run.verifying = 0.0, False, False
         run.mail_looked, run.mail_held, run.mail_held_at = 0.0, 0.0, 0.0
         run.paused_host = host_of(run.url)

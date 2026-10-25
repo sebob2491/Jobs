@@ -169,10 +169,14 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   the answers there instead of reading every review page again. It never shows a password,
   an emailed code or a security answer, and it's on the desk page only (never in the job's
   log, a note or a problem report).
-- **Jobs at once** (1, 2 or 3, beside Submit for me; `settings.jobs_at_once` in profile.yaml,
+- **Jobs at once** (1 to 5, beside Submit for me; `settings.jobs_at_once` in profile.yaml,
   default 2) is how many applications the desk fills at the same time, each in its own tab.
   Never two at one employer's site or job-system tenant; one at a time signs in, makes an
-  account, resets a password or waits on an emailed code (the inbox is one); while a sign-in
+  account, resets a password or waits on an emailed code (the inbox is one); unless **Don't wait for
+  me** is on (beside it: for a desk left to go through the list, each sign-in, or emailed code only
+  the user can read, then waits on its card as after Later, and no other job at its site starts;
+  a code the desk reads itself, from the inbox or through Claude's Gmail, still holds the queue
+  while it's looked for, so it never goes to another job), while a sign-in
   or code needs the user, or they're in one of the desk's rounds, no new job starts (those under
   way go on in their own tabs) and no other tab comes to the front; a Submit they press goes
   beside the jobs under way. **Working on** shows each job under way. 1 fills them one after another, as before. The desk's choice is kept in
@@ -185,6 +189,11 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   starts no other until **Carry on with the queue**. A Submit the user presses still goes, and jobs waiting on them are still
   watched. A paused queue stays paused after a restart. To stop the queue, never close the desk's browser window: that
   breaks the job in progress (it says so, and its **Carry on** opens the application again).
+- **Clear the queue** (in the header beside it, and on the notice of jobs back after a restart) asks first, then takes
+  out every job the desk hasn't begun (waiting its turn, or held for a tailored resume or a first cover letter's say),
+  never skipped: back in the openings, to apply to again. A job begun keeps its card, one the user carried on with stays
+  queued, and a Submit they pressed goes on. The pause that came with a restart ends with it; their own Pause queue
+  stays. To search again with a queue waiting, Find jobs works anyway: only the 12-hourly search waits for the queue.
 - **The site's own passing errors** (its web server's error page, Workday's "Something went wrong" again after the
   desk's reload, "try again later", a page that never loaded or came up blank): the job is tried again by itself about
   20 minutes later, once a job while the desk runs, opened afresh in its own tab. Its card says when, with **Try now**

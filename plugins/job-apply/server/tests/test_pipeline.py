@@ -6578,6 +6578,178 @@ def test_a_try_queued_after_the_sites_error_goes_through_the_holds_and_is_counte
         assert not r.fresh_retry and not r.retry_at, end
 
 
+def test_clear_the_queue_keeps_the_persons_own_pause_and_the_kept_queue_without_its_jobs(srv, job_apply_home):
+    """Clear the queue takes the jobs never begun out of the queue the desk keeps (QUEUE_FILE) too, so a restart doesn't
+    bring them back. The person's own Pause queue stays; a pause that came only with a restart's jobs back ends once
+    they're out (the restart's hold, not theirs). Jobs cleared are queued again by Apply as any job."""
+    ids = [srv.add_job(url=f"https://careers.example.com/fab/{i}", title=f"Technician {i}",
+                       company="Example Fab")["job"]["id"] for i in range(3)]
+    a = Applier(srv, keep_queue=True)
+    a._queue_owner = True
+    a.pause_queue()
+    for job_id in ids:
+        a.enqueue(job_id)
+    assert [e["id"] for e in json.loads(pipeline.queue_path().read_text(encoding="utf-8"))["jobs"]] == ids
+    assert a.clear_queue() == ids
+    assert a.paused and not a.tasks and not a.runs  # (their own pause)
+    assert json.loads(pipeline.queue_path().read_text(encoding="utf-8")) == {"paused": True, "jobs": []}
+    assert a.enqueue(ids[0]).status == "queued" and list(a.tasks) == [("apply", ids[0])]
+
+    # a restart's jobs back, paused by the restart alone: cleared, the queue goes on
+    pipeline.queue_path().write_text(json.dumps({"paused": False, "jobs": [{"id": j, "state": "queued"} for j in ids],
+                                                 "since": time.time()}), encoding="utf-8")
+    after = Applier(srv, keep_queue=True)
+    after._queue_owner = True
+    after._restore_queue()
+    assert after.paused and after.restored_notice() is not None
+    assert after.clear_queue() == ids and not after.paused and after.restored_notice() is None
+    # ...and paused by the person before the restart: it stays so
+    pipeline.queue_path().write_text(json.dumps({"paused": True, "jobs": [{"id": j, "state": "queued"} for j in ids],
+                                                 "since": time.time()}), encoding="utf-8")
+    kept = Applier(srv, keep_queue=True)
+    kept._queue_owner = True
+    kept._restore_queue()
+    assert kept.clear_queue() == ids and kept.paused
+
+    # one of a restart's jobs gone another way first (I submitted it): the rest cleared, the restart's pause ends still
+    more = [srv.add_job(url=f"https://careers.example.com/fab/more-{i}", title=f"Technician {i}",
+                        company="Example Fab")["job"]["id"] for i in range(3)]
+    pipeline.queue_path().write_text(json.dumps({"paused": False, "jobs": [{"id": j, "state": "queued"} for j in more],
+                                                 "since": time.time()}), encoding="utf-8")
+    gone = Applier(srv, keep_queue=True)
+    gone._queue_owner = True
+    gone._restore_queue()
+    gone.mark_applied(more[0])
+    assert gone.clear_queue() == more[1:] and not gone.paused and not gone.tasks
+
+
+def test_clear_the_queue_keeps_a_cover_letter_going_in_after_the_persons_ok(srv, job_apply_home):
+    """Before the person's OK on the first cover letter, a cleared job's letter being written is dropped; after it,
+    the letter going into the job's folder (the one they just said Use it to, among them) is left to land there, for
+    a later Apply."""
+    a = Applier(srv)
+    jobs = [srv.add_job(url=f"https://careers.example.com/fab/{i}", title="Technician",
+                        company="Example Fab")["job"]["id"] for i in range(2)]
+    for job_id in jobs:
+        a.enqueue(job_id)
+    loop = asyncio.new_event_loop()
+    try:
+        writing, putting_in = loop.create_future(), loop.create_future()
+        a._letter_tasks[jobs[0]] = writing
+        assert a.clear_queue() == jobs and writing.cancelled()
+        a.letters_approved = True
+        a.enqueue(jobs[1])
+        a._letter_tasks[jobs[1]] = putting_in
+        assert a.clear_queue() == [jobs[1]] and not putting_in.cancelled()
+    finally:
+        loop.close()
+
+
+def test_dont_wait_for_me_never_gives_one_jobs_late_code_to_the_next(srv, monkeypatch):
+    """The review of 0.3.240: with "Don't wait for me" on, a job waiting on an emailed code the desk reads itself let
+    the queue go on, and the next job's code step, at a site sending from the same address (two Oracle sites, any
+    Workday employers), took the first one's code, come late, as its own. Such a code holds the queue while it's looked
+    for, as without the switch: each job is given its own."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setattr(pipeline, "HANDS_ON_IDLE", 600)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    monkeypatch.setattr(pipeline, "_another_employers_mail", lambda *a, **k: None)
+    inbox, codes, typed = [], {}, []
+    late = 4.0  # (each code comes this long after its job's step)
+    real_pause, real_enter = Applier._pause, Applier._enter_code
+
+    def pause(self, r, need, reason, questions=None, seen=None, *, code):
+        if need == "email_code" and r.job_id not in codes:
+            codes[r.job_id] = f"{100000 + r.job_id * 1111}"
+            inbox.append(pipeline.mailbox.Found("code", codes[r.job_id], "oraclecloud.com", time.time() + late))
+        return real_pause(self, r, need, reason, questions, seen, code=code)
+
+    def search(address, password, since, senders, want, allowed_link, before=None, look_back=120, others=None):
+        now = time.time()
+        got = [m for m in inbox if since - look_back <= m.received <= now and (before is None or m.received < before)]
+        return max(got, key=lambda m: m.received) if got else None
+
+    async def enter(self, r, found):
+        typed.append((r.job_id, found.value))
+        return await real_enter(self, r, found)
+
+    monkeypatch.setattr(Applier, "_pause", pause)
+    monkeypatch.setattr(pipeline.mailbox, "search", search)
+    monkeypatch.setattr(Applier, "_enter_code", enter)
+    monkeypatch.setattr(Applier, "_mail_senders", lambda self, r: {"oraclecloud.com"})  # (two Oracle sites)
+    jobs = [srv.add_job(url=fixture_url("site/verify-email.html") + f"?code&job={n}", title="FSE",
+                        company=company)["job"]["id"] for n, company in enumerate(("Example Fab", "Example Litho"))]
+    applier = Applier(srv)
+    applier.jobs_at_once, applier.dont_wait = 1, True
+
+    async def go():
+        applier.start()
+        try:
+            for job_id in jobs:
+                applier.enqueue(job_id)
+            await until(lambda: len(typed) >= 2, timeout=60, about=lambda: (typed, codes))
+        finally:
+            await applier.stop()
+
+    run(go())
+    assert typed == [(j, codes[j]) for j in jobs], (typed, codes)
+
+
+def test_dont_wait_for_me_goes_on_past_a_sign_in_but_not_to_its_site(srv, job_apply_home, monkeypatch):
+    """With "Don't wait for me" on, a sign-in (or a code only the person can read) waits on its card and the queue goes
+    on; a code the desk reads from the inbox itself holds it while it's looked for, and while the page it typed it into
+    settles; after that the switch lets go. A job left so keeps its site, not just its employer, and says so on the
+    cards it holds: another job there would try the same refused password. The person's own press still goes. A job
+    left whose code the desk reads keeps the inbox: its code, come late, would be the next one's newest (the reviews of
+    0.3.240)."""
+    a = Applier(srv)
+    a.dont_wait = True
+    fab = [srv.add_job(url=f"https://careers.examplefab.com/jobs/{i}", title=f"Technician {i}",
+                       company="Example Fab")["job"]["id"] for i in range(3)]
+    litho = srv.add_job(url="https://careers.examplelitho.com/jobs/1", title="Technician",
+                        company="Example Litho")["job"]["id"]
+    board = srv.add_job(url="https://jobs.exampleboard.com/view/1", title="Technician",
+                        company="Example Fab")["job"]["id"]  # (Example Fab's, on a job board: not its site)
+    signing_in, coded, queued = (Run(j, "Technician", "Example Fab", status="running", started=True,
+                                     url=f"https://careers.examplefab.com/jobs/{n}") for n, j in enumerate(fab))
+    for r in (signing_in, coded):
+        a.runs[r.job_id] = r
+    a._pause(signing_in, "sign_in", "Sign in.", code="sign_in")
+    assert signing_in.left and not signing_in.blocking and a._blocker() is None
+    a.runs[queued.job_id] = queued
+    queued.status = "queued"
+    a.enqueue(litho)
+    a.enqueue(board)
+    assert not a._site_free(queued.job_id) and a._site_free(litho) and a._site_free(board)
+    assert queued.reason == ("Waiting: Example Fab's sign-in on the same site waits for you on its card. This one goes "
+                             "once that's done.")
+    a.pressed.add(queued.job_id)  # (the person's Carry on for it)
+    assert a._site_free(queued.job_id) and queued.reason == ""
+    a.pressed.discard(queued.job_id)
+
+    monkeypatch.setattr(Applier, "mail_login", lambda self: ("someone@example.com", "an-app-password"))
+    a._pause(coded, "email_code", "The site emailed you a code.", code="email_code")
+    assert coded.blocking and not coded.left and a._blocker() is coded  # (its code read from the inbox)
+    a.set_dont_wait(True)
+    assert coded.blocking  # (turned on again: still read)
+    coded.mail_done, coded.desk_at = True, time.time()  # (its code typed by the desk: its page settling)
+    assert a._desk_reads_code(coded)
+    coded.desk_at -= pipeline.DESK_SETTLE + 1
+    assert not a._desk_reads_code(coded)
+    coded.mail_done = False
+    a.later(coded.job_id)  # (left, its code still read: the inbox is its own)
+    other = a.runs[litho]
+    assert a._hands_on(other) is coded
+    monkeypatch.setattr(Applier, "mail_login", lambda self: None)
+    assert a._hands_on(other) is None  # (no inbox to read it from: it holds nothing)
+    a.dont_wait = False
+    a._pause(coded, "email_code", "The site emailed you a code.", code="email_code")
+    a.set_dont_wait(True)  # (and it lets go)
+    assert coded.left and not coded.blocking and a._blocker() is None
+
+
 def test_a_try_after_the_sites_error_never_outlives_a_job_marked_applied_or_a_restart(srv, job_apply_home):
     """I submitted it ends the wait; and the queue kept for a restart keeps no wait: the job comes back on its card
     for the person, as any job waiting on them (the desk forgets its try)."""

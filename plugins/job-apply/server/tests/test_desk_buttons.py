@@ -1,7 +1,7 @@
 """The desk's buttons that no test pressed through the page (the design of Oct 18, A9): Carry on with the queue on the
-notice of jobs back after a restart, Undo on a skipped job's row, Show me, Clear, the review round's Stop, and the
-header's This week, Safety, Notes and What and where. Each is pressed in the real page; the test checks the call it made
-to the desk (or that it made none) and what the page shows after."""
+notice of jobs back after a restart (and Clear the queue beside it), Undo on a skipped job's row, Show me, Clear, the
+review round's Stop, and the header's This week, Safety, Notes and What and where. Each is pressed in the real page; the
+test checks the call it made to the desk (or that it made none) and what the page shows after."""
 
 import asyncio
 import contextlib
@@ -95,6 +95,78 @@ def test_resume_queue_on_the_restored_notice_lets_the_jobs_back_go_on(srv):
     calls = run(go())
     assert calls == [("POST", "/api/queue/resume", {})], calls
     assert not a.paused and a.restored_notice() is None and [j for _, j in a.tasks] == [job["id"]]
+
+
+def test_clear_the_queue_takes_out_the_jobs_not_begun_and_leaves_the_rest(srv):
+    """The owner, Oct 24: 58 jobs back after a restart, paused, and no way to empty the queue to search again but Carry
+    on (starting all 58) or a Skip on each card. Clear the queue, on the notice and beside Carry on in the header, asks
+    first, then takes out each job not begun (waiting its turn, or held before its tab opens for a tailored resume),
+    never skipped: back in the openings, to apply to again. A job begun keeps its card, one the person carried on with
+    stays queued, and their Submit goes on. The pause that came with the restart ends with it."""
+    from job_apply.pipeline import Run
+
+    desk = _idle_desk(srv)
+    a = desk.applier
+    ids = [srv.add_job(url=f"https://careers.example.com/fab/{i}", title=f"Technician {i}",
+                       company="Example Fab")["job"]["id"] for i in range(6)]
+    waiting, waiting_too, tailor, begun, carried, ready = ids
+    for job_id in (waiting, waiting_too):
+        a.runs[job_id] = Run(job_id, "Technician", "Example Fab", status="queued")
+        a.tasks.append(("apply", job_id))
+        a._restored_ids.add(job_id)
+    a.runs[tailor] = Run(tailor, "Technician", "Example Fab", status="needs_you", need="tailor", code="tailor")
+    a.runs[begun] = Run(begun, "Technician", "Example Fab", status="needs_you", need="restarted", code="restarted",
+                        left_at_restart=True, started=True)
+    a.runs[carried] = Run(carried, "Technician", "Example Fab", status="queued", started=True)
+    a.tasks.append(("apply", carried))
+    a.pressed.add(carried)
+    a.runs[ready] = Run(ready, "Technician", "Example Fab", status="ready", started=True, submit_pressed=True)
+    a.tasks.append(("submit", ready))
+    a.paused = a._restore_held = True  # (paused by the restart, not by the person's Pause queue)
+    said: list[str] = []
+
+    async def go():
+        async with _desk_page(desk, said) as (page, calls):
+            notice = page.locator("#notices .waiting", has_text="back in the queue")
+            await notice.wait_for()
+            header = page.locator("#clear-queue-btn")
+            await header.wait_for()
+            await notice.locator("[data-act=clear-queue]").click()
+            await notice.wait_for(state="detached")
+            await header.wait_for(state="hidden")
+            await page.wait_for_selector("#pause-btn:text-is('Pause queue')")
+            return calls
+
+    calls = run(go())
+    assert calls == [("POST", "/api/queue/clear", {})], calls
+    assert said == ["Take the 3 jobs not started yet out of the queue? They go back to the openings, not skipped, and "
+                    "you can apply to them again. Jobs already begun keep their cards."], said
+    assert set(a.runs) == {begun, carried, ready} and list(a.tasks) == [("apply", carried), ("submit", ready)]
+    assert not a.paused and a.restored_notice() is None and carried in a.pressed
+    assert {srv.tracker().get(j)["status"] for j in (waiting, waiting_too, tailor)} == {"saved"}
+
+
+def test_the_restart_notice_offers_clear_the_queue_only_with_jobs_to_clear(srv):
+    """A restart's jobs back that were all begun before it: Clear the queue would take none out, so neither the notice
+    nor the header offers it; Carry on with the queue does."""
+    from job_apply.pipeline import Run
+
+    desk = _idle_desk(srv)
+    a = desk.applier
+    job_id = srv.add_job(url="https://careers.example.com/fab/1", title="Technician",
+                         company="Example Fab")["job"]["id"]
+    a.runs[job_id] = Run(job_id, "Technician", "Example Fab", status="queued", started=True)
+    a.tasks.append(("apply", job_id))
+    a._restored_ids.add(job_id)
+    a.paused = a._restore_held = True
+
+    async def go():
+        async with _desk_page(desk) as (page, calls):
+            notice = page.locator("#notices .waiting", has_text="back in the queue")
+            await notice.locator("[data-act=resume]").wait_for()
+            return await notice.locator("[data-act=clear-queue]").count(), await page.is_hidden("#clear-queue-btn")
+
+    assert run(go()) == (0, True)
 
 
 def test_undo_on_a_skipped_jobs_row_puts_it_back_in_the_queue(srv):
