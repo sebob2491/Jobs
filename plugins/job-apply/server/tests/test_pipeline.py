@@ -6701,9 +6701,8 @@ def test_dont_wait_for_me_goes_on_past_a_sign_in_but_not_to_its_site(srv, job_ap
     """With "Don't wait for me" on, a sign-in (or a code only the person can read) waits on its card and the queue goes
     on; a code the desk reads from the inbox itself holds it while it's looked for, and while the page it typed it into
     settles; after that the switch lets go. A job left so keeps its site, not just its employer, and says so on the
-    cards it holds: another job there would try the same refused password. The person's own press still goes. A job
-    left whose code the desk reads keeps the inbox: its code, come late, would be the next one's newest (the reviews of
-    0.3.240)."""
+    cards it holds: another job there would try the same refused password. The person's own press still goes (the
+    reviews of 0.3.240)."""
     a = Applier(srv)
     a.dont_wait = True
     fab = [srv.add_job(url=f"https://careers.examplefab.com/jobs/{i}", title=f"Technician {i}",
@@ -6728,6 +6727,11 @@ def test_dont_wait_for_me_goes_on_past_a_sign_in_but_not_to_its_site(srv, job_ap
     a.pressed.add(queued.job_id)  # (the person's Carry on for it)
     assert a._site_free(queued.job_id) and queued.reason == ""
     a.pressed.discard(queued.job_id)
+    assert not a._site_free(queued.job_id)
+    signing_in.status = "queued"  # (past its sign-in: on again, while the slots are full, say)
+    a._site_holds_said()
+    assert queued.reason == "" and a._site_free(queued.job_id)
+    signing_in.status = "needs_you"
 
     monkeypatch.setattr(Applier, "mail_login", lambda self: ("someone@example.com", "an-app-password"))
     a._pause(coded, "email_code", "The site emailed you a code.", code="email_code")
@@ -6738,12 +6742,7 @@ def test_dont_wait_for_me_goes_on_past_a_sign_in_but_not_to_its_site(srv, job_ap
     assert a._desk_reads_code(coded)
     coded.desk_at -= pipeline.DESK_SETTLE + 1
     assert not a._desk_reads_code(coded)
-    coded.mail_done = False
-    a.later(coded.job_id)  # (left, its code still read: the inbox is its own)
-    other = a.runs[litho]
-    assert a._hands_on(other) is coded
     monkeypatch.setattr(Applier, "mail_login", lambda self: None)
-    assert a._hands_on(other) is None  # (no inbox to read it from: it holds nothing)
     a.dont_wait = False
     a._pause(coded, "email_code", "The site emailed you a code.", code="email_code")
     a.set_dont_wait(True)  # (and it lets go)

@@ -2756,6 +2756,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         return True
 
     async def _tick(self) -> None:
+        self._site_holds_said()
         if self._full() and not (self._slots.keys() <= self._waiting) and not self._may_go_beside():
             # as many jobs under way as go at once: nothing else is begun or looked at until one is done (with one at
             # once, between jobs, as ever). Unless each of them waits on the person's pause (Jobs at once lowered
@@ -3090,21 +3091,34 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         run = self.runs.get(job_id)
         if run is None or job_id in self._slots:
             return run is None
-        under_way = self._under_way()
-        left = ([r for r in self.runs.values() if r is not run and r.left and r.status == "needs_you"
-                 and r.need in HANDS_ON] if job_id not in self.pressed and job_id not in self._first else [])
-        mine = self._sites(run) if under_way or left else set()
-        if any(mine & self._sites(other) for other in under_way):
+        if self._held_at_site(run):
             return False
-        here = {key for key in mine if not key.startswith("employer:")}
+        under_way = self._under_way()
+        if not under_way:
+            return True
+        mine = self._sites(run)
+        return not any(mine & self._sites(other) for other in under_way)
+
+    def _held_at_site(self, run: Run) -> bool:
+        """Does a job the queue went on without wait on this one's site for the person's sign-in or emailed code
+        (_site_free)? Said on its card while it does, and no more once it doesn't."""
+        left = ([r for r in self.runs.values() if r is not run and r.left and r.status == "needs_you"
+                 and r.need in HANDS_ON] if run.job_id not in self.pressed and run.job_id not in self._first else [])
+        here = {key for key in self._sites(run) if not key.startswith("employer:")} if left else set()
         holder = next((other for other in left if here & self._sites(other)), None)
         if holder is not None:
             what = "sign-in" if holder.need == "sign_in" else "emailed code"
             run.reason = f"Waiting: {holder.company or 'another job'}'s {what} {_HELD_AT_SITE}"
-            return False
-        if run.reason.endswith(_HELD_AT_SITE):
+        elif run.reason.endswith(_HELD_AT_SITE):
             run.reason = ""
-        return True
+        return holder is not None
+
+    def _site_holds_said(self) -> None:
+        """Each queued job's "waits for you on its card" (_held_at_site) said again as things stand now, between jobs:
+        the job left on its site may be past its stop, skipped or marked applied since, while the jobs under way fill
+        every slot (the review of 0.3.240)."""
+        for run in [r for r in self.runs.values() if r.status == "queued" and r.reason.endswith(_HELD_AT_SITE)]:
+            self._held_at_site(run)
 
     def _submit_free(self, job_id: int) -> bool:
         """May the Submit the person pressed go now? It presses Submit in its own tab alone: never while another job
@@ -3167,17 +3181,15 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
     def _desk_reads_code(self, run: Run) -> bool:
         """Is the desk reading this job's emailed code itself (_reads_mail), the code not in yet and its window not
         over, or just typed by the desk, its page still settling (DESK_SETTLE: it carries on from there, at the front)?
-        Then "Don't wait for me" holds the queue for it still (_pause), and the inbox stays its own (_hands_on)."""
+        Then "Don't wait for me" holds the queue for it still (_pause)."""
         looking = not run.mail_done and _mail_waited(run) <= MAIL_WINDOW
         settling = run.mail_done and time.time() - run.desk_at <= DESK_SETTLE
         return run.need == "email_code" and (looking or settling) and self._reads_mail(run)
 
     def _hands_on(self, run: Run) -> Run | None:
         """Another job holding the queue for the person's sign-in or emailed code (an email step of theirs, in its
-        tab), or one the queue went on without whose code the desk reads itself (_desk_reads_code: its reader come
-        since, say; its code, come late, would be the next job's newest), if any."""
-        return min((r for r in self.runs.values() if r is not run and r.need in HANDS_ON and (
-                    r.blocking or r.left and r.status == "needs_you" and self._desk_reads_code(r))),
+        tab), if any."""
+        return min((r for r in self.runs.values() if r is not run and r.blocking and r.need in HANDS_ON),
                    key=lambda r: r.paused_at, default=None)
 
     async def _take_inbox(self, run: Run, step: bool = True) -> float:
