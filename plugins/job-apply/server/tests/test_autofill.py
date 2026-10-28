@@ -1157,6 +1157,46 @@ def test_icims_phone_country_code_and_number_are_answered_from_the_profiles_phon
     assert resolve_field({**number, "section": "Emergency Contact"}, _person()) is None
 
 
+def test_a_phone_numbers_country_code_list_is_answered_from_the_profile():
+    """EMD Electronics (run 170, Oct 28) split its one phone box ("+1##########") into a "Phone Number Country
+    Code" list and a "Phone Number" box: the list, read as no rule's, was asked of the person (the live check's
+    first country, Afghanistan, then had the number refused). It's the phone's code, from the profile, as a
+    "Country Phone Code" is, and a preset other country takes it too; a box for the number itself, said with or
+    without its code, is still the number's."""
+    codes = ["", "Afghanistan (+93)", "Åland Islands (+358)", "American Samoa (+1)", "Canada (+1)",
+             "United Kingdom (+44)", "United States (+1)", "United States Minor Outlying Islands (+1)"]
+    code = f("Phone Number Country Code*", "select", value="", options=codes, required=True)
+    number = {**f("Phone Number*", required=True), "id": "2"}
+    filled = {x["label"]: x["value"] for x in plan_autofill([code, number], _person())["to_fill"]}
+    assert filled == {"Phone Number Country Code*": "United States (+1)", "Phone Number*": "480-555-0100"}, filled
+    for label in ("Mobile Phone Number Country Code", "Phone No. Dialing Code"):
+        assert resolve_field(f(label, "select", value="", options=codes), _person()).value == "United States (+1)"
+    preset = f("Phone Number Country Code*", "select", value="Afghanistan (+93)", options=codes[1:], required=True)
+    assert plan_autofill([preset], _person())["to_fill"][0]["value"] == "United States (+1)"
+    for label in ("Phone number (do not include country code)", "Country code and phone number",
+                  "Phone number including country code"):
+        assert resolve_field(f(label), _person()).rule == "phone", label
+
+
+def test_a_phone_shown_with_dashes_is_its_digits_alone_only_where_its_the_profiles():
+    """EMD Electronics' phone box (run 170) takes no dashes: the profile's phone a box shows, with dashes, brackets,
+    dots or spaces, in its digits alone (with its "+" and dial code where it shows them); never another number, one
+    in digits already, or anything else the box shows."""
+    from job_apply.autofill import phone_digits
+    prof = _person()  # (480-555-0100, +1)
+    for shown, bare in (("480-555-0100", "4805550100"), ("(480) 555-0100", "4805550100"),
+                        ("480.555.0100", "4805550100"), ("+1 480-555-0100", "+14805550100"),
+                        ("1-480-555-0100", "14805550100")):
+        assert phone_digits(shown, prof) == bare, shown
+    for shown in ("4805550100", "+14805550100", "480-555-0199", "602-555-0100", "480-555-0100 ext 4", "", None,
+                  "85225-1234"):
+        assert phone_digits(shown, prof) is None, shown
+    written_with_code = _person(personal={"first_name": "Sam", "phone": "+1 480-555-0100", "phone_country_code": "+1"})
+    assert phone_digits("480-555-0100", written_with_code) == "4805550100"
+    assert phone_digits("+1 (480) 555-0100", written_with_code) == "+14805550100"
+    assert phone_digits("480-555-0100", _person(personal={"first_name": "Sam"})) is None
+
+
 def test_a_phone_written_with_its_code_or_a_code_read_as_a_number():
     """A profile's number written with its dial code ("+1 480-555-0100", "1-480-555-0100"), or a
     dial code YAML read as a number (phone_country_code: +1 is 1), still goes in as asked."""

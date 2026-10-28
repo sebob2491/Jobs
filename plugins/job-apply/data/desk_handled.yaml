@@ -2,7 +2,7 @@
 # account there and the common questions answered) to the application's review page, or to its last button.
 # The desk's "Only where the desk goes all the way" switch shows these employers' openings alone.
 # Refresh it from each full nightly before a release: `uv run python scripts/nightly_summary.py --handled`.
-as_of: "2026-10-24: full run 161 (main 2ea8bba, 0.3.239); Edward Jones left out (it flips)"
+as_of: "2026-10-28: full run 170 (main d9e706a, 0.3.241); Edward Jones left out (it flips); EMD Electronics kept (its stop in run 170 was the desk's, fixed in 0.3.242)"
 employers:
   - "Air Liquide"
   - "Air Products"
@@ -77,6 +77,7 @@ employers:
   - "Robert Half"
   - "SCREEN SPE USA"
   - "Southwest Gas"
+  - "Station Casinos (Red Rock Resorts)"
   - "Switch"
   - "TEKsystems"
   - "TEKsystems (consultant jobs)"

@@ -2662,6 +2662,27 @@ def _masked_phone(prof: Profile, job: dict, label: str = "") -> Any:
     return _phone(prof, job, label) if re.search(r"#{3}-#{3}-#{4}", label or "") else None
 
 
+def phone_digits(shown: Any, prof: Profile) -> str | None:
+    """The profile's phone, as a box shows it written with dashes, brackets, dots or spaces ("480-555-0199"), in its
+    digits alone ("4805550199"; "+14805550199" where it shows the dial code with a "+"): for a box the page calls
+    invalid so written (EMD Electronics' Phenom, run 170, takes no dashes beside its own country code list). None for
+    a box that shows another number, or one written in digits already."""
+    shown = str(shown or "").strip()
+    phone = str(prof.get("personal.phone") or "").strip()
+    if not phone or not re.search(r"\d[\s().-]+\d", shown) or re.search(r"[^\d\s().+-]", shown):
+        return None
+    code = re.sub(r"\D", "", str(prof.get("personal.phone_country_code", "+1"))) or "1"  # (YAML reads +1 as 1)
+    digits, own = re.sub(r"\D", "", shown), re.sub(r"\D", "", phone)
+    # the profile's number without its dial code, as _phone reads it
+    national = own[len(code):] if (phone.startswith("+") and own.startswith(code)
+                                   or code == "1" and len(own) == 11 and own.startswith("1")) else own
+    if digits == national:
+        return national
+    if digits == code + national:
+        return ("+" if shown.startswith("+") else "") + digits
+    return None
+
+
 # The kinds of phone a form's boxes name (the alias groups of a phone's type, in _COUNTRY_ALIASES)
 _PHONE_KINDS = {"mobile": r"mobile|cell(?:ular)?", "home": r"home|landline", "work": r"work|business|office"}
 _ANY_PHONE_KIND = "|".join(_PHONE_KINDS.values())
@@ -2795,6 +2816,9 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     # (not "Phone Number (including country code)": that's the number, written with its code)
     ("phone_code", r"^(?!.*\b(number|no|incl|including|with)\b).*\b(country|phone|dial(ing)?) (phone )?code\b",
      _phone_code, 45, None),
+    # but the code of the phone number, by its own list (EMD Electronics' "Phone Number Country Code", run 170)
+    ("phone_code", r"^((mobile|cell(ular)?|home|primary|contact) )?(tele)?phone (number|no) "
+                   r"(country|dial(ing)?|calling) code$", _phone_code, 45, None),
     ("phone_ext", r"extension", lambda p, j: None, 45, None),
     ("phone", r"phone|mobile|cell|telephone", _phone, 45, {"text", "combobox"}),
     # a longer label that goes on to say how to write it ("Phone Number [must include your location code ...]")
@@ -4614,7 +4638,8 @@ def site_default(f: dict) -> bool:
 
 # A country list, the address's or the phone's dial code's, by its label
 _COUNTRY_LIST = re.compile(r"^(country|country region|country or region|country territory|country of residence|"
-                           r"(phone )?country (phone |dial(ing)? |calling )?code)$")
+                           r"(phone (number |no )?)?country (phone |dial(ing)? |calling )?code|"
+                           r"phone (number|no) (dial(ing)?|calling) code)$")
 
 
 # The person's own address or phone, where a country list is theirs today: a section naming one, or none at all
