@@ -4217,6 +4217,46 @@ def test_a_box_the_page_says_is_wrong_showing_what_it_wrote_itself_takes_the_pro
     assert shown == "+14805550000", r.log
 
 
+def test_a_phone_the_page_calls_invalid_with_its_dashes_is_typed_again_in_its_digits_alone(srv, monkeypatch):
+    """EMD Electronics' Phenom (run 170, Oct 28): its one phone box became a "Phone Number Country Code" list beside a
+    "Phone Number" box. The list was asked of the person, and the number, typed as the profile writes it
+    (480-555-0123), was "Invalid Phone Number" whatever the code: the box takes digits alone. The code comes from the
+    profile, and a phone the page calls invalid, showing the profile's number with dashes, brackets or spaces, is
+    typed again in its digits alone, once a page. A box that won't take those either stops as before."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "STEP_SAVE_WAIT", 1)
+    said = "typed your phone number again in its digits alone, as the page said it was invalid: Phone Number"
+
+    async def go(query=""):
+        job = srv.add_job(url=fixture_url("site/phenom-phone-widget.html") + query, title="Equipment Technician",
+                          company="Example Fab")["job"]
+        applier = Applier(srv)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            shown = None if "review.html" in r.url else await r.page.evaluate(
+                "() => document.getElementById('phoneWidget.phoneNumber').value")
+            return r, shown
+        finally:
+            await applier.stop()
+
+    r, _ = run(go())
+    assert "review.html" in r.url, (r.url, r.status, r.reason, r.log)
+    assert said in r.log, r.log
+    assert not r.questions, r.questions
+
+    r, shown = run(go("?plus"))
+    assert r.status == "needs_you" and "Invalid Phone Number" in r.reason, (r.status, r.reason, r.log)
+    assert r.log.count(said) == 1, r.log
+    assert shown in ("4805550123", "480-555-0123"), shown
+
+    # (the review's) the page's errors name the phone, and call another box's answer invalid: the phone keeps its dashes
+    r, shown = run(go("?other"))
+    assert r.status == "needs_you" and "Invalid format" in r.reason, (r.status, r.reason, r.log)
+    assert said not in r.log and shown == "480-555-0123", (shown, r.log)
+
+
 def test_a_step_waiting_on_a_tax_credit_screening_says_so_and_leaves_it_to_the_person(srv, monkeypatch):
     """Kforce's Taleo (live run 41, Oct 12): Save and Continue wouldn't go on until the applicant completed its tax
     credit screening questionnaire ("Complete Tax Credit Screening Questionnaire"), and the desk stopped with the page's

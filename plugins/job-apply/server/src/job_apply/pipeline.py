@@ -42,7 +42,7 @@ from .search import every_employer
 from .tracker import city_key, title_key
 from .ats import ATS_NAMES, JOB_BOARDS, detect_ats, host_of, shared_system
 from .autofill import (_OTHER_DOCUMENT, clean_label, documents_asked, documents_named, entry_list_unloaded,
-                       _CHOICE_KINDS, is_empty_value, kept_documents, norm,
+                       _CHOICE_KINDS, is_empty_value, kept_documents, norm, phone_digits,
                        profile_entries, unset_choice, polarity, tailored_document, works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
                       confirmations, declines_cookies, final_text, may_accept_cookies, questions_shown)
@@ -1463,6 +1463,8 @@ class _Pass:
     refilled_pages: set[tuple[Any, ...]] = field(default_factory=set)
     # pages whose boxes said wrong were answered again (once a page)
     redone_pages: set[tuple[Any, ...]] = field(default_factory=set)
+    # pages whose phone said invalid was typed again in its digits alone (once a page)
+    digit_pages: set[tuple[Any, ...]] = field(default_factory=set)
     # steps gone back to for the boxes their errors name (once a step)
     asked_back: set[tuple[Any, ...]] = field(default_factory=set)
     # pages filled once more for required boxes still empty after their fill (once a page: _form_lap)
@@ -1625,6 +1627,10 @@ _BOT_CHECK_SAYS = ("The site is checking that you're a person (a bot check or CA
                    "desk's Bot checks round takes you to each one waiting).")
 # a section's count, not what's wrong: "1 error found", "(2) issues"
 _ERROR_COUNT = re.compile(r"^\(?\d+\)?\s+(?:errors?|issues?|problems?)(?:\s+found)?\.?$", re.I)
+# the page's errors (norm) saying a box isn't written as it takes it: "Invalid Phone Number", "enter a valid phone
+# number", "incorrect format", "digits only"
+_SAID_INVALID = re.compile(r"\b(?:invalid|not valid|valid (?:phone|mobile|telephone|number)|incorrect|format|"
+                           r"(?:digits|numbers) only|only (?:digits|numbers))\b")
 
 
 def _count(n: int, noun: str) -> str:
@@ -5247,7 +5253,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             # (Nikon's UKG Pro, live run 10: its resume parse wiped Address 1 and Zip a moment after they
             # were typed). Typed again, once a page, and the step pressed again
             seen_now = (await self._look(text=False))[0] if (looked not in ps.retyped or looked not in ps.refilled_pages
-                                                   or looked not in ps.redone_pages) else {}
+                                                   or looked not in ps.redone_pages
+                                                   or looked not in ps.digit_pages) else {}
             # (and Workday's error links, "Error-Date", where its words read as no error: Entegris' and Analog
             # Devices' Self Identify, runs 53 and 54, whose signature Date showed 10/13/2026)
             links = [a.get("text") or "" for a in seen_now.get("actions") or []
@@ -5267,6 +5274,31 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             for f in seen_now.get("fields") or []:
                 if f.get("role") == "spinbutton":
                     blocks.setdefault(norm(clean_label(f.get("label") or "")), set()).add(str(f.get("section") or ""))
+            # a phone the page calls invalid, showing the profile's number written with dashes, brackets or spaces:
+            # typed again in its digits alone, once a page (EMD Electronics' Phenom, run 170: "Invalid Phone Number"
+            # for 480-555-0199 beside its own country code list, and 4805550199 taken)
+            # (an error of its own saying so, naming the box: not another box's "invalid format", the review's)
+            told = [norm(e) for e in [*(e for e in seen_now.get("errors") or [] if _errorish(e)), *links]]
+            bare = {f["id"]: digits for f in lost if f.get("kind") == "text"
+                    and any(re.search(rf"\b{re.escape(norm(clean_label(f.get('label') or '')))}\b", e)
+                            and _SAID_INVALID.search(e) for e in told)
+                    and (digits := phone_digits(f.get("value"), config.Profile.load(),
+                                                clean_label(f.get("label") or "")))} if (
+                lost and looked not in ps.digit_pages) else {}
+            if bare:
+                ps.digit_pages.add(looked)
+                run.did("typed", [f for f in lost if f["id"] in bare])
+                out = await srv.fill_form([{"id": fid, "value": value, "again": True} for fid, value in bare.items()])
+                typed = {str(r.get("id")) for r in out.get("results") or [] if r.get("ok")}
+                if typed:
+                    _went_in(run, [{"id": fid, "value": value, "rule": "phone"} for fid, value in bare.items()
+                                   if str(fid) in typed], seen_now)
+                    ps.filled_values |= {norm(value) for fid, value in bare.items() if str(fid) in typed}
+                    names = ", ".join(clean_label(f.get("label") or "") for f in lost if str(f["id"]) in typed)
+                    self._log(run, f"typed your phone number again in its digits alone, as the page said it was "
+                              f"invalid: {names}")
+                    ps.stalls, ps.fixed_at = 0, len(ps.pressed)
+                    return _Then.AGAIN
             # (never a text area: the profile never answers one again over what it shows, the review of 0.3.166)
             wrong = [f for f in lost
                      if f.get("kind") != "textarea" and f.get("invalid") or f.get("role") == "spinbutton"

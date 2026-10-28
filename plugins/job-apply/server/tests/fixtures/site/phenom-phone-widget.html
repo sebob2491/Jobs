@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Equipment Technician | Apply</title></head>
+<body>
+<!-- like EMD Electronics' Phenom application (live run 170, Oct 28): its one phone box became a "Phone Number Country
+     Code" list beside a "Phone Number" box, and Next calls a number written with dashes, brackets or spaces invalid
+     ("Invalid Phone Number"); its digits alone go. ?plus: the box wants the number with a "+" and its code, never
+     taken as digits alone either. ?other: the box takes the number with its dashes, and the page's errors name it
+     beside another box's "Invalid format" (the review of 0.3.242). -->
+<h2>My information</h2>
+<form onsubmit="return false">
+  <label for="first">First Name*</label><input id="first" required>
+  <fieldset id="phoneWidget">
+    <legend>phoneWidget</legend>
+    <label for="phoneWidget.countryPhoneCode">Phone Number Country Code*</label>
+    <select id="phoneWidget.countryPhoneCode" autocomplete="tel-country-code" required>
+      <option value=""></option>
+      <option value="AFG_93">Afghanistan (+93)</option>
+      <option value="CAN_1">Canada (+1)</option>
+      <option value="UMI_1">United States Minor Outlying Islands (+1)</option>
+      <option value="USA_1">United States of America (+1)</option>
+    </select>
+    <label for="phoneWidget.phoneNumber">Phone Number*</label>
+    <input id="phoneWidget.phoneNumber" required autocomplete="tel-national">
+  </fieldset>
+  <label for="zip">Zip/Postal Code</label><input id="zip">
+  <div id="errors"></div>
+  <button type="button" id="next">Next</button>
+</form>
+<script>
+  const plus = new URLSearchParams(location.search).has('plus');
+  const other = new URLSearchParams(location.search).has('other');
+  const code = document.getElementById('phoneWidget.countryPhoneCode');
+  const phone = document.getElementById('phoneWidget.phoneNumber');
+  document.getElementById('next').addEventListener('click', () => {
+    const errs = [];
+    if (!document.getElementById('first').value) errs.push('First Name* Required');
+    if (!code.value) errs.push('Phone Number Country Code* Required');
+    const bad = !(plus ? /^\+1\d{10}$/ : other ? /^\d{3}-?\d{3}-?\d{4}$/ : /^\d{10}$/).test(phone.value)
+      || code.value !== 'USA_1';
+    phone.setAttribute('aria-invalid', String(bad));
+    if (bad) errs.push('Phone Number* Invalid Phone Number');
+    if (other) errs.push('Phone Number* must be a mobile number', 'Zip/Postal Code Invalid format');
+    document.getElementById('errors').innerHTML = errs.map((t) => '<p role="alert" class="error">' + t + '</p>').join('');
+    if (!errs.length) location.href = 'review.html';
+  });
+</script>
+</body>
+</html>
