@@ -4251,6 +4251,11 @@ def test_a_phone_the_page_calls_invalid_with_its_dashes_is_typed_again_in_its_di
     assert r.log.count(said) == 1, r.log
     assert shown in ("4805550123", "480-555-0123"), shown
 
+    # (the review's) the page's errors name the phone, and call another box's answer invalid: the phone keeps its dashes
+    r, shown = run(go("?other"))
+    assert r.status == "needs_you" and "Invalid format" in r.reason, (r.status, r.reason, r.log)
+    assert said not in r.log and shown == "480-555-0123", (shown, r.log)
+
 
 def test_a_step_waiting_on_a_tax_credit_screening_says_so_and_leaves_it_to_the_person(srv, monkeypatch):
     """Kforce's Taleo (live run 41, Oct 12): Save and Continue wouldn't go on until the applicant completed its tax

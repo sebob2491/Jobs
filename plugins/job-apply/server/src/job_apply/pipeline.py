@@ -5277,8 +5277,13 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             # a phone the page calls invalid, showing the profile's number written with dashes, brackets or spaces:
             # typed again in its digits alone, once a page (EMD Electronics' Phenom, run 170: "Invalid Phone Number"
             # for 480-555-0199 beside its own country code list, and 4805550199 taken)
-            bare = {f["id"]: digits for f in lost if f.get("kind") == "text" and _SAID_INVALID.search(said)
-                    and (digits := phone_digits(f.get("value"), config.Profile.load()))} if (
+            # (an error of its own saying so, naming the box: not another box's "invalid format", the review's)
+            told = [norm(e) for e in [*(e for e in seen_now.get("errors") or [] if _errorish(e)), *links]]
+            bare = {f["id"]: digits for f in lost if f.get("kind") == "text"
+                    and any(re.search(rf"\b{re.escape(norm(clean_label(f.get('label') or '')))}\b", e)
+                            and _SAID_INVALID.search(e) for e in told)
+                    and (digits := phone_digits(f.get("value"), config.Profile.load(),
+                                                clean_label(f.get("label") or "")))} if (
                 lost and looked not in ps.digit_pages) else {}
             if bare:
                 ps.digit_pages.add(looked)
@@ -5286,6 +5291,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                 out = await srv.fill_form([{"id": fid, "value": value, "again": True} for fid, value in bare.items()])
                 typed = {str(r.get("id")) for r in out.get("results") or [] if r.get("ok")}
                 if typed:
+                    _went_in(run, [{"id": fid, "value": value, "rule": "phone"} for fid, value in bare.items()
+                                   if str(fid) in typed], seen_now)
                     ps.filled_values |= {norm(value) for fid, value in bare.items() if str(fid) in typed}
                     names = ", ".join(clean_label(f.get("label") or "") for f in lost if str(f["id"]) in typed)
                     self._log(run, f"typed your phone number again in its digits alone, as the page said it was "
