@@ -4660,7 +4660,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         reloadable = loading and _agreement_button(lap.data) is None and not lap.data.get("captcha") \
             and not _BOT_BADGE.search(
                 " ".join([lap.text[:3000], *(a.get("text") or "" for a in lap.data.get("actions") or [])])) \
-            and not _closed_notice(lap.data, lap.text) and not _maintenance_page(lap.data, run.title, lap.text) \
+            and not _closed_notice(lap.data, lap.text) and not _maintenance_page(lap.data, run.title) \
             and not _account_step(lap.data) \
             and not any(g.startswith(f"{_page_key(lap.data)} ") for g in ps.agreed) \
             and not any(_errorish(e) for e in lap.data.get("errors") or []) \
@@ -4938,7 +4938,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             now, now_text = await self._look()
             # (never a page whose notice was drawn since: the site down, said below, the review of 5d4aee6)
             blank = blank and not (_app_fields(now) or now.get("actions") or now.get("headings")) \
-                and len(now_text.strip()) < 40 and not _maintenance_page(now, run.title, now_text)
+                and len(now_text.strip()) < 40 and not _maintenance_page(now, run.title)
             empty = empty and _nothing_drawn(now, now_text, run.title)
         if empty and now.get("busy") and (_page_key(now), "busy", run.logged) not in ps.waited:
             # turned busy on this look (a loading indicator drawn since the first): waited out as a blank page is,
@@ -5043,7 +5043,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             await self.skip(run.job_id, closed=said)
             return _Then.STOP
         # (on the page as last looked at too: its notice drawn after the first look, the review of 5d4aee6)
-        if down := _maintenance_page(now, run.title, now_text) or _maintenance_page(data, run.title, text):
+        if down := _maintenance_page(now, run.title) or _maintenance_page(data, run.title):
             self._pause(run, "stuck", f"{_site(run, data)} is down for maintenance ({down}). Try again in a few "
                         "hours: press Carry on once it's back.", code="site_down")
             return _Then.STOP
@@ -7791,7 +7791,7 @@ def _nothing_drawn(data: dict[str, Any], text: str, job_title: str = "") -> bool
         return False
     said = (text or "")[:3000]
     return not (_BOT_BADGE.search(said) or _BOT_TEXT.search(said) or _ROBOT.search(said) or _closed_notice(data, said)
-                or _maintenance_page(data, job_title, said) or _ERROR_PAGE.search(said) or _SPENT_PAGE.search(said)
+                or _maintenance_page(data, job_title) or _ERROR_PAGE.search(said) or _SPENT_PAGE.search(said)
                 or _REFRESH_ASKED.search(said) or _CONTENT_MISSING.search(said) or confirmations(said)
                 or _applied_before(data, said))
 
@@ -7823,8 +7823,6 @@ _DOWN_WORDS = re.compile(
     # never "equipment unavailable for maintenance" in a posting)
     rf"|\b(?:(?:web)?site|application|system|portal|service)(?: is| are)? (?:currently |temporarily )?unavailable "
     rf"(?:for|due to) {_DOWN_KIND}maintenance\b", re.I)
-# The most of a page's text that can be its notice alone (BrassRing's, 236 characters): never a posting's
-_NOTICE_ONLY = 600
 
 
 def _names_job(said: str, job_title: str) -> bool:
@@ -7835,16 +7833,16 @@ def _names_job(said: str, job_title: str) -> bool:
                                        or re.search(rf"(?<!\w){re.escape(said)}(?!\w)", own))
 
 
-def _maintenance_page(data: dict[str, Any], job_title: str = "", text: str = "") -> str:
+def _maintenance_page(data: dict[str, Any], job_title: str = "") -> str:
     """A site down for maintenance, said in a few words for the person ("it sent the job to <its address>", "its page
     says “...”"), or "" when the page isn't one. The job sent on to a page named for it (Workday's
     community.workday.com/maintenance-page, asml.com/en/maintenance's "We'll be back.", live, Oct 2026); and, on a
     page with nothing to fill or press, to the index of a folder or a file named for it at its host's top (Edward Jones'
     careers site, sent to its host's cdn-static.findly.com/maintenance/index.html in run 155: read as a page with no
     way on, reloaded, then said as a step button not found), or a page whose title or heading says it (_DOWN_WORDS) and
-    isn't `job_title`, the job's own (Run.title), wherever it is; or whose `text`, no more than a notice's
-    (_NOTICE_ONLY), says it in a sentence of its own (BrassRing's one heading, too long for the reader to keep as one:
-    run 176, said as a posting that may have been taken down)."""
+    isn't `job_title`, the job's own (Run.title), wherever it is; or one of its notices (a heading too long to be kept
+    as one, an alert or a banner: never a posting's paragraphs) in a sentence or line of its own (BrassRing's one
+    heading: run 176, said as a posting that may have been taken down)."""
     url = data.get("url") or ""
     path = urlparse(url).path.rstrip("/")
     if re.fullmatch(r"maintenance(?:-page)?|outage", path.rsplit("/", 1)[-1], re.I):
@@ -7856,8 +7854,9 @@ def _maintenance_page(data: dict[str, Any], job_title: str = "", text: str = "")
         return f"it sent the job to {_bare(url)}"  # (never a folder of postings: /jobs/maintenance/index.html)
     said = next((t.strip() for t in (data.get("title"), *(data.get("headings") or []))
                  if isinstance(t, str) and _DOWN_WORDS.search(t) and not _names_job(t, job_title)), "")
-    if not said and text and len(text.strip()) <= _NOTICE_ONLY:
-        said = next((s.strip() for s in re.split(r"(?<=[.!?])\s+", text.strip())
+    if not said:
+        said = next((s.strip() for n in data.get("notices") or [] if isinstance(n, str)
+                     for s in re.split(r"(?<=[.!?])\s+|\n+", n)
                      if _DOWN_WORDS.search(s) and not _names_job(s, job_title)), "")
     return f"its page says \u201c{_short(said)}\u201d" if said else ""
 

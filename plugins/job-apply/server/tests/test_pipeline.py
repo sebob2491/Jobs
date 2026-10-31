@@ -15935,21 +15935,23 @@ def test_a_posting_for_maintenance_work_isnt_a_site_down():
     # the page's words said short
     said = pipeline._maintenance_page({**nothing, "title": "Temporarily offline " + "for a while " * 30})
     assert said.startswith("its page says “Temporarily offline for a while") and len(said) < 110, said
-    # its words read from the page's text where they're no title or heading the reader keeps (BrassRing's one long
-    # heading, run 176): only on a short page with nothing to fill or press, and never the posting's own words
+    # its words in one of the page's notices, where they're no heading the reader keeps (BrassRing's one heading, too
+    # long for one, run 176), in a sentence or line of its own; never a posting's own words or its title
     down = ("The application is currently unavailable for scheduled maintenance. We apologize for any inconvenience "
             "this may cause.")
     brassring = {**nothing, "title": "Infinite BrassRing"}
     assert not pipeline._maintenance_page(brassring)
-    said = pipeline._maintenance_page(brassring, "", down)
+    said = pipeline._maintenance_page({**brassring, "notices": [down]})
     assert said == "its page says “The application is currently unavailable for scheduled maintenance.”", said
-    assert pipeline._maintenance_page(brassring, "", "Careers site unavailable due to planned maintenance tonight")
-    for text in ("Maintenance Technician. Keep the line's equipment unavailable for maintenance as scheduled.",
-                 down + " " + "We build semiconductors. " * 60,  # (a page with more to it than its notice)
-                 "Equipment Unavailable For Maintenance Coordinator"):
-        title = "Equipment Unavailable For Maintenance Coordinator" if text.startswith("Equipment") else ""
-        assert not pipeline._maintenance_page(brassring, title, text), text
-    assert not pipeline._maintenance_page({**brassring, "actions": [{"id": "a", "text": "Apply"}]}, "", down)
+    assert pipeline._maintenance_page({**brassring, "notices": ["Careers site unavailable due to planned maintenance"]})
+    # (the review's) the job's title on a line above the notice
+    titled_notice = ["Field Service Engineer\nThe application is currently unavailable for scheduled maintenance."]
+    assert pipeline._maintenance_page({**brassring, "notices": titled_notice}, "Field Service Engineer")
+    for notices, title in ((["Equipment Unavailable For Maintenance Coordinator"], ""),
+                           (["Under Scheduled Maintenance Planner"], "Under Scheduled Maintenance Planner"),
+                           (["Equipment Technician", "Chandler, AZ"], "Equipment Technician")):
+        assert not pipeline._maintenance_page({**brassring, "notices": notices}, title), notices
+    assert not pipeline._maintenance_page({**brassring, "notices": [down], "actions": [{"id": "a", "text": "Apply"}]})
 
 
 _UNDRAWN_APPLY = "https://careers.acme-auto.example/apply/42"
