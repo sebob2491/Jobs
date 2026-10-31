@@ -15821,6 +15821,15 @@ _UNAVAILABLE_PAGE = ("<html><head><title>Workday is currently unavailable.</titl
                      "quickly as possible. We apologize for the inconvenience.</p><p>Otherwise, please check back "
                      "later.</p></body></html>")
 
+# BrassRing's page while it's down (Edward Jones' posting in the accounts check's run 176, Oct 31: read as a page with
+# nothing on it, its one heading too long for one, and said as a posting that may have been taken down), its words as
+# it said them
+_BRASSRING_DOWN_PAGE = ("<html><head><title>Infinite BrassRing</title></head><body><h2>The application is currently "
+                        "unavailable for scheduled maintenance. We apologize for any inconvenience this may cause and "
+                        "appreciate your patience as we work to improve our solutions. Please visit <a "
+                        "href='https://status.ats-host.example/'>status page</a> for additional information.<p></p>"
+                        "<hr width='50%'></h2></body></html>")
+
 
 @pytest.mark.parametrize("sent_to, page, said", [
     # a page named for it ("We'll be back.", live, Oct 2026)
@@ -15836,7 +15845,9 @@ _UNAVAILABLE_PAGE = ("<html><head><title>Workday is currently unavailable.</titl
     # static.community.workday.com/maintenance-page.html in run 160: said as a step button not found)
     ("https://static.community.ats-host.example/maintenance-page.html", _UNAVAILABLE_PAGE,
      "https://static.community.ats-host.example/maintenance-page.html"),
-], ids=["named", "folder-index", "its-words", "named-file"])
+    # its words in a heading too long to be read as one, on a page with nothing else (BrassRing's, run 176)
+    ("", _BRASSRING_DOWN_PAGE, "unavailable for scheduled maintenance"),
+], ids=["named", "folder-index", "its-words", "named-file", "its-long-words"])
 def test_a_job_sent_to_a_maintenance_page_is_said_down_for_maintenance(srv, monkeypatch, sent_to, page, said):
     """A careers site down for its maintenance sends every job to its maintenance page ("We'll
     be back.", live, Oct 2026): the desk said it couldn't find the button that moves the
@@ -15924,6 +15935,23 @@ def test_a_posting_for_maintenance_work_isnt_a_site_down():
     # the page's words said short
     said = pipeline._maintenance_page({**nothing, "title": "Temporarily offline " + "for a while " * 30})
     assert said.startswith("its page says “Temporarily offline for a while") and len(said) < 110, said
+    # its words in one of the page's notices, where they're no heading the reader keeps (BrassRing's one heading, too
+    # long for one, run 176), in a sentence or line of its own; never a posting's own words or its title
+    down = ("The application is currently unavailable for scheduled maintenance. We apologize for any inconvenience "
+            "this may cause.")
+    brassring = {**nothing, "title": "Infinite BrassRing"}
+    assert not pipeline._maintenance_page(brassring)
+    said = pipeline._maintenance_page({**brassring, "notices": [down]})
+    assert said == "its page says “The application is currently unavailable for scheduled maintenance.”", said
+    assert pipeline._maintenance_page({**brassring, "notices": ["Careers site unavailable due to planned maintenance"]})
+    # (the review's) the job's title on a line above the notice
+    titled_notice = ["Field Service Engineer\nThe application is currently unavailable for scheduled maintenance."]
+    assert pipeline._maintenance_page({**brassring, "notices": titled_notice}, "Field Service Engineer")
+    for notices, title in ((["Equipment Unavailable For Maintenance Coordinator"], ""),
+                           (["Under Scheduled Maintenance Planner"], "Under Scheduled Maintenance Planner"),
+                           (["Equipment Technician", "Chandler, AZ"], "Equipment Technician")):
+        assert not pipeline._maintenance_page({**brassring, "notices": notices}, title), notices
+    assert not pipeline._maintenance_page({**brassring, "notices": [down], "actions": [{"id": "a", "text": "Apply"}]})
 
 
 _UNDRAWN_APPLY = "https://careers.acme-auto.example/apply/42"

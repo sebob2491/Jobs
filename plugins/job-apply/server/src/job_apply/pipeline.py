@@ -7818,7 +7818,11 @@ _DOWN_WORDS = re.compile(
     rf"(?:(?<!shut )\bdown for {_DOWN_KIND}|\bunder(?:going)? {_DOWN_KIND})maintenance\b"
     r"|\bmaintenance (?:is )?(?:underway|in progress)\b"
     r"|^\s*temporarily offline\b|\b(?:(?:this |our )?(?:web)?site is|we(?:'re|\u2019re| are)) (?:currently )?"
-    r"temporarily offline\b", re.I)
+    r"temporarily offline\b"
+    # (the site's own: BrassRing's "The application is currently unavailable for scheduled maintenance.", run 176;
+    # never "equipment unavailable for maintenance" in a posting)
+    rf"|\b(?:(?:web)?site|application|system|portal|service)(?: is| are)? (?:currently |temporarily )?unavailable "
+    rf"(?:for|due to) {_DOWN_KIND}maintenance\b", re.I)
 
 
 def _names_job(said: str, job_title: str) -> bool:
@@ -7836,7 +7840,9 @@ def _maintenance_page(data: dict[str, Any], job_title: str = "") -> str:
     page with nothing to fill or press, to the index of a folder or a file named for it at its host's top (Edward Jones'
     careers site, sent to its host's cdn-static.findly.com/maintenance/index.html in run 155: read as a page with no
     way on, reloaded, then said as a step button not found), or a page whose title or heading says it (_DOWN_WORDS) and
-    isn't `job_title`, the job's own (Run.title), wherever it is."""
+    isn't `job_title`, the job's own (Run.title), wherever it is; or one of its notices (a heading too long to be kept
+    as one, an alert or a banner: never a posting's paragraphs) in a sentence or line of its own (BrassRing's one
+    heading: run 176, said as a posting that may have been taken down)."""
     url = data.get("url") or ""
     path = urlparse(url).path.rstrip("/")
     if re.fullmatch(r"maintenance(?:-page)?|outage", path.rsplit("/", 1)[-1], re.I):
@@ -7848,6 +7854,10 @@ def _maintenance_page(data: dict[str, Any], job_title: str = "") -> str:
         return f"it sent the job to {_bare(url)}"  # (never a folder of postings: /jobs/maintenance/index.html)
     said = next((t.strip() for t in (data.get("title"), *(data.get("headings") or []))
                  if isinstance(t, str) and _DOWN_WORDS.search(t) and not _names_job(t, job_title)), "")
+    if not said:
+        said = next((s.strip() for n in data.get("notices") or [] if isinstance(n, str)
+                     for s in re.split(r"(?<=[.!?])\s+|\n+", n)
+                     if _DOWN_WORDS.search(s) and not _names_job(s, job_title)), "")
     return f"its page says \u201c{_short(said)}\u201d" if said else ""
 
 
