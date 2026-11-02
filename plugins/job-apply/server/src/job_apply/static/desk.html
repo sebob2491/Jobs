@@ -1206,13 +1206,14 @@ function renderRows() {
     // once the score is pressed. A score saved before scores had parts has none
     const parts = (fit.parts || []).map((p) => `${p.why} ${points(p.points, p.why === "start")}`);
     const tip = `How well it fits your profile, out of 100 (${RECOMMEND_AT} or more is recommended).`
-      + (parts.length ? ` ${parts.join(", ")} = ${fit.score}. Press to see it under the tags.` : " The tags below say why.");
+      + (parts.length ? ` ${parts.join(", ")} = ${fit.score}. Press to see it under the tags.` : " The tags below say why.")
+      + (fit.placed ? ` ${fit.placed}.` : "");  // (what worked before: its place in the list, not its score)
     const score = parts.length
       ? `<button class="score ${scoreClass(fit.score)}" data-parts="${esc(r.url)}" aria-expanded="${partsOpen.has(r.url)}" title="${esc(tip)}">${esc(fit.score)}</button>`
       : `<span class="score ${scoreClass(fit.score)}" title="${esc(tip)}">${esc(fit.score)}</span>`;
     const sum = parts.length && partsOpen.has(r.url) ? `<div class="parts">${(fit.parts || []).map((p) =>
       `<span class="pt">${esc(p.why)} <span class="n">${esc(points(p.points, p.why === "start"))}</span></span>`).join(" · ")}
-      = <span class="n">${esc(fit.score)}</span></div>` : "";
+      = <span class="n">${esc(fit.score)}</span></div>${fit.placed ? `<div class="parts placed">${esc(fit.placed)}.</div>` : ""}` : "";
     return {key: r.url, html: `<li class="row ${DONE.has(r.status) || unwanted ? "done" : ""}">
       <input type="checkbox" data-pick="${esc(r.url)}" ${checked} ${done ? "disabled" : ""} aria-label="Select ${esc(r.title)}">
       ${score}
@@ -1537,9 +1538,11 @@ function renderWorking() {
       ${o.answered} got an answer (${esc(o.answered_rate)}), and ${o.further} led to an interview or a test
       (${esc(o.further_rate)}).${days}</p>${lines}${tables}
       <p class="small">Only groups with ${o.min_group} applications or more are shown${(o.groups || []).length ? "" : ", and none has that many yet"}.
-      ${o.nudging ? `Openings like the ones that led to interviews move up a little, and ones like those that didn't move down
-      (at most ${o.cap} points: “worked before” in a score). Counted on this computer only.`
-      : `Off in your profile (settings.learn_from_responses: false): the openings' scores don't use these.`}</p>`;
+      ${o.nudging ? `Where a difference is clear, not likely luck, openings like the applications that led to interviews
+      are placed a little higher in the list, and ones like those that didn't a little lower (as much as ${o.cap} points
+      would move them; “Placed higher” or “Placed lower” under a score says why). Scores, and which openings are
+      recommended, don't change. Counted on this computer only.`
+      : `Off in your profile (settings.learn_from_responses: false): the openings' order doesn't use these.`}</p>`;
   }
   if ($("working").dataset.html !== html) { $("working").innerHTML = html; $("working").dataset.html = html; }
 }
@@ -2639,7 +2642,8 @@ document.addEventListener("click", (e) => {
     const employerOf = (r) => String(r.company || "").trim().toLowerCase();
     const picked = new Set((state.listings || []).filter((r) => r.run || (selected.has(r.url) && selectable(r.url)))
       .map(employerOf));
-    [...(state.listings || [])].sort((x, y) => ((y.fit || {}).score || 0) - ((x.fit || {}).score || 0)).forEach((r) => {
+    const rank = (r) => (r.fit || {}).rank ?? (r.fit || {}).score ?? 0;  // (the order what worked before gives)
+    [...(state.listings || [])].sort((x, y) => rank(y) - rank(x)).forEach((r) => {
       if (!((s.troubleshoot || r.fit && r.fit.recommended) && !DONE.has(r.status) && !r.run && selectable(r.url)
             && (s.handled_only ? r.handled : s.troubleshoot ? !r.handled : true))) return;
       const employer = employerOf(r);

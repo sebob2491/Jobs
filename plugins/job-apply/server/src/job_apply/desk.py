@@ -1429,15 +1429,17 @@ class Desk:
         learned = outcomes.learn([{**o, "ats": system_of(None, o)["key"]} for o in t.outcomes()], titles,
                                  (lambda j: _miles(places.away(home, j.get("location")))) if home else None)
 
-        def lean(row: dict[str, Any], item: dict[str, Any] | None, job: dict[str, Any] | None) -> None:
-            """The row's fit moved by what worked before (recommend.worked_before): its order only."""
-            if not settings.learn_from_responses or not learned.overall.n:
-                return
+        def lean(row: dict[str, Any], item: dict[str, Any] | None, job: dict[str, Any] | None) -> int:
+            """Where what worked before places the row (recommend.worked_before: its fit's `rank` and `placed`, its
+            score as it was), and the points of order that is."""
+            if not settings.learn_from_responses or not learned.overall.n or not isinstance(row["fit"], dict):
+                return 0
             said = {"company": row["company"], "title": row["title"], "ats": row["system"]["key"],
                     "source": (job or {}).get("source") or "job desk",
                     "workplace": (item or {}).get("workplace") or (job or {}).get("workplace"),
                     **{k: ((item or {}) if (item or {}).get("pay_period") else (job or {})).get(k) for k in PAY_KEYS}}
             row["fit"] = worked_before(row["fit"], learned, outcomes.keys_of(said, titles, _miles(row["miles"])))
+            return int(row["fit"].get("rank", row["fit"].get("score", 0)) - row["fit"].get("score", 0))
 
         def news(url: str, job: dict[str, Any] | None, run: Any) -> tuple[float | None, bool]:
             """When an opening was first saved (found by a search, or saved to the tracker), and whether it's New: first
@@ -1448,6 +1450,7 @@ class Desk:
             return first, (since is not None and first is not None and first > since and run is None
                            and (job is None or job.get("status") not in DONE))
 
+        moved: list[int] = []  # (each row's points of order from what worked before: lean)
         for item, job in zip(self.listings, tracked_at):
             copy = next(copies) if job is None else None
             job = job or copy
@@ -1477,7 +1480,7 @@ class Desk:
                 "saved_at": first, "new": new and not said,
                 "not_interested": {"reason": said["reason"], "at": said["at"]} if said else None,
             })
-            lean(rows[-1], item, job)
+            moved.append(lean(rows[-1], item, job))
         tracked = t.list(limit=300)
         # what the person applied to, and where each stands (the page's My applications): the newest email logged for
         # it, how many there are, whether it's time to follow up, and its group
@@ -1511,7 +1514,16 @@ class Desk:
                 "saved_at": first, "new": new and not said,
                 "not_interested": {"reason": said["reason"], "at": said["at"]} if said else None,
             })
-            lean(rows[-1], None, job)
+            moved.append(lean(rows[-1], None, job))
+        if any(moved):
+            # what worked before moves rows in the list's order (the page's Fit; their scores don't change): the
+            # openings by the score their search gave them and those points; the jobs added another way, kept in their
+            # own order after them, by the points alone
+            opened = len(self.listings)
+            base = [item["fit"].get("score") or 0 if isinstance(item.get("fit"), dict) else 0
+                    for item in self.listings]
+            rows[:opened] = [r for _, r in sorted(enumerate(rows[:opened]), key=lambda x: -(base[x[0]] + moved[x[0]]))]
+            rows[opened:] = [r for _, r in sorted(enumerate(rows[opened:]), key=lambda x: -moved[opened + x[0]])]
         others = []
         for jid, run in runs.items():
             if jid not in seen:

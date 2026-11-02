@@ -4,8 +4,13 @@ The tracker keeps each application sent in and what came back (Tracker.outcomes)
 system it went through, the employer, where it was found, the kind of title (which of the person's target titles it
 is), its pay and how far away it is: how many heard back (an assessment, an interview, an offer or a rejection), how
 many went on to an interview or a test, and how long the first answer took. The desk's What's working card says it,
-for groups with MIN_GROUP applications or more only, with a takeaway or two where the numbers hold one up; and the
-ranking's "worked before" part (recommend.worked_before) leans on it a little.
+for groups with MIN_GROUP applications or more only.
+
+A difference between groups is said (a takeaway), or leant on (recommend.worked_before places an opening a little
+higher or lower in the list), only where it's unlikely to be luck: each group of a kind (a job system, say) is compared
+with the rest of its kind by Fisher's exact test, every comparison made at once corrected by Holm's method, so on
+numbers with no real difference nothing is said at least 19 times in 20. Employers aren't compared (too many, each too
+small); the card's table still shows them.
 
 Nothing here leaves the person's computer: it's worked out from the tracker each time the desk asks, never written down,
 logged or put in a problem report.
@@ -24,16 +29,18 @@ from .ats import ATS_NAMES, JOB_BOARDS
 from .search import title_matches
 from .tracker import company_key
 
-MIN_GROUP = 5  # applications a group needs before it's shown, compared or leant on
+MIN_GROUP = 5  # applications a group needs before the card shows it (and answers, before their median days)
 SETTLED_DAYS = 21  # an application with no answer counts as unanswered once it's had this long; until then, it waits
 TAKEAWAYS = 2  # the most takeaways said
-_SURE = 2.0  # how far apart (in standard errors) two groups' rates are before a takeaway says so
-_TAKEAWAY_HITS = 3  # and the better group's own count of them, at least
+TEST_MIN = 10  # applications a group, and the rest of its kind, each need before they're compared
+TEST_HITS = 3  # and the better of the two, answers (or interviews and tests)
+ALPHA = 0.05  # the chance, every comparison taken together, of saying a difference that's only luck
 
-# the groups, in the card's order, each with its heading
+# the groups, in the card's order, each with its heading; and the kinds compared
 DIMENSIONS = {"system": "By job system", "employer": "By employer", "source": "By where it was found",
               "title": "By job title", "pay": "By pay", "distance": "By distance"}
-# the measures, as a takeaway says them
+COMPARED = ("system", "source", "title", "pay", "distance")
+# the measures, as a takeaway says them (what happened, never why)
 MEASURES = {"further": "led to an interview or a test", "answered": "got an answer"}
 
 _NOT_A_SYSTEM = {"", "unknown"}
@@ -51,13 +58,15 @@ _MILES = ((10, "within 10 miles", "within 10 miles of home"),
 @dataclass
 class Tally:
     """A group's applications with an outcome (`n`: answered, or sent SETTLED_DAYS ago or more), how many heard back
-    (`answered`), how many went on to an interview or a test (`further`), and the days each answer took (`days`)."""
+    (`answered`), how many went on to an interview or a test (`further`), and the days each answer took (`days`: only
+    where the day it was applied and the answer email's time are both known)."""
     label: str = ""  # as the card shows it ("Workday")
     phrase: str = ""  # as a takeaway says it ("through Workday")
     n: int = 0
     answered: int = 0
     further: int = 0
     days: list[float] = field(default_factory=list)
+    key: str = ""
 
     def count(self, measure: str) -> int:
         return self.further if measure == "further" else self.answered
@@ -68,15 +77,52 @@ class Tally:
 
 
 @dataclass
+class Finding:
+    """A group whose `measure` differs from the rest of its kind's (`rest_n` applications, `rest_k` of them answered or
+    further), by Fisher's exact test (`p`, before the correction); `versus`: the one other group, where the rest is
+    one."""
+    dimension: str
+    measure: str
+    group: Tally
+    rest_n: int
+    rest_k: int
+    p: float
+    versus: Tally | None = None
+
+    @property
+    def higher(self) -> bool:
+        return self.group.count(self.measure) * self.rest_n > self.rest_k * self.group.n
+
+
+@dataclass
 class Learned:
     """Every application's tally (`overall`), each group's (by dimension and key), and how many sent in still wait
     (`waiting`: under SETTLED_DAYS, nothing heard)."""
     overall: Tally = field(default_factory=Tally)
     groups: dict[tuple[str, str], Tally] = field(default_factory=dict)
     waiting: int = 0
+    _found: list[Finding] | None = field(default=None, repr=False)
 
     def tally(self, dimension: str, key: str | None) -> Tally | None:
         return self.groups.get((dimension, key)) if key else None
+
+    def findings(self) -> list[Finding]:
+        """The differences that hold up, surest first (worked out once)."""
+        if self._found is None:
+            self._found = _holm(_comparisons(self))
+        return self._found
+
+    def leaning(self) -> dict[tuple[str, str], bool]:
+        """The groups whose interviews and tests surely differ from the rest of their kind's: by dimension and key,
+        whether theirs are more (True) or fewer. Of a kind with two groups, both (one more, the other fewer)."""
+        out: dict[tuple[str, str], bool] = {}
+        for f in self.findings():
+            if f.measure != "further":
+                continue
+            out.setdefault((f.dimension, f.group.key), f.higher)
+            if f.versus is not None:
+                out.setdefault((f.dimension, f.versus.key), not f.higher)
+        return out
 
 
 def _moment(said: Any) -> datetime | None:
@@ -129,7 +175,9 @@ def learn(rows: list[dict[str, Any]], titles: list[str], miles_of: Any = None,
           now: datetime | None = None) -> Learned:
     """The tallies from the tracker's applications (Tracker.outcomes). `titles`: the person's target titles;
     `miles_of`: a job's distance from home, or None (places.away's miles), where the person's home town is known.
-    An application withdrawn with nothing heard isn't counted (the person's choice, not an answer)."""
+    An application withdrawn with nothing heard isn't counted (the person's choice, not an answer). The days to a first
+    answer run from the day it was applied (`applied_at`) to the answer email's time (`first_answer`): one without
+    either still counts, but not in the days."""
     now = now or datetime.now(timezone.utc)
     learned = Learned()
     for row in rows:
@@ -139,10 +187,10 @@ def learn(rows: list[dict[str, Any]], titles: list[str], miles_of: Any = None,
         if not row.get("answered") and (sent is None or (now - sent).days < SETTLED_DAYS):
             learned.waiting += 1
             continue
-        first = _moment(row.get("first_answer"))
-        days = max(0.0, (first - sent).total_seconds() / 86400) if first is not None and sent is not None else None
+        first, applied = _moment(row.get("first_answer")), _moment(row.get("applied_at"))
+        days = max(0.0, (first - applied).total_seconds() / 86400) if first and applied else None
         keys = keys_of(row, titles, miles_of(row) if miles_of else None)
-        for tally in [learned.overall, *(learned.groups.setdefault((dim, key), Tally(label, phrase))
+        for tally in [learned.overall, *(learned.groups.setdefault((dim, key), Tally(label, phrase, key=key))
                                          for dim, (key, label, phrase) in keys.items())]:
             tally.n += 1
             tally.answered += bool(row.get("answered"))
@@ -152,60 +200,92 @@ def learn(rows: list[dict[str, Any]], titles: list[str], miles_of: Any = None,
     return learned
 
 
+def _log_choose(n: int, k: int) -> float:
+    return math.lgamma(n + 1) - math.lgamma(k + 1) - math.lgamma(n - k + 1)
+
+
+def fisher(k: int, n: int, rest_k: int, rest_n: int) -> float:
+    """Fisher's exact test, two-sided: the chance of counts at least as far apart as `k` in `n` against `rest_k` in
+    `rest_n` by luck alone, with every application as likely as any other to be among the hits (the hypergeometric
+    chances of every table as likely as this one, or less)."""
+    hits, total = k + rest_k, n + rest_n
+    lo, hi = max(0, hits - rest_n), min(hits, n)
+
+    def chance(x: int) -> float:
+        return _log_choose(n, x) + _log_choose(rest_n, hits - x) - _log_choose(total, hits)
+
+    seen = chance(k)
+    return min(1.0, sum(math.exp(c) for c in map(chance, range(lo, hi + 1)) if c <= seen + 1e-7))
+
+
+def _comparisons(learned: Learned) -> list[Finding]:
+    """Every comparison made: in each kind compared (COMPARED) with two groups or more, each group against the rest of
+    its kind (for two, one of them: the other is its rest), for each measure, where both have TEST_MIN applications
+    or more. One whose better side has fewer than TEST_HITS, or that doesn't differ at all, is made but says nothing
+    (its p is 1)."""
+    out = []
+    for dimension in COMPARED:
+        mine = sorted((t for (dim, _), t in learned.groups.items() if dim == dimension), key=lambda t: (-t.n, t.key))
+        if len(mine) < 2:
+            continue
+        total_n = sum(t.n for t in mine)
+        for measure in MEASURES:
+            total_k = sum(t.count(measure) for t in mine)
+            for g in mine[:1] if len(mine) == 2 else mine:
+                k, rest_n = g.count(measure), total_n - g.n
+                rest_k = total_k - k
+                if g.n < TEST_MIN or rest_n < TEST_MIN:
+                    continue
+                # (one too few to say anything still counts among the comparisons made: which ones are made is
+                # decided by their sizes alone, never by how they came out, or the correction would be too small)
+                said = k * rest_n != rest_k * g.n and (k if k * rest_n > rest_k * g.n else rest_k) >= TEST_HITS
+                p = fisher(k, g.n, rest_k, rest_n) if said else 1.0
+                out.append(Finding(dimension, measure, g, rest_n, rest_k, p, mine[1] if len(mine) == 2 else None))
+    return out
+
+
+def _holm(tests: list[Finding]) -> list[Finding]:
+    """The comparisons that hold up after Holm's correction for making them all at once (ALPHA in all), surest
+    first."""
+    held = []
+    for i, f in enumerate(sorted(tests, key=lambda f: f.p)):
+        if f.p >= 1 or f.p > ALPHA / (len(tests) - i):
+            break
+        held.append(f)
+    return held
+
+
 def _rate(k: int, n: int) -> str:
     return f"{round(100 * k / n)}%" if n else ""
 
 
-def _times(ratio: float) -> str:
-    halves = round(ratio * 2) / 2
-    return "twice" if halves == 2 else f"{halves:g} times"
+def _said(f: Finding) -> str:
+    """A finding in words: what happened, never why."""
+    verb, g, m = MEASURES[f.measure], f.group, f.measure
+    if f.versus is not None:
+        hi, lo = (g, f.versus) if f.higher else (f.versus, g)
+        return (f"Applications {hi.phrase} {verb} more often than those {lo.phrase}: {hi.count(m)} of {hi.n} "
+                f"({_rate(hi.count(m), hi.n)}), against {lo.count(m)} of {lo.n} ({_rate(lo.count(m), lo.n)}).")
+    return (f"Applications {g.phrase} {verb} {'more' if f.higher else 'less'} often than your others: "
+            f"{g.count(m)} of {g.n} ({_rate(g.count(m), g.n)}), against {f.rest_k} of {f.rest_n} "
+            f"({_rate(f.rest_k, f.rest_n)}).")
 
 
 def takeaways(learned: Learned) -> list[str]:
-    """At most TAKEAWAYS lines the numbers hold up: two groups of one kind (two job systems, say), each with MIN_GROUP
-    applications or more, whose rates differ by _SURE standard errors or more, the better one with _TAKEAWAY_HITS
-    or more; one line for a pair of groups (its stronger measure). None when nothing does: small numbers say
-    nothing."""
-    found: list[tuple[float, tuple[str, str, str], str]] = []
-    for dimension in DIMENSIONS:
-        big = [t for (dim, _), t in learned.groups.items() if dim == dimension and t.n >= MIN_GROUP]
-        for measure, verb in MEASURES.items():
-            for i, a in enumerate(big):
-                for b in big[i + 1:]:
-                    hi, lo = (a, b) if a.count(measure) / a.n >= b.count(measure) / b.n else (b, a)
-                    kh, kl = hi.count(measure), lo.count(measure)
-                    if kh < _TAKEAWAY_HITS:
-                        continue
-                    p = (kh + kl) / (hi.n + lo.n)
-                    spread = math.sqrt(p * (1 - p) * (1 / hi.n + 1 / lo.n))
-                    z = (kh / hi.n - kl / lo.n) / spread if spread else 0.0
-                    if z < _SURE:
-                        continue
-                    ratio = (kh / hi.n) / (kl / lo.n) if kl else math.inf
-                    if not kl:
-                        said = (f"Applications {hi.phrase} {verb} {kh} times in {hi.n}; those {lo.phrase}, "
-                                f"not once in {lo.n}.")
-                    elif ratio >= 1.5:
-                        said = (f"Applications {hi.phrase} {verb} {_times(ratio)} as often as those {lo.phrase} "
-                                f"({hi.n} vs {lo.n} applications).")
-                    else:  # (rates both high: "1 times as often" says nothing)
-                        said = (f"Applications {hi.phrase} {verb} {_rate(kh, hi.n)} of the time ({kh} in {hi.n}); "
-                                f"those {lo.phrase}, {_rate(kl, lo.n)} ({kl} in {lo.n}).")
-                    first, second = sorted((hi.label, lo.label))
-                    found.append((z, (dimension, first, second), said))
-    found.sort(key=lambda x: -x[0])
-    said_of: dict[tuple[str, str, str], str] = {}
-    for _, pair, said in found:
-        said_of.setdefault(pair, said)
-    return list(said_of.values())[:TAKEAWAYS]
+    """At most TAKEAWAYS lines, the surest first, each a difference that holds up (Learned.findings), one for a group
+    (its surer measure). None when nothing does: small numbers, or no real difference, say nothing."""
+    said: dict[tuple[str, str], str] = {}
+    for f in learned.findings():
+        said.setdefault((f.dimension, f.group.key), _said(f))
+    return list(said.values())[:TAKEAWAYS]
 
 
 def summary(learned: Learned, nudging: bool, cap: int) -> dict[str, Any] | None:
     """What the desk's What's working card shows (None, and the card hidden, before any application is sent in): how
     many applications have an outcome and how many still wait; how many heard back and went further, with their rates;
     the median days to a first answer; each dimension's groups with MIN_GROUP applications or more (a dimension only
-    where the applications are in more than one group); the takeaways; and whether the ranking leans on it
-    (`nudging`: settings.learn_from_responses), by at most `cap` points."""
+    where the applications are in more than one group); the takeaways; and whether the list's order leans on it
+    (`nudging`: settings.learn_from_responses), by at most `cap` points' worth."""
     o = learned.overall
     if not o.n and not learned.waiting:
         return None
