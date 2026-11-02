@@ -1306,8 +1306,8 @@ async def forget_saved_pages(job_id: int | None = None) -> dict[str, Any]:
 @tool(drives=True)
 async def fill_secret(field_id: str, secret_name: str) -> dict[str, Any]:
     """Type a stored secret (e.g. a career-site password) into a field without the value
-    passing through the conversation. Secrets come from env JOB_APPLY_SECRET_<NAME> or
-    ~/.job-apply/secrets.yaml. A system's password (workday_password) goes only onto that
+    passing through the conversation. Secrets come from env JOB_APPLY_SECRET_<NAME>, the
+    computer's password vault, or ~/.job-apply/secrets.yaml. A system's password (workday_password) goes only onto that
     system's sites; one named for a site (linkedin_password, or the safer linkedin_com_password)
     only onto that site's own domain, or its tenant on a shared job system (honeywell_password
     on honeywell.wd5.myworkdayjobs.com)."""

@@ -20,7 +20,7 @@ import pytest
 import yaml
 from conftest import browser_available, fixture_url, run
 
-from job_apply import config, letters, pipeline, pipeline_letters, render
+from job_apply import config, letters, pipeline, pipeline_letters, render, vault
 from job_apply.desk import Desk
 from job_apply.pipeline import Applier, Run
 
@@ -1803,7 +1803,7 @@ def test_an_api_key_saved_on_the_desk_writes_the_letters_without_claude_code(fak
     with pytest.raises(letters.Refused, match="check found something"):
         run(letters.write_letter(JOB, prof, POSTING))
     # (none saved, and none in the environment: the person's Claude login, as before; ANTHROPIC_API_KEY: the next test)
-    config.secrets_path().unlink()
+    vault.forget(config.API_KEY_NAME)  # (none saved)
     assert letters.api_key() is None and letters.written_by() == letters.BY
 
 
@@ -1912,6 +1912,6 @@ def test_a_key_saved_after_letters_stopped_is_tried_at_once_and_the_page_says_wh
             await desk.stop()
     run(go())
     assert tried == [1]
-    config.secrets_path().unlink()
+    vault.forget(config.API_KEY_NAME)  # (none saved)
     monkeypatch.setenv("ANTHROPIC_API_KEY", KEY)
     assert desk.state()["letters_by"] == letters.BY_KEY

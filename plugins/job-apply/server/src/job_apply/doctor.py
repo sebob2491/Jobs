@@ -364,6 +364,39 @@ def check_home() -> Check:
                  f"Run the one-step installer, or {SAY_SETUP}: setup makes it.")
 
 
+def check_secrets() -> Check:
+    """Where the passwords saved on the desk are kept: the computer's password vault, or secrets.yaml where there's
+    none (and why). Neither is a problem; only a look at whether the vault answers, which changes nothing."""
+    from . import vault
+
+    status = vault.status(say=False)
+    moved = vault.moved_warning() if status.usable else None
+    if moved:
+        return Check("secrets", ADVICE, f"Your saved passwords are kept in {status.name}", moved)
+    if status.usable:
+        return Check("secrets", OK, f"Your saved passwords are kept in {status.name}")
+    if status.down:
+        return Check("secrets", ADVICE, f"Your saved passwords are kept in {vault.where()}", f"{status.why}.")
+    return Check("secrets", OK, f"Your saved passwords are kept in {vault.where()}",
+                 "" if status.why == "no password vault on this computer" else f"(The vault: {status.why}.)")
+
+
+def forget_passwords() -> str:
+    """--forget-passwords: every password the desk saved in this computer's password vault for this folder taken out
+    of it (deleting the folder doesn't), said in a line."""
+    from . import vault
+
+    try:
+        gone = vault.forget_all()
+    except vault.Stuck:
+        return (f"{vault.status(say=False).name or 'The password vault'} wouldn't let them go just now: unlock it and "
+                "run this again.")
+    status = vault.status(say=False)
+    if not status.usable:
+        return f"Nothing to remove: {vault.where()}."
+    return f"Removed {gone} saved password{'s' if gone != 1 else ''} from {status.name}."
+
+
 
 
 def _read_only_uri(path: Path) -> str:
@@ -512,6 +545,7 @@ async def run(launch: bool = False) -> Report:
     prof, profile_checks = check_profile()
     checks.append(await check_browser(prof.settings if prof else config.Settings.from_dict(None), launch))
     checks.append(check_home())
+    checks.append(check_secrets())
     tracked = check_tracker()
     if tracked:
         checks.append(tracked)
@@ -541,6 +575,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--launch", action="store_true",
                         help="also start the browser (out of sight) to be sure it opens")
     parser.add_argument("--json", action="store_true", help="print the report as JSON")
+    parser.add_argument("--forget-passwords", action="store_true",
+                        help="instead, remove every password the desk saved in this computer's password vault for "
+                             "this folder (deleting the folder doesn't remove them)")
     parser.add_argument("--replay", type=Path, metavar="PAGE",
                         help="instead, open a saved page (a job's debug folder, or a test fixture's .html) offline in "
                              "the bundled Chromium and say what the Job Desk reads and decides there, each box's "
@@ -551,6 +588,10 @@ def main(argv: list[str] | None = None) -> int:
     reconfigure = getattr(sys.stdout, "reconfigure", None)
     if reconfigure:  # a path the console can't show mustn't stop the report
         reconfigure(errors="replace")
+    if args.forget_passwords:
+        said = forget_passwords()
+        print(private(said))
+        return 0 if said.startswith(("Removed", "Nothing")) else 1
     if args.replay is not None:
         from playwright.async_api import Error as PlaywrightError
 

@@ -37,7 +37,7 @@ from collections.abc import Awaitable, Callable, Iterator
 from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
-from . import config, history, mailbox, report
+from . import config, history, mailbox, report, vault
 from .search import every_employer
 from .tracker import city_key, title_key
 from .ats import ATS_NAMES, JOB_BOARDS, detect_ats, host_of, shared_system
@@ -7081,9 +7081,7 @@ def _sign_in_ways(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 # The systems whose password the desk page lets the person save, by the name it shows
-DESK_PASSWORDS = {"workday_password": "Workday", "successfactors_password": "SuccessFactors", "icims_password": "iCIMS",
-                  "applicantstack_password": "ApplicantStack", "ukg_password": "UKG Pro", "infor_password": "Infor",
-                  "taleo_password": "Taleo"}
+DESK_PASSWORDS = config.DESK_PASSWORDS
 
 
 def _password_tip(url: str) -> str:
@@ -8144,9 +8142,13 @@ _SECRETS_READ: dict[str, Any] = {}  # secrets.yaml's values, as last read, and w
 
 
 def _secret_values() -> set[str]:
-    """The secrets the desk keeps (each job system's password, the inbox's app password), from where get_secret reads
-    them: the panel never shows one, whatever box it went into. The file is read again only once it has changed."""
+    """The secrets the desk keeps (each job system's password, the inbox's app password), from everywhere get_secret
+    reads them (the environment, the password vault, secrets.yaml): the panel never shows one, whatever box it went
+    into, and a problem report takes each out (_report_hidden). The file is read again only once it has changed; the
+    vault, only every vault.READ_FOR seconds."""
     found = {v for k, v in os.environ.items() if k.startswith("JOB_APPLY_SECRET_") and v.strip()}
+    with contextlib.suppress(Exception):  # (a vault that can't be read just now holds none it could show)
+        found |= {v for v in vault.values() if v.strip()}
     with contextlib.suppress(Exception):  # (a file it can't read holds none it could show)
         if (path := config.secrets_path()).exists():
             stat = path.stat()

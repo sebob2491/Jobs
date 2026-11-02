@@ -367,8 +367,9 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
           desk creates your account at each of that system's employers (agreeing to its terms for you) and signs you in,
           on that system's own sites only; when a site turns the password down, it resets that account's password to this
           one through the site's "Forgot password" email (unless your profile says <code>manage_accounts: false</code>).
-          It stays on this computer, in <code>~/.job-apply/secrets.yaml</code>, and Claude never sees it. Use passwords you
-          don't use anywhere else.</p>
+          It stays on this computer, in its password vault (Windows Credential Manager, the macOS Keychain or your
+          desktop's keyring; <code>~/.job-apply/secrets.yaml</code> where there's none), and Claude never sees it.
+          Use passwords you don't use anywhere else.</p>
         <p>Your email: with an app password for the address in your profile (for Gmail, make one at
           <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a>;
           it needs 2-Step Verification), a job waiting on an emailed code or link gets it from your inbox: only mail from
@@ -414,7 +415,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
         <p>The alerts go through ntfy's servers to the topic your phone subscribes to. So they say only counts and
           kinds ("A job needs you: a bot check", "2 applications are ready for your Submit"), never an employer, a job or
           anything about you, unless you turn on Say which employer and job. The topic is a long random name kept on
-          this computer, in <code>~/.job-apply/secrets.yaml</code>; Turn off forgets it (a new one is made next time).
+          this computer, with your passwords; Turn off forgets it (a new one is made next time).
           One alert a job a stop, those that come together in one; the summary at the time you pick (empty: none). To
           use your own ntfy server, set <code>phone_alerts_server</code> under <code>settings:</code> in your profile.</p>
         </details>
@@ -1688,6 +1689,7 @@ function renderHeader() {
     + `${esc(searchWords(sr.error, "something went wrong in it"))}</span>. Press Find jobs to try again.`});
   if (state.profile_problem) notes.push({cls: "notice bad", html: `Problem: your profile can't be read: ${esc(state.profile_problem)} Fix it and the desk picks it up again by itself.`});
   if (state.mail_problem) notes.push({cls: "notice bad", html: problemSaid(esc(state.mail_problem))});
+  if (state.vault_problem) notes.push({cls: "notice bad", html: problemSaid(esc(state.vault_problem))});
   if (state.letters_problem) notes.push({cls: "notice bad", html: problemSaid(esc(state.letters_problem))});
   if ((state.phone || {}).problem) notes.push({cls: "notice bad", html: problemSaid(esc(state.phone.problem))});
   if (state.answers_problem) notes.push({cls: "notice bad", html: `Problem: your saved answers aren't being used: ${esc(state.answers_problem)}.`});

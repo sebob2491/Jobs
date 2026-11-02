@@ -11,7 +11,7 @@ All of the user's data lives in `~/.job-apply/`, outside the plugin:
 |---|---|
 | `profile.yaml` | Answers used to fill forms (created from the plugin's `templates/profile.example.yaml`) |
 | `resume.pdf` | Default resume to upload |
-| `secrets.yaml` | Optional career-site passwords, which the user writes. Never read it or print it |
+| `secrets.yaml` | Optional career-site passwords, which the user writes, where the computer has no password vault (the desk moves them into the vault where there is one). Never read it or print it. Deleting the folder leaves the vault's `job-apply` entries: `job-apply-doctor --forget-passwords` removes them (or Windows Credential Manager, Keychain Access, Passwords and Keys) |
 | `tracker.db` | Application tracker (SQLite) |
 | `browser/` | Persistent browser profile that keeps sign-ins (`browser-msedge/` when Edge stands in for Chrome) |
 | `applications/<id>-<company>-<title>/` | Per-job tailored documents, screenshots and the submission record |
@@ -158,7 +158,8 @@ soon, with the least answered that it needs:
      the desk changes that); LinkedIn and Indeed applications are always theirs to submit.
    - **Passwords (optional).** Company sites on Workday and SuccessFactors need an account
      per company, as do SCREEN's, Nikon Precision's, Benchmark's and Daifuku's. The desk's
-     **Site passwords** card stores one password per job system, on their computer; with
+     **Site passwords** card stores one password per job system, on their computer (in its
+     password vault: Windows Credential Manager, the macOS Keychain or a Linux keyring); with
      one saved, the desk makes their accounts and signs them in. Otherwise the user creates
      `~/.job-apply/secrets.yaml` themselves, for example `workday_password: "..."`, and runs
      `chmod 600` on it. Never ask them to paste a password into the chat.

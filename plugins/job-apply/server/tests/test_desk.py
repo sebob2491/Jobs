@@ -712,7 +712,8 @@ def test_a_site_password_goes_to_secrets_only(srv):
     assert config.get_secret("workday_password") == "s3cret: #1"
 
 
-def test_saving_a_password_leaves_the_rest_of_the_file_alone(job_apply_home):
+def test_saving_a_password_leaves_the_rest_of_the_file_alone(job_apply_home, no_vault):
+    """Without a password vault (a headless Linux): the file keeps it, and only its own entry changes."""
     path = config.secrets_path()
     path.write_text("# career sites\nsuccessfactors_password: keep-me\nworkday_password: old-one\n\nother: 1\n",
                     encoding="utf-8")

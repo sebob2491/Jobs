@@ -464,7 +464,7 @@ def test_the_card_makes_a_topic_kept_as_a_secret_never_in_the_state_or_page(srv)
                 assert made["server"] == "https://ntfy.sh"
                 assert topic.startswith("jobdesk-") and len(topic) == len("jobdesk-") + 24
                 assert config.NTFY_TOPIC.match(topic)
-                assert config.read_secrets(config.secrets_path())[config.NTFY_TOPIC_NAME] == topic
+                assert config.get_secret(config.NTFY_TOPIC_NAME) == topic  # (kept as a password is: the vault here)
                 state = await c.get("/api/state", headers=h)
                 assert state.json()["phone"]["on"] is True and topic not in state.text
                 page = await c.get("/")
