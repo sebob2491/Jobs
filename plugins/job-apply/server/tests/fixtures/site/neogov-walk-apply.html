@@ -14,13 +14,28 @@
                     "Supplemental Questions" (one only the person can answer, and an optional "email me future job
                     openings": job alerts, never chosen);
        attachments: "Attachments": the resume's file box;
-       review:      "Review": what went in, and "Proceed to Certify and Submit";
-       certify:     "Certify & Submit": the statement, and "Accept and Submit", which sends it (/__fake/submit).
+       review:      "Review": what went in, and "Proceed to Certify and Submit" (which, with sessionStorage's
+                    neo.holdReview set, says the application has errors and stays);
+       certify:     "Certify & Submit": the statement (whose words hold "the application submitted by me", which isn't
+                    a confirmation: the review of 0.3.252), and "Accept and Submit", which sends it (/__fake/submit)
+                    and says "Application Submitted" and "Thank you for applying".
      Each step's "Save & Continue" checks its required boxes and says what's missing ("First Name is required."). Signed
      out (localStorage's neo.signedIn), the page sends the browser on to NEOGOV's sign-in with this address as its
-     returnUrl, as NEOGOV's does. What went in is kept for the tab (sessionStorage's neo.answers). Made-up agency and
-     values. -->
-<header><span>Example County, NV</span> <span>Equipment Technician</span></header>
+     returnUrl, as NEOGOV's does. What went in is kept for the tab (sessionStorage's neo.answers).
+     Over the first step, until it's answered (localStorage's neo.terms), NEOGOV's "Updated Terms of Use and Privacy
+     Policy" dialog (its app-privacy-policy-modal: "Accept", /__fake/terms; "Decline", /__fake/declined, which leaves the
+     platform shut). In the header, NEOGOV's Access Membership opt-in, "Yes, let employers find me." (a profile shown to
+     employers: never pressed, /__fake/access). Made-up agency and values. -->
+<header><span>Example County, NV</span> <span>Equipment Technician</span>
+  <div class="access-member"><span>Become an Access Member and let employers find you. It's free.</span>
+    <button type="button" id="access">Yes, let employers find me.</button></div></header>
+<div id="terms" role="dialog" aria-modal="true" aria-labelledby="terms-h" hidden>
+  <h2 id="terms-h">Updated Terms of Use and Privacy Policy</h2>
+  <p id="terms-said"> We've updated our <a href="/home/termsofuse" target="_blank">Terms of Use</a> and
+    <a href="/home/privacypolicy" target="_blank">Privacy Policy</a>. Your continued use of this website constitutes
+    acceptance of these updated policies. </p>
+  <button type="button" id="decline"> Decline </button> <button type="button" id="accept"> Accept </button>
+</div>
 <main id="app" hidden>
   <nav aria-label="Application progress"><ol class="steps"><li>Info</li><li>Work</li><li>Education</li><li>References</li>
     <li>Questions</li><li>Attachments</li><li>Review</li></ol></nav>
@@ -78,7 +93,8 @@
       + 'type="file" aria-required="true" accept=".pdf,.doc,.docx,.jpg"></div>', 'Save &amp; Continue', 'review'],
     review: ['Review', '<div id="summary"></div>', 'Proceed to Certify and Submit', 'certify'],
     certify: ['Certify &amp; Submit', '<p>By clicking "Accept and Submit", I certify that the information in this application '
-      + 'is true and complete.</p>', 'Accept and Submit', null],
+      + 'is true and complete, and that the information in the application submitted by me is accurate.</p>',
+      'Accept and Submit', null],
   };
   if (localStorage.getItem('neo.signedIn') === 'true') {
     $('app').hidden = false;
@@ -89,7 +105,22 @@
     if (step === 'review') {
       $('summary').innerHTML = Object.entries(kept).map(([k, v]) => '<p>' + k + ': ' + v + '</p>').join('');
     }
+    if (!localStorage.getItem('neo.terms')) {
+      $('terms').hidden = false;
+      $('terms').style.cssText = 'position:fixed;inset:0;background:#fff;padding:40px;z-index:10';
+    }
   }
+  $('access').addEventListener('click', () => fake('access', {}));
+  $('accept').addEventListener('click', async () => {
+    localStorage.setItem('neo.terms', 'accepted');
+    await fake('terms', {});
+    $('terms').hidden = true;
+  });
+  $('decline').addEventListener('click', async () => {
+    await fake('declined', {});
+    $('terms-said').textContent = ' Access to this platform requires acceptance of our revised Privacy Policy and Terms '
+      + 'of Use. Please return to the previous screen to review the terms and provide your consent to proceed. ';
+  });
   function collect() {
     const out = {};
     for (const el of ($('boxes') ? $('boxes').querySelectorAll('input, select, textarea') : [])) {
@@ -105,7 +136,11 @@
     const now = collect();
     if (step === 'certify') {
       await fake('submit', {answers: kept});
-      document.body.innerHTML = '<h1>Application Submitted</h1>';
+      document.body.innerHTML = '<h1>Application Submitted</h1><p>Thank you for applying to Example County.</p>';
+      return;
+    }
+    if (step === 'review' && sessionStorage.getItem('neo.holdReview')) {
+      $('err').textContent = 'Your application has errors: Work Experience is required.';
       return;
     }
     const missing = [...$('boxes').querySelectorAll('[aria-required="true"], [data-required="true"]')]

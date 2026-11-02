@@ -761,10 +761,11 @@ NEOGOV_PASSWORD = "Not-a-real-Passw0rd!"  # (NEOGOV's rules: 12 or more, upper a
 NEOGOV_THEIRS = {"Employer*": "Intel", "Job Title*": "Equipment Technician"}
 
 
-def _neogov_walk(srv, fake_ats, answer=True, submit=False):
+def _neogov_walk(srv, fake_ats, answer=True, submit=False, account=False, before_submit=None):
     """The NEOGOV walk as the person runs it: Apply on the desk, each question the profile can't answer given an answer
     there (when `answer`: NEOGOV_THEIRS), until the job stops otherwise; and then (with `submit`) the person's Submit on
-    the desk, until that's done. The run, its stops, what went in and the account the pages kept."""
+    the desk (after `before_submit(run)`), until that's done. With `account`, the person's NEOGOV account is there
+    already, verified. The run, its stops, what went in and the account the pages kept."""
     job = srv.add_job(url=NEOGOV + NEOGOV_JOB, title="Equipment Technician", company="Example County")["job"]
     desk = Desk(srv)
     applier = desk.applier
@@ -772,6 +773,11 @@ def _neogov_walk(srv, fake_ats, answer=True, submit=False):
 
     async def go():
         await fake_ats.serve(srv, NEOGOV, NEOGOV_PAGES)
+        if account:  # (made and verified before: the saved password signs in)
+            page = await srv.browser.page()
+            await page.goto(NEOGOV + "/app/signin")
+            await page.evaluate("p => localStorage.setItem('neo.account', JSON.stringify({email: "
+                                "'sam.rivera@example.com', password: p, verified: true}))", NEOGOV_PASSWORD)
         applier.start()
         try:
             r = applier.enqueue(job["id"])
@@ -783,6 +789,8 @@ def _neogov_walk(srv, fake_ats, answer=True, submit=False):
                 desk.answer(job["id"], [{"label": q["label"], "remember": False, "value": NEOGOV_THEIRS.get(
                     q["label"], (q.get("options") or ["Yes"])[-1])} for q in r.questions])
             if submit and r.status == "ready":
+                if before_submit is not None:
+                    await before_submit(r)
                 applier.submit_now(job["id"])  # (the person's Submit)
                 await until(lambda: r.status not in ("queued", "running"), timeout=90, about=state(r))
             kept = await r.page.evaluate("() => [window.answers ? window.answers() : null, "
@@ -834,6 +842,10 @@ def test_neogov_walk(srv, fake_ats, job_apply_home, monkeypatch):
     assert answers["resume"] == "resume.pdf", answers
     assert any(line.startswith("ticked “I certify that the information I have provided")
                and line.endswith("for you (settings.accept_notices)") for line in r.log), r.log
+    # (NEOGOV's "Updated Terms of Use and Privacy Policy" agreed to, as accept_notices allows; never its Decline, nor
+    # its Access Membership's "Yes, let employers find me.")
+    assert len(fake_ats.said("terms")) == 1 and fake_ats.said("declined") == [], fake_ats.events
+    assert fake_ats.said("access") == [], fake_ats.events
     no_submit(fake_ats, srv, r)
 
 
@@ -842,15 +854,84 @@ def test_neogov_persons_submit_goes_on_through_certify_and_submit(srv, fake_ats,
     """NEOGOV's review page sends nothing itself: its "Proceed to Certify and Submit" opens the Certify & Submit page,
     whose "Accept and Submit" sends the application (NEOGOV's Application Guide). The person's Submit on the desk
     pressed the first and stopped, saying the form was still there. It goes on through that page's own button, once,
-    as the same Submit, and the application is sent and confirmed."""
+    as the same Submit, and the application is sent and confirmed. The Certify & Submit page's own words hold "the
+    application submitted by me", which read as a confirmation: the first press was taken for the application sent,
+    and "Accept and Submit" never pressed (the review of 0.3.252). What the first press seemed to confirm counts for
+    nothing; the final press certifies the application, as accept_notices allows, and says so."""
     monkeypatch.setenv("JOB_APPLY_SECRET_NEOGOV_PASSWORD", NEOGOV_PASSWORD)
     settings(job_apply_home, manage_accounts=True)
-    r, stops, answers, _ = _neogov_walk(srv, fake_ats, submit=True)
+    r, stops, answers, _ = _neogov_walk(srv, fake_ats, submit=True, account=True)
     assert stops[-1][:2] == ("ready", ""), stops
     assert (r.status, r.need) == ("submitted", ""), (r.status, r.need, r.reason, r.log)
     [sent] = fake_ats.said("submit")
     assert sent["answers"]["first"] == "Sam" and sent["answers"]["certify"] is True, sent
     assert srv.tracker().get(r.job_id)["status"] == "applied"
+    assert any(line.startswith("certified the application for you by pressing “Certify & Submit: Accept and Submit”")
+               and line.endswith("(settings.accept_notices)") for line in r.log), r.log
+
+
+@pytest.mark.slow
+def test_neogov_certification_is_the_persons_where_notices_are_theirs(srv, fake_ats, job_apply_home, monkeypatch):
+    """With settings.accept_notices off by the person's Submit, NEOGOV's "Accept and Submit" (which certifies the
+    application) is theirs: the desk goes on to the Certify & Submit page and stops there, saying so, and nothing is
+    sent or marked applied (the review of 0.3.252)."""
+    monkeypatch.setenv("JOB_APPLY_SECRET_NEOGOV_PASSWORD", NEOGOV_PASSWORD)
+    settings(job_apply_home, manage_accounts=True)
+
+    async def off(r):
+        settings(job_apply_home, accept_notices=False)
+
+    r, stops, _, _ = _neogov_walk(srv, fake_ats, submit=True, account=True, before_submit=off)
+    assert stops[-1][:2] == ("ready", ""), stops
+    assert (r.status, r.need) == ("needs_you", "your_submit"), (r.status, r.need, r.reason, r.log)
+    assert "needs your certification" in r.reason and "“Accept and Submit” yourself" in r.reason, r.reason
+    assert r.page.url.endswith("/apply?step=certify"), r.page.url
+    assert fake_ats.said("submit") == [] and srv.tracker().get(r.job_id)["status"] != "applied", fake_ats.events
+    assert not any(line.startswith("certified") for line in r.log), r.log
+
+
+@pytest.mark.slow
+def test_neogov_proceed_that_doesnt_move_on_is_left_to_the_person(srv, fake_ats, job_apply_home, monkeypatch):
+    """A "Proceed to Certify and Submit" whose page stays where it was, with an error (the review of 0.3.252): nothing
+    more is pressed, and the person is told the page didn't move on, with its words; nothing sent or marked applied."""
+    monkeypatch.setenv("JOB_APPLY_SECRET_NEOGOV_PASSWORD", NEOGOV_PASSWORD)
+    settings(job_apply_home, manage_accounts=True)
+
+    async def hold(r):
+        await r.page.evaluate("() => sessionStorage.setItem('neo.holdReview', '1')")
+
+    r, _, _, _ = _neogov_walk(srv, fake_ats, submit=True, account=True, before_submit=hold)
+    assert (r.status, r.need) == ("needs_you", "your_submit"), (r.status, r.need, r.reason, r.log)
+    assert "didn't move on" in r.reason and "Work Experience is required" in r.reason, r.reason
+    assert r.page.url.endswith("/apply?step=review"), r.page.url
+    assert fake_ats.said("submit") == [] and srv.tracker().get(r.job_id)["status"] != "applied", fake_ats.events
+
+
+@pytest.mark.parametrize("how", ["notices-off", "practice", "test-identity"])
+def test_neogovs_updated_terms_dialog_is_agreed_only_as_accept_notices_allows(srv, fake_ats, job_apply_home,
+                                                                               monkeypatch, how):
+    """NEOGOV's "Updated Terms of Use and Privacy Policy" dialog over the application (its app-privacy-policy-modal),
+    for an account made before: with accept_notices off, or in practice mode, it's the person's, named on the desk;
+    the live check's test identity agrees to it (the owner's call, Oct 10). Its "Decline" is never pressed, nor the
+    Access Membership's "Yes, let employers find me.", and nothing is sent."""
+    from test_pipeline import as_test_identity
+
+    monkeypatch.setenv("JOB_APPLY_SECRET_NEOGOV_PASSWORD", NEOGOV_PASSWORD)
+    if how == "notices-off":
+        settings(job_apply_home, accept_notices=False)
+    elif how == "practice":
+        settings(job_apply_home, submit_mode="dry_run")
+    else:
+        as_test_identity(monkeypatch, job_apply_home)
+    r, stops, _, _ = _neogov_walk(srv, fake_ats, answer=False, account=True)
+    assert fake_ats.said("declined") == [] and fake_ats.said("access") == [], fake_ats.events
+    if how == "test-identity":
+        assert len(fake_ats.said("terms")) == 1, (fake_ats.events, r.reason, r.log)
+    else:
+        assert fake_ats.said("terms") == [], (fake_ats.events, r.log)
+        assert r.status == "needs_you" and "Updated Terms of Use and Privacy Policy" in r.reason, (r.reason, r.log)
+        assert r.page.url.endswith(NEOGOV_JOB + "/apply"), r.page.url
+    assert fake_ats.said("submit") == [], fake_ats.events
 
 
 @pytest.mark.parametrize("how", [{"manage_accounts": False}, {"manage_accounts": True, "submit_mode": "dry_run"}],
