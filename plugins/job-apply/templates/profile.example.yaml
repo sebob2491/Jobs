@@ -236,7 +236,7 @@ settings:
   # job needs you or is ready for your Submit, and a summary of the day, while the desk runs. They go
   # through ntfy's servers, so by default they say only counts and kinds ("A job needs you: a bot
   # check"); set phone_alert_details to true to have them name the employer and the job too.
+  # Never in practice mode (dry_run), which sends nothing.
   phone_alert_details: false
   phone_summary_at: "18:00"     # when the daily summary comes (this computer's clock), or off
-  phone_alerts_server: ~        # your own ntfy server's address (empty: ntfy.sh)
-  phone_alerts_in_practice: false  # also in practice mode (dry_run); never in the plugin's live check
+  phone_alerts_server: ~        # your own ntfy server's https address (empty: ntfy.sh)

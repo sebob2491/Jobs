@@ -316,26 +316,37 @@ def _phone_summary_at(raw: Any) -> tuple[str, str]:
     return f"{hour:02d}:{minute:02d}", ""
 
 
+_LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
+
+
 def _phone_alerts_server(raw: Any) -> tuple[str, str]:
     """settings.phone_alerts_server: the ntfy server phone alerts go through, for a person who runs their own ("" for
-    ntfy.sh's), and what to say of one that isn't a web address."""
+    ntfy.sh's), and what to say of one that can't be used: only https (http only on this computer itself), and never
+    a name and password in the address (said without the address, which may hold them)."""
     if raw is None or isinstance(raw, str) and not raw.strip():
         return "", ""
     said = str(raw).strip().rstrip("/")
-    parsed = urlparse(said)
-    if (isinstance(raw, str) and parsed.scheme in ("http", "https") and parsed.netloc and not parsed.query
-            and not parsed.fragment and not re.search(r"\s", said)):
+    try:
+        parsed = urlparse(said)
+        host = parsed.hostname or ""
+        credentials = parsed.username is not None or parsed.password is not None or "@" in parsed.netloc
+    except ValueError:
+        parsed, host, credentials = urlparse(""), "", False
+    if credentials:
+        return "", ("settings.phone_alerts_server has a name or password in its address, which phone alerts never "
+                    "send; using ntfy.sh. Give your server's address alone, such as https://ntfy.example.com.")
+    if (isinstance(raw, str) and host and not parsed.query and not parsed.fragment and not re.search(r"\s", said)
+            and (parsed.scheme == "https" or parsed.scheme == "http" and host in _LOCAL_HOSTS)):
         return said, ""
-    return "", (f"settings.phone_alerts_server should be your ntfy server's web address, such as "
-                f"https://ntfy.example.com, not {raw!r}; using ntfy.sh.")
+    return "", ("settings.phone_alerts_server should be your ntfy server's https address, such as "
+                "https://ntfy.example.com (http only on this computer: http://localhost); using ntfy.sh.")
 
 
 # The keys the desk reads under settings: (the template's); any other is said, as it has no effect
 # ("accept_notice: false")
 KNOWN_SETTINGS = ("submit_mode", "auto_submit_ats", "browser_channel", "headless", "email_codes", "email_tracking",
                   "accept_cookies", "manage_accounts", "accept_notices", "jobs_at_once", "follow_up_days",
-                  "cover_letter_model", "phone_alert_details", "phone_summary_at", "phone_alerts_server",
-                  "phone_alerts_in_practice")
+                  "cover_letter_model", "phone_alert_details", "phone_summary_at", "phone_alerts_server")
 
 
 @dataclass
@@ -368,12 +379,10 @@ class Settings:
     cover_letter_model: str = ""
     # Phone alerts (phone.py; on once the desk's Phone alerts card made a topic, kept in secrets.yaml): whether they
     # name the employer and the job (off: only counts and kinds go through ntfy's servers), the daily summary's time
-    # ("HH:MM"; "" for none), the ntfy server ("" for ntfy.sh), and whether practice mode sends them too (never in the
-    # live check or with JOB_APPLY_NEVER_SUBMIT=1, whatever this says)
+    # ("HH:MM"; "" for none) and the ntfy server ("" for ntfy.sh). Never in practice mode, which sends nothing
     phone_alert_details: bool = False
     phone_summary_at: str = PHONE_SUMMARY_DEFAULT
     phone_alerts_server: str = ""
-    phone_alerts_in_practice: bool = False
     # the live check's test identity (live_test_identity): accounts and notices in practice mode too
     test_identity: bool = False
     warnings: list[str] = field(default_factory=list)
@@ -426,7 +435,6 @@ class Settings:
             phone_alert_details=d.get("phone_alert_details") is True,
             phone_summary_at=summary_at,
             phone_alerts_server=phone_server,
-            phone_alerts_in_practice=d.get("phone_alerts_in_practice") is True,
         )
         if os.environ.get("JOB_APPLY_HEADLESS") == "1":
             s.headless = True

@@ -930,6 +930,9 @@ class Desk:
         try:
             body = await self._body(request)
             name = str(body.get("name") or "")
+            if re.sub(r"[^a-z0-9]", "_", name.strip().lower()) == config.NTFY_TOPIC_NAME:
+                # (the phone alerts' topic is made by the Phone alerts card alone: long and random, never typed)
+                raise ValueError("The phone alerts topic is made on the Phone alerts card, not saved here.")
             env = "JOB_APPLY_SECRET_" + re.sub(r"[^A-Z0-9]", "_", name.upper())
             if name and os.environ.get(env):
                 # the environment's wins (config.get_secret): saved here, it would never be used
@@ -966,6 +969,10 @@ class Desk:
                 raise ValueError("Your phone alerts topic is set in your environment (JOB_APPLY_SECRET_NTFY_TOPIC), "
                                  "which comes before one saved here. Change or remove it there.")
             if action == "make":
+                if phone.topic() is not None and body.get("replace") is not True:
+                    # (a new topic cuts off the phone subscribed to the old one: only when the page says so)
+                    return JSONResponse({"error": "Phone alerts are on already: making a new topic needs replace.",
+                                         "exists": True}, status_code=409)
                 name = phone.make_topic()
                 config.save_site_password(config.NTFY_TOPIC_NAME, name)
                 self.phone.problem = None

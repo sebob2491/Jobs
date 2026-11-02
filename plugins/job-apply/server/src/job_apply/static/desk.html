@@ -386,7 +386,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
     <!-- phone alerts through ntfy (phone.py): the topic is shown only right after it's made, or on Show the topic, never
          kept in the page's state -->
     <section class="card" aria-labelledby="phone-h">
-      <div class="card-head"><h2 id="phone-h">Phone alerts</h2><span class="pill" id="phone-pill">Off</span></div>
+      <div class="card-head"><h2 id="phone-h">Phone alerts</h2><span class="pill" id="phone-pill" aria-live="polite">Off</span></div>
       <div class="pw">
         <p class="small">A push on your phone when a job needs you or is ready for your Submit, and a summary of the day,
           with this page closed too (while the desk runs). Free, through the ntfy app.</p>
@@ -404,11 +404,12 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
         <div id="phone-on" hidden>
           <div class="pw-row"><button data-act="phone-test">Send a test</button>
             <button class="link" data-act="phone-show">Show the topic</button>
+            <button class="link" data-act="phone-make" title="Make a new topic, for when someone else may know this one">New topic</button>
             <button class="link" data-act="phone-off">Turn off</button></div>
           <p class="small"><label><input type="checkbox" id="phone-details"> Say which employer and job</label></p>
           <p class="small"><label>Summary of the day at <input type="time" id="phone-summary"></label></p>
         </div>
-        <p class="small" id="phone-held" hidden></p>
+        <p class="small" id="phone-held" aria-live="polite" hidden></p>
         <details><summary>How this works</summary>
         <p>The alerts go through ntfy's servers to the topic your phone subscribes to. So they say only counts and
           kinds ("A job needs you: a bot check", "2 applications are ready for your Submit"), never an employer, a job or
@@ -2548,7 +2549,15 @@ document.addEventListener("click", (e) => {
     act(async () => { await api("/api/notes/clear", {ids: notesShown}); $("notes").close(); });
   }
   if (a === "phone-make") {
-    act(async () => { phoneShown = await api("/api/phone/make", {}); });
+    act(async () => {
+      try {
+        phoneShown = await api("/api/phone/make", {});
+      } catch (err) {  // (alerts on already: a new topic cuts the phone off until it subscribes again)
+        if (err.status !== 409) throw err;
+        if (!confirm("This makes a new topic; your phone stops getting alerts until you subscribe to the new one. Go on?")) return;
+        phoneShown = await api("/api/phone/make", {replace: true});
+      }
+    });
   }
   if (a === "phone-show") {
     act(async () => { phoneShown = phoneShown ? null : await api("/api/phone/show", {}); });
@@ -2734,7 +2743,6 @@ document.addEventListener("change", (e) => {
   if (t.id === "auto-search") act(() => api("/api/settings", {auto_search: t.checked}));
   if (t.id === "dont-wait") act(() => api("/api/settings", {dont_wait: t.checked}));
   if (t.id === "phone-details") act(() => api("/api/phone/settings", {details: t.checked}));
-  if (t.id === "phone-summary") act(() => api("/api/phone/settings", {summary_at: t.value}));
   if (t.id === "min-pay" && state) {
     // "60000", "$60,000", "60k": dollars a year; empty (or 0) for any pay
     const said = t.value.trim().replace(/[$,\s]/g, "").replace(/\/?(yr|year)$/i, "");
@@ -2762,6 +2770,18 @@ document.addEventListener("change", (e) => {
   if (t.dataset.bank) act(() => api("/api/bank", {id: t.dataset.bank, answer: t.value}));
   if (t.id === "report-anonymous" && reportShown) makeReport(reportShown.job, true);
 });
+
+// the summary's time: written once the box is left (or Enter pressed) with a whole time in it, or emptied (no summary),
+// never while it's being typed
+function phoneSummaryDone(box) {
+  if (!state || !state.phone) return;
+  const value = box.value;
+  if (value === (state.phone.summary_at || "") || (value && !/^\d{2}:\d{2}$/.test(value))) return;
+  state.phone.summary_at = value;
+  act(() => api("/api/phone/settings", {summary_at: value}));
+}
+$("phone-summary").addEventListener("blur", (e) => phoneSummaryDone(e.target));
+$("phone-summary").addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); });
 
 // the link opens GitHub in a new tab; without one (a report being made) it does nothing
 $("report-open").addEventListener("click", (e) => { if (e.currentTarget.href) $("report").close(); });

@@ -3,8 +3,10 @@ The topic is a secret (secrets.yaml, never the page's state or HTML); a message 
 person asks for the employer and job; one a job a stop, close ones batched; a daily summary; failures said once and
 never raised; nothing in practice mode or the live check. Every POST goes to an httpx.MockTransport: nothing leaves."""
 
+import asyncio
 import json
 import logging
+import os
 import time
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -35,8 +37,10 @@ class Phone:
     def __init__(self):
         self.sent: list[tuple[str, str, str]] = []
         self.fail: object = None
+        self.tries = 0  # (every POST, failed or not)
 
     def handler(self, request: httpx.Request) -> httpx.Response:
+        self.tries += 1
         if isinstance(self.fail, Exception):
             raise self.fail
         if isinstance(self.fail, int):
@@ -239,6 +243,28 @@ def test_a_summary_time_or_server_that_cant_be_read_is_said():
     assert own.phone_alerts_server == "https://ntfy.example.com" and own.warnings == []
 
 
+@pytest.mark.parametrize("server, kept", [
+    ("https://ntfy.example.com", True), ("http://localhost:8080", True), ("http://127.0.0.1", True),
+    ("http://[::1]:2586", True), ("http://ntfy.example.com", False), ("ftp://ntfy.example.com", False),
+    ("https://jo:hunter2secret@ntfy.example.com", False), ("https://jo@ntfy.example.com", False),
+    ("http://jo:hunter2secret@localhost", False)])
+def test_the_server_is_https_with_no_credentials_and_never_said_back(server, kept):
+    """The review of dafeaf9: an alert goes over https (http only to this computer itself), and a name and password in
+    the server's address are never sent, nor said back on the page (its warning doesn't repeat the address)."""
+    s = config.Settings.from_dict({"phone_alerts_server": server})
+    assert s.phone_alerts_server == (server if kept else "")
+    assert (s.warnings == []) == kept
+    assert not any("hunter2secret" in w or "jo@" in w for w in s.warnings)
+
+
+def test_practice_mode_has_no_setting_of_its_own_for_phone_alerts():
+    """The review of dafeaf9: practice mode sends nothing (CLAUDE.md): phone_alerts_in_practice is no setting."""
+    assert "phone_alerts_in_practice" not in config.KNOWN_SETTINGS
+    said = config.Settings.from_dict({"submit_mode": "dry_run", "phone_alerts_in_practice": True})
+    assert any("Unknown settings key 'phone_alerts_in_practice'" in w for w in said.warnings)
+    assert "never sends anything" in (phone.held(said) or "")
+
+
 def test_a_failure_is_said_once_never_raised_and_tried_again_with_the_next_alert(loop, caplog):
     config.save_site_password(config.NTFY_TOPIC_NAME, TOPIC)
     applier = _applier()
@@ -254,6 +280,7 @@ def test_a_failure_is_said_once_never_raised_and_tried_again_with_the_next_alert
         assert TOPIC not in alerts.problem
         for i in range(1, 20):  # (not tried again every few seconds: with the next alert)
             _tick(alerts, _settings(), t0 + 100 + i * phone.TICK)
+    assert fake.tries == 1
     tries = [r for r in caplog.records if "phone alert not sent" in r.getMessage()]
     assert len(tries) == 1 and TOPIC not in caplog.text  # (logged once, without the topic)
     fake.fail = None
@@ -272,6 +299,108 @@ def test_a_failure_is_said_once_never_raised_and_tried_again_with_the_next_alert
                               "with the next alert.")
 
 
+def test_a_failed_alert_is_tried_again_by_itself_after_a_growing_wait(loop):
+    """The review of dafeaf9: a failed alert waits for no other job to stop. It's tried again RETRY_FIRST later, then
+    after twice that, and so on up to RETRY_MOST apart, until it goes."""
+    config.save_site_password(config.NTFY_TOPIC_NAME, TOPIC)
+    applier = _applier()
+    alerts, fake = _alerts(applier)
+    t0 = 5_500_000.0
+    _tick(alerts, _settings(), t0)
+    fake.fail = 503
+    applier.runs[1] = _stop(1)
+    _tick(alerts, _settings(), t0 + 1)
+    first = t0 + 1 + phone.GATHER
+    _tick(alerts, _settings(), first)
+    assert fake.tries == 1 and phone.RETRY_FIRST == 300
+    tried_at = []
+    for second in range(0, 4 * 3600, 5):
+        before = fake.tries
+        _tick(alerts, _settings(), first + second)
+        if fake.tries > before:
+            tried_at.append(second)
+    assert tried_at[:5] == [300, 900, 2100, 3900, 5700]  # (300, 600, 1200, 1800, 1800 apart)
+    fake.fail = None
+    _tick(alerts, _settings(), first + 4 * 3600 + phone.RETRY_MOST)
+    assert fake.texts == ["A job needs you: a bot check"] and alerts.problem is None
+    assert alerts.retry_wait == phone.RETRY_FIRST  # (gone: the next failure waits the first wait again)
+
+
+def test_a_failed_summary_is_tried_again_within_three_hours_of_its_time(srv):
+    config.save_site_password(config.NTFY_TOPIC_NAME, TOPIC)
+    applier = _applier()
+    alerts, fake = _alerts(applier, srv.tracker)
+    today = datetime.now()
+    at_six = _settings(phone_summary_at="18:00")
+    fake.fail = httpx.ConnectError("no network")
+    for minute in range(0, 5 * 60):
+        _tick(alerts, at_six, _local(today, 18) + minute * 60 + 2)
+    tries = fake.tries
+    assert tries == 8 and alerts.summary_day is None  # (at 0, 5, 15, 35, 65, 95, 125 and 155 min; none after 3 h)
+    # one that goes on a retry goes once
+    again, phone2 = _alerts(applier, srv.tracker)
+    phone2.fail = 500
+    _tick(again, at_six, _local(today, 18, 0, 2))
+    phone2.fail = None
+    for minute in range(1, 60):
+        _tick(again, at_six, _local(today, 18, minute, 2))
+    assert phone2.tries == 2 and len(phone2.sent) == 1 and again.summary_day == today.date().isoformat()
+
+
+def test_a_summary_at_midnight_counts_the_day_that_ended(srv):
+    """The review of dafeaf9: a summary at 00:00 is the day just ended's, since the midnight before, not a minute's."""
+    config.save_site_password(config.NTFY_TOPIC_NAME, TOPIC)
+    t = srv.tracker()
+    today = datetime.now()
+    jobs = [srv.add_job(url=f"https://careers.example.com/fab/{n}", title="Technician", company="Example Fab")["job"]
+            for n in range(2)]
+    for job, days in ((jobs[0], 1), (jobs[1], 2)):  # (yesterday afternoon, and the day before)
+        when = (today - timedelta(days=days)).replace(hour=15, minute=0, second=0, microsecond=0).astimezone()
+        t.conn.execute("UPDATE jobs SET applied_at = ? WHERE id = ?", (when.isoformat(), job["id"]))
+    t.conn.commit()
+    alerts, fake = _alerts(_applier(), srv.tracker)
+    _tick(alerts, _settings(phone_summary_at="00:00"), _local(today, 0, 0, 30))
+    assert fake.texts == ["Yesterday: 1 submitted, 0 ready for you, 0 need you, 0 replies"]
+
+
+def test_a_look_that_keeps_failing_is_logged_once(loop, caplog):
+    """The review of dafeaf9: a look every 5 seconds that fails the same way logs it once, not a traceback each time."""
+    applier = _applier()
+    applier.runs = None  # (every look fails the same way)
+    alerts, _ = _alerts(applier)
+    with caplog.at_level(logging.WARNING, logger="job_apply.phone"):
+        for i in range(20):
+            _tick(alerts, _settings(), 8_000_000.0 + i * phone.TICK)
+    assert len([r for r in caplog.records if "a look failed" in r.getMessage()]) == 1
+
+
+def test_a_letters_problem_reads_as_one_line():
+    """The review of dafeaf9: never "Cover letters stopped: Cover letters aren't being written: ..."."""
+    from job_apply import letters
+
+    line = phone.letters_line(letters.NOT_SIGNED_IN)
+    assert line.startswith("Cover letters aren't being written: ") and "stopped" not in line
+    assert line == phone.first_sentence(letters.NOT_SIGNED_IN)
+    assert phone.letters_line("The API is down. Try later.") == "Cover letters stopped: The API is down."
+
+
+def test_a_test_never_posts_without_a_transport_of_its_own(loop, monkeypatch):
+    """The review of dafeaf9: a developer's own topic in their environment never gets a test's alerts. conftest takes
+    JOB_APPLY_SECRET_NTFY_TOPIC out, and phone.post refuses in a test (PYTEST_CURRENT_TEST) with no transport given."""
+    assert "JOB_APPLY_SECRET_NTFY_TOPIC" not in os.environ
+    monkeypatch.setenv("JOB_APPLY_SECRET_NTFY_TOPIC", TOPIC)
+    posted = []
+
+    async def post(self, *args, **kwargs):
+        posted.append(args)
+        raise AssertionError("posted for real")
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    alerts = phone.PhoneAlerts(_applier(), lambda: None)
+    said = run(alerts.test(_settings()))
+    assert said and "from a test" in said and posted == []
+
+
 def test_nothing_is_sent_in_practice_mode_or_the_live_check(loop, monkeypatch):
     config.save_site_password(config.NTFY_TOPIC_NAME, TOPIC)
 
@@ -283,16 +412,14 @@ def test_nothing_is_sent_in_practice_mode_or_the_live_check(loop, monkeypatch):
         _tick(alerts, settings, 6_000_001.0)
         _tick(alerts, settings, 6_000_001.0 + phone.GATHER)
         assert run(alerts.test(settings)) is None or not fake.sent  # (nor the card's test)
-        return len(fake.sent)
+        return fake.tries
 
     assert sends(_settings()) == 2  # (the alert and the test: as a person runs the desk)
-    assert sends(_settings(submit_mode="dry_run")) == 0
-    assert sends(_settings(submit_mode="dry_run", phone_alerts_in_practice=True)) == 2
-    # the live check and the tests: JOB_APPLY_NEVER_SUBMIT=1 (which makes every profile practice mode), whatever the
-    # profile says
+    assert sends(_settings(submit_mode="dry_run")) == 0  # (practice mode sends nothing, a test included)
+    # the live check and the tests: JOB_APPLY_NEVER_SUBMIT=1 (which makes every profile practice mode)
     monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
-    assert sends(_settings(phone_alerts_in_practice=True)) == 0
-    assert "never sent in a test run" in (phone.held(_settings(phone_alerts_in_practice=True)) or "")
+    assert sends(_settings()) == 0
+    assert "nothing is sent in a test run" in (phone.held(_settings()) or "")
 
 
 def test_no_topic_no_alert(loop):
@@ -329,6 +456,9 @@ def test_the_card_makes_a_topic_kept_as_a_secret_never_in_the_state_or_page(srv)
                                       "custom_server": False, "held": None, "problem": None}  # (_idle_desk's off)
                 assert (await c.post("/api/phone/test", headers=h, json={})).json()["error"].startswith(
                     "Phone alerts are off")
+                # (the topic is made here alone: never saved through Site passwords)
+                r = await c.post("/api/password", headers=h, json={"name": "ntfy_topic", "value": TOPIC})
+                assert r.status_code == 400 and config.get_secret(config.NTFY_TOPIC_NAME) is None
                 made = (await c.post("/api/phone/make", headers=h, json={})).json()
                 topic = made["topic"]
                 assert made["server"] == "https://ntfy.sh"
@@ -345,7 +475,11 @@ def test_the_card_makes_a_topic_kept_as_a_secret_never_in_the_state_or_page(srv)
                 assert fake.texts[0].startswith("Test from the Job Desk")
                 # shown again on asking (to this page alone), and a new one each time it's made
                 assert (await c.post("/api/phone/show", headers=h, json={})).json()["topic"] == topic
-                again = (await c.post("/api/phone/make", headers=h, json={})).json()["topic"]
+                # a new one only when the page says replace (the phone subscribed to the old one stops getting them)
+                r = await c.post("/api/phone/make", headers=h, json={})
+                assert r.status_code == 409 and config.get_secret(config.NTFY_TOPIC_NAME) == topic
+                assert topic not in r.text
+                again = (await c.post("/api/phone/make", headers=h, json={"replace": True})).json()["topic"]
                 assert again != topic and config.get_secret(config.NTFY_TOPIC_NAME) == again
                 # the switch and the summary's time: the profile's settings
                 assert (await c.post("/api/phone/settings", headers=h,
@@ -362,7 +496,8 @@ def test_the_card_makes_a_topic_kept_as_a_secret_never_in_the_state_or_page(srv)
                 config.set_setting("submit_mode", "dry_run")
                 said = (await c.post("/api/phone/test", headers=h, json={})).json()["error"]
                 assert "practice mode" in said and len(fake.sent) == 1
-                assert "practice mode" in (await c.get("/api/state", headers=h)).json()["phone"]["held"]
+                held = (await c.get("/api/state", headers=h)).json()["phone"]["held"]
+                assert "practice mode" in held and "never sends anything" in held
                 # a failure: said on the page, never with the topic
                 config.set_setting("submit_mode", "review")
                 desk.phone.problem = None
@@ -419,7 +554,10 @@ def test_the_phone_alerts_card_turns_them_on_and_sends_a_test(srv):
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                page.on("dialog", lambda d: d.accept())
+
+                def accept(d):
+                    asyncio.ensure_future(d.accept())
+                page.on("dialog", accept)
                 await page.goto(desk.url)
                 await page.wait_for_selector("#plugin-version:not(:empty)")
                 assert await page.inner_text("#phone-pill") == "Off"
@@ -435,6 +573,31 @@ def test_the_phone_alerts_card_turns_them_on_and_sends_a_test(srv):
                         break
                     await page.wait_for_timeout(50)
                 assert fake.sent and fake.sent[0][0].endswith("/" + shown)
+                # New topic: asked first (the phone stops getting alerts until it subscribes again), then made
+                asked = []
+                page.remove_listener("dialog", accept)
+                page.on("dialog", lambda d: (asked.append(d.message), asyncio.ensure_future(d.accept())))
+                await page.click("#phone-on [data-act=phone-make]")
+                for _ in range(100):
+                    if config.get_secret(config.NTFY_TOPIC_NAME) != shown:
+                        break
+                    await page.wait_for_timeout(50)
+                assert asked and asked[0].startswith("This makes a new topic")
+                shown = config.get_secret(config.NTFY_TOPIC_NAME)
+                await page.wait_for_function("(t) => document.getElementById('phone-topic-name').textContent === t",
+                                             arg=shown)
+                # the summary's time: written once the box is left, never while it's typed
+                await page.focus("#phone-summary")
+                await page.keyboard.type("0715a")
+                await page.wait_for_timeout(300)
+                assert config.Profile.load().settings.phone_summary_at == ""
+                await page.keyboard.press("Enter")
+                for _ in range(100):
+                    if config.Profile.load().settings.phone_summary_at == "07:15":
+                        break
+                    await page.wait_for_timeout(50)
+                assert config.Profile.load().settings.phone_summary_at == "07:15"
+                assert await page.get_attribute("#phone-pill", "aria-live") == "polite"
                 await page.click("[data-act=phone-show]")  # (Hide the topic)
                 await page.wait_for_selector("#phone-topic", state="hidden")
                 assert shown not in await page.content()
@@ -449,3 +612,14 @@ def test_the_phone_alerts_card_turns_them_on_and_sends_a_test(srv):
             await desk.stop()
 
     run(go())
+
+
+def test_the_topic_is_never_typed_into_a_page(loop):
+    """The review of dafeaf9: Claude's fill_secret types a saved password onto its own site's pages; the topic has no
+    site, and a page whose domain spells its name (ntfytopic.com) is somebody else's."""
+    from job_apply import server
+
+    config.save_site_password(config.NTFY_TOPIC_NAME, TOPIC)
+    for name in ("ntfy_topic", "NTFY_TOPIC", " ntfy-topic "):
+        said = run(server.fill_secret("f1", name))
+        assert said == {"ok": False, "error": "The phone alerts topic is never typed into a page."}

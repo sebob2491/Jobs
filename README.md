@@ -308,9 +308,11 @@ The desk's **Phone alerts** card sends a push to your phone through
   kinds ("A job needs you: a bot check"), never an employer, a job or anything from your
   profile. **Say which employer and job** adds the employer and the job's title.
 - If an alert can't be sent (no network, ntfy down), the desk says so once at the top of its
-  page and tries again with the next alert; nothing else is held up.
-- Never in practice mode (`submit_mode: dry_run`) unless `phone_alerts_in_practice: true`, and
-  never in the plugin's live check. To use your own ntfy server, set `phone_alerts_server`.
+  page and tries again with the next alert, or by itself a few minutes later; nothing else is
+  held up.
+- Never in practice mode (`submit_mode: dry_run`), which sends nothing (a test included), nor in
+  the plugin's live check. To use your own ntfy server, set `phone_alerts_server` to its https
+  address.
 
 #### Cover letters
 
@@ -539,8 +541,7 @@ Settings in `profile.yaml`:
 | `auto_submit_ats` | `[]` | With `submit_mode: auto`, the job systems Claude may submit on without asking (`workday`, `greenhouse`, `lever`, `eightfold`, `successfactors`). The Job Desk has its own switch, **Submit for me**. |
 | `phone_alert_details` | `false` | [Phone alerts](#phone-alerts) name the employer and the job too (they pass through ntfy's servers). The desk's **Say which employer and job** changes it. |
 | `phone_summary_at` | `"18:00"` | When the phone alerts' summary of the day comes, by this computer's clock (`off`: none). The desk's card changes it. |
-| `phone_alerts_server` | ntfy.sh | Your own ntfy server's address, for phone alerts. |
-| `phone_alerts_in_practice` | `false` | Send phone alerts in practice mode (`dry_run`) too. Never in the plugin's live check. |
+| `phone_alerts_server` | ntfy.sh | Your own ntfy server's https address, for phone alerts (http only for `localhost`; no name or password in it). |
 | `browser_channel` | `chrome` | The browser the desk drives: `chrome`, `msedge`, or `chromium` (Playwright's bundled browser). `headless: true` hides its window. |
 
 ## What's inside

@@ -11,10 +11,12 @@ them something with its page closed.
 - When: a job newly needing the person (the page's own desktop alerts' rule: a need of theirs, or ready for their
   Submit), at most once a job a stop, those that come close together in one message, no more than one message a
   BATCH_GAP; cover letters stopping; and a summary of the day at settings.phone_summary_at, while the desk runs.
-- A failure (no network, ntfy down, a refusal) never disturbs the desk: it's said once on the desk's page, and the
-  alerts waiting are tried again with the next one.
-- Never in the live check or a test run (JOB_APPLY_NEVER_SUBMIT=1, the test identity), and in practice mode only with
-  settings.phone_alerts_in_practice.
+- A failure (no network, ntfy down, a refusal) never disturbs the desk: it's said once on the desk's page, and what
+  waits is tried again with the next alert, or by itself after RETRY_FIRST (doubling to RETRY_MOST); a summary that
+  failed is tried again so up to SUMMARY_RETRY after its time.
+- Never in practice mode, which sends nothing (submit_mode: dry_run, JOB_APPLY_NEVER_SUBMIT=1: the live check and the
+  tests), nor as the live check's test identity, Send a test included. Nor from a test that hasn't a transport of its
+  own (PYTEST_CURRENT_TEST): a developer's own topic in their environment never gets a test's alerts.
 """
 
 from __future__ import annotations
@@ -37,6 +39,13 @@ TICK = 5.0  # how often the desk looks for something to send (seconds)
 GATHER = 10.0  # a new alert waits this long for others that come with it, to go in one message
 BATCH_GAP = 60.0  # and messages go this far apart at least: what comes meanwhile goes in the next one
 SUMMARY_LATE = 60 * 60  # the daily summary still goes this long after its time (a computer asleep at it), not later
+SUMMARY_RETRY = 3 * 60 * 60  # and one that failed is tried again up to this long after its time
+# A message that failed is tried again by itself this long after (or with the next alert, sooner), each failure in a row
+# doubling the wait, up to RETRY_MOST
+RETRY_FIRST = max(5 * BATCH_GAP, 5 * 60)
+RETRY_MOST = 30 * 60
+# A summary at a time before this hour is the day that just ended's (00:00: since the midnight before)
+SUMMARY_NIGHT_HOUR = 4
 TIMEOUT = 10.0  # seconds a send may take
 MESSAGE_MOST = 3500  # characters (ntfy takes 4096 bytes)
 
@@ -79,13 +88,14 @@ def server(settings: config.Settings) -> str:
 
 
 def held(settings: config.Settings) -> str | None:
-    """Why no alert goes now, whatever is saved: the live check and test runs (JOB_APPLY_NEVER_SUBMIT=1, the test
-    identity) never send one; practice mode sends one only with settings.phone_alerts_in_practice."""
+    """Why no alert goes now, whatever is saved: practice mode sends nothing (CLAUDE.md), the live check's and the
+    tests' (JOB_APPLY_NEVER_SUBMIT=1) and the test identity's included."""
     if config.never_submit() or settings.test_identity:
-        return "Phone alerts are never sent in a test run or the plugin's live check (JOB_APPLY_NEVER_SUBMIT=1)."
-    if settings.dry_run and not settings.phone_alerts_in_practice:
-        return ("Phone alerts aren't sent in practice mode (submit_mode: dry_run) unless your profile says "
-                "phone_alerts_in_practice: true under settings:.")
+        return ("Phone alerts are held: nothing is sent in a test run or the plugin's live check "
+                "(JOB_APPLY_NEVER_SUBMIT=1), a test included.")
+    if settings.dry_run:
+        return ("Phone alerts are held: practice mode (submit_mode: dry_run in your profile) never sends anything, a "
+                "test included.")
     return None
 
 
@@ -94,6 +104,13 @@ def first_sentence(text: str) -> str:
     said = " ".join(str(text or "").split())
     m = re.match(r"(.+?[.!?])(?:\s|$)", said)
     return (m.group(1) if m else said)[:200]
+
+
+def letters_line(problem: str) -> str:
+    """A cover letters problem as a message's line: its first sentence, said as stopped letters where it doesn't say
+    so itself."""
+    said = first_sentence(problem)
+    return said if said.lower().startswith("cover letter") else f"Cover letters stopped: {said}"
 
 
 def _many(n: int, kind: tuple[str, str]) -> str:
@@ -114,7 +131,11 @@ class PhoneAlerts:
         self.letters_said: str | None = None  # the cover letters' problem last seen
         self.letters_pending: str | None = None
         self.last_sent = 0.0  # when the last message was tried
-        self.waiting_retry = False  # the last one failed: tried again with the next alert
+        self.waiting_retry = False  # the last one failed: tried again with the next alert, or at retry_at
+        self.retry_at = 0.0
+        self.retry_wait = RETRY_FIRST  # (doubles with each failure in a row)
+        self.summary_failed: str | None = None  # the day whose summary failed, tried again until SUMMARY_RETRY
+        self._tick_logged: str | None = None  # (a look's failure, logged once a kind)
         self.problem: str | None = None  # why the last one couldn't be sent, for the desk's page
         self._logged: str | None = None
         self.summary_day: str | None = None  # the day (YYYY-MM-DD) the daily summary last went
@@ -172,14 +193,18 @@ class PhoneAlerts:
                 what = "ready for your Submit" if i["ready"] else KINDS.get(i["kind"], OTHER_KIND)[0]
                 who = ", ".join(x for x in (i["company"], i["title"]) if x) or "A job"
                 lines.append(f"- {who}: {what}")
-        if letters:
-            lines.append(f"Cover letters stopped: {letters}")
+        if letters:  # (letters_line's)
+            lines.append(letters)
         return "\n".join(lines)[:MESSAGE_MOST]
 
-    def summary(self, now: float) -> str:
+    def summary(self, now: float, night: bool = False) -> str:
         """The day so far: "Today: N submitted, M ready for you, K need you, R replies" (sent in and replies from the
-        tracker, since this computer's midnight; ready and needing the person from the desk's jobs now)."""
-        midnight = datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0).astimezone()
+        tracker, since this computer's midnight; ready and needing the person from the desk's jobs now). `night`: a
+        summary set before SUMMARY_NIGHT_HOUR, the day that just ended's ("Yesterday:", since the midnight before)."""
+        midnight = datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0)
+        if night:
+            midnight -= timedelta(days=1)
+        midnight = midnight.astimezone()
         try:
             day = self.tracker().since(midnight)
         except Exception:
@@ -188,8 +213,8 @@ class PhoneAlerts:
         ready = sum(1 for i in due.values() if i["ready"])
         needs = len(due) - ready
         replies = day["replies"]
-        return (f"Today: {day['submitted']} submitted, {ready} ready for you, {needs} need you, "
-                f"{replies} {'reply' if replies == 1 else 'replies'}")
+        return (f"{'Yesterday' if night else 'Today'}: {day['submitted']} submitted, {ready} ready for you, "
+                f"{needs} need you, {replies} {'reply' if replies == 1 else 'replies'}")
 
     # ------------------------------------------------------------- sending
     async def post(self, text: str, settings: config.Settings, title: str = TITLE) -> str | None:
@@ -200,6 +225,8 @@ class PhoneAlerts:
         why = held(settings)
         if why:
             return why
+        if self.transport is None and os.environ.get("PYTEST_CURRENT_TEST"):
+            return "Phone alerts aren't sent from a test without a transport of its own."
         url = f"{server(settings)}/{name}"
         try:
             async with httpx.AsyncClient(timeout=TIMEOUT, transport=self.transport) as client:
@@ -214,14 +241,18 @@ class PhoneAlerts:
             return f"{type(e).__name__}" + (f": {said[:200]}" if said else "")
 
     async def _send(self, text: str, settings: config.Settings, now: float) -> bool:
-        """Sent, with a failure noted once (and logged once a kind, without the topic)."""
+        """Sent, with a failure noted once (and logged once a kind, without the topic), and tried again at the next
+        alert or at retry_at, whichever comes first."""
         self.last_sent = now
         why = await self.post(text, settings)
         if why is None:
             self.problem, self._logged, self.waiting_retry = None, None, False
+            self.retry_wait = RETRY_FIRST
             return True
         self.problem = f"Phone alerts couldn't be sent: {why}. The desk tries again with the next alert."
         self.waiting_retry = True
+        self.retry_at = now + self.retry_wait
+        self.retry_wait = min(self.retry_wait * 2, RETRY_MOST)
         if self._logged != why:
             self._logged = why
             logging.getLogger(__name__).warning("phone alert not sent: %s", why)
@@ -241,8 +272,11 @@ class PhoneAlerts:
         now = time.time() if now is None else now
         try:
             await self._tick(settings, now)
-        except Exception:
-            logging.getLogger(__name__).warning("phone alerts: a look failed", exc_info=True)
+        except Exception as e:  # (every TICK seconds: logged once a kind, not a traceback every 5 s)
+            said = f"{type(e).__name__}: {e}"
+            if said != self._tick_logged:
+                self._tick_logged = said
+                logging.getLogger(__name__).warning("phone alerts: a look failed", exc_info=True)
 
     async def _tick(self, settings: config.Settings | None, now: float) -> None:
         due = self.due()
@@ -253,15 +287,15 @@ class PhoneAlerts:
             self.pending.setdefault(k, (now, due[k]))
         self.pending = {k: v for k, v in self.pending.items() if k in due}  # (seen to meanwhile: nothing to say)
         problem = self.applier.letters_problem if self.applier.letters else None
-        said = first_sentence(problem) if problem else None
+        said = letters_line(problem) if problem else None
         letters_new = said is not None and said != self.letters_said and not first
         self.letters_said = said
         if letters_new:
             self.letters_pending = said
         elif said is None:
             self.letters_pending = None
-        if new or letters_new:
-            self.waiting_retry = False  # (a failed one is tried again with the next alert)
+        if new or letters_new or self.waiting_retry and now >= self.retry_at:
+            self.waiting_retry = False  # (a failed one is tried again with the next alert, or after its wait)
         if settings is None:
             try:
                 settings = config.Profile.load().settings
@@ -274,10 +308,14 @@ class PhoneAlerts:
             self.pending, self.letters_pending = {}, None
             return
         if summary:
-            self.summary_day = datetime.fromtimestamp(now).date().isoformat()  # (once a day, gone or not)
-            if self.saved:
-                self.saved()
-            await self._send(self.summary(now), settings, now)
+            today = datetime.fromtimestamp(now).date().isoformat()
+            if await self._send(self.summary(now, int(settings.phone_summary_at[:2]) < SUMMARY_NIGHT_HOUR), settings,
+                                now):
+                self.summary_day, self.summary_failed = today, None  # (once a day)
+                if self.saved:
+                    self.saved()
+            else:
+                self.summary_failed = today
             return
         if self.waiting_retry or not (self.pending or self.letters_pending):
             return
@@ -289,14 +327,19 @@ class PhoneAlerts:
             self.pending, self.letters_pending = {}, None
 
     def _summary_due(self, settings: config.Settings, now: float) -> bool:
-        """Is the daily summary due now? At its time, or up to SUMMARY_LATE after it, once a day."""
+        """Is the daily summary due now? At its time, or up to SUMMARY_LATE after it, once a day; one that failed, again
+        after the retry's wait, up to SUMMARY_RETRY after its time."""
         if not settings.phone_summary_at:
             return False
         hour, minute = (int(x) for x in settings.phone_summary_at.split(":"))
         here = datetime.fromtimestamp(now)
-        at = here.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        return (here.date().isoformat() != self.summary_day
-                and timedelta(0) <= here - at < timedelta(seconds=SUMMARY_LATE))
+        today = here.date().isoformat()
+        late = here - here.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if today == self.summary_day or late < timedelta(0):
+            return False
+        if self.summary_failed == today:
+            return late < timedelta(seconds=SUMMARY_RETRY) and now >= self.retry_at
+        return late < timedelta(seconds=SUMMARY_LATE)
 
     def public(self, settings: config.Settings, on: bool) -> dict[str, Any]:
         """For the desk's state: whether alerts are on, never the topic."""

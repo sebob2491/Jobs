@@ -1320,6 +1320,9 @@ async def fill_secret(field_id: str, secret_name: str) -> dict[str, Any]:
         # 0.3.246: a page could talk Claude into typing it into a box of its own)
         return {"ok": False, "error": "The Anthropic API key is only for writing cover letters; it is never typed into "
                                       "a page."}
+    if re.sub(r"[^a-z0-9]", "_", secret_name.strip().lower()) == config.NTFY_TOPIC_NAME:
+        # the phone alerts' topic (phone.py): anyone who has it reads the alerts, and no site's box is its
+        return {"ok": False, "error": "The phone alerts topic is never typed into a page."}
     secret = config.get_secret(secret_name)
     if secret is None:
         return {"ok": False, "error": f"No secret named {secret_name!r}. Ask the user to add it to "
