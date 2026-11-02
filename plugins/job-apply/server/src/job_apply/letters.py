@@ -27,7 +27,7 @@ import subprocess
 import tempfile
 import threading
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -43,6 +43,14 @@ POSTING_CHARS = 12000  # of a posting's text, as tailoring_queue hands it to Cla
 RESUME_CHARS = 20000
 PDF_MOST = 4 * 1024 * 1024  # a resume PDF bigger than this goes as the profile's facts alone
 BY = "your Claude login"  # how the job's log says it was written
+BY_KEY = "your Anthropic API key"  # (written through Anthropic's API with the key saved on the desk: _ask_api)
+MAX_TOKENS = 16000  # an answer's most, through the API (a letter is about 500; the check's far fewer)
+# The models the API path asks with medium effort, as the claude -p path does (--effort medium), and offers the
+# server's fallback model where Claude declines (the safety classifiers' false positives); any other model named in
+# the profile (cover_letter_model) is asked plainly
+_EFFORT_MODELS = ("claude-opus-5", "claude-sonnet-5", "claude-fable-5", "claude-haiku-5", "claude-mythos-5",
+                  "claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8", "claude-sonnet-4-6")
+_FALLBACK_MODELS = {"claude-fable-5-1", "claude-mythos-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}
 
 LETTER_RULES = [
     "Use only facts that the applicant's resume or profile below states. Never claim a degree, certification, "
@@ -120,8 +128,20 @@ _CHILD_SECRET = re.compile(r"^(JOB_APPLY_SECRET_|LIVE_TEST_|CLAUDE_BG_)")
 
 TAIL = (" The desk tries again in 10 minutes, or at once when you turn Write a cover letter for each job off and on. "
         "Meanwhile your usual cover letter, if you have one, goes in.")
-NO_CLAUDE = ("Cover letters aren't being written: the desk can't find Claude Code's claude command on this computer. "
-             "Install Claude Code (or put claude on your PATH) and sign in to it." + TAIL)
+NO_CLAUDE = ("Cover letters aren't being written: no Anthropic API key is saved on the desk, and it can't find Claude "
+             "Code's claude command on this computer. Save an API key under Site passwords (Anthropic API key), or "
+             "install Claude Code (or put claude on your PATH) and sign in to it." + TAIL)
+KEY_REFUSED = ("Cover letters aren't being written: Anthropic turned down the API key saved on the desk. Make a new "
+               "one in the Claude Console (console.anthropic.com, API keys) and save it under Site passwords." + TAIL)
+KEY_NOT_ALLOWED = ("Cover letters aren't being written: Anthropic turned the desk's API key away for this (the key's "
+                   "workspace may not be allowed the model it asks for). Check the key in the Claude Console "
+                   "(console.anthropic.com), or save another under Site passwords." + TAIL)
+NO_CREDIT = ("Cover letters aren't being written: the Anthropic account behind the desk's API key is out of credit. "
+             "Add some in the Claude Console (console.anthropic.com, Billing)." + TAIL)
+KEY_AT_LIMIT = ("Cover letters aren't being written: the desk's API key has reached its rate limit for now. Wait a "
+                "few minutes." + TAIL)
+API_OFFLINE = ("Cover letters aren't being written: the desk couldn't reach Anthropic's API (no internet connection, "
+               "or a proxy or firewall in the way)." + TAIL)
 NOT_SIGNED_IN = ("Cover letters aren't being written: Claude Code isn't signed in on this computer. In a terminal, run "
                  "claude and sign in (/login)." + TAIL)
 TOO_OLD = ("Cover letters aren't being written: your Claude Code is too old to write them without tools. Update it "
@@ -933,6 +953,90 @@ def letter_markdown(body: str, prof: config.Profile) -> str:
         f"# {name}\n\n{body}\n\nSincerely,  \n{name}\n"
 
 
+# ------------------------------------------------------------------ an API key's: Anthropic's API
+# Where a key saved on the desk goes: Anthropic's own API, never a gateway the environment names (ANTHROPIC_BASE_URL,
+# set for Claude Code perhaps): a saved secret goes only to its own system (the review of 0.3.246)
+ANTHROPIC_API = "https://api.anthropic.com"
+
+
+@dataclass(frozen=True)
+class ApiKey:
+    """The Anthropic API key saved on the desk (Site passwords) or set as ANTHROPIC_API_KEY: letters are written
+    through Anthropic's API with it, instead of claude -p. Never printed (its repr leaves the value out). `saved`:
+    the desk's own (sent to Anthropic's API alone), not the environment's (which goes where the environment says)."""
+    value: str = field(repr=False)
+    saved: bool = True
+
+
+def api_key() -> ApiKey | None:
+    """The key letters are written with, where there's one: the desk's saved one (config.API_KEY_NAME, or its
+    JOB_APPLY_SECRET_ variable), else ANTHROPIC_API_KEY (which claude -p would use as well)."""
+    saved = (config.get_secret(config.API_KEY_NAME) or "").strip()
+    if saved:
+        return ApiKey(saved)
+    env = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+    return ApiKey(env, saved=False) if env else None
+
+
+def written_by() -> str:
+    """How a job's log says its letter was written: with the API key, or the person's Claude login."""
+    return BY_KEY if api_key() is not None else BY
+
+
+async def _ask_api(key: ApiKey, system: str, content: list[dict[str, Any]], model: str, timeout: float) -> str:
+    """One request to Anthropic's Messages API: the same system prompt and message the claude -p path sends, and no
+    tools. Its text, or why there's none: Unavailable for what stops every letter (the key turned down, no credit, the
+    rate limit, no connection, a model the key can't use), LetterError for this one's. Within `timeout` in all, the
+    client's own retries of a busy service included (as claude -p is). Cancelled (the switch turned off, the job
+    skipped), its request is dropped with it."""
+    import anthropic  # (here: the desk starts without loading it, and only a key's letters need it)
+
+    ask: dict[str, Any] = {"model": model, "max_tokens": MAX_TOKENS, "system": system,
+                           "messages": [{"role": "user", "content": content}]}
+    if model.startswith(_EFFORT_MODELS):
+        ask["output_config"] = {"effort": "medium"}
+    where: dict[str, Any] = {"base_url": ANTHROPIC_API} if key.saved else {}
+    try:
+        async with anthropic.AsyncAnthropic(api_key=key.value, timeout=timeout, max_retries=2, **where) as client:
+            if model in _FALLBACK_MODELS:
+                asked = client.beta.messages.create(**ask, betas=["server-side-fallback-2026-07-01"],
+                                                    fallbacks="default")
+            else:
+                asked = client.messages.create(**ask)
+            said: Any = await asyncio.wait_for(asked, timeout)
+    except asyncio.TimeoutError:  # (all of it, retries included: Python 3.10's own, not the builtin)
+        raise LetterError(f"Claude took longer than {round(timeout)} seconds") from None
+    except anthropic.AuthenticationError:
+        raise Unavailable(KEY_REFUSED) from None
+    except anthropic.PermissionDeniedError:
+        raise Unavailable(KEY_NOT_ALLOWED) from None
+    except anthropic.NotFoundError:
+        raise Unavailable(no_model(model)) from None
+    except anthropic.RateLimitError:
+        raise Unavailable(KEY_AT_LIMIT) from None
+    except anthropic.BadRequestError as e:
+        if re.search(r"credit balance", str(e), re.I):
+            raise Unavailable(NO_CREDIT) from None
+        raise LetterError(f"Anthropic's API turned the request down ({_first_line(getattr(e, 'message', ''))})") \
+            from None
+    except anthropic.APITimeoutError:  # (before APIConnectionError, which it is a kind of)
+        raise LetterError(f"Claude took longer than {round(timeout)} seconds") from None
+    except anthropic.APIConnectionError:
+        raise Unavailable(API_OFFLINE) from None
+    except anthropic.APIStatusError as e:  # (Anthropic's side: busy or down, after the client's own retries)
+        raise LetterError(f"Anthropic's API answered with an error ({e.status_code})") from None
+    except (anthropic.AnthropicError, TypeError) as e:  # (an answer it couldn't read; an SDK too old for the request)
+        raise LetterError(f"the request to Anthropic's API failed ({type(e).__name__})") from None
+    if said.stop_reason == "refusal":
+        raise LetterError("Claude declined to write it")
+    if said.stop_reason == "max_tokens":
+        raise LetterError("Claude's answer was cut short")
+    text = "".join(block.text for block in said.content if getattr(block, "type", "") == "text")
+    if not text.strip():
+        raise LetterError("Claude's answer was empty")
+    return text
+
+
 # ------------------------------------------------------------------ the child: claude -p
 def _install_places() -> list[Path]:
     """Where Claude Code puts its claude command when it isn't on the PATH the desk was started with."""
@@ -1079,10 +1183,12 @@ def model_of(prof: config.Profile) -> str:
     return prof.settings.cover_letter_model or DEFAULT_MODEL
 
 
-async def _ask(exe: str, system: str, content: list[dict[str, Any]], model: str, timeout: float) -> str:
-    """One claude -p call, off the event loop: its answer. Dropped meanwhile (the switch turned off, the job skipped,
-    the desk stopping), its child is ended, off the event loop (Windows' taskkill takes a moment), and the letter's
-    place is let go only once it has."""
+async def _ask(exe: str | ApiKey, system: str, content: list[dict[str, Any]], model: str, timeout: float) -> str:
+    """One claude -p call, off the event loop: its answer (or, with an API key, one request to Anthropic's API:
+    _ask_api). Dropped meanwhile (the switch turned off, the job skipped, the desk stopping), its child is ended, off
+    the event loop (Windows' taskkill takes a moment), and the letter's place is let go only once it has."""
+    if isinstance(exe, ApiKey):
+        return await _ask_api(exe, system, content, model, timeout)
     started: list[subprocess.Popen] = []
     dropped = threading.Event()
     work = asyncio.ensure_future(asyncio.to_thread(_run_child, exe, system, content, model, timeout, started, dropped))
@@ -1121,7 +1227,7 @@ def read_verdict(said: str) -> list[str]:
     return found
 
 
-async def check_letter(exe: str, body: str, prof: config.Profile, job: dict[str, Any], model: str,
+async def check_letter(exe: str | ApiKey, body: str, prof: config.Profile, job: dict[str, Any], model: str,
                        timeout: float = CLI_TIMEOUT) -> None:
     """The second reading of what a letter claims: Claude again, the same way (check_prompt, check_content). Anything
     it finds, an answer that isn't the JSON asked for, or a check that can't be done: LetterError (Unavailable for
@@ -1141,11 +1247,11 @@ async def write_letter(job: dict[str, Any], prof: config.Profile, description: s
     """This job's letter, whole (the profile's header and signature around Claude's body), once what it claims has
     been read twice (check_claims, then check_letter). Unavailable when no letter can be written now, LetterError when
     this one couldn't, or can't be used."""
-    exe = find_claude()
+    exe: str | ApiKey | None = api_key() or find_claude()  # (an API key's first: the person saved it for this)
     if exe is None:
         raise Unavailable(NO_CLAUDE)
     model = model_of(prof)
     body = clean_body(await _ask(exe, system_prompt(), message_content(prof, job, description), model, timeout))
     check_claims(body, prof, resume_source(prof)[0], job, description)
     await check_letter(exe, body, prof, job, model, timeout)
-    return Letter(letter_markdown(body, prof))
+    return Letter(letter_markdown(body, prof), BY_KEY if isinstance(exe, ApiKey) else BY)
