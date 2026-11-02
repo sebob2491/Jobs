@@ -1315,6 +1315,17 @@ class Tracker:
         return [dict(r) for r in rows]
 
     @_locked
+    def since(self, start: datetime) -> dict[str, int]:
+        """What came after `start` (a time with its offset: the phone's daily summary passes this computer's midnight):
+        the applications sent in (`submitted`: applied_at, by the desk or marked so by the person) and the employers'
+        emails logged (`replies`: any but a "we received your application" confirmation)."""
+        sent = sum(1 for r in self.conn.execute("SELECT applied_at FROM jobs WHERE applied_at != ''")
+                   if (at := _moment(r["applied_at"])) is not None and at >= start)
+        replies = sum(1 for r in self.conn.execute("SELECT logged_at FROM emails WHERE category != 'confirmation'")
+                      if (at := _moment(r["logged_at"])) is not None and at >= start)
+        return {"submitted": sent, "replies": replies}
+
+    @_locked
     def counts(self) -> dict[str, int]:
         rows = self.conn.execute("SELECT status, COUNT(*) AS n FROM jobs GROUP BY status")
         return {r["status"]: r["n"] for r in rows}
