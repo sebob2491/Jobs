@@ -898,6 +898,16 @@ def test_age_asked_either_way_and_never_for_another_question():
     for q in ("Are you at least eighteen years old?", "Are you 18 or older?", "Are you over 18?", "Age 18 or older?",
               "Are you at least 18 years of age? If under 18, please provide your date of birth"):
         assert _answer(q, kind="radio_group", options=["Yes", "No"]) == "Yes", q
+    # NV Energy's Oracle (run 176): over 18 now answers "... or will you be within the next 6 months?" Yes; someone not
+    # 18 yet may be within those months, so theirs; and its months stay a count where the age isn't asked first
+    soon = "Are you over the age of 18 or will you be within the next 6 months?"
+    assert _answer(soon, kind="radio_group", options=["Yes", "No"]) == "Yes"
+    young = _person(work_authorization={"authorized_to_work": True, "requires_sponsorship": False, "over_18": False})
+    assert _answer(soon, young, kind="radio_group", options=["Yes", "No"]) is None
+    assert _answer("Are you under 18 or will you be within the next 6 months?", kind="radio_group",
+                   options=["Yes", "No"]) is None
+    assert _answer("Do you have 18 months of experience, or will you within the next 6 months?", kind="radio_group",
+                   options=["Yes", "No"]) is None
 
 
 def test_schooling_is_never_understated_nor_overstated():

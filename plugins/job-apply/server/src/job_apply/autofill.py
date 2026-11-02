@@ -2247,12 +2247,18 @@ def _age(invert: bool) -> Getter:
     """Over 18 (or, inverted, under). Not answered from age alone when the question also asks
     about working or sponsorship ("at least 18 and legally authorized to work…?")."""
     def g(prof: Profile, job: dict, label: str = "") -> Any:
+        asked = norm(label)
+        # "Are you over the age of 18 or will you be within the next 6 months?" (NV Energy's Oracle, run 176): over 18
+        # now answers it Yes; anyone else's is theirs, who may turn 18 within those months
+        soon = re.search(r"\bor (will|would) (you )?(be|turn)\b", asked)
         # (nor from a count of 18 months, hours, credits or units, or 18 years of experience or
         # work: the review of Oct 15)
         if re.search(r"authori[sz]|sponsor|eligib|legally|permitted to work|able to work|right to work|"
-                     r"\b(months?|hours?|credits?|units?|experience|work(ed|ing)?)\b", norm(label)):
+                     r"\b(months?|hours?|credits?|units?|experience|work(ed|ing)?)\b",
+                     asked[:soon.start()] if soon else asked):
             return None
-        return _yn("work_authorization.over_18", invert=invert)(prof, job)
+        said = _yn("work_authorization.over_18", invert=invert)(prof, job)
+        return None if soon and (invert or said != "Yes") else said
     return g
 
 

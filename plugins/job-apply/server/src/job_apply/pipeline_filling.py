@@ -139,6 +139,16 @@ class FillingMixin:
         other plan_autofill's refresh leaves alone. Said in the log either way. A box that won't take the profile's
         answer is read again: what it holds is said, and one left empty is asked as any box a fill didn't go into."""
         page = pipeline._answers_page(data)
+        if (run.code_asked and not run.draft and not run.draft_off and data.get("fields")
+                and pipeline.detect_ats(str(data.get("url") or "")) == "oracle_hcm"):
+            # an Oracle application its emailed code signed the person in to: the site fills it with the answers it
+            # kept from their earlier applications (NV Energy's, the accounts check's runs 176 and 177: "No" to being
+            # over 18 among them, and the page taken as ready), checked against the profile as a saved draft is
+            run.draft = True
+            self._log(run, f"{pipeline._site(run, data)} signed you in by the emailed code and may fill this "
+                      "application with answers from an earlier application, so I'll check them against your profile")
+            if run.hands_on:  # (as a draft gone on with on the person's Resume: theirs)
+                self._draft_off(run)
         checking = run.draft and not run.draft_off and not run.hands_on
         before = {str(f.get("id")): f for f in data.get("fields") or [] if isinstance(f, dict)}
 

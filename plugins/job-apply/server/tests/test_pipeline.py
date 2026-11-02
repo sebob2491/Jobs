@@ -13,7 +13,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse
 
 import pytest
 import yaml
-from conftest import browser_available, fixture_url, run
+from conftest import FIXTURES, browser_available, fixture_url, run
 
 import job_apply.browser as browser_module
 import job_apply.pipeline as pipeline
@@ -14708,6 +14708,70 @@ def test_a_saved_drafts_continue_application_is_the_way_in_and_its_answers_are_c
     else:
         assert (saved["ln"], saved["rd-1"]) == ("Rivers", "Ran the wet benches on nights."), (saved, r.log)
         assert not checked and not r.draft and not r.draft_changed, r.log
+
+
+@pytest.mark.parametrize("returning", [True, False], ids=["returning", "new"])
+def test_an_oracle_application_signed_in_by_its_code_has_its_kept_answers_checked(srv, monkeypatch, returning):
+    """NV Energy's Oracle Recruiting Cloud (the accounts check's runs 176 and 177, Oct 31 and Nov 1): once its emailed
+    code signed the applicant in, the form came back filled with the answers the site kept from an earlier
+    application, "No" to being over 18 among them, and the desk filled nothing (every box showed something) and took
+    the page as ready. An Oracle application its code signed in to is checked against the profile as a saved draft
+    is: the profile's answer where the box shows another, said in the log and on the card, and never sent by Submit
+    for me. One the site kept nothing for ("new") is filled as any other."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    monkeypatch.setattr(pipeline, "_another_employers_mail", lambda *a, **k: None)
+    monkeypatch.setattr(Applier, "_mail_senders", lambda self, r: {"oraclecloud.com"})
+    asked_at = []
+    real_pause = Applier._pause
+
+    def pause(self, r, need, reason, questions=None, seen=None, *, code):
+        if need == "email_code":
+            asked_at.append(time.time())
+        return real_pause(self, r, need, reason, questions, seen, code=code)
+
+    def search(address, password, since, senders, want, allowed_link, before=None, look_back=120, others=None):
+        return pipeline.mailbox.Found("code", "123456", "oraclecloud.com", asked_at[-1] + 1) if asked_at else None
+
+    monkeypatch.setattr(Applier, "_pause", pause)
+    monkeypatch.setattr(pipeline.mailbox, "search", search)
+    site = "https://acme.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/1/apply/"
+    pages = {"email": (FIXTURES / "site" / "oracle-returning.html").read_text(encoding="utf-8"),
+             "review.html": (FIXTURES / "site" / "review.html").read_text(encoding="utf-8")}
+    job = srv.add_job(url=site + "email" + ("" if returning else "?new"), title="IT Project Manager",
+                      company="Example Energy")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        async def handler(route):
+            name = route.request.url.split("?")[0].rsplit("/", 1)[-1]
+            await route.fulfill(status=200, content_type="text/html", body=pages.get(name, pages["email"]))
+
+        await srv.browser.page()
+        await srv.browser._ctx.route("https://acme.fa.us2.oraclecloud.com/**", handler)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running", "needs_you") or r.need not in ("email_code", ""),
+                        timeout=60, about=state(r))
+            return r, await r.page.evaluate("() => sessionStorage.getItem('adult')")
+        finally:
+            await applier.stop()
+
+    r, adult = run(go())
+    assert r.status == "ready" and "review.html" in r.url, (r.status, r.reason, r.log)
+    assert any(line.startswith("entered the code from your email") for line in r.log), r.log
+    assert adult == "Yes", (adult, r.log)  # (the profile's: over 18)
+    said = [line for line in r.log if "earlier application" in line]
+    if returning:
+        assert said, r.log
+        assert r.draft_changed and "I changed some of its answers to your profile's (see What went in)" in r.reason
+        assert r.public()["went_in"]["changed"] == [
+            "Are you over the age of 18 or will you be within the next 6 months?: No → Yes"], r.public()["went_in"]
+    else:
+        assert not r.draft_changed, r.log  # (nothing kept: filled as any other application)
 
 
 @pytest.mark.parametrize("case", ["stopped", "refused"])

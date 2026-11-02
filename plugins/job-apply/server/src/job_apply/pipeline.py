@@ -1265,6 +1265,9 @@ class Run:
     asked_once: dict[str, str] = field(default_factory=dict)
     mail_checked: float = 0.0  # when the inbox was last looked at for its emailed code or link
     mail_done: bool = False  # the code or link from the inbox went in: no more looking
+    # an emailed code stopped this job: an Oracle site signs an applicant in by it, and fills its form with the answers
+    # it kept from their earlier applications (NV Energy's, runs 176 and 177), checked as a saved draft's (_autofill)
+    code_asked: bool = False
     # the employer's own mail domains, from its list (looked up once), and _another_employers_mail's answer for this
     # job (False: not looked up yet): the desk's own, never in public() (a frozenset and a function aren't JSON's)
     employer_mail: frozenset[str] | None = None
@@ -3552,6 +3555,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         run.tab_mark, run.moved_since, run.desk_at = 0, 0.0, 0.0
         run.left = need == "bot_check" or lets_go
         run.mail_checked, run.mail_done, run.verifying = 0.0, False, False
+        run.code_asked = run.code_asked or need == "email_code"
         run.mail_looked, run.mail_held, run.mail_held_at = 0.0, 0.0, 0.0
         run.paused_host = host_of(run.url)
         run.hold_host = ""
