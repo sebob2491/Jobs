@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import math
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import date
@@ -20,6 +21,7 @@ from . import pay, workplace
 from .ats import host_of
 from .autofill import _PARTIAL_STUDY, degree_key, entry_dates, norm, school_under_way
 from .config import Profile, listed
+from .outcomes import DIMENSIONS, TEST_HITS, TEST_MIN, Learned, Tally
 from .postings import QUESTIONS_HEADING, Posting, fetch_posting
 from .search import (DEFAULT_TITLES, MAX_ALTERNATIVES, US_STATES, avoided_title, location_matches, location_terms,
                      title_matches, title_words)
@@ -335,6 +337,65 @@ def not_interested_in(fit: dict[str, Any], company: str, points: int = NOT_INTER
     if isinstance(fit.get("parts"), list):
         out["parts"] = [*fit["parts"], {"why": said, "points": lowered - score}]
     return out
+
+
+# "Worked before": an opening like the person's applications that went on to an interview or a test is placed a little
+# higher in the list, one like those that didn't a little lower, from their own outcomes (outcomes.py;
+# settings.learn_from_responses). Only from a group whose interviews and tests surely differ from the rest of its kind's
+# (outcomes.Learned.leaning: Fisher's exact test, Holm's correction), its rate drawn toward the person's overall one as
+# if it had WORKED_BEFORE_PRIOR more applications at that rate, in proportion to how many standard errors it's away
+# (WORKED_BEFORE_FULL of them for the whole cap), at most WORKED_BEFORE_CAP points' worth of order either way (a tenth
+# of the score's 0 to 100). The score, its colour and whether it's recommended stay as they were: only the order moves
+WORKED_BEFORE_CAP = 10
+WORKED_BEFORE_PRIOR = 20
+WORKED_BEFORE_FULL = 2.0
+
+
+def worked_before_points(group: Tally | None, overall: Tally) -> int:
+    """The points of order a group's outcomes are worth (from -WORKED_BEFORE_CAP to WORKED_BEFORE_CAP): none for no
+    group, one under outcomes.TEST_MIN applications, while the person's applications all went the same way (none went
+    further, or all did), or up for a group with fewer than outcomes.TEST_HITS interviews or tests."""
+    if group is None or group.n < TEST_MIN or not overall.n:
+        return 0
+    p = overall.further / overall.n
+    if p <= 0 or p >= 1:
+        return 0
+    rate = (group.further + WORKED_BEFORE_PRIOR * p) / (group.n + WORKED_BEFORE_PRIOR)
+    z = (rate - p) / math.sqrt(p * (1 - p) / (group.n + WORKED_BEFORE_PRIOR))
+    points = max(-WORKED_BEFORE_CAP, min(WORKED_BEFORE_CAP, round(WORKED_BEFORE_CAP * z / WORKED_BEFORE_FULL)))
+    return 0 if points > 0 and group.further < TEST_HITS else points
+
+
+def worked_before(fit: dict[str, Any], learned: Learned, keys: dict[str, tuple[str, str, str]]) -> dict[str, Any]:
+    """An opening's fit (Fit.to_dict()) with where what worked before places it: among the groups it's in
+    (outcomes.keys_of: its job system, source, title, pay, distance) whose interviews and tests surely differ from the
+    rest of their kind's (Learned.leaning), the one worth the most points either way (never two added up). Said in
+    `placed` ("Placed higher: applications through Workday led to an interview or a test 6 times in 12; yours overall,
+    6 in 32"), with `rank`, its score and those points: the desk's order goes by it. Its score, its parts and whether
+    it's recommended stay as they were (an opening is never hidden or kept out of the queue by it), and nothing it
+    fills changes. The fit as it was when no group moves it."""
+    if not isinstance(fit, dict) or not isinstance(fit.get("score"), (int, float)):
+        return fit
+    leaning = learned.leaning()
+    best: tuple[int, Tally] | None = None
+    for dimension in DIMENSIONS:
+        key = keys.get(dimension)
+        group = learned.tally(dimension, key[0]) if key else None
+        if group is None or (dimension, group.key) not in leaning:
+            continue
+        points = worked_before_points(group, learned.overall)
+        if (points > 0) != leaning[(dimension, group.key)]:  # (only the way the difference goes)
+            continue
+        if points and (best is None or abs(points) > abs(best[0])):
+            best = (points, group)
+    if best is None:
+        return fit
+    points, group = best
+    o = learned.overall
+    times = {0: "not once", 1: "once"}.get(group.further, f"{group.further} times")
+    said = (f"Placed {'higher' if points > 0 else 'lower'}: applications {group.phrase} led to an interview or a test "
+            f"{times} in {group.n}; yours overall, {o.further} in {o.n}")
+    return {**fit, "rank": fit["score"] + points, "placed": said}
 
 
 # --------------------------------------------------------------------- profile

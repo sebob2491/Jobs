@@ -24,6 +24,7 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   - `ats.py`: which job system a link is; `postings.py`: a posting read into a record;
   - `search.py`: employer job searches;
   - `recommend.py`: ranking;
+  - `outcomes.py`: what has worked, from the person's own responses (the "What's working" card, the "worked before" score part);
   - `places.py`: miles from the person's home town (the desk's "Within N miles"), from `data/places.yaml`;
   - `mailbox.py`: emailed codes, and the confirmation and password-reset links (one message's checks, `pick`, shared
     with the messages Claude reads in Gmail for the desk's mail requests: `pipeline_mail.MailAsk`, `mail_requests`,

@@ -225,6 +225,8 @@ settings:
   # The days an application you sent in waits with no reply (not even a "we received it" email)
   # before the desk's My applications marks it for a follow-up, with a Follow up button (1 to 90).
   follow_up_days: 10
+  # Where it's clear, openings like your applications that got interviews (or didn't) are placed higher (or lower) in the desk's list; scores don't change; counted on this computer only.
+  learn_from_responses: true
   # Cover letters: with the desk's "Write a cover letter for each job" on, Claude writes one for each
   # job you apply to, through your own Claude Code sign-in (your Claude plan; no key needed), from your
   # resume, this profile and the job's posting, using only what they say. The model it writes them with:

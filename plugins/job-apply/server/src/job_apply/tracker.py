@@ -71,7 +71,10 @@ CREATE TABLE IF NOT EXISTS emails (
     category TEXT NOT NULL,
     summary TEXT DEFAULT '',
     received_at TEXT DEFAULT '',
-    logged_at TEXT NOT NULL
+    logged_at TEXT NOT NULL,
+    -- when the thread's first answer came (an assessment, interview, offer or rejection: ANSWER_CATEGORIES), kept when
+    -- a later message replaces the row; '' for none (or a row from before it was kept). For outcomes' days only
+    answered_at TEXT DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -158,6 +161,8 @@ EMAIL_CATEGORIES = {
     "other": None,
 }
 _PIPELINE = ["saved", "in_progress", "ready_to_submit", "applied", "interviewing", "offer"]
+# an employer's answer to an application (outcomes): not a "we received it", nor an email of another kind
+ANSWER_CATEGORIES = ("assessment", "interview", "offer", "rejection")
 _DONE = {"applied", "interviewing", "offer", "rejected", "withdrawn"}
 # a job the person sent in (or is about to): listed under the desk's My applications with where it stands
 APPLICATION_STATUSES = ("ready_to_submit", "applied", "interviewing", "offer", "rejected", "withdrawn")
@@ -239,6 +244,9 @@ _TRACKING_PARAMS = {"trk", "trackingid", "refid", "src", "source", "gh_src", "le
 def _clock() -> datetime:
     """Now, for what's worked out from the time (standing's follow-up): a test pins it."""
     return datetime.now(timezone.utc)
+
+
+CORRECTED_WITHIN = timedelta(days=2)  # (outcomes: a status moved back this soon was a correction, not an answer)
 
 
 def _now() -> str:
@@ -1253,14 +1261,20 @@ class Tracker:
         job = self.get(job_id, with_description=False)
         if job is None:
             raise KeyError(f"No job with id {job_id}")
-        seen = self.conn.execute("SELECT category, received_at FROM emails WHERE thread_id = ?",
+        seen = self.conn.execute("SELECT category, received_at, answered_at FROM emails WHERE thread_id = ?",
                                  (thread_id,)).fetchone()
         if seen and seen["category"] == category and (not received_at or seen["received_at"] == received_at):
             return {"already_logged": True, "status": job["status"], "changed": False}
+        # when the thread first answered: the row it replaces kept it (an interview, then a message that isn't an
+        # answer, then the rejection under them), or was the answer itself, else this message, if it's an answer
+        # (outcomes' days to a first answer; the row says its latest message)
+        answered_at = ((seen["answered_at"] if seen else "")
+                       or (seen["received_at"] if seen and seen["category"] in ANSWER_CATEGORIES else "")
+                       or (received_at if category in ANSWER_CATEGORIES else ""))
         self.conn.execute(  # one row per thread: its latest message
-            "INSERT OR REPLACE INTO emails (thread_id, job_id, category, summary, received_at, logged_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (thread_id, job_id, category, summary, received_at, _now()),
+            "INSERT OR REPLACE INTO emails (thread_id, job_id, category, summary, received_at, logged_at, answered_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (thread_id, job_id, category, summary, received_at, _now(), answered_at),
         )
         self.conn.commit()
         current, target = job["status"], EMAIL_CATEGORIES[category]
@@ -1308,6 +1322,69 @@ class Tracker:
                       "day": came.date().isoformat() if came else "", "summary": r["summary"] or "",
                       "emails": counts[jid]}
                 for jid, (_, r, came) in newest.items()}
+
+    @_locked
+    def outcomes(self) -> builtins.list[dict[str, Any]]:
+        """Each application sent in (applied, and on from there: _DONE) with what came of it, for what's worked
+        (outcomes.py): its employer, title, place, job system, source, pay and workplace, its status, and
+        - `sent_at`: when it was sent in (applied_at; when it was saved, where that's empty), ISO;
+        - `applied_at`: when it was marked applied, ISO; "" where it never was (marked interviewing straight away);
+        - `answered`: the employer answered: an assessment, an interview, an offer or a rejection (ANSWER_CATEGORIES),
+          by email or by the status the person set (a "we received it" or an email of another kind isn't an answer);
+        - `further`: it went on to an assessment, an interview or an offer, now or before (a rejection after an
+          interview still went further);
+        - `first_answer`: when the first answer email came (its thread's answered_at, or received_at), ISO; "" for
+          none, or for answers known only from a status (its time is when the person set it, not when it came).
+        A status set and then put back (interviewing by mistake, then applied again) says nothing: only a status the
+        job wasn't moved back from counts (its emails count either way).
+        Read here only, each time it's asked: nothing of it is kept elsewhere or leaves the computer."""
+        firsts: dict[int, datetime] = {}
+        answered: set[int] = set()
+        further: set[int] = set()
+        for r in self.conn.execute("SELECT job_id, category, received_at, answered_at FROM emails"):
+            was = r["category"] in ANSWER_CATEGORIES
+            if not was and not r["answered_at"]:
+                continue
+            answered.add(r["job_id"])
+            if r["category"] in ANSWER_CATEGORIES and r["category"] != "rejection":
+                further.add(r["job_id"])
+            when = _moment(r["answered_at"] or (r["received_at"] if was else ""))
+            if when is not None and (r["job_id"] not in firsts or when < firsts[r["job_id"]]):
+                firsts[r["job_id"]] = when
+        # the status changes, each job's in order: an answer's status counts unless the job was moved back soon after
+        # it (a correction: set by mistake, put back); a move back days later (a phone screen told first, the job
+        # marked applied when the person says they sent it on the site) leaves it counted
+        statuses: dict[int, builtins.list[tuple[str, datetime | None]]] = {}
+        for r in self.conn.execute("SELECT job_id, status, at FROM events WHERE status != '' ORDER BY id"):
+            statuses.setdefault(r["job_id"], []).append((r["status"], _moment(r["at"])))
+        back = set(_PIPELINE[:_PIPELINE.index("applied") + 1])
+
+        def corrected(at: datetime | None, later: builtins.list[tuple[str, datetime | None]]) -> bool:
+            return any(s in back and (at is None or when is None or when - at <= CORRECTED_WITHIN)
+                       for s, when in later)
+
+        for jid, said in statuses.items():
+            for i, (status, at) in enumerate(said):
+                if status in ("interviewing", "offer", "rejected") and not corrected(at, said[i + 1:]):
+                    answered.add(jid)
+                    if status != "rejected":
+                        further.add(jid)
+        marks = ",".join("?" * len(_DONE))
+        out = []
+        for r in self.conn.execute("SELECT id, url, apply_url, company, title, location, ats, source, pay_min, "
+                                   "pay_max, pay_period, pay_source, pay_sure, workplace, status, applied_at, "
+                                   f"created_at FROM jobs WHERE status IN ({marks}) ORDER BY id", sorted(_DONE)):
+            jid, status = r["id"], r["status"]
+            applied, first = _moment(r["applied_at"]), firsts.get(jid)
+            sent = applied or _moment(r["created_at"])
+            out.append({**{k: r[k] for k in ("url", "apply_url", "company", "title", "location", "ats", "source",
+                                             "workplace", "status", *_PAY_FIELDS)},
+                        "id": jid, "sent_at": sent.isoformat() if sent else "",
+                        "applied_at": applied.isoformat() if applied else "",
+                        "answered": jid in answered or status in ("interviewing", "offer", "rejected"),
+                        "further": jid in further or status in ("interviewing", "offer"),
+                        "first_answer": first.isoformat() if first is not None else ""})
+        return out
 
     @_locked
     def events(self, job_id: int) -> builtins.list[dict[str, Any]]:
