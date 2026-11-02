@@ -144,6 +144,20 @@ what and where to search. Then it opens the Job Desk. After that it offers, once
 answered is a stop the desk won't make. It asks you to sign in to LinkedIn and Indeed in the
 desk's browser window only if you'll paste their job links. The sign-ins persist.
 
+**Or set up on the Job Desk itself, with or without Claude Code.** Open the desk (the
+Job Desk shortcut JobDeskSetup.exe made, `uv run --project <plugin>/server job-apply-desk`, or
+ask Claude to open it): while your
+profile lacks what an application needs, its **Set up your profile** window opens by itself
+(and **Your profile**, at the top, opens it any time). Pick your resume (a PDF or Word
+file), then check your contact details, answer the work authorization questions (none is
+answered for you), list your jobs and schools (each school asks whether you finished the
+degree: one you didn't is saved as "Some college (no degree)", never as a degree), and choose
+the three consents; Save writes `profile.yaml`, changing only what you changed and keeping its
+comments, and opens What and where. With an Anthropic API key saved under Site passwords,
+**Read my resume** has Claude read it and fill in the boxes that are still empty, each named
+for you to check; without one, you type them. The rest of setup's questions (stage 2) are
+asked on a job's card when an application needs them.
+
 ## Use
 
 ```

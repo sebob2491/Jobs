@@ -37,7 +37,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
-from . import autofill, config, employment, history, letters, pay, places, report, workplace
+from . import autofill, config, employment, history, letters, pay, places, profile_setup, report, workplace
 from .browser import _cookie_setting
 from .pipeline import (DESK_PASSWORDS, MAIL_WATCH_MAX, QUEUE_NO_LOCK, Applier, _may_accept_notices,
                        _may_manage_accounts, _test_identity, placed_key, question_key)
@@ -318,6 +318,10 @@ class Desk:
             r("/api/add", self.add_view, methods=["POST"]),
             r("/api/bank", self.bank_view, methods=["POST"]),
             r("/api/area", self.area_view, methods=["POST"]),
+            r("/api/profile/form", self.profile_form_view),
+            r("/api/profile/resume", self.profile_resume_view, methods=["POST"]),
+            r("/api/profile/read", self.profile_read_view, methods=["POST"]),
+            r("/api/profile/save", self.profile_save_view, methods=["POST"]),
             r("/api/mail/wait", self.mail_wait_view),
         ])
 
@@ -826,6 +830,56 @@ class Desk:
             return self._bad(e)
         self._forget_openings()
         return JSONResponse(area)
+
+    # ------------------------------------------------------------- Set up your profile (profile_setup.py)
+    # (the form's values and the resume pass between the page and profile_setup alone: never in the page's state, a
+    # log or a problem report)
+    async def profile_form_view(self, request: Request) -> Response:
+        """The Set up your profile window's form as the profile fills it, and whether a saved API key can read the
+        resume for it (never the key)."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        try:
+            form = profile_setup.form_of(config.Profile.load())
+        except ValueError as e:  # (a profile.yaml with a typo: said in the window)
+            return self._bad(e)
+        return JSONResponse({"form": form, "can_read": letters.api_key() is not None,
+                             "resume_most": profile_setup.RESUME_MOST}, headers={"Cache-Control": "no-store"})
+
+    async def profile_resume_view(self, request: Request) -> Response:
+        """The resume picked in the window ({name, data: its bytes in base64}), saved as ~/.job-apply/resume.pdf (or
+        .docx), documents.resume set to it."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        try:
+            body = await self._body(request)
+            saved = await asyncio.to_thread(profile_setup.save_resume, body.get("name"), body.get("data"))
+        except (ValueError, OSError) as e:
+            return self._bad(e)
+        return JSONResponse({"resume": {"path": str(saved), "found": True}})
+
+    async def profile_read_view(self, request: Request) -> Response:
+        """Read my resume: Claude's reading of it (with the saved API key) put into the form's empty boxes ({form}, as
+        the page has it), and which boxes it filled."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        try:
+            body = await self._body(request)
+            out = await profile_setup.read_resume(body.get("form"))
+        except ValueError as e:
+            return self._bad(e)
+        return JSONResponse(out, headers={"Cache-Control": "no-store"})
+
+    async def profile_save_view(self, request: Request) -> Response:
+        """The window's form saved to profile.yaml: only what it changed, every other line and comment kept."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        try:
+            body = await self._body(request)
+            out = await asyncio.to_thread(profile_setup.save_form, body.get("form"))
+        except (ValueError, OSError) as e:
+            return self._bad(e)
+        return JSONResponse(out)
 
     async def bank_view(self, request: Request) -> Response:
         """An answer to one of the common questions (data/question_bank.yaml), kept in answers.yaml for

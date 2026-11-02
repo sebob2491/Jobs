@@ -1875,6 +1875,8 @@ def test_within_miles_is_off_and_the_window_says_why_without_a_home_town(srv, jo
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("text=Tucson Technician")
+                # (a profile without its city: Set up your profile opens by itself, and the person closes it)
+                await page.click("#setup [data-act='setup-close']")
                 assert await page.is_disabled("[data-within='25']")
                 assert "your profile doesn't say it" in await page.get_attribute("#within-group", "title")
                 # (the review, L3) the 10 miles kept from before shows, hiding nothing, and Any lets it go, so it

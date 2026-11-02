@@ -775,20 +775,26 @@ def _value_and_comment(rest: str) -> tuple[str, str]:
 
 
 def set_yaml_value(text: str, keys: tuple[str, ...], value: Any) -> str:
-    """The YAML text with the value at `keys` (a top-level key, or one key under a top-level mapping:
-    ("preferences", "locations")) set, written on its one line in JSON's spelling (which YAML reads: a flow list
-    of quoted strings, true, false); every other line, comments too, stays as the person wrote it. A file laid
-    out so that can't be done safely (a flow mapping, a value over several lines, a key spelled another way, a
-    file that doesn't read) is a ValueError, and nothing is changed: the person edits it by hand."""
-    if not 1 <= len(keys) <= 2:
-        raise ValueError("one key, or a section and a key")
+    """The YAML text with the value at `keys` (a top-level key; a key under a top-level mapping: ("preferences",
+    "locations"); or one a level deeper: ("personal", "address", "city")) set, written on its one line in JSON's
+    spelling (which YAML reads: a flow list of quoted strings, true, false); every other line, comments too, stays as
+    the person wrote it. A section that isn't there is added (at the end of the file, or at the top of the section it
+    goes in). A file laid out so that can't be done safely (a flow mapping, a value over several lines, a key spelled
+    another way, a file that doesn't read) is a ValueError, and nothing is changed: the person edits it by hand."""
+    if not 1 <= len(keys) <= 3:
+        raise ValueError("one key, or up to two sections and a key")
     try:
         before = yaml.safe_load(text) if text.strip() else {}
     except yaml.YAMLError as e:
         raise ValueError(f"it doesn't read as YAML ({str(e).splitlines()[0]})") from e
     if before is None:
         before = {}
-    if not isinstance(before, dict) or len(keys) == 2 and not isinstance(before.get(keys[0]) or {}, dict):
+    node: Any = before
+    for name in keys[:-1]:  # (each section on the way a mapping, or not there yet)
+        if not isinstance(node, dict):
+            break
+        node = node.get(name) or {}
+    if not isinstance(before, dict) or not isinstance(node, dict):
         raise ValueError("it isn't laid out as sections of settings")
     bom = "\ufeff" if text.startswith("\ufeff") else ""  # (PowerShell 5 writes one before the first key)
     lines = text[len(bom):].splitlines(keepends=True)
@@ -797,27 +803,33 @@ def set_yaml_value(text: str, keys: tuple[str, ...], value: Any) -> str:
     written = json.dumps(value, ensure_ascii=False)
     key = keys[-1]
     start, stop, indent = 0, len(lines), ""
-    section = before
-    if len(keys) == 2:
-        top = next((i for i, line in enumerate(lines) if re.match(rf"^{re.escape(keys[0])}:\s*(#.*)?$", line)), None)
+    section: dict[str, Any] = before
+    for depth, name in enumerate(keys[:-1]):
+        head = re.compile(rf"^{re.escape(indent)}{re.escape(name)}:\s*(#.*)?$")
+        top = next((i for i in range(start, stop) if head.match(lines[i].rstrip("\r\n"))), None)
         if top is None:
-            if keys[0] in before:
-                raise ValueError(f"its {keys[0]} section is written in a way this can't change")
-            lines.append(f"{keys[0]}:\n  {key}: {written}\n")
+            if name in section:
+                raise ValueError(f"its {name} section is written in a way this can't change")
+            # (this section, any under it and the value: at the end of the file, or the top of the section it's in)
+            added = [f"{indent}{'  ' * i}{k}:\n" for i, k in enumerate(keys[depth:-1])]
+            added.append(f"{indent}{'  ' * (len(keys) - 1 - depth)}{key}: {written}\n")
+            where = start if depth else len(lines)
+            lines[where:where] = added
             return _checked(text, bom + "".join(lines), keys, value, before)
-        section = before.get(keys[0]) or {}
+        section = section.get(name) or {}
         start = top + 1
-        stop = next((i for i in range(start, len(lines))
-                     if lines[i].strip() and not lines[i].startswith((" ", "\t", "#"))),
-                    len(lines))
-        child = next((ln for ln in lines[start:stop] if ln.strip() and not ln.lstrip().startswith("#")), "  x")
-        indent = child[:len(child) - len(child.lstrip())] or "  "
+        # (a section ends at the next line as far out as its own, comments aside)
+        stop = next((i for i in range(start, stop) if lines[i].strip() and not lines[i].lstrip().startswith("#")
+                     and len(lines[i]) - len(lines[i].lstrip()) <= len(indent)), stop)
+        child = next((ln for ln in lines[start:stop] if ln.strip() and not ln.lstrip().startswith("#")), "")
+        deeper = child[:len(child) - len(child.lstrip())]
+        indent = deeper if len(deeper) > len(indent) else indent + "  "
     pattern = re.compile(_KEY_LINE.format(indent=re.escape(indent), key=re.escape(key)))
     at = next((i for i in range(start, stop) if pattern.match(lines[i].rstrip("\r\n"))), None)
     if at is None:
         if key in section:  # (spelled another way: quoted, a space before its colon; a second one would win)
             raise ValueError(f"its {key} is written in a way this can't change")
-        lines.insert(start if len(keys) == 2 else len(lines), f"{indent}{key}: {written}\n")
+        lines.insert(start if len(keys) > 1 else len(lines), f"{indent}{key}: {written}\n")
         return _checked(text, bom + "".join(lines), keys, value, before)
     m = pattern.match(lines[at].rstrip("\r\n"))
     assert m is not None
@@ -838,9 +850,11 @@ def _checked(text: str, out: str, keys: tuple[str, ...], value: Any, before: dic
     except yaml.YAMLError as e:
         raise ValueError("it couldn't be changed safely") from e
     want = copy.deepcopy(before)
-    section = want.setdefault(keys[0], {}) if len(keys) == 2 else want
-    if section is None:
-        section = want[keys[0]] = {}
+    section = want
+    for name in keys[:-1]:
+        if not isinstance(section.get(name), dict):
+            section[name] = {}
+        section = section[name]
     section[keys[-1]] = value
     if after != want:
         raise ValueError("it couldn't be changed safely")
