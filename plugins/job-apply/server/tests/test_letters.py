@@ -124,6 +124,7 @@ def fake_claude(tmp_path: Path, monkeypatch, mode: str = "ok", body: str = BODY,
     monkeypatch.setenv("FAKE_CLAUDE_CHECK", check)
     monkeypatch.setenv("PATH", str(where) if on_path else str(tmp_path / "empty"))
     monkeypatch.delenv("CLAUDE_CODE_EXECPATH", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)  # (a key there would write through the API instead)
     if not on_path:
         monkeypatch.setenv("CLAUDE_CODE_EXECPATH", str(exe))
     monkeypatch.setattr(letters, "_install_places", lambda: [])
@@ -134,6 +135,7 @@ def no_claude(tmp_path: Path, monkeypatch) -> None:
     (tmp_path / "empty").mkdir(exist_ok=True)
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
     monkeypatch.delenv("CLAUDE_CODE_EXECPATH", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setattr(letters, "_install_places", lambda: [])
 
 
@@ -1706,3 +1708,210 @@ def test_use_it_is_kept_even_when_its_job_cant_go_on(srv, monkeypatch, job_apply
     r = run(go())
     assert r.status_code == 400
     assert json.loads((job_apply_home / "desk.json").read_text(encoding="utf-8"))["cover_letters_approved"] is True
+
+
+# ------------------------------------------------------------------ an Anthropic API key, saved on the desk
+KEY = "sk-ant-api03-made-up-for-the-tests"
+
+
+class FakeAnthropic:
+    """anthropic.AsyncAnthropic as the tests' own: no network. Each request is written down (`asked`, with which
+    endpoint took it), its arguments bound to the real SDK's (a misspelled one, or the beta's sent to the plain
+    endpoint, fails), and answered by `answers` in turn: a text, an exception to raise, a (stop_reason, text) pair, or
+    a number of seconds to take."""
+    asked: list = []
+    answers: list = []
+    keys: list = []
+    clients: list = []
+
+    def __init__(self, api_key, **kw):
+        FakeAnthropic.keys.append(api_key)
+        FakeAnthropic.clients.append(kw)
+        self.messages = _FakeMessages("messages")
+        self.beta = type("Beta", (), {"messages": _FakeMessages("beta")})()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _FakeMessages:
+    def __init__(self, endpoint):
+        self.endpoint = endpoint
+
+    async def create(self, **ask):
+        import inspect
+
+        from anthropic.resources.beta.messages import AsyncMessages as Beta
+        from anthropic.resources.messages import AsyncMessages as Plain
+        inspect.signature(Beta.create if self.endpoint == "beta" else Plain.create).bind(None, **ask)
+        FakeAnthropic.asked.append({**ask, "endpoint": self.endpoint})
+        answer = FakeAnthropic.answers.pop(0)
+        if isinstance(answer, BaseException):
+            raise answer
+        if isinstance(answer, (int, float)):
+            await asyncio.sleep(answer)
+            answer = BODY
+        stop, text = answer if isinstance(answer, tuple) else ("end_turn", answer)
+        thinking = type("Block", (), {"type": "thinking", "thinking": ""})()
+        block = type("Block", (), {"type": "text", "text": text})()
+        return type("Message", (), {"stop_reason": stop, "content": [thinking, block]})()
+
+
+@pytest.fixture
+def fake_api(job_apply_home, tmp_path, monkeypatch):
+    import anthropic
+    no_claude(tmp_path, monkeypatch)  # (no claude command: an API key's letters need none)
+    FakeAnthropic.asked, FakeAnthropic.answers, FakeAnthropic.keys, FakeAnthropic.clients = [], [], [], []
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
+    return FakeAnthropic
+
+
+def _status(cls, code, message="error"):
+    import httpx2
+    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    return cls(message, response=httpx2.Response(code, request=request), body=None)
+
+
+def test_an_api_key_saved_on_the_desk_writes_the_letters_without_claude_code(fake_api, loop):
+    """The owner's choice (Nov 2): the desk without Claude Code. An Anthropic API key saved on the desk's Site passwords
+    card writes each letter through Anthropic's API, with no claude command on the computer: the same system prompt
+    and message as claude -p gets, no tools, medium effort (as claude -p's --effort), the server's fallback where Claude
+    declines, and the same two readings of what it claims (the check is a second request). The log says it was written
+    with the API key."""
+    config.save_site_password(config.API_KEY_NAME, f"  {KEY}  ")
+    assert letters.api_key() == letters.ApiKey(KEY) and KEY not in repr(letters.api_key())
+    assert letters.written_by() == letters.BY_KEY
+    fake_api.answers[:] = [BODY, '{"unsupported": []}']
+    prof = config.Profile.load()
+    letter = run(letters.write_letter(JOB, prof, POSTING))
+    assert letter.markdown.startswith("# Sam Rivera") and letter.by == letters.BY_KEY
+    write, check = fake_api.asked
+    assert fake_api.keys == [KEY, KEY]
+    assert write["system"] == letters.system_prompt() and check["system"] == letters.check_prompt()
+    assert write["messages"] == [{"role": "user", "content": letters.message_content(prof, JOB, POSTING)}]
+    assert "tools" not in write and "tools" not in check
+    assert write["model"] == letters.DEFAULT_MODEL and write["output_config"] == {"effort": "medium"}
+    assert write["fallbacks"] == "default" and write["betas"] == ["server-side-fallback-2026-07-01"]
+    assert write["endpoint"] == "beta"
+    # a saved key goes to Anthropic's own API alone, whatever gateway the environment names (the review of 0.3.246)
+    assert [c.get("base_url") for c in fake_api.clients] == [letters.ANTHROPIC_API] * 2
+    # what its check finds keeps the letter out, as with claude -p
+    fake_api.answers[:] = [BODY, '{"unsupported": ["a made-up license"]}']
+    with pytest.raises(letters.Refused, match="check found something"):
+        run(letters.write_letter(JOB, prof, POSTING))
+    # (none saved, and none in the environment: the person's Claude login, as before; ANTHROPIC_API_KEY: the next test)
+    config.secrets_path().unlink()
+    assert letters.api_key() is None and letters.written_by() == letters.BY
+
+
+def test_what_an_api_key_cant_do_is_said_in_the_persons_words(fake_api, loop, monkeypatch):
+    """A key turned down, an account out of credit, the rate limit, no connection, a model the key can't use: every
+    letter stops, said once (Unavailable). Claude declining, an answer cut short or a slow one: this letter's alone
+    (LetterError)."""
+    import anthropic
+    import httpx2
+    monkeypatch.setenv("ANTHROPIC_API_KEY", KEY)
+    prof = config.Profile.load()
+    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    for error, said in ((_status(anthropic.AuthenticationError, 401), letters.KEY_REFUSED),
+                        (_status(anthropic.PermissionDeniedError, 403), letters.KEY_NOT_ALLOWED),
+                        (_status(anthropic.BadRequestError, 400, "Your credit balance is too low to access the "
+                                                                  "Anthropic API."), letters.NO_CREDIT),
+                        (_status(anthropic.RateLimitError, 429), letters.KEY_AT_LIMIT),
+                        (anthropic.APIConnectionError(request=request), letters.API_OFFLINE),
+                        (_status(anthropic.NotFoundError, 404), letters.no_model(letters.DEFAULT_MODEL))):
+        fake_api.answers[:] = [error]
+        with pytest.raises(letters.Unavailable) as caught:
+            run(letters.write_letter(JOB, prof, POSTING))
+        assert str(caught.value) == said and KEY not in str(caught.value)
+    for answer, why in ((("refusal", ""), "declined"), (("max_tokens", BODY[:40]), "cut short"),
+                        (anthropic.APITimeoutError(request=request), "took longer than 120 seconds"),
+                        (_status(anthropic.InternalServerError, 529), r"an error \(529\)"),
+                        (_status(anthropic.BadRequestError, 400, "messages: bad"), "turned the request down")):
+        fake_api.answers[:] = [answer]
+        with pytest.raises(letters.LetterError, match=why) as caught:
+            run(letters.write_letter(JOB, prof, POSTING))
+        assert not isinstance(caught.value, letters.Unavailable)
+
+
+def test_the_desk_saves_an_api_key_and_says_whether_one_is_saved(job_apply_home):
+    """The Site passwords card's Anthropic API key: kept in secrets.yaml like a site password (never sent back), only
+    one that looks like a key, and said saved in the page's state."""
+    with pytest.raises(ValueError, match="start with sk-ant-"):
+        config.save_site_password(config.API_KEY_NAME, "my-password")
+    with pytest.raises(ValueError, match="not a site password name"):
+        config.save_site_password("anthropic_key", KEY)
+    config.save_site_password(config.API_KEY_NAME, KEY)
+    assert config.get_secret(config.API_KEY_NAME) == KEY
+    html = (Path(letters.__file__).parent / "static" / "desk.html").read_text(encoding="utf-8")
+    assert '<option value="anthropic">' in html and '"anthropic_api_key"' in html
+
+
+def test_an_api_keys_request_stays_within_its_time_and_goes_where_its_key_says(fake_api, loop, monkeypatch):
+    """The review of 0.3.246: a slow answer is given up on within the letter's time in all, the client's own retries
+    included (as claude -p is); the saved key wins over ANTHROPIC_API_KEY, and goes to Anthropic's own API whatever
+    ANTHROPIC_BASE_URL says, where the environment's own key goes where the environment says; a model outside the
+    effort list is asked plainly (no effort, no fallback, the plain endpoint)."""
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://127.0.0.1:9/a-gateway")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-from-the-environment")
+    prof = config.Profile.load()
+    fake_api.answers[:] = [5]
+    began = time.monotonic()
+    with pytest.raises(letters.LetterError, match="took longer than 1 seconds"):
+        run(letters.write_letter(JOB, prof, POSTING, timeout=1))
+    assert time.monotonic() - began < 3
+    assert fake_api.keys == ["sk-ant-from-the-environment"] and "base_url" not in fake_api.clients[0]
+    config.save_site_password(config.API_KEY_NAME, KEY)
+    fake_api.answers[:] = [BODY, '{"unsupported": []}']
+    run(letters.write_letter(JOB, prof, POSTING))
+    assert fake_api.keys[1:] == [KEY, KEY] and fake_api.clients[1]["base_url"] == letters.ANTHROPIC_API
+    for model, effort, endpoint in (("claude-haiku-4-5", False, "messages"), ("claude-opus-4-8", True, "messages"),
+                                    ("claude-sonnet-5-5", True, "beta")):
+        fake_api.asked.clear()
+        fake_api.answers[:] = [BODY, '{"unsupported": []}']
+        run(letters.write_letter(JOB, config.Profile({**prof.data, "settings": {"cover_letter_model": model}}),
+                                 POSTING))
+        assert ("output_config" in fake_api.asked[0]) == effort and fake_api.asked[0]["endpoint"] == endpoint, model
+
+
+def test_the_api_key_is_never_typed_into_a_page(job_apply_home, loop):
+    """The review of 0.3.246: Claude's fill_secret tool types a saved password into a box on its own system's sites; the
+    API key has no site of its own, and a page whose domain spells its name (anthropicapikey.net) is somebody else's."""
+    from job_apply import server
+    config.save_site_password(config.API_KEY_NAME, KEY)
+    for name in ("anthropic_api_key", "ANTHROPIC_API_KEY", " anthropic-api-key "):
+        said = run(server.fill_secret("f1", name))
+        assert said["ok"] is False and "never typed into a page" in said["error"] and KEY not in str(said)
+
+
+def test_a_key_saved_after_letters_stopped_is_tried_at_once_and_the_page_says_what_writes_them(srv, monkeypatch, loop):
+    """The review of 0.3.246: letters stopped for want of a key (or by one turned down) are tried again as soon as one
+    is saved on the desk, not 10 minutes on; and the page says what writes them, a key in the environment too."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    tried = []
+    monkeypatch.setattr(desk.applier, "_letters_next", lambda: tried.append(1))
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        desk.applier.letters, desk.applier.letters_problem = True, letters.NO_CLAUDE
+        try:
+            async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{desk.port}", timeout=20, trust_env=False) as c:
+                h = {"x-desk-token": desk.token}
+                assert (await c.get("/api/state", headers=h)).json()["letters_by"] == letters.BY
+                said = await c.post("/api/password", headers=h, json={"name": config.API_KEY_NAME, "value": KEY})
+                assert said.json() == {"saved": True}
+                state = await c.get("/api/state", headers=h)
+                assert state.json()["letters_by"] == letters.BY_KEY and KEY not in state.text
+                assert state.json()["passwords"]["anthropic"] is True and state.json()["letters_problem"] is None
+        finally:
+            await desk.stop()
+    run(go())
+    assert tried == [1]
+    config.secrets_path().unlink()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", KEY)
+    assert desk.state()["letters_by"] == letters.BY_KEY

@@ -860,6 +860,12 @@ class Desk:
             # the new one is tried at the next emailed code, even if it's the one turned down before
             # (a mail service's hiccup could be taken for a refusal)
             self.applier.mail_problem = self.applier._mail_refused = None
+        if name == config.API_KEY_NAME and self.applier.letters and self.applier.letters_problem is not None \
+                and not self.applier._letters_tripped:
+            # (letters stopped for want of one, or by a key turned down: tried again now with this one, not in 10
+            # minutes: the review of 0.3.246)
+            self.applier.letters_problem = None
+            self.applier._letters_next()
         return JSONResponse({"saved": True})
 
     async def add_view(self, request: Request) -> Response:
@@ -1367,9 +1373,12 @@ class Desk:
             "tailoring": len(self.applier.tailoring()),
             # why no cover letter is being written (the switch on), said once at the top of the page
             "letters_problem": self.applier.letters_problem if self.applier.letters else None,
+            # (what writes them: an API key, saved here or in the environment, or the person's Claude login)
+            "letters_by": letters.written_by(),
             # saved or not, never the value
-            "passwords": {name.removesuffix("_password"): saved for name, saved in
-                          _saved([f"{ats}_password" for ats in SITE_PASSWORDS] + ["email_password"]).items()},
+            "passwords": {name.removesuffix("_password").removesuffix("_api_key"): saved for name, saved in
+                          _saved([f"{ats}_password" for ats in SITE_PASSWORDS]
+                                 + ["email_password", config.API_KEY_NAME]).items()},
             "password_systems": password_systems(),
             "mail_problem": self.applier.mail_problem,
             "profile_problem": profile_problem,

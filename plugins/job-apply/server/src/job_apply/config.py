@@ -626,6 +626,8 @@ def read_secrets(path: Path) -> dict[str, str]:
 
 
 SITE_PASSWORD = re.compile(r"^[a-z][a-z0-9]{1,30}_password$")  # e.g. workday_password
+# The Anthropic API key the desk writes cover letters with (letters.api_key), saved as a site password is
+API_KEY_NAME = "anthropic_api_key"
 
 
 # The longest site password the desk keeps (a real one is far shorter; the file is read on every poll)
@@ -636,10 +638,15 @@ def save_site_password(name: str, value: str) -> None:
     """Store a career-site password the person typed into the Job Desk. Only its own
     entry in secrets.yaml changes; the rest of the file, comments included, stays as
     they wrote it. The file is readable by the person alone."""
-    if not SITE_PASSWORD.match(name):
+    if not SITE_PASSWORD.match(name) and name != API_KEY_NAME:
         raise ValueError(f"not a site password name: {name!r}")
     if not value or not value.strip() or "\n" in value or "\r" in value:
         raise ValueError("the password is empty or has a line break")
+    if name == API_KEY_NAME:
+        value = value.strip()
+        if not value.startswith("sk-ant-"):
+            raise ValueError("That isn't an Anthropic API key: those start with sk-ant- (make one in the Claude "
+                             "Console, console.anthropic.com, under API keys)")
     if len(value) > PASSWORD_MAX:
         raise ValueError(f"the password is longer than {PASSWORD_MAX} characters")
     ensure_home()

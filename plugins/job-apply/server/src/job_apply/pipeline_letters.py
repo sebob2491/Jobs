@@ -374,7 +374,7 @@ class LettersMixin:
                            "cover letter goes in, if you have one")
             return False
         run.letter = Path(out["path"]).name
-        self._log(run, f"wrote a cover letter for this job ({letters.BY})")
+        self._log(run, f"wrote a cover letter for this job ({letters.written_by()})")
         return True
 
     # ------------------------------------------------- where a job meets its letter

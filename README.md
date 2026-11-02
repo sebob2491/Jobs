@@ -270,14 +270,19 @@ Turn on **Write a cover letter for each job** (beside Submit for me) and each jo
 apply to gets a cover letter of its own, written while the job waits in the queue and
 uploaded wherever its application has a cover letter box:
 
-- **Who writes it:** Claude, through your own Claude Code sign-in: the desk runs the
-  `claude` command in the background, so it counts against your Claude plan like any other
-  use of Claude Code, and there's no API key to set up (though if `ANTHROPIC_API_KEY` is set
-  where the desk's server runs, Claude Code uses that key, billed to it, instead of your
-  plan). If `claude` isn't on this
-  computer or isn't signed in, the desk says so once at the top of the page (sign in by
-  running `claude` in a terminal and typing `/login`), and your applications go on with your
-  usual cover letter (`documents.cover_letter` in your profile), or none.
+- **Who writes it:** Claude, one of two ways:
+  - **With an Anthropic API key** saved on the desk (Site passwords, "Anthropic API key"; make
+    one in the [Claude Console](https://console.anthropic.com/settings/keys) and add credit
+    under Billing): each letter is written through Anthropic's API, billed to that key (about
+    10 to 20 cents a letter, written and checked). Claude Code isn't needed for this. A key set
+    as `ANTHROPIC_API_KEY` where the desk runs works the same way.
+  - **Without one, through your own Claude Code sign-in:** the desk runs the `claude` command
+    in the background, so it counts against your Claude plan like any other use of Claude Code.
+
+  If neither works (no key saved and `claude` isn't on this computer or isn't signed in, or the
+  key is turned down or out of credit), the desk says so once at the top of the page, and your
+  applications go on with your usual cover letter (`documents.cover_letter` in your profile),
+  or none.
 - **What it says:** one page from your resume, your profile and the job's posting, using
   only what they say: never a degree, certification, clearance, years of experience or skill
   they don't state (coursework isn't a degree), no made-up numbers, names or contact details,

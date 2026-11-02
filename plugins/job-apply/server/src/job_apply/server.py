@@ -1315,6 +1315,11 @@ async def fill_secret(field_id: str, secret_name: str) -> dict[str, Any]:
         # the key to the person's inbox: the desk reads sign-up codes with it, nothing types it anywhere
         return {"ok": False, "error": "The email app password is only for reading sign-up codes from the inbox; "
                                       "it is never typed into a page."}
+    if re.sub(r"[^a-z0-9]", "_", secret_name.strip().lower()) == config.API_KEY_NAME:
+        # the Anthropic API key: the desk writes cover letters with it, nothing types it anywhere (the review of
+        # 0.3.246: a page could talk Claude into typing it into a box of its own)
+        return {"ok": False, "error": "The Anthropic API key is only for writing cover letters; it is never typed into "
+                                      "a page."}
     secret = config.get_secret(secret_name)
     if secret is None:
         return {"ok": False, "error": f"No secret named {secret_name!r}. Ask the user to add it to "
