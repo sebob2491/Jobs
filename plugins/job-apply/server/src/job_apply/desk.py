@@ -2042,9 +2042,9 @@ def running_desk(port: int) -> str | None:
     if not isinstance(token, str) or not token or said.get("port") != port:
         return None
     ask = urllib.request.Request(f"http://127.0.0.1:{port}/api/safety", headers={"x-desk-token": token})
-    no_proxy = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # (127.0.0.1 is never behind one)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # (127.0.0.1 is never behind a proxy)
     try:
-        with no_proxy.open(ask, timeout=5) as answer:
+        with opener.open(ask, timeout=5) as answer:
             if answer.status != 200:
                 return None
     except (OSError, ValueError, http.client.HTTPException):
