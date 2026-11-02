@@ -16,6 +16,12 @@ from .browser import final_text
 if TYPE_CHECKING:
     from .pipeline import Run
 
+# the boxes an Oracle application holding answers the site kept shows them in (Run.kept_looked): its lists and choices,
+# never the country and phone code lists it may set for anyone (the third review of 0.3.244)
+_KEPT_KINDS = {"select", "listbox", "combobox", "radio_group"}
+_PRESET_FOR_ANYONE = re.compile(r"\b(?:country|countries|phone|dial\w*|calling code|region|state|province|language|"
+                                r"locale|prefix|suffix)\b")
+
 
 def _flagged(box: dict[str, Any], page: dict[str, Any]) -> bool:
     """Does the page say this box is wrong: marked invalid, an error of its own, or one of the page's errors naming
@@ -139,16 +145,27 @@ class FillingMixin:
         other plan_autofill's refresh leaves alone. Said in the log either way. A box that won't take the profile's
         answer is read again: what it holds is said, and one left empty is asked as any box a fill didn't go into."""
         page = pipeline._answers_page(data)
-        if (run.code_asked and not run.draft and not run.draft_off and data.get("fields")
-                and pipeline.detect_ats(str(data.get("url") or "")) == "oracle_hcm"):
-            # an Oracle application its emailed code signed the person in to: the site fills it with the answers it
-            # kept from their earlier applications (NV Energy's, the accounts check's runs 176 and 177: "No" to being
-            # over 18 among them, and the page taken as ready), checked against the profile as a saved draft is
-            run.draft = True
-            self._log(run, f"{pipeline._site(run, data)} signed you in by the emailed code and may fill this "
-                      "application with answers from an earlier application, so I'll check them against your profile")
-            if run.hands_on:  # (as a draft gone on with on the person's Resume: theirs)
-                self._draft_off(run)
+        if (not run.kept_looked and not run.draft and not run.draft_off
+                and pipeline.detect_ats(str(data.get("url") or "")) == "oracle_hcm"
+                and any(isinstance(f, dict) and f.get("kind") in _KEPT_KINDS for f in data.get("fields") or [])):
+            # an Oracle application, on the first of its pages with a list or choices: one that shows answers there
+            # the desk didn't give (the site's, kept from the person's earlier applications once its emailed code
+            # signed them in: NV Energy's, the accounts check's runs 176 and 177, "No" to being over 18 among them, and
+            # the page taken as ready) has them checked against the profile as a saved draft's are. Where the person
+            # had worked in its tab before (a Resume, a tab the queue went on with), they may be theirs: left as they
+            # are, and never sent by Submit for me (the review of 0.3.244)
+            run.kept_looked = True
+            shown = [f for f in data.get("fields") or [] if isinstance(f, dict) and f.get("kind") in _KEPT_KINDS
+                     and str(f.get("id")) not in (own or set()) and not is_empty_value(f.get("value"))
+                     and not unset_choice(f) and not site_default(f)
+                     and not _PRESET_FOR_ANYONE.search(norm(clean_label(f.get("label") or "")))]
+            if shown and (run.hands_on or run.in_their_hands):
+                run.kept_unchecked = True
+                self._log(run, f"{pipeline._site(run, data)} shows answers on this application that may be ones it "
+                          "kept from an earlier application of yours; I didn't check them against your profile, as "
+                          "you'd worked in its tab, so check them before you press Submit")
+            elif shown:  # (said once the check finds one that isn't the profile's: never of a new applicant's)
+                run.draft = run.kept_answers = True
         checking = run.draft and not run.draft_off and not run.hands_on
         before = {str(f.get("id")): f for f in data.get("fields") or [] if isinstance(f, dict)}
 
@@ -207,16 +224,21 @@ class FillingMixin:
             return ", ".join(dict.fromkeys(f"“{pipeline._short(clean_label(f.get('label') or '') or 'a field')}”"
                                            for f in fields))
         where = pipeline._where(data)
+        # (an Oracle application's answers the site kept: said so where one wasn't the profile's, and nothing said where
+        # they all were, which may be a new applicant's own or the desk's: Run.kept_answers)
+        drafted = (f"checked the answers {pipeline._site(run, data)} kept from an earlier application of yours"
+                   if run.kept_answers else "re-checked the saved draft's answers")
         if changed:
-            self._log(run, f"re-checked the saved draft's answers on {where}: {len(changed)} field(s) showed another "
+            self._log(run, f"{drafted} on {where}: {len(changed)} field(s) showed another "
                       f"answer than your profile's, so I put your profile's in: {named(changed)}")
-        elif not refused and (not replacing or any(not is_empty_value(f.get("value")) for fid, f in before.items()
-                                                   if fid not in replacing)):
+        elif not refused and not run.kept_answers and (
+                not replacing or any(not is_empty_value(f.get("value")) for fid, f in before.items()
+                                     if fid not in replacing)):
             # (never of a box whose kept file the desk replaces: that's said on its own. With no other box showing an
             # answer, there's nothing to say here)
             self._log(run, f"re-checked the saved draft's answers on {where}: they match your profile")
         if refused:
-            self._log(run, f"re-checked the saved draft's answers on {where}: {len(refused)} field(s) wouldn't take "
+            self._log(run, f"{drafted} on {where}: {len(refused)} field(s) wouldn't take "
                       "your profile's answer" + (f"; as they are now: {named(kept)}" if kept else "")
                       + (f"; {len(emptied)} left empty, so they're asked" if emptied else ""))
         return result

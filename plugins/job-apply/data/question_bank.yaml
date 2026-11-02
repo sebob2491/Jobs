@@ -53,8 +53,9 @@ questions:
   - id: adult
     example: "Are you 18 years of age or older?"
     ask: Are you 18 or older?
-    # (nor a count of 18 credits or units, or 18 years of experience or work: the review of 0.3.175)
-    match: "^(?!.*\\b(?:under|hours?|months?|days?|weeks?|credits?|units?|experience|work(?:ed|ing)?)\\b).*(?:\\b(?:at least|aged?)\\s+18\\b|\\b18 (?:years|or older|or over|\\+))"
+    # (nor a count of 18 credits or units, or 18 years of experience or work: the review of 0.3.175; nor an age range or
+    # an age and something more, as adult_21: the review of 0.3.244)
+    match: "^(?!.*\\b(?:under|hours?|shifts?|months?|days?|weeks?|credits?|units?|experience|work(?:ed|ing)?|and(?! (?:older|over|above|up)\\b)|but|not|nor|between|younger|lbs?|pounds?|kg|lift\\w*|vehicles?|cars?|trucks?|household|drivers?|spouse|child\\w*|dependents?|family|anyone|someone)\\b)(?!.*\\b18\\s*(?:-|to)\\s*\\d).*(?:\\b(?:at least|aged?)\\s+18\\b|\\b18 (?:years|or older|or over|\\+))"
     kind: choice
     choices: ["Yes", "No"]
     seen: 3
@@ -62,8 +63,9 @@ questions:
   - id: adult_21
     example: "Are you 21 years of age or older?"
     ask: Are you 21 or older? (Casinos and bars ask.)
-    # (run 177; as `adult`, never a count of 21 credits, hours or years of experience)
-    match: "^(?!.*\\b(?:under|hours?|months?|days?|weeks?|credits?|units?|experience|work(?:ed|ing)?)\\b).*(?:\\b(?:at least|aged?)\\s+21\\b|\\b21 (?:years|or older|or over|\\+))"
+    # (run 177; as `adult`, never a count of 21 credits, hours or years of experience; nor an age range, an age and
+    # something more ("and a CDL"), a weight, a vehicle's or someone else's: the review of 0.3.244)
+    match: "^(?!.*\\b(?:under|hours?|shifts?|months?|days?|weeks?|credits?|units?|experience|work(?:ed|ing)?|and(?! (?:older|over|above|up)\\b)|but|not|nor|between|younger|lbs?|pounds?|kg|lift\\w*|vehicles?|cars?|trucks?|household|drivers?|spouse|child\\w*|dependents?|family|anyone|someone)\\b)(?!.*\\b21\\s*(?:-|to)\\s*\\d).*(?:\\b(?:at least|aged?)\\s+21\\b|\\b21 (?:years|or older|or over|\\+))"
     kind: choice
     choices: ["Yes", "No"]
     seen: 1
@@ -71,19 +73,11 @@ questions:
   - id: age_16
     example: "Are you at least 16 years old?"
     ask: Are you 16 or older?
-    # (run 177's Circle K; never 16 hours, shifts or credits)
-    match: "^(?!.*\\b(?:under|hours?|shifts?|months?|days?|weeks?|credits?|units?|experience|work(?:ed|ing)?)\\b).*(?:\\b(?:at least|aged?)\\s+16\\b|\\b16 (?:years|or older|or over|\\+))"
+    # (run 177's Circle K; as `adult`, never a count of 16 credits, hours or years of experience; nor an age range, an
+    # age and something more ("and a CDL"), a weight, a vehicle's or someone else's: the review of 0.3.244)
+    match: "^(?!.*\\b(?:under|hours?|shifts?|months?|days?|weeks?|credits?|units?|experience|work(?:ed|ing)?|and(?! (?:older|over|above|up)\\b)|but|not|nor|between|younger|lbs?|pounds?|kg|lift\\w*|vehicles?|cars?|trucks?|household|drivers?|spouse|child\\w*|dependents?|family|anyone|someone)\\b)(?!.*\\b16\\s*(?:-|to)\\s*\\d).*(?:\\b(?:at least|aged?)\\s+16\\b|\\b16 (?:years|or older|or over|\\+))"
     kind: choice
     choices: ["Yes", "No"]
-    seen: 1
-
-  - id: enrolled_now
-    example: "Are you currently enrolled in a degree program?"
-    ask: Are you enrolled in a degree program or college now?
-    # (run 177; never one gone by: "have you ever been", "were you")
-    match: "^(?!.*\\b(?:ever|were|was|past|previously)\\b).*\\b(?:currently|presently|now)\\b.{0,20}\\benrolled\\b.{0,60}\\b(?:degree|program|college|universit\\w*|school)"
-    kind: choice
-    choices: ["No", "Yes"]
     seen: 1
 
   - id: essential_functions

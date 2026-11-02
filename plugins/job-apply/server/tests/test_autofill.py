@@ -908,6 +908,26 @@ def test_age_asked_either_way_and_never_for_another_question():
                    options=["Yes", "No"]) is None
     assert _answer("Do you have 18 months of experience, or will you within the next 6 months?", kind="radio_group",
                    options=["Yes", "No"]) is None
+    # (nor where more than a time to come follows, work authorization above all: the review of 0.3.244)
+    unauthorized = _person(work_authorization={"authorized_to_work": False, "requires_sponsorship": True,
+                                               "over_18": True})
+    assert _answer("Are you at least 18 years of age (or will you be by your start date)?", kind="radio_group",
+                   options=["Yes", "No"]) == "Yes"
+    for q in ("Are you at least 18 years of age (or will you be by your start date) and legally authorized to work in "
+              "the United States?",
+              "Are you 18 or older or will you be by the start date? Will you now or in the future require "
+              "sponsorship?",
+              "Are you over 18 or will you be by the time you start and do you have a car?"):
+        assert _answer(q, unauthorized, kind="radio_group", options=["Yes", "No"]) is None, q
+    # (and the other ways a time to come is put: answered as before, the third review)
+    for q in ("Are you 18 or older, or will you be prior to your start date?",
+              "Are you 18 or older, or will you be before your start date?",
+              "Are you 18 or older, or will you be at the time of hire?",
+              "Are you 18 or older, or will you be upon hire?",
+              "Are you 18 or older, or will you be by the time employment begins?",
+              "Are you 18 or older, or will you be on your start date?",
+              "Are you at least 18 years of age (or will you be by your start date)? Required"):
+        assert _answer(q, kind="radio_group", options=["Yes", "No"]) == "Yes", q
 
 
 def test_schooling_is_never_understated_nor_overstated():
@@ -1010,37 +1030,93 @@ def test_worked_here_before_says_when_and_only_about_working_there():
 def test_works_here_now_is_answered_from_the_profiles_job_now():
     """The live check's questions (run 177, Nov 2): "Are you currently employed with Edward Jones?", "Are you a current
     employee of Circle K?", "Are you currently a Station Casinos Team Member?" were asked of the person every time,
-    though the profile says where they work now (Example Fab). Answered as the worked-here question is: Yes where the
-    job now is there, No where it's elsewhere or the work there is past. Never a question about another organization,
-    the employer's subsidiaries or affiliates, a contractor, a relative or someone else, or working "now" in general."""
+    though the profile says where they work now (Example Fab). Yes where the job now is there; No only where the
+    profile says where the person works and never names this employer, so a choice that says "never" is true too.
+    Never where they worked there before, nor a question about another organization (named by this one's first word
+    alone too), the employer's subsidiaries or affiliates, an agency, a contractor, a franchise or a competitor, a
+    relative, a household, a hiring manager or someone else, "not", "or in the last year", or working "now" in general
+    (the reviews of 0.3.244)."""
     yes_no = ["Select One", "Yes", "No"]
 
-    def asked(label, company, prof=None):
-        return _answer(label, prof or _person(), kind="select", options=yes_no, job={"company": company})
+    def asked(label, company, prof=None, options=yes_no):
+        return _answer(label, prof or _person(), kind="select", options=options, job={"company": company})
 
     for label, company in (("Are you currently employed with Edward Jones?", "Edward Jones"),
                            ("Are you a current employee of Circle K?", "Circle K"),
                            ("Are you currently an employee of Light & Wonder?", "Light & Wonder"),
                            ("Are you currently a Station Casinos Team Member? If yes, please go to mysclife.net",
                             "Station Casinos (Red Rock Resorts)"),
-                           ("Are you presently working for ASM?", "ASM")):  # (ASM's a job gone by: no longer there)
+                           ("Do you currently work for Edward Jones?", "Edward Jones"),
+                           ("Current Edward Jones employee?", "Edward Jones")):
         assert asked(label, company) == "No", label
     assert asked("Are you currently employed with Example Fab?", "Example Fab") == "Yes"
     # (working now at all is employed_now's, from the profile's job now: never this employer's)
     employed = resolve_field(f("Are you currently employed?", "select", options=yes_no, value="Select One"),
                              _person(), {"company": "Edward Jones"})
     assert (employed.value, employed.rule) == ("Yes", "employed_now"), employed
+    # a job there gone by (ASM's): not there now, but a "No, never" choice would be untrue, and the getter can't see
+    # the choices: the person's
+    never = ["Yes", "No, I have never been employed by ASM", "No, but I was employed by ASM before"]
+    assert asked("Are you presently working for ASM?", "ASM", options=never) is None
+    assert asked("Are you presently working for ASM?", "ASM") is None
     for label, company in (("Are you currently employed by Infineon or one of its subsidiaries?", "Infineon"),
                            ("Are you currently employed by the U.S. government?", "Edward Jones"),
                            ("Are any of your relatives currently employed with Edward Jones?", "Edward Jones"),
                            ("Is your spouse currently employed by Circle K?", "Circle K"),
                            ("Are you a current or former contractor of Edward Jones?", "Edward Jones"),
-                           ("Were you referred by a current Circle K employee?", "Circle K")):
+                           ("Were you referred by a current Circle K employee?", "Circle K"),
+                           ("Is anyone in your household currently employed by Circle K?", "Circle K"),
+                           ("Do you know a current Circle K employee?", "Circle K"),
+                           ("Is the hiring manager a current employee of Circle K?", "Circle K"),
+                           ("Are you related to a current Circle K employee?", "Circle K"),
+                           ("Are you currently employed by Circle K, or have you been in the last 12 months?",
+                            "Circle K"),
+                           ("Are you currently working at Circle K through an agency?", "Circle K"),
+                           ("Are you currently employed by a staffing agency at Circle K?", "Circle K"),
+                           ("Are you currently employed by a competitor of Circle K?", "Circle K"),
+                           ("Are you currently a Circle K franchise employee?", "Circle K"),
+                           ("Are you NOT currently employed by Circle K?", "Circle K"),
+                           # someone else there: the person never the employee (the third review)
+                           ("Are you currently living with a Circle K employee?", "Circle K"),
+                           ("Are you currently married to a Circle K employee?", "Circle K"),
+                           ("Do you currently know any Circle K employees?", "Circle K"),
+                           ("Do you currently work with any Circle K employees?", "Circle K"),
+                           ("Are you currently supervised by a Circle K employee?", "Circle K"),
+                           ("Are you currently acquainted with any employees of Circle K?", "Circle K")):
         assert asked(label, company) is None, label
-    # (a job now whose name may be this one's: the person's to say)
+    # more than working there asked (a role, a license, good standing, how long, full time): never Yes from the job
+    # there alone (the third review)
+    there = _person(work_history=[{"company": "Edward Jones", "title": "Branch Office Administrator",
+                                   "start": "2022-06", "end": "present"}])
+    assert asked("Are you currently employed by Edward Jones?", "Edward Jones", there) == "Yes"
+    for label in ("Are you currently employed by Edward Jones as a Financial Advisor?",
+                  "Are you currently employed by Edward Jones and do you hold a Series 7 license?",
+                  "Are you currently employed by Edward Jones and in good standing?",
+                  "Are you currently employed by Edward Jones in a home office role?",
+                  "Are you currently employed by Edward Jones for more than 6 months?",
+                  "Are you currently a full-time Edward Jones employee?",
+                  "Are you currently employed by Edward Jones? Do you hold a Series 7 license?"):
+        assert asked(label, "Edward Jones", there) is None, label
+    state = resolve_field(f("Are you currently employed by the State of Arizona?", "select", options=yes_no,
+                            value="Select One"), _person(), {"company": "Arizona Public Service"})
+    assert state is None or state.rule != "current_employee", state  # (another employer's: never this one's No)
+    # a profile that may have the person there now, has had them there, or says nothing of their work: theirs
+    open_ended = _person(work_history=[
+        {"company": "Example Fab", "title": "Technician", "start": "2022-06", "end": "present"},
+        {"company": "ASM", "title": "Technician", "start": "2019-01"}])
+    assert asked("Are you currently employed by ASM?", "ASM", open_ended) is None
+    before = _person(history={"previous_employers": ["Circle K"]})
+    assert asked("Are you currently employed by Circle K?", "Circle K", before) is None
+    nothing = Profile({"work_authorization": {"over_18": True}})
+    assert asked("Are you currently employed by Circle K?", "Circle K", nothing) is None
     services = _person(work_history=[{"company": "Example Fab Services", "title": "Technician", "start": "2022-06",
                                       "end": "present"}])
     assert asked("Are you currently employed with Example Fab?", "Example Fab", services) is None
+    # a question only for the employer's staff keeps its "not a current employee" choice (_not_staff_choice)
+    dept = resolve_field(f("If you are a current employee, which department are you in?", "select",
+                           options=["Not a current employee", "Sales", "Operations"], value=""),
+                         _person(), {"company": "Circle K"})
+    assert dept is not None and dept.value == "Not a current employee", dept
 
 
 def test_an_answer_given_for_one_employer_isnt_given_to_another(job_apply_home):
