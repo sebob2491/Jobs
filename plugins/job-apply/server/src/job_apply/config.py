@@ -657,11 +657,17 @@ SERVICE_KEYS = ("us_government_employee", "us_military")
 def get_secret(name: str) -> str | None:
     """Look up a secret by name without ever returning it to the model.
 
-    Order: env var JOB_APPLY_SECRET_<NAME>, then ~/.job-apply/secrets.yaml.
+    Order: env var JOB_APPLY_SECRET_<NAME>, then the computer's password vault (vault.py), then
+    ~/.job-apply/secrets.yaml.
     """
+    from . import vault
+
     env_key = "JOB_APPLY_SECRET_" + re.sub(r"[^A-Z0-9]", "_", name.upper())
     if os.environ.get(env_key):
         return os.environ[env_key]
+    value = vault.get(name)
+    if value:
+        return value
     path = secrets_path()
     if path.exists():
         value = read_secrets(path).get(name)
@@ -696,6 +702,10 @@ def read_secrets(path: Path) -> dict[str, str]:
 
 
 SITE_PASSWORD = re.compile(r"^[a-z][a-z0-9]{1,30}_password$")  # e.g. workday_password
+# The systems whose password the desk page lets the person save, by the name it shows (pipeline.DESK_PASSWORDS)
+DESK_PASSWORDS = {"workday_password": "Workday", "successfactors_password": "SuccessFactors", "icims_password": "iCIMS",
+                  "applicantstack_password": "ApplicantStack", "ukg_password": "UKG Pro", "infor_password": "Infor",
+                  "taleo_password": "Taleo"}
 # The Anthropic API key the desk writes cover letters with (letters.api_key), saved as a site password is
 API_KEY_NAME = "anthropic_api_key"
 # The ntfy topic phone alerts go to (phone.py): anyone who knows it can read them, so it's kept as a password is, and
@@ -709,9 +719,12 @@ PASSWORD_MAX = 256
 
 
 def save_site_password(name: str, value: str) -> None:
-    """Store a career-site password the person typed into the Job Desk. Only its own
-    entry in secrets.yaml changes; the rest of the file, comments included, stays as
-    they wrote it. The file is readable by the person alone."""
+    """Store a career-site password the person typed into the Job Desk: in the computer's password vault
+    (vault.py), and then its line in secrets.yaml, if it had one, goes. Where there's no vault, in secrets.yaml:
+    only its own entry changes, and the rest of the file, comments included, stays as they wrote it (readable by
+    the person alone). All or nothing either way."""
+    from . import vault
+
     if not SITE_PASSWORD.match(name) and name not in (API_KEY_NAME, NTFY_TOPIC_NAME):
         raise ValueError(f"not a site password name: {name!r}")
     if not value or not value.strip() or "\n" in value or "\r" in value:
@@ -727,7 +740,24 @@ def save_site_password(name: str, value: str) -> None:
         raise ValueError(f"the password is longer than {PASSWORD_MAX} characters")
     ensure_home()
     path = secrets_path()
-    kept = _secrets_without(path, name)
+    try:
+        before = vault.get(name, fresh=True)
+        if vault.put(name, value):
+            try:
+                _drop_secrets(path, [name])
+            except BaseException:
+                # (the file's older line would come back at the next start's move, over this one: the vault goes back
+                # to as it was, and the save fails as a whole)
+                with contextlib.suppress(Exception):
+                    if before is None:
+                        vault.forget(name)
+                    else:
+                        vault.put(name, before)
+                raise
+            return
+    except vault.Stuck:
+        raise ValueError(f"Your password vault ({vault.status().name}) holds an older one and wouldn't change it "
+                         "just now (is it locked?). Unlock it and save this again.") from None
     # always in double quotes, which YAML escapes everything awkward in (U+2028, a leading
     # no-break space, quotes, backslashes), and which read_secrets reads back exactly
     entry = f"{name}: " + yaml.safe_dump(value, default_style='"', allow_unicode=True, width=10**6).strip()
@@ -735,36 +765,29 @@ def save_site_password(name: str, value: str) -> None:
     # so the text-mode write below puts Windows' own line ends once): the file was truncated before it was written,
     # so a failure in between (a full disk, an exit, an antivirus hold) emptied every saved password, the review of
     # Oct 18
-    write_text_atomic(path, "\n".join([*kept, entry]) + "\n")
+    write_text_atomic(path, "\n".join([*_without_secrets(_secret_lines(path), [name]), entry]) + "\n")
     path.chmod(0o600)
-
-
-def _secrets_without(path: Path, name: str) -> list[str]:
-    """secrets.yaml's lines, but for the entry `name` (and any lines continuing it)."""
-    old = path.read_text(encoding="utf-8-sig").split("\n") if path.exists() else []
-    old = [line.rstrip("\r") for line in old if line.strip() or line != ""]
-    kept, skipping = [], False
-    for line in old:
-        if re.match(rf"{re.escape(name)}\s*:", line):
-            skipping = True  # drop the old entry and any lines continuing it
-            continue
-        if skipping and (line.startswith((" ", "\t")) or not line.strip()):
-            continue
-        skipping = False
-        kept.append(line)
-    return kept
 
 
 def forget_secret(name: str) -> bool:
-    """The entry `name` taken out of secrets.yaml (the phone alerts topic, turned off on the desk): the rest of the
-    file, comments included, stays as written. Whether there was one."""
+    """The secret `name` forgotten (the phone alerts topic, turned off or replaced on the desk): taken out of the
+    computer's password vault and its list of names, and its entry out of secrets.yaml, the rest of the file,
+    comments included, as written. Whether there was one. A ValueError when the vault won't let it go."""
+    from . import vault
+
     if name != NTFY_TOPIC_NAME:
         raise ValueError(f"not a secret the desk forgets: {name!r}")
+    there = vault.get(name, fresh=True) is not None
+    try:
+        vault.forget(name)
+    except vault.Stuck:
+        raise ValueError(f"Your password vault ({vault.status().name}) wouldn't let it go just now (is it locked?). "
+                         "Unlock it and try again.") from None
+    vault.unlist(name)
     path = secrets_path()
     if not path.exists() or name not in read_secrets(path):
-        return False
-    write_text_atomic(path, "\n".join(_secrets_without(path, name)) + "\n")
-    path.chmod(0o600)
+        return there
+    _drop_secrets(path, [name])
     return True
 
 
@@ -782,6 +805,86 @@ def set_setting(key: str, value: Any) -> None:
         raise ValueError(f"Your profile's settings couldn't be changed here ({e}): set {key} under settings: in "
                          f"{path} yourself") from None
     write_text_atomic(path, text)
+
+
+def _secret_lines(path: Path) -> list[str]:
+    old = path.read_text(encoding="utf-8-sig").split("\n") if path.exists() else []
+    return [line.rstrip("\r") for line in old if line.strip() or line != ""]
+
+
+def _without_secrets(lines: list[str], names: list[str]) -> list[str]:
+    """secrets.yaml's lines without these entries (each one's line, and any lines continuing it)."""
+    kept, skipping = [], False
+    for line in lines:
+        if any(re.match(rf"{re.escape(name)}\s*:", line) for name in names):
+            skipping = True  # drop the old entry and any lines continuing it
+            continue
+        if skipping and (line.startswith((" ", "\t")) or not line.strip()):
+            continue
+        skipping = False
+        kept.append(line)
+    return kept
+
+
+def _drop_secrets(path: Path, names: list[str]) -> None:
+    """Take these entries out of secrets.yaml, the rest of it (comments too) as written. Nothing to do without them."""
+    if not path.exists():
+        return
+    lines = _secret_lines(path)
+    kept = _without_secrets(lines, names)
+    if kept == lines:
+        return
+    write_text_atomic(path, "".join(line + "\n" for line in kept))
+    path.chmod(0o600)
+
+
+def move_secrets_to_vault() -> dict[str, int]:
+    """At the desk's start: each entry of secrets.yaml into the computer's password vault, where there's one. One at a
+    time and all or nothing: written to the vault, read back and compared, and only then taken out of the file, which
+    keeps its comments and every entry that didn't move (one the vault refused or gave back otherwise, a value
+    continued on lines below it). A line in the file is the newer (the desk saves to the vault and takes the file's
+    line out; a line there now was written since, by hand), so it replaces the vault's. Logs only names and counts,
+    never a value. Returns {"moved": n, "kept": m}."""
+    import logging
+
+    from . import vault
+
+    log = logging.getLogger(__name__)
+    path = secrets_path()
+    out = {"moved": 0, "kept": 0}
+    if not path.exists() or not vault.status().usable:
+        return out
+    try:
+        lines = _secret_lines(path)
+        entries = read_secrets(path)
+    except (OSError, ValueError):
+        log.warning("secrets.yaml couldn't be read, so nothing in it was moved into the password vault")
+        return out
+    # (a name whose value goes on below it: read_secrets has its first line alone, which mustn't stand for it)
+    continued = {m.group(1) for line, below in zip(lines, lines[1:])
+                 if (m := re.match(r"([A-Za-z0-9_]+)[ \t]*:", line)) and below.startswith((" ", "\t"))}
+    moved: list[str] = []
+    kept: list[str] = []
+    for name, value in entries.items():
+        try:
+            ok = name not in continued and vault.put(name, value)
+        except (vault.Stuck, OSError):  # (an older one stuck in the vault; the list of names not written)
+            ok = False
+        (moved if ok else kept).append(name)
+    if moved:
+        try:
+            _drop_secrets(path, moved)
+        except OSError:
+            # (each is in the vault as the file has it, so the next start's move takes them out of the file)
+            log.warning("%d saved password(s) went into %s, but secrets.yaml couldn't be rewritten just now",
+                        len(moved), vault.status().name)
+            return {"moved": 0, "kept": len(entries)}
+    if kept:
+        log.warning("Moved %d saved password(s) from secrets.yaml into %s; %d stayed in the file (%s)", len(moved),
+                    vault.status().name, len(kept), ", ".join(sorted(kept)))
+    elif moved:
+        log.info("Moved %d saved password(s) from secrets.yaml into %s", len(moved), vault.status().name)
+    return {"moved": len(moved), "kept": len(kept)}
 
 
 def _answers_file() -> dict[str, Any]:

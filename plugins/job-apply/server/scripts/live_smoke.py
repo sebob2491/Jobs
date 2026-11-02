@@ -87,6 +87,8 @@ os.environ["JOB_APPLY_NEVER_SUBMIT"] = "1"
 # each step of a Workday date said in the log (what the site does with it)
 os.environ.setdefault("JOB_APPLY_DATE_TRACE", "1")
 os.environ["JOB_APPLY_HEADLESS"] = "1"
+# never the password vault of the computer it runs on (vault.py): its passwords are the run's own, in its environment
+os.environ["JOB_APPLY_NO_VAULT"] = "1"
 # A job the site's own passing error stopped is tried again by itself (pipeline.RETRY_AFTER, 20 minutes on the desk): a
 # minute on here, waited out in its round (check_pipeline), so a run shows what the try does without growing much
 RETRY_AFTER = 60

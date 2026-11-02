@@ -610,6 +610,33 @@ def test_a_report_and_a_note_hide_what_the_desk_history_hides(srv, job_apply_hom
         desk_module._desk = None
 
 
+def test_a_report_hides_a_password_kept_in_the_vault(srv, job_apply_home):
+    """The desk's secrets now live in the computer's password vault (vault.py), which secrets.yaml's scrubbing never
+    read: a report still takes out each one, a page's error quoting it, saved on the desk or moved there from the file
+    under a name of the person's own."""
+    from job_apply import config, vault
+    from job_apply.pipeline import Applier
+
+    config.save_site_password("workday_password", "Vault-Held-Pw-81")
+    config.secrets_path().write_text("acme_password: Moved-From-File-62\n", encoding="utf-8")
+    assert config.move_secrets_to_vault() == {"moved": 1, "kept": 0}
+    vault.reset()  # (read afresh from the vault, as a new start would)
+    assert not config.read_secrets(config.secrets_path())
+    job = srv.add_job(url="https://example.com/jobs/fse", title="Field Service Engineer", company="Example Fab")["job"]
+    r = Run(job["id"], "Field Service Engineer", "Example Fab", status="needs_you", need="stuck",
+            reason="review page shows errors: Vault-Held-Pw-81 isn't a valid answer; Moved-From-File-62 neither",
+            log=["the review page shows errors"],
+            page_info={"url": "https://example.com/apply/review", "title": "Review",
+                       "errors": ["Vault-Held-Pw-81 isn't a valid answer"]})
+    hide = Applier._report_hidden(r)
+    assert {"Vault-Held-Pw-81", "Moved-From-File-62"} <= hide
+    built = report.build(job, r, PERSON, hide=hide)
+    for text in (built["preview"], parse_qs(urlsplit(built["issue_url"]).query)["body"][0],
+                 report.note(job, r, PERSON, hide=hide)):
+        assert "Vault-Held-Pw-81" not in text and "Moved-From-File-62" not in text, text
+        assert "review page shows errors" in text, text
+
+
 def _reported(srv, job_apply_home, job, r) -> tuple[str, str]:
     """Claude's report_problem on the desk's run `r`, and the note the desk takes on its stop: their texts."""
     from job_apply import desk as desk_module

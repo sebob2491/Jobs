@@ -364,6 +364,18 @@ def check_home() -> Check:
                  f"Run the one-step installer, or {SAY_SETUP}: setup makes it.")
 
 
+def check_secrets() -> Check:
+    """Where the passwords saved on the desk are kept: the computer's password vault, or secrets.yaml where there's
+    none (and why). Neither is a problem; only a look at whether the vault answers, which changes nothing."""
+    from . import vault
+
+    status = vault.status(say=False)
+    if status.usable:
+        return Check("secrets", OK, f"Your saved passwords are kept in {status.name}")
+    return Check("secrets", OK, f"Your saved passwords are kept in {vault.where()}",
+                 "" if status.why == "no password vault on this computer" else f"(The vault: {status.why}.)")
+
+
 
 
 def _read_only_uri(path: Path) -> str:
@@ -512,6 +524,7 @@ async def run(launch: bool = False) -> Report:
     prof, profile_checks = check_profile()
     checks.append(await check_browser(prof.settings if prof else config.Settings.from_dict(None), launch))
     checks.append(check_home())
+    checks.append(check_secrets())
     tracked = check_tracker()
     if tracked:
         checks.append(tracked)

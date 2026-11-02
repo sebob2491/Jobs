@@ -17,6 +17,7 @@ import atexit
 import contextlib
 import http.client
 import json
+import logging
 import math
 import os
 import re
@@ -37,7 +38,8 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
-from . import autofill, config, employment, history, letters, pay, phone, places, profile_setup, report, workplace
+from . import (autofill, config, employment, history, letters, pay, phone, places, profile_setup, report,
+               vault, workplace)
 from .browser import _cookie_setting
 from .pipeline import (DESK_PASSWORDS, MAIL_WATCH_MAX, QUEUE_NO_LOCK, Applier, _may_accept_notices,
                        _may_manage_accounts, _test_identity, placed_key, question_key)
@@ -354,6 +356,13 @@ class Desk:
                 await asyncio.sleep(0.05)
             if self._serve_task.done():
                 raise RuntimeError(f"The Job Desk couldn't start on port {self.port}")
+        # secrets.yaml's passwords into the computer's password vault, where there's one, before the desk reads any
+        # (each once: one moved is out of the file; vault.py finds out once whether the vault works)
+        try:
+            await asyncio.get_running_loop().run_in_executor(None, config.move_secrets_to_vault)
+        except Exception as e:  # (they stay where they are, and are read there)
+            logging.getLogger(__name__).warning("Saved passwords weren't moved into the password vault (%s)",
+                                                type(e).__name__)
         self.applier.start()
         with contextlib.suppress(OSError):  # (without it, Claude's watch for mail requests says the desk isn't open)
             self._write_watch_file()
@@ -923,8 +932,8 @@ class Desk:
         return JSONResponse({"ok": True})
 
     async def password_view(self, request: Request) -> Response:
-        """A career-site password typed into the page goes straight to secrets.yaml. It is
-        never sent back, logged, or shown to Claude."""
+        """A career-site password typed into the page goes straight to the computer's password vault (secrets.yaml
+        where there's none: config.save_site_password). It is never sent back, logged, or shown to Claude."""
         if not self._allowed(request, api=True):
             return self._forbidden()
         try:
@@ -954,9 +963,10 @@ class Desk:
         return JSONResponse({"saved": True})
 
     async def phone_view(self, request: Request) -> Response:
-        """The Phone alerts card: `make` a new topic (saved in secrets.yaml, and given to this page alone to show, never
-        in its state), `show` it again, turn alerts `off` (the topic forgotten), send a `test`, or change its
-        `settings` ({details, summary_at}, written to profile.yaml's settings)."""
+        """The Phone alerts card: `make` a new topic (saved as a password is, in the password vault or secrets.yaml,
+        and given to this page alone to show, never in its state), `show` it again, turn alerts `off` (the topic
+        forgotten), send a `test`, or change its `settings` ({details, summary_at}, written to profile.yaml's
+        settings)."""
         if not self._allowed(request, api=True):
             return self._forbidden()
         action = request.path_params["action"]
@@ -2077,16 +2087,23 @@ def whats_new(tracker: Any, since: float) -> list[dict[str, Any]]:
 
 
 def _saved(names: list[str]) -> dict[str, bool]:
-    """Which of these secrets are saved, from one reading of secrets.yaml (the page asks
-    every 1.5 s): never their values."""
+    """Which of these secrets are saved, wherever get_secret reads them (the environment, the password vault, from
+    what it last read of each, and one reading of secrets.yaml: the page asks every 1.5 s): never their values."""
     try:
         path = config.secrets_path()
         data = config.read_secrets(path) if path.exists() else {}
     except Exception:  # a hand-edited secrets.yaml with a typo mustn't break the page
         data = {}
     env = {k for k, v in os.environ.items() if k.startswith("JOB_APPLY_SECRET_") and v}
+
+    def in_vault(name: str) -> bool:
+        try:
+            return bool(vault.get(name))
+        except Exception:  # (a vault that can't be read just now has none the page could say)
+            return False
+
     return {n: f"JOB_APPLY_SECRET_{re.sub(r'[^A-Z0-9]', '_', n.upper())}" in env or data.get(n) is not None
-            for n in names}
+            or in_vault(n) for n in names}
 
 
 TROUBLESHOOT_TITLES = ["human resources", "recruiter"]  # troubleshooting's HR jobs, beside the profile's titles

@@ -8,6 +8,10 @@ import zlib
 from pathlib import Path
 from typing import Any
 
+import keyring
+import keyring.backend
+import keyring.core
+import keyring.errors
 import pytest
 import yaml
 from playwright.async_api import Browser, async_playwright
@@ -71,6 +75,53 @@ def job_apply_home(tmp_path, monkeypatch):
     # a transport of its own)
     monkeypatch.delenv("JOB_APPLY_SECRET_NTFY_TOPIC", raising=False)
     return home
+
+
+class MemoryVault(keyring.backend.KeyringBackend):
+    """A password vault in memory, for the tests: no test ever reaches the computer's own (Windows Credential
+    Manager, the macOS Keychain, a Secret Service)."""
+
+    priority = 1
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.store: dict[tuple[str, str], str] = {}
+
+    def get_password(self, service: str, username: str) -> str | None:
+        return self.store.get((service, username))
+
+    def set_password(self, service: str, username: str, password: str) -> None:
+        self.store[(service, username)] = password
+
+    def delete_password(self, service: str, username: str) -> None:
+        if self.store.pop((service, username), None) is None:
+            raise keyring.errors.PasswordDeleteError(username)
+
+
+@pytest.fixture(autouse=True)
+def memory_vault(monkeypatch):
+    """Every test's password vault is one in memory (vault.py finds it out afresh); a program a test starts gets
+    keyring's null one, which keeps nothing, so it falls back to secrets.yaml."""
+    from job_apply import vault
+
+    fake = MemoryVault()
+    monkeypatch.setattr(keyring.core, "_keyring_backend", fake)
+    monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
+    monkeypatch.delenv(vault.OFF_SWITCH, raising=False)
+    vault.reset()
+    yield fake
+    vault.reset()
+
+
+@pytest.fixture
+def no_vault(monkeypatch, memory_vault):
+    """A computer without a password vault (a headless Linux, CI): keyring's "fail" backend."""
+    from keyring.backends import fail
+
+    from job_apply import vault
+
+    monkeypatch.setattr(keyring.core, "_keyring_backend", fail.Keyring())
+    vault.reset()
 
 
 def fixture_url(name: str) -> str:

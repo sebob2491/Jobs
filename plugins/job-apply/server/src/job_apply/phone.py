@@ -2,9 +2,10 @@
 (https://ntfy.sh, a free push service: the person installs its app and subscribes to a topic), so the desk can tell
 them something with its page closed.
 
-- Opt-in: nothing is sent until the desk's Phone alerts card makes a topic, a long random name kept in secrets.yaml
-  (config.NTFY_TOPIC_NAME). Anyone who knows it can read the alerts, so it's never in the page's state, a log or a
-  problem report: the page only learns whether alerts are on.
+- Opt-in: nothing is sent until the desk's Phone alerts card makes a topic, a long random name kept as a password
+  is (config.NTFY_TOPIC_NAME: in the password vault, or secrets.yaml where there's none). Anyone who knows it can read
+  the alerts, so it's never in the page's state, a log or a problem report: the page only learns whether alerts are
+  on.
 - Private by default: an alert goes through ntfy's servers, so it says only counts and kinds ("A job needs you: a bot
   check"), never an employer, a job's title, a name or anything from the profile; settings.phone_alert_details adds the
   employer and the job.

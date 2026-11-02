@@ -222,6 +222,35 @@ def test_a_saved_password_goes_only_into_a_password_box_on_its_own_site(srv, job
 
 
 @needs_browser
+def test_a_password_kept_in_the_vault_is_typed_as_one_from_the_file_was(srv, job_apply_home, memory_vault):
+    """Saved on the desk, it's in the computer's password vault, not secrets.yaml: fill_secret types it as before, only
+    on its own system's sites; the email app password and the API key are refused all the same."""
+    from job_apply import vault
+
+    routed(srv)
+    config.save_site_password("workday_password", "S3cret-Workday!")
+    config.save_site_password(config.API_KEY_NAME, "sk-ant-api03-not-a-real-key")
+    memory_vault.set_password(vault.service(), "email_password", "abcdefghijklmnop")
+    config.save_site_password(config.NTFY_TOPIC_NAME, "jobdesk-notarealtopic0000000001")
+    assert not config.secrets_path().exists()
+    run(srv.browser.goto("https://careers.example.com/a"))
+    fields = {f["label"]: f["id"] for f in run(srv.inspect_form(False))["fields"]}
+    out = run(srv.fill_secret(fields["Password"], "workday_password"))  # not a Workday site
+    assert out["ok"] is False and "another site" in out["error"]
+    for name, words in (("email_password", "only for reading sign-up codes"),
+                        (config.API_KEY_NAME, "only for writing cover letters"),
+                        (config.NTFY_TOPIC_NAME, "phone alerts topic is never typed")):
+        out = run(srv.fill_secret(fields["Password"], name))
+        assert out["ok"] is False and words in out["error"], out
+    run(srv.browser.goto("https://acme.wd1.myworkdayjobs.com/en-US/External/login"))
+    fields = {f["label"]: f["id"] for f in run(srv.inspect_form(False))["fields"]}
+    assert run(srv.fill_secret(fields["Password"], "workday_password")) == {"ok": True}
+    assert "S3cret" not in str(run(srv.inspect_form(False)))
+    out = run(srv.fill_secret(fields["Password"], "taleo_password"))
+    assert out["ok"] is False and "No secret named" in out["error"]
+
+
+@needs_browser
 def test_a_saved_password_goes_into_a_frame_by_the_frames_own_address(srv, job_apply_home, monkeypatch):
     """fill_secret checks the address of the frame the box is in, never the page's around it: an iCIMS password goes
     into iCIMS' own frame on an employer's careers page, and never into a frame from another site on iCIMS' own page.
@@ -355,7 +384,7 @@ def test_the_yes_no_settings_read_a_yes_the_same_way(written):
     assert (off.manage_accounts, off.accept_notices) == (False, False)  # (unclear is no)
 
 
-def test_passwords_are_read_as_written(job_apply_home):
+def test_passwords_are_read_as_written(job_apply_home, no_vault):
     path = config.secrets_path()
     for written, meant in (("0123456", "0123456"), ("yes", "yes"), ("12:30:45", "12:30:45"),
                            ("!Summer2024x", "!Summer2024x"), ("*pw", "*pw"), ("'it''s'", "it's"), ('"q\\"x"', 'q"x'),

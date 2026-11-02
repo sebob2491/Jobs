@@ -384,8 +384,10 @@ before you sign in") isn't reset: with the email app password the desk presses t
 that button. To do these steps yourself, set
 `manage_accounts: false` under `settings:` in your profile: the desk then fills in Create
 Account for you to finish. Practice mode never creates an account. On Qorvo's one-page application
-it puts the password in both boxes. The password goes from the page straight into
-`~/.job-apply/secrets.yaml` on your computer, and is only ever typed into that system's
+it puts the password in both boxes. The password goes from the page straight into your
+computer's password vault (Windows Credential Manager, the macOS Keychain, or your Linux
+desktop's keyring), or into `~/.job-apply/secrets.yaml` where there's none (a headless
+Linux, or a keyring that's locked), and is only ever typed into that system's
 own addresses (for Workday, `*.myworkdayjobs.com` and `*.myworkday.com`). Claude never sees
 it, and the desk only reports whether one is saved.
 
@@ -502,7 +504,7 @@ Everything personal stays on your machine in `~/.job-apply/`. Set
 |---|---|
 | `profile.yaml` | Your answers. Edit it any time ([template](plugins/job-apply/templates/profile.example.yaml)). |
 | `resume.pdf` | Default resume |
-| `secrets.yaml` | Optional career-site passwords, such as `workday_password` (and the phone alerts' topic, `ntfy_topic`). Save one from the Job Desk, or write the file yourself and run `chmod 600` on it. A password named for a job system goes only onto that system's sites; any other only onto that site's own domain (`acme_password` on acme.com) or its tenant on a shared job system (acme.wd5.myworkdayjobs.com), never an address that merely contains the name. |
+| `secrets.yaml` | Optional career-site passwords, such as `workday_password` (and the phone alerts' topic, `ntfy_topic`), where your computer has no password vault. Save one from the Job Desk, or write the file yourself and run `chmod 600` on it. Where there is a vault (Windows Credential Manager, the macOS Keychain, a Linux desktop's keyring), the desk keeps saved passwords there instead, under `job-apply`, and moves what you write in this file into it when it starts (comments and anything it couldn't move stay); `vault-names.json` lists their names, never a value. `job-apply-doctor` says which it uses. A password set in the environment as `JOB_APPLY_SECRET_<NAME>` comes before both. A password named for a job system goes only onto that system's sites; any other only onto that site's own domain (`acme_password` on acme.com) or its tenant on a shared job system (acme.wd5.myworkdayjobs.com), never an address that merely contains the name. |
 | `tracker.db` | Application tracker (SQLite). `export_jobs_csv` writes a spreadsheet. |
 | `answers.yaml` | Answers you gave in the Job Desk, reused on later applications. Edit or delete entries freely. |
 | `companies.yaml` | Optional: which of the plugin's employer lists to search (`lists:`) and employers of your own, in place of the default list. |
