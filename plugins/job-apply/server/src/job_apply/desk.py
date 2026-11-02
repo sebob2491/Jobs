@@ -38,14 +38,15 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
-from . import (autofill, config, employment, history, letters, pay, phone, places, profile_setup, report,
+from . import (autofill, config, employment, history, letters, outcomes, pay, phone, places, profile_setup, report,
                vault, workplace)
 from .browser import _cookie_setting
 from .pipeline import (DESK_PASSWORDS, MAIL_WATCH_MAX, QUEUE_NO_LOCK, Applier, _may_accept_notices,
                        _may_manage_accounts, _test_identity, placed_key, question_key)
 from .ats import ATS_NAMES, JOB_BOARDS, detect_ats, job_board
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
-from .recommend import applicant_degree, days_since, not_interested_in, recommend, score_listing
+from .recommend import (applicant_degree, days_since, not_interested_in, recommend, score_listing, target_titles,
+                        WORKED_BEFORE_CAP, worked_before)
 from .search import (MAX_ALTERNATIVES, alternatives, every_employer, load_companies, own_companies_path, search_area,
                      set_search_area)
 from .tracker import APPLICATION_STATUSES, NotInterested, company_key, damaged, normalize_url, standing
@@ -1422,6 +1423,21 @@ class Desk:
         if profile_problem:  # (a profile.yaml that doesn't read: not one without a home town)
             home_problem = ("Within N miles can't find your home town just now: your profile can't be read "
                             f"({profile_problem}).")
+        # what worked before: the person's own applications' outcomes, counted here each time (outcomes.py), for the
+        # What's working card and, unless settings.learn_from_responses is off, each opening's "worked before" part
+        titles = target_titles(prof)
+        learned = outcomes.learn([{**o, "ats": system_of(None, o)["key"]} for o in t.outcomes()], titles,
+                                 (lambda j: _miles(places.away(home, j.get("location")))) if home else None)
+
+        def lean(row: dict[str, Any], item: dict[str, Any] | None, job: dict[str, Any] | None) -> None:
+            """The row's fit moved by what worked before (recommend.worked_before): its order only."""
+            if not settings.learn_from_responses or not learned.overall.n:
+                return
+            said = {"company": row["company"], "title": row["title"], "ats": row["system"]["key"],
+                    "source": (job or {}).get("source") or "job desk",
+                    "workplace": (item or {}).get("workplace") or (job or {}).get("workplace"),
+                    **{k: ((item or {}) if (item or {}).get("pay_period") else (job or {})).get(k) for k in PAY_KEYS}}
+            row["fit"] = worked_before(row["fit"], learned, outcomes.keys_of(said, titles, _miles(row["miles"])))
 
         def news(url: str, job: dict[str, Any] | None, run: Any) -> tuple[float | None, bool]:
             """When an opening was first saved (found by a search, or saved to the tracker), and whether it's New: first
@@ -1461,6 +1477,7 @@ class Desk:
                 "saved_at": first, "new": new and not said,
                 "not_interested": {"reason": said["reason"], "at": said["at"]} if said else None,
             })
+            lean(rows[-1], item, job)
         tracked = t.list(limit=300)
         # what the person applied to, and where each stands (the page's My applications): the newest email logged for
         # it, how many there are, whether it's time to follow up, and its group
@@ -1494,6 +1511,7 @@ class Desk:
                 "saved_at": first, "new": new and not said,
                 "not_interested": {"reason": said["reason"], "at": said["at"]} if said else None,
             })
+            lean(rows[-1], None, job)
         others = []
         for jid, run in runs.items():
             if jid not in seen:
@@ -1520,7 +1538,8 @@ class Desk:
                          "within_miles": self.within_miles, **self.chips, "companies": self.companies,
                          "auto_search": self.auto_search, "dont_wait": self.applier.dont_wait,
                          "jobs_at_once": self.applier.at_once(),
-                         "follow_up_days": settings.follow_up_days},
+                         "follow_up_days": settings.follow_up_days,
+                         "learn_from_responses": settings.learn_from_responses},
             "tailoring": len(self.applier.tailoring()),
             # why no cover letter is being written (the switch on), said once at the top of the page
             "letters_problem": self.applier.letters_problem if self.applier.letters else None,
@@ -1552,6 +1571,8 @@ class Desk:
             "listings": rows,
             "others": others,
             "applications": applications,
+            # what's worked: the person's own outcomes by group (the What's working card; None before any is sent)
+            "outcomes": outcomes.summary(learned, settings.learn_from_responses, WORKED_BEFORE_CAP),
             "bank": autofill.common_questions(prof),  # the common questions, with the person's answers
             "area": search_area(),  # where Find jobs searches
             "current": self.applier.current,
@@ -1832,6 +1853,9 @@ class _NoJobs:
     def not_interested_marks(self, listings: Any) -> NotInterested:
         return NotInterested([])
 
+    def outcomes(self) -> list[dict[str, Any]]:
+        return []
+
     def list(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
         return []
 
@@ -1843,6 +1867,11 @@ class _NoJobs:
 
     def counts(self) -> dict[str, int]:
         return {}
+
+
+def _miles(said: dict[str, Any] | None) -> float | None:
+    """How far a job is from home, from places.away's answer (None for none)."""
+    return float(said["miles"]) if said else None
 
 
 def unwanted_employers(marks: NotInterested) -> dict[str, str]:

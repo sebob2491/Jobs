@@ -138,7 +138,7 @@ def _compare(name: str, seen: str) -> None:
 def test_the_desks_cards_say_what_they_said(srv, job_apply_home, monkeypatch, case):
     how = CASES[case]
     seen = _cards(srv, monkeypatch, _state(how["state"]), how.get("storage"), how.get("press", []))
-    assert seen.count("\n## ") + 1 == 8, seen  # (every card: the openings, the idle one, the six on the side)
+    assert seen.count("\n## ") + 1 == 9, seen  # (every card: the openings, the idle one, the seven on the side)
     _compare(how["golden"], seen)
 
 

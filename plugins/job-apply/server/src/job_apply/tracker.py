@@ -1310,6 +1310,51 @@ class Tracker:
                 for jid, (_, r, came) in newest.items()}
 
     @_locked
+    def outcomes(self) -> builtins.list[dict[str, Any]]:
+        """Each application sent in (applied, and on from there: _DONE) with what came of it, for what's worked
+        (outcomes.py): its employer, title, place, job system, source, pay and workplace, its status, and
+        - `sent_at`: when it was sent in (applied_at; when it was saved, where that's empty), ISO;
+        - `answered`: the employer answered: an assessment, an interview, an offer or a rejection, by email or by the
+          status the person set (a "we received it" or an email of another kind isn't an answer);
+        - `further`: it went on to an assessment, an interview or an offer, now or before (a rejection after an
+          interview still went further);
+        - `first_answer`: when the first answer came (an email's time, or when the status said so), ISO; "" for none.
+        Read here only, each time it's asked: nothing of it is kept elsewhere or leaves the computer."""
+        firsts: dict[int, datetime] = {}
+        further: set[int] = set()
+
+        def heard(job_id: int, when: datetime | None) -> None:
+            firsts.setdefault(job_id, when or datetime.max.replace(tzinfo=timezone.utc))
+            if when is not None and when < firsts[job_id]:
+                firsts[job_id] = when
+
+        for r in self.conn.execute("SELECT job_id, category, received_at, logged_at FROM emails WHERE category IN "
+                                   "('assessment', 'interview', 'offer', 'rejection')"):
+            heard(r["job_id"], _moment(r["received_at"]) or _moment(r["logged_at"]))
+            if r["category"] != "rejection":
+                further.add(r["job_id"])
+        for r in self.conn.execute("SELECT job_id, status, at FROM events WHERE status IN "
+                                   "('interviewing', 'offer', 'rejected')"):
+            heard(r["job_id"], _moment(r["at"]))
+            if r["status"] != "rejected":
+                further.add(r["job_id"])
+        marks = ",".join("?" * len(_DONE))
+        out = []
+        for r in self.conn.execute("SELECT id, url, apply_url, company, title, location, ats, source, pay_min, "
+                                   "pay_max, pay_period, pay_source, pay_sure, workplace, status, applied_at, "
+                                   f"created_at FROM jobs WHERE status IN ({marks}) ORDER BY id", sorted(_DONE)):
+            jid, status = r["id"], r["status"]
+            answered = jid in firsts or status in ("interviewing", "offer", "rejected")
+            first = firsts.get(jid)
+            sent = _moment(r["applied_at"]) or _moment(r["created_at"])
+            out.append({**{k: r[k] for k in ("url", "apply_url", "company", "title", "location", "ats", "source",
+                                             "workplace", "status", *_PAY_FIELDS)},
+                        "id": jid, "sent_at": sent.isoformat() if sent else "", "answered": answered,
+                        "further": jid in further or status in ("interviewing", "offer"),
+                        "first_answer": first.isoformat() if first is not None and first.year < 9999 else ""})
+        return out
+
+    @_locked
     def events(self, job_id: int) -> builtins.list[dict[str, Any]]:
         rows = self.conn.execute("SELECT at, status, note FROM events WHERE job_id = ? ORDER BY id", (job_id,))
         return [dict(r) for r in rows]

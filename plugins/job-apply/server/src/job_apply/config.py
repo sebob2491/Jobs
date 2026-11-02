@@ -227,6 +227,8 @@ def live_test_identity(email: Any) -> bool:
 MANAGE_ACCOUNTS_DEFAULT = True
 # And agreeing to notices about AI screening, privacy notices and terms, and attestations (settings.accept_notices)
 ACCEPT_NOTICES_DEFAULT = True
+# And the ranking's "worked before" part, from the person's own outcomes (settings.learn_from_responses)
+LEARN_FROM_RESPONSES_DEFAULT = True
 
 
 def _on_unless_off(raw: Any, malformed: bool, default: bool) -> bool:
@@ -347,7 +349,8 @@ def _phone_alerts_server(raw: Any) -> tuple[str, str]:
 # ("accept_notice: false")
 KNOWN_SETTINGS = ("submit_mode", "auto_submit_ats", "browser_channel", "headless", "email_codes", "email_tracking",
                   "accept_cookies", "manage_accounts", "accept_notices", "jobs_at_once", "follow_up_days",
-                  "cover_letter_model", "phone_alert_details", "phone_summary_at", "phone_alerts_server")
+                  "cover_letter_model", "phone_alert_details", "phone_summary_at", "phone_alerts_server",
+                  "learn_from_responses")
 
 
 @dataclass
@@ -384,6 +387,9 @@ class Settings:
     phone_alert_details: bool = False
     phone_summary_at: str = PHONE_SUMMARY_DEFAULT
     phone_alerts_server: str = ""
+    # may the openings' scores lean on what worked before: the person's own applications' outcomes, kept on this
+    # computer (recommend.worked_before; on unless the profile turns it off)
+    learn_from_responses: bool = LEARN_FROM_RESPONSES_DEFAULT
     # the live check's test identity (live_test_identity): accounts and notices in practice mode too
     test_identity: bool = False
     warnings: list[str] = field(default_factory=list)
@@ -436,6 +442,8 @@ class Settings:
             phone_alert_details=d.get("phone_alert_details") is True,
             phone_summary_at=summary_at,
             phone_alerts_server=phone_server,
+            learn_from_responses=_on_unless_off(d.get("learn_from_responses"), malformed,
+                                                LEARN_FROM_RESPONSES_DEFAULT),
         )
         if os.environ.get("JOB_APPLY_HEADLESS") == "1":
             s.headless = True

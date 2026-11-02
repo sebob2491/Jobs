@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import math
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import date
@@ -20,6 +21,7 @@ from . import pay, workplace
 from .ats import host_of
 from .autofill import _PARTIAL_STUDY, degree_key, entry_dates, norm, school_under_way
 from .config import Profile, listed
+from .outcomes import DIMENSIONS, MIN_GROUP, Learned, Tally
 from .postings import QUESTIONS_HEADING, Posting, fetch_posting
 from .search import (DEFAULT_TITLES, MAX_ALTERNATIVES, US_STATES, avoided_title, location_matches, location_terms,
                      title_matches, title_words)
@@ -335,6 +337,62 @@ def not_interested_in(fit: dict[str, Any], company: str, points: int = NOT_INTER
     if isinstance(fit.get("parts"), list):
         out["parts"] = [*fit["parts"], {"why": said, "points": lowered - score}]
     return out
+
+
+# "Worked before": a little up for an opening like the person's applications that went on to an interview or a test,
+# a little down for one like those that didn't, from their own outcomes (outcomes.py; settings.learn_from_responses).
+# At most WORKED_BEFORE_CAP points either way (a tenth of the score's 0 to 100), only from a group with
+# outcomes.MIN_GROUP applications or more, its rate drawn toward the person's overall one as if it had
+# WORKED_BEFORE_PRIOR more applications at that rate (so a small group moves a job less), and the points in proportion
+# to how many standard errors it's away from the overall rate (WORKED_BEFORE_FULL of them for the whole cap)
+WORKED_BEFORE = "worked before"
+WORKED_BEFORE_CAP = 10
+WORKED_BEFORE_PRIOR = 5
+WORKED_BEFORE_FULL = 3.0
+
+
+def worked_before_points(group: Tally | None, overall: Tally) -> int:
+    """The points a group's outcomes are worth (from -WORKED_BEFORE_CAP to WORKED_BEFORE_CAP): none for no group, one
+    under outcomes.MIN_GROUP applications, or while the person's applications all went the same way (none went
+    further, or all did: nothing tells one kind of job from another)."""
+    if group is None or group.n < MIN_GROUP or not overall.n:
+        return 0
+    p = overall.further / overall.n
+    if p <= 0 or p >= 1:
+        return 0
+    rate = (group.further + WORKED_BEFORE_PRIOR * p) / (group.n + WORKED_BEFORE_PRIOR)
+    z = (rate - p) / math.sqrt(p * (1 - p) / (group.n + WORKED_BEFORE_PRIOR))
+    return max(-WORKED_BEFORE_CAP, min(WORKED_BEFORE_CAP, round(WORKED_BEFORE_CAP * z / WORKED_BEFORE_FULL)))
+
+
+def worked_before(fit: dict[str, Any], learned: Learned, keys: dict[str, tuple[str, str, str]]) -> dict[str, Any]:
+    """An opening's fit (Fit.to_dict()) moved by what worked before: the one group it's in (outcomes.keys_of: its job
+    system, employer, source, title, pay, distance) whose outcomes are worth the most points either way, said among its
+    parts in plain words ("worked before: applications through Workday led to an interview or a test 4 times in 12;
+    yours overall, 5 in 40", +6), its score kept within 0 to 100. Only its order changes: whether it's recommended stays
+    as it was (an opening is never hidden or kept out of the queue by it), and nothing it fills changes. The fit as it
+    was when no group is worth a point, or for one saved before scores had parts."""
+    if not isinstance(fit, dict) or not isinstance(fit.get("parts"), list):
+        return fit
+    best: tuple[int, Tally] | None = None
+    for dimension in DIMENSIONS:
+        key = keys.get(dimension)
+        group = learned.tally(dimension, key[0]) if key else None
+        points = worked_before_points(group, learned.overall)
+        if points and group is not None and (best is None or abs(points) > abs(best[0])):
+            best = (points, group)
+    if best is None:
+        return fit
+    points, group = best
+    o = learned.overall
+    times = {0: "not once", 1: "once"}.get(group.further, f"{group.further} times")
+    said = (f"{WORKED_BEFORE}: applications {group.phrase} led to an interview or a test {times} in {group.n}; "
+            f"yours overall, {o.further} in {o.n}")
+    score = int(fit.get("score") or 0)
+    moved = max(0, min(100, score + points))
+    if moved == score:
+        return fit
+    return {**fit, "score": moved, "parts": [*fit["parts"], {"why": said, "points": moved - score}]}
 
 
 # --------------------------------------------------------------------- profile

@@ -108,6 +108,17 @@ Interviewing: 1
 ## done-h
 (hidden)
 
+## working-h
+What's working
+35 sent
+From 32 applications answered or sent 3 weeks ago or more (3 newer still wait): 8 got an answer (25%), and 6 led to an interview or a test (19%). The first answer took 9 days (the median of 8).
+Applications through Workday led to an interview or a test 6 times in 12; those through iCIMS, not once in 20.
+By job system
+Applications Answered Interview or test Days to answer
+iCIMS 20 10% 0% –
+Workday 12 50% 50% 7
+Only groups with 5 applications or more are shown. Openings like the ones that led to interviews move up a little, and ones like those that didn't move down (at most 10 points: “worked before” in a score). Counted on this computer only.
+
 ## bank-h
 Common questions
 1 of 12 answered
