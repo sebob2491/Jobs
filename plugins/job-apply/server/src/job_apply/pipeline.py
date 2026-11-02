@@ -550,8 +550,10 @@ _PICTURE_CODE = re.compile(r"captcha|text in (?:the )?(?:image|picture)", re.I)
 # or contacted), the site saying the email already has an account (said of the account or
 # email, not "Already have an account? Sign in"), the way to a password reset (not a username
 # reminder), the buttons of a reset's pages, and its "we've emailed you a link"
-_MAKE_ACCOUNT = re.compile(r"^(create(?: an| my| your| a new)? account|register|sign ?up|create|submit|continue)$",
-                           re.I)
+_MAKE_ACCOUNT = re.compile(r"^(create(?: an| my| your| a new)? account|register|sign ?up|create|submit|continue|"
+                           # (NEOGOV's Create an account: "Continue with Email", beside "Continue with Google", which
+                           # _account_button never takes: _SOCIAL)
+                           r"continue with (?:your )?e-?mail)$", re.I)
 # and the button of its second step, on a page of its own (UKG Pro's "Create account" after a name and phone)
 _ACCOUNT_BUTTON = re.compile(r"^(create(?: an| my| your| a new)? account|register|sign ?up)$", re.I)
 _TERMS_ONLY = re.compile(r"terms|conditions|(?:privacy|data protection) (?:policy|notice|statement)"
@@ -6938,6 +6940,8 @@ PASSWORD_SITES = {
     "icims": ("icims.com",), "applicantstack": ("applicantstack.com",), "ukg": ("ultipro.com",),
     "infor": ("inforcloudsuite.com",), "taleo": ("taleo.net", "myhiring.kforce.com"), "brassring": ("brassring.com",),
     "avature": ("avature.net",),
+    # (NEOGOV: one account at governmentjobs.com for every agency there; its sign-in is on that same host)
+    "neogov": ("governmentjobs.com",),
 }
 
 

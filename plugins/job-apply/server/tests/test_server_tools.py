@@ -29,6 +29,7 @@ PAGES = {
     "https://careers.example.com/indeed-host": INDEED_HOST,
     "https://apply.indeed.com/form": INDEED_FORM,
     "https://acme.wd1.myworkdayjobs.com/en-US/External/login": FORM.format(title="Sign in", action="x"),
+    "https://www.governmentjobs.com/app/signin": FORM.format(title="Sign In", action="x"),
 }
 
 
@@ -219,6 +220,23 @@ def test_a_saved_password_goes_only_into_a_password_box_on_its_own_site(srv, job
     run(srv.browser.goto("https://acme.wd1.myworkdayjobs.com/en-US/External/login"))
     fields = {f["label"]: f["id"] for f in run(srv.inspect_form(False))["fields"]}
     assert run(srv.fill_secret(fields["Password"], "workday_password")) == {"ok": True}
+
+
+@needs_browser
+def test_a_neogov_password_goes_only_onto_governmentjobs_com(srv, job_apply_home):
+    """NEOGOV's password (one account at governmentjobs.com serves every agency) goes into NEOGOV's own sign-in, and
+    never onto another site: not a Workday sign-in, nor an agency's own careers page."""
+    routed(srv)
+    config.secrets_path().write_text("neogov_password: S3cret-Neogov-1!\n", encoding="utf-8")
+    for url in ("https://careers.example.com/a", "https://acme.wd1.myworkdayjobs.com/en-US/External/login"):
+        run(srv.browser.goto(url))
+        fields = {f["label"]: f["id"] for f in run(srv.inspect_form(False))["fields"]}
+        out = run(srv.fill_secret(fields["Password"], "neogov_password"))
+        assert out["ok"] is False and "another site" in out["error"], (url, out)
+    run(srv.browser.goto("https://www.governmentjobs.com/app/signin"))
+    fields = {f["label"]: f["id"] for f in run(srv.inspect_form(False))["fields"]}
+    assert run(srv.fill_secret(fields["Password"], "neogov_password")) == {"ok": True}
+    assert "S3cret" not in str(run(srv.inspect_form(False)))
 
 
 @needs_browser

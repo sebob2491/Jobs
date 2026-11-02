@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>GovernmentJobs.com | Account Verified</title></head>
+<body>
+<!-- Where NEOGOV's emailed confirmation link leads (/app/verify-email?token=...&returnUrl=..., as neogov-walk-signup.html
+     sends it): the account's email is verified (localStorage's neo.account), and the page says so, with a way to sign
+     in. It doesn't sign the browser in: the sign-in does that. (What NEOGOV's own link page shows wasn't seen: a live
+     probe with the test identity settles it.) Made-up values only. -->
+<main class="auth-page">
+  <div class="auth-card">
+    <h1 class="heading" id="heading">Your email has been verified</h1>
+    <p id="said">Your account is ready. Sign in to continue.</p>
+    <a id="signin" class="btn-primary" href="/app/signin">Sign In</a>
+  </div>
+</main>
+<script>
+  const query = new URLSearchParams(location.search);
+  const account = JSON.parse(localStorage.getItem('neo.account') || 'null');
+  if (account && query.get('token') === 'c0ffee1234') {
+    localStorage.setItem('neo.account', JSON.stringify({...account, verified: true}));
+    fetch('/__fake/verified', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+  } else {
+    document.getElementById('heading').textContent = 'This link is invalid or has expired';
+    document.getElementById('said').textContent = 'Request a new confirmation link from the sign-up page.';
+  }
+  document.getElementById('signin').href = '/app/signin?returnUrl=' + encodeURIComponent(query.get('returnUrl') || '/');
+</script>
+</body>
+</html>

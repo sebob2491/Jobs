@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Apply | Equipment Technician | GovernmentJobs</title></head>
+<body>
+<!-- A NEOGOV application (the job's /apply address) once signed in, in the steps NEOGOV's own Application Guide lists
+     (www.governmentjobs.com/Home/ApplicationGuide, Nov 2026), its progress on the left; ?step= keeps the step here:
+       info:        "Personal Information": names, email, address, a State list, Zip Code, phone, and whether
+                    authorized to work in the U.S.;
+       work:        "Work Experience": one job's employer, title, dates (MM/YYYY), "I currently work here", duties;
+       education:   "Education": school, a Degree list, major;
+       references:  "References": none required;
+       questions:   "Agency-Wide Questions" (whether 18 or older; the attestation box, "I certify that the information
+                    I have provided in this application is true and complete...": settings.accept_notices) and
+                    "Supplemental Questions" (one only the person can answer, and an optional "email me future job
+                    openings": job alerts, never chosen);
+       attachments: "Attachments": the resume's file box;
+       review:      "Review": what went in, and "Proceed to Certify and Submit";
+       certify:     "Certify & Submit": the statement, and "Accept and Submit", which sends it (/__fake/submit).
+     Each step's "Save & Continue" checks its required boxes and says what's missing ("First Name is required."). Signed
+     out (localStorage's neo.signedIn), the page sends the browser on to NEOGOV's sign-in with this address as its
+     returnUrl, as NEOGOV's does. What went in is kept for the tab (sessionStorage's neo.answers). Made-up agency and
+     values. -->
+<header><span>Example County, NV</span> <span>Equipment Technician</span></header>
+<main id="app" hidden>
+  <nav aria-label="Application progress"><ol class="steps"><li>Info</li><li>Work</li><li>Education</li><li>References</li>
+    <li>Questions</li><li>Attachments</li><li>Review</li></ol></nav>
+  <h2 id="heading"></h2>
+  <form id="step" novalidate><div id="boxes"></div><div id="err" role="alert"></div><div id="buttons"></div></form>
+</main>
+<script>
+  if (localStorage.getItem('neo.signedIn') !== 'true') {
+    location.replace('/app/signin?returnUrl=' + encodeURIComponent(location.pathname));
+  }
+  const fake = (what, data) => fetch('/__fake/' + what, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                         body: JSON.stringify(data || {})});
+  const $ = (id) => document.getElementById(id);
+  const step = new URLSearchParams(location.search).get('step') || 'info';
+  const kept = JSON.parse(sessionStorage.getItem('neo.answers') || '{}');
+  const req = (required) => required ? '<span class="required">*</span>' : '';
+  const text = (id, label, required = true, hint = '') => '<div class="form-group"><label for="' + id + '">' + label
+    + req(required) + '</label><input id="' + id + '"' + (required ? ' aria-required="true"' : '')
+    + (hint ? ' placeholder="' + hint + '"' : '') + '></div>';
+  const list = (id, label, options, required = true) => '<div class="form-group"><label for="' + id + '">' + label
+    + req(required) + '</label><select id="' + id + '"' + (required ? ' aria-required="true"' : '')
+    + '><option value="">Select</option>' + options.map((o) => '<option>' + o + '</option>').join('') + '</select></div>';
+  const yesNo = (id, label) => '<fieldset class="form-group" id="' + id + '" data-required="true"><legend>' + label
+    + req(true) + '</legend><label><input type="radio" name="' + id + '" value="Yes"> Yes</label><label><input type="radio" '
+    + 'name="' + id + '" value="No"> No</label></fieldset>';
+  const box = (id, label) => '<div class="form-group"><input type="checkbox" id="' + id + '" aria-required="true"><label for="'
+    + id + '">' + label + req(true) + '</label></div>';
+  const STEPS = {
+    info: ['Personal Information', text('first', 'First Name') + text('middle', 'Middle Name', false)
+      + text('last', 'Last Name') + text('email', 'Email') + text('address', 'Address') + text('city', 'City')
+      + list('state', 'State', ['Arizona', 'California', 'Nevada', 'Utah']) + text('zip', 'Zip Code')
+      + text('phone', 'Phone Number')
+      + list('authorized', 'Are you legally authorized to work in the United States?', ['Yes', 'No']),
+      'Save &amp; Continue', 'work'],
+    work: ['Work Experience', text('employer', 'Employer') + text('title', 'Job Title')
+      + text('start', 'Start Date', true, 'MM/YYYY') + text('end', 'End Date', false, 'MM/YYYY')
+      + '<div class="form-group"><input type="checkbox" id="current"><label for="current">I currently work here</label></div>'
+      + '<div class="form-group"><label for="duties">Duties</label><textarea id="duties"></textarea></div>',
+      'Save &amp; Continue', 'education'],
+    education: ['Education', text('school', 'School Name')
+      + list('degree', 'Degree', ['High School Diploma/GED', "Associate's", "Bachelor's", "Master's", 'Doctorate'])
+      + text('major', 'Major', false), 'Save &amp; Continue', 'references'],
+    references: ['References', '<p>References are not required for this position.</p>' + text('refName', 'Name', false)
+      + text('refPhone', 'Phone', false), 'Save &amp; Continue', 'questions'],
+    questions: ['Questions', '<h3>Agency-Wide Questions</h3>'
+      + yesNo('adult', 'Are you at least 18 years of age?')
+      + box('certify', 'I certify that the information I have provided in this application is true and complete to the '
+        + 'best of my knowledge, and I understand that any false statement or omission may disqualify me from employment.')
+      + '<h3>Supplemental Questions</h3>'
+      + list('hvac', 'How many years of experience do you have installing and repairing commercial HVAC equipment?',
+        ['None', 'Less than 1 year', '1 to 3 years', 'More than 3 years'])
+      + list('alerts', 'Would you like to receive email notifications of future job openings with Example County?',
+        ['Yes', 'No'], false), 'Save &amp; Continue', 'attachments'],
+    attachments: ['Attachments', '<div class="form-group"><label for="resume">Resume' + req(true) + '</label><input id="resume" '
+      + 'type="file" aria-required="true" accept=".pdf,.doc,.docx,.jpg"></div>', 'Save &amp; Continue', 'review'],
+    review: ['Review', '<div id="summary"></div>', 'Proceed to Certify and Submit', 'certify'],
+    certify: ['Certify &amp; Submit', '<p>By clicking "Accept and Submit", I certify that the information in this application '
+      + 'is true and complete.</p>', 'Accept and Submit', null],
+  };
+  if (localStorage.getItem('neo.signedIn') === 'true') {
+    $('app').hidden = false;
+    const [heading, boxes, button] = STEPS[step];
+    $('heading').innerHTML = heading;
+    $('boxes').innerHTML = boxes;
+    $('buttons').innerHTML = '<button type="submit" class="btn-primary">' + button + '</button>';
+    if (step === 'review') {
+      $('summary').innerHTML = Object.entries(kept).map(([k, v]) => '<p>' + k + ': ' + v + '</p>').join('');
+    }
+  }
+  function collect() {
+    const out = {};
+    for (const el of ($('boxes') ? $('boxes').querySelectorAll('input, select, textarea') : [])) {
+      if (el.type === 'radio') { if (el.checked) out[el.name] = el.value; else if (!(el.name in out)) out[el.name] = ''; }
+      else if (el.type === 'checkbox') out[el.id] = el.checked;
+      else out[el.id] = el.type === 'file' ? (el.files[0] ? el.files[0].name : '') : el.value;
+    }
+    return out;
+  }
+  window.answers = () => ({...kept, ...collect()});
+  $('step').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const now = collect();
+    if (step === 'certify') {
+      await fake('submit', {answers: kept});
+      document.body.innerHTML = '<h1>Application Submitted</h1>';
+      return;
+    }
+    const missing = [...$('boxes').querySelectorAll('[aria-required="true"], [data-required="true"]')]
+      .filter((el) => !now[el.id] && !now[el.name] || (el.tagName === 'FIELDSET' && !now[el.id]));
+    if (missing.length) {
+      $('err').textContent = missing.map((el) => (el.tagName === 'FIELDSET' ? el.querySelector('legend')
+        : document.querySelector('label[for="' + el.id + '"]')).textContent.replace(/\*$/, '').trim() + ' is required.')
+        .join(' ');
+      return;
+    }
+    sessionStorage.setItem('neo.answers', JSON.stringify({...kept, ...now}));
+    location.href = location.pathname + '?step=' + STEPS[step][3];
+  });
+</script>
+</body>
+</html>

@@ -499,7 +499,7 @@ def test_the_desk_moves_secrets_yaml_into_the_vault_at_its_start_and_says_what_i
                 state = await c.get("/api/state", headers=h)
                 assert state.json()["passwords"] == {
                     "workday": True, "successfactors": False, "icims": False, "applicantstack": False, "ukg": False,
-                    "infor": False, "taleo": False, "email": True, "anthropic": False}
+                    "infor": False, "taleo": False, "neogov": False, "email": True, "anthropic": False}
                 assert "Wd-pass-1" not in state.text and "abcdefgh" not in state.text
                 body = {"name": "taleo_password", "value": "Taleo-pass-5"}
                 assert (await c.post("/api/password", headers=h, json=body)).json() == {"saved": True}

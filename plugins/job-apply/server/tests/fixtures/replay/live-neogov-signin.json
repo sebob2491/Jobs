@@ -1,0 +1,42 @@
+{
+  "file": "live-neogov-signin.html",
+  "address": "https://www.governmentjobs.com/app/signin",
+  "applicant": "the live check's test applicant",
+  "refused": 0,
+  "page": "sign_in",
+  "next": null,
+  "captcha": false,
+  "security_asked": false,
+  "account_and_application": false,
+  "job_search": false,
+  "errors": [],
+  "buttons": [
+    "Forgot password?",
+    "Show password",
+    "Sign In",
+    "Continue with Google",
+    "Continue with Facebook",
+    "Sign Up",
+    "Back"
+  ],
+  "dialogs": [],
+  "boxes": [
+    {
+      "label": "Email*",
+      "kind": "text",
+      "required": true,
+      "plan": "fill",
+      "rule": "email",
+      "value": "<email>"
+    },
+    {
+      "label": "Password*",
+      "kind": "password",
+      "required": true,
+      "plan": "left",
+      "why": "a password: the desk's own step (sign-in or account)"
+    }
+  ],
+  "agreement": null,
+  "notice": null
+}

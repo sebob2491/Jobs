@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>GovernmentJobs.com | Sign Up</title></head>
+<body>
+<!-- Like NEOGOV's "Create an account" (www.governmentjobs.com/app/signup?returnUrl=...), its public page in Nov 2026:
+     Email, Password (its rules listed: at least 12 characters, upper and lower case letters, numbers and symbols),
+     Confirm Password, the line that continuing agrees to its Terms of Use and Privacy Policy (no box: the account's
+     terms), "Continue with Email", "Continue with Google" (never pressed: /__fake/social), and "Already have an
+     account? Sign In".
+     Continue with Email, with the rules met and the passwords the same, makes the account (localStorage's
+     neo.account, unverified; reported to /__fake/account) and emails its confirmation link (/__fake/mail: a link to
+     /app/verify-email, neogov-walk-verified.html), then shows "Verify your account" in place of the form, at the same
+     address: reloaded, the page is the empty form again, as NEOGOV's own is. For an email that has an account already
+     it shows "Verify your account" all the same, and emails nothing (NEOGOV's sign-up never says an email is taken).
+     ?verify=<email> (where the sign-in sends an account not verified yet) shows "Verify your account" at once.
+     Made-up values only. -->
+<main class="auth-page">
+  <div class="auth-card" id="card">
+    <h1 class="heading">Create an account</h1>
+    <p class="subtitle">Enter your email below to create your account</p>
+    <p class="required-instruction"><span class="required">*</span> indicates a required field</p>
+    <form id="signup" novalidate>
+      <div class="form-group"><label for="signup-email"> Email<span class="required">*</span></label>
+        <input type="email" id="signup-email" placeholder="m@example.com" aria-required="true" autocomplete="email"></div>
+      <div class="form-group"><label for="signup-password"> Password<span class="required">*</span></label>
+        <div class="password-wrapper"><input type="password" id="signup-password" aria-required="true"
+          autocomplete="new-password" aria-describedby="password-requirements"><button type="button"
+          aria-label="Show password" class="password-toggle" aria-pressed="false"></button></div></div>
+      <div id="password-requirements"><div class="password-requirements"><p class="requirements-label">Your password must
+        contain:</p><ul><li> At least 12 characters in length </li><li> Upper and lower case letters </li><li> Numbers and
+        symbols </li><li> Must not be a previously used password </li><li> Must not be a commonly used word or phrase
+        </li></ul></div></div>
+      <div class="form-group"><label for="signup-confirm-password"> Confirm Password<span class="required">*</span></label>
+        <div class="password-wrapper"><input type="password" id="signup-confirm-password" aria-required="true"
+          autocomplete="new-password"><button type="button" aria-label="Show password" class="password-toggle"
+          aria-pressed="false"></button></div></div>
+      <div id="err" role="alert"></div>
+      <p class="legal-text">By clicking one of the "<strong>Continue</strong>" options below, you will sign in to or create a
+        Governmentjobs account managed by Governmentjobs.com, Inc. d/b/a NEOGOV, and you agree to the
+        <a href="/home/termsofuse" target="_blank">Terms of Use</a> and acknowledge NEOGOV's
+        <a href="/home/privacypolicy" target="_blank">Privacy Policy</a>.</p>
+      <button type="submit" class="btn-primary"> Continue with Email </button>
+    </form>
+    <div class="divider"><span class="divider-text">OR</span></div>
+    <div class="social-buttons">
+      <button type="button" class="btn-outline social" aria-label="Continue with Google"> Continue with Google </button>
+    </div>
+    <p class="footer-text"> Already have an account? <a id="signin" class="footer-link" href="/app/signin">Sign In</a></p>
+  </div>
+  <div class="auth-back-wrapper"><button type="button" class="auth-back-link" id="back"> Back </button></div>
+</main>
+<script>
+  const fake = (what, data) => fetch('/__fake/' + what, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                         body: JSON.stringify(data || {})});
+  const $ = (id) => document.getElementById(id);
+  const query = new URLSearchParams(location.search);
+  const back = query.get('returnUrl') || '/';
+  const signIn = '/app/signin?returnUrl=' + encodeURIComponent(back);
+  $('signin').href = signIn;
+  for (const b of document.querySelectorAll('.social')) b.addEventListener('click', () => fake('social', {which: b.textContent.trim()}));
+  const mask = (email) => email.replace(/^(.).*(@.*)$/, '$1***$2');
+  function verifyView(email) {
+    document.title = 'GovernmentJobs.com | Verify Your Account';
+    $('card').innerHTML = '<h1 class="heading">Verify your account</h1><p>We\'ve sent a confirmation link to</p>'
+      + '<p class="masked">' + mask(email) + '</p><p> Click the confirmation link in the email to complete your sign up. '
+      + 'The link will expire after 60 minutes. </p><p> Didn\'t get the email? <button type="button" id="resend" '
+      + 'class="link-button">Resend</button></p>';
+    $('back').textContent = ' Back to Sign in ';
+    $('back').addEventListener('click', () => { location.href = signIn; });
+    $('resend').addEventListener('click', () => fake('resend', {}));
+  }
+  if (query.get('verify')) verifyView(query.get('verify'));
+  $('signup').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = $('signup-email').value.trim(), password = $('signup-password').value;
+    const rules = password.length >= 12 && /[a-z]/.test(password) && /[A-Z]/.test(password) && /\d/.test(password)
+      && /[^A-Za-z0-9]/.test(password);
+    if (!/^\S+@\S+\.\S+$/.test(email)) { $('err').textContent = 'Please enter a valid email address'; return; }
+    if (!rules) { $('err').textContent = 'Your password does not meet the requirements.'; return; }
+    if (password !== $('signup-confirm-password').value) { $('err').textContent = 'Passwords do not match.'; return; }
+    const had = JSON.parse(localStorage.getItem('neo.account') || 'null');
+    if (!had) {
+      localStorage.setItem('neo.account', JSON.stringify({email, password, verified: false}));
+      await fake('account', {email, password});
+      await fake('mail', {sender: 'noreply@governmentjobs.com', subject: 'Verify your GovernmentJobs account', to: email,
+                          kind: 'link', value: location.origin + '/app/verify-email?token=c0ffee1234&returnUrl='
+                            + encodeURIComponent(back)});
+    } else {
+      await fake('account_again', {email});
+    }
+    verifyView(email);
+  });
+</script>
+</body>
+</html>

@@ -173,20 +173,20 @@ companies:
     search: {workday: https://lvvwd.wd1.myworkdayjobs.com/LVVWDWaterJobs}
   - name: Clark County
     careers_url: https://www.governmentjobs.com/careers/clarkcounty
-    ats: custom               # neogov; clarkcountynv.gov's Human Resources "Employment" page links here
+    ats: neogov               # clarkcountynv.gov's Human Resources "Employment" page links here
     nv_sites: Las Vegas (Government Center), county-wide
     confidence: high          # live check, Nov 2026: its NEOGOV board's 21 openings (Facility Maintenance Technician,
                               # Purchasing Analyst); the board names no place, so its openings get the county's
     search: {neogov: {agency: clarkcounty, place: "Clark County, NV"}}
   - name: City of Las Vegas
     careers_url: https://www.governmentjobs.com/careers/lasvegas
-    ats: custom               # neogov; lasvegasnevada.gov/Government/Employment links here
+    ats: neogov               # lasvegasnevada.gov/Government/Employment links here
     nv_sites: Las Vegas (City Hall)
     confidence: high          # live check, Nov 2026: IT Support Technician, HVAC Technician (27 openings)
     search: {neogov: lasvegas}
   - name: City of Henderson
     careers_url: https://www.governmentjobs.com/careers/henderson
-    ats: custom               # neogov; cityofhenderson.com answered 403 (Access Denied) from here; this NEOGOV page
+    ats: neogov               # cityofhenderson.com answered 403 (Access Denied) from here; this NEOGOV page
                               # carries the City's logo
     nv_sites: Henderson
     confidence: high          # live check, Nov 2026: Public Works Business Analyst III, ERP Application Developer
@@ -228,7 +228,7 @@ companies:
     no_search: careers.hcahealthcare.com answers with a Cloudflare challenge (Oct 2026), so its job system was never seen
   - name: University Medical Center of Southern Nevada
     careers_url: https://www.governmentjobs.com/careers/umcsn
-    ats: custom               # neogov; umcsn.com's "Careers at UMC" links to its NEOGOV page
+    ats: neogov               # umcsn.com's "Careers at UMC" links to its NEOGOV page
     nv_sites: Las Vegas (Medical District)
     confidence: high          # live check, Nov 2026: Epic Analyst - Core Clinical, Per Diem Pharmacy Technician
                               # (72 openings)

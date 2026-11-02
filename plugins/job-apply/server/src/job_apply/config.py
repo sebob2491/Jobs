@@ -713,7 +713,7 @@ SITE_PASSWORD = re.compile(r"^[a-z][a-z0-9]{1,30}_password$")  # e.g. workday_pa
 # The systems whose password the desk page lets the person save, by the name it shows (pipeline.DESK_PASSWORDS)
 DESK_PASSWORDS = {"workday_password": "Workday", "successfactors_password": "SuccessFactors", "icims_password": "iCIMS",
                   "applicantstack_password": "ApplicantStack", "ukg_password": "UKG Pro", "infor_password": "Infor",
-                  "taleo_password": "Taleo"}
+                  "taleo_password": "Taleo", "neogov_password": "NEOGOV"}
 # The Anthropic API key the desk writes cover letters with (letters.api_key), saved as a site password is
 API_KEY_NAME = "anthropic_api_key"
 # The ntfy topic phone alerts go to (phone.py): anyone who knows it can read them, so it's kept as a password is, and

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>GovernmentJobs.com | Sign In</title></head>
+<body>
+<!-- Like NEOGOV's sign-in (www.governmentjobs.com/app/signin?returnUrl=<the job's /apply>), its public page in Nov 2026:
+     "Welcome back", Email and Password, "Forgot password?", the line that signing in agrees to its Terms of Use and
+     Privacy Policy (no box), "Sign In", then "Continue with Google" and "Continue with Facebook" (never pressed: a
+     report of one goes to /__fake/social), and "Don't have an account? Sign Up" (/app/signup, neogov-walk-signup.html,
+     with the returnUrl). One account at governmentjobs.com serves every agency.
+     The account is kept for the browser (localStorage's neo.account: its email, password and whether its email is
+     verified). With none, or another password, the sign-in says so. An account whose email isn't verified yet is sent
+     on to /app/signup?verify=<email>, which says to click the emailed link (as NEOGOV's sign-up reads its "verify"
+     parameter). A verified one is signed in (localStorage's neo.signedIn) and goes on to the returnUrl.
+     Made-up values only. -->
+<main class="auth-page">
+  <div class="auth-card">
+    <h1 class="heading">Welcome back</h1>
+    <p class="subtitle">Enter your email to sign in to your account</p>
+    <p class="required-instruction"><span class="required">*</span> indicates a required field</p>
+    <form id="signin" novalidate>
+      <div class="form-group"><label for="signin-email"> Email<span class="required">*</span></label>
+        <input type="email" id="signin-email" placeholder="m@example.com" aria-required="true" autocomplete="email"></div>
+      <div class="form-group"><div class="password-row"><label for="signin-password"> Password<span class="required">*</span></label>
+        <a id="forgot" class="forgot-password" href="/app/forgot-password">Forgot password?</a></div>
+        <div class="password-wrapper"><input type="password" id="signin-password" aria-required="true"
+          autocomplete="current-password"><button type="button" aria-label="Show password" class="password-toggle"
+          aria-pressed="false"></button></div></div>
+      <div id="err" role="alert"></div>
+      <p class="legal-text">By clicking one of the "<strong>Continue</strong>" options below, you will sign in to or create a
+        Governmentjobs account managed by Governmentjobs.com, Inc. d/b/a NEOGOV, and you agree to the
+        <a href="/home/termsofuse" target="_blank">Terms of Use</a> and acknowledge NEOGOV's
+        <a href="/home/privacypolicy" target="_blank">Privacy Policy</a>.</p>
+      <button type="submit" class="btn-primary"> Sign In </button>
+    </form>
+    <div class="divider"><span class="divider-text">OR</span></div>
+    <div class="social-buttons">
+      <button type="button" class="btn-outline social" aria-label="Continue with Google"> Continue with Google </button>
+      <button type="button" class="btn-outline social" aria-label="Continue with Facebook"> Continue with Facebook </button>
+    </div>
+    <p class="footer-text"> Don't have an account? <a id="signup" class="footer-link" href="/app/signup">Sign Up</a></p>
+  </div>
+  <div class="auth-back-wrapper"><button type="button" class="auth-back-link"> Back </button></div>
+</main>
+<script>
+  const fake = (what, data) => fetch('/__fake/' + what, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                         body: JSON.stringify(data || {})});
+  const $ = (id) => document.getElementById(id);
+  const back = new URLSearchParams(location.search).get('returnUrl') || '/';
+  $('signup').href = '/app/signup?returnUrl=' + encodeURIComponent(back);
+  $('forgot').href = '/app/forgot-password?returnUrl=' + encodeURIComponent(back);
+  for (const b of document.querySelectorAll('.social')) b.addEventListener('click', () => fake('social', {which: b.textContent.trim()}));
+  $('signin').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const email = $('signin-email').value.trim(), password = $('signin-password').value;
+    if (!email || !password) { $('err').textContent = 'Please enter your email and password.'; return; }
+    const account = JSON.parse(localStorage.getItem('neo.account') || 'null');
+    fake('signin', {email, ok: !!(account && account.email === email && account.password === password)});
+    if (!account || account.email !== email || account.password !== password) {
+      $('err').textContent = 'The email or password you entered is incorrect.';
+      return;
+    }
+    if (!account.verified) {
+      location.href = '/app/signup?verify=' + encodeURIComponent(email) + '&returnUrl=' + encodeURIComponent(back);
+      return;
+    }
+    localStorage.setItem('neo.signedIn', 'true');
+    location.href = back;
+  });
+</script>
+</body>
+</html>

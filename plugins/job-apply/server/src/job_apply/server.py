@@ -34,7 +34,7 @@ from .ats import ATS_NAMES, detect_ats, greenhouse_form_url, host_of, shared_sys
 from .autofill import common_questions as bank_questions
 from .autofill import (documents_asked, is_eeo_rule, is_empty_value, is_how_heard, is_name_rule, is_school_rule, norm,
                        place_words, plan_autofill, profile_entries, resolve_field)
-from .browser import BrowserSession, BrowserUnavailable, SiteDown, SubmitBlocked
+from .browser import BrowserSession, BrowserUnavailable, SiteDown, SubmitBlocked, final_text
 from .mailbox import MailboxError, site_domain
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .recommend import avoided_title
@@ -1597,6 +1597,10 @@ def _submit_policy(ats: str) -> str:
 
 # Tracker statuses that mean the application is no longer the desk's to send (pipeline.FINISHED, and a Skip)
 _SUBMIT_GONE = frozenset({"applied", "interviewing", "offer", "rejected", "withdrawn", "skipped"})
+# A review page's way on to the page that sends the application, which sends nothing itself (NEOGOV's "Proceed to
+# Certify and Submit": its Certify & Submit page's "Accept and Submit" does). Pressed only as a Submit is: by
+# submit_application, which goes on through the final page's own button
+_ON_TO_SUBMIT = re.compile(r"^proceed to (?:certify (?:and|&) )?submit$", re.I)
 # A job the tracker kept apart from one it may be the same posting as (an Indeed job and the employer's): what Claude's
 # tools say while that one is begun or applied to, as the Job Desk's card asks (the review of 0.3.206)
 MAYBE_SAME_SAYS = "may be the job already started or applied to: ask the person before applying"
@@ -1713,6 +1717,15 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
     _write_record(record, {"confirmed": False, "state": "pressing", "at": datetime.now().isoformat()})
     try:
         result = await browser.press_submit(buttons[-1]["id"])
+        if not result["confirmed"] and _ON_TO_SUBMIT.match(final_text(buttons[-1].get("text") or "")):
+            # NEOGOV's review page: its "Proceed to Certify and Submit" opens the Certify & Submit page, whose "Accept
+            # and Submit" sends it (NEOGOV's Application Guide). The same Submit goes on through that page's own final
+            # button, once; never another "proceed to" one
+            final = [b for b in await browser.find_submit()
+                     if not _ON_TO_SUBMIT.match(final_text(b.get("text") or ""))]
+            if final:
+                with contextlib.suppress(SubmitBlocked):  # (gone meanwhile: the first press's result, unconfirmed)
+                    result = await browser.press_submit(final[-1]["id"])
     except SubmitBlocked as e:  # nothing was pressed: the record is as it was
         with contextlib.suppress(OSError):
             record.write_text(earlier, encoding="utf-8") if earlier is not None else record.unlink(missing_ok=True)

@@ -86,7 +86,8 @@ _PAGE_WORDS = {
     "general", "screening", "cover", "letter", "new", "listing", "listings", "postings", "posting", "dashboard", "help",
     "faq", "benefits", "about", "inc", "llc", "workday", "sap", "successfactors", "icims", "oracle", "taleo", "cloud",
     "eightfold", "greenhouse", "lever", "smartrecruiters", "ashby", "avature", "brassring", "jobvite", "phenom",
-    "applicantstack", "paycom", "ukg", "pro", "infor", "cornerstone", "linkedin", "indeed", "company", "redacted",
+    "applicantstack", "paycom", "ukg", "pro", "infor", "cornerstone", "neogov", "linkedin", "indeed", "company",
+    "redacted",
     # (and everyday words a page writes with a capital, in a heading or a title: "Employment at Will", "Engineering
     # Careers", "Remote Jobs", "Life at Work": the review's)
     "will", "remote", "hybrid", "engineering", "engineer", "engineers", "global", "worldwide", "international", "team",
