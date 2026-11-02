@@ -13,7 +13,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse
 
 import pytest
 import yaml
-from conftest import browser_available, fixture_url, run
+from conftest import FIXTURES, browser_available, fixture_url, run
 
 import job_apply.browser as browser_module
 import job_apply.pipeline as pipeline
@@ -14708,6 +14708,87 @@ def test_a_saved_drafts_continue_application_is_the_way_in_and_its_answers_are_c
     else:
         assert (saved["ln"], saved["rd-1"]) == ("Rivers", "Ran the wet benches on nights."), (saved, r.log)
         assert not checked and not r.draft and not r.draft_changed, r.log
+
+
+@pytest.mark.parametrize("how", ["returning", "new", "in", "theirs"])
+def test_an_oracle_application_signed_in_by_its_code_has_its_kept_answers_checked(srv, monkeypatch, how):
+    """NV Energy's Oracle Recruiting Cloud (the accounts check's runs 176 and 177, Oct 31 and Nov 1): once its emailed
+    code signed the applicant in, the form came back filled with the answers the site kept from an earlier
+    application, "No" to being over 18 among them, and the desk filled nothing (every box showed something) and took
+    the page as ready. An Oracle application showing answers the desk didn't give is checked against the profile as a
+    saved draft is: the profile's answer where the box shows another, said in the log and on the card, and never sent
+    by Submit for me. Whether or not this job's code was asked ("in": the site signed in already, a second job there
+    or after a restart of the desk: the review of 0.3.244). One the site kept nothing for ("new") is filled as any
+    other, and nothing is said of answers kept. Where the person had worked in its tab before ("theirs": a Resume on the
+    code's card, typed by hand), its answers may be theirs: left as they are, said, and never sent by Submit for me."""
+    returning = how != "new"
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    monkeypatch.setattr(pipeline, "MAIL_POLL_SECONDS", 0)
+    monkeypatch.setenv("JOB_APPLY_SECRET_EMAIL_PASSWORD", "an-app-password")
+    monkeypatch.setattr(pipeline.mailbox, "imap_host", lambda address: "imap.example.com")
+    monkeypatch.setattr(pipeline, "_another_employers_mail", lambda *a, **k: None)
+    monkeypatch.setattr(Applier, "_mail_senders", lambda self, r: {"oraclecloud.com"})
+    asked_at = []
+    real_pause = Applier._pause
+
+    def pause(self, r, need, reason, questions=None, seen=None, *, code):
+        if need == "email_code":
+            asked_at.append(time.time())
+        return real_pause(self, r, need, reason, questions, seen, code=code)
+
+    def search(address, password, since, senders, want, allowed_link, before=None, look_back=120, others=None):
+        return pipeline.mailbox.Found("code", "123456", "oraclecloud.com", asked_at[-1] + 1) if asked_at else None
+
+    monkeypatch.setattr(Applier, "_pause", pause)
+    monkeypatch.setattr(pipeline.mailbox, "search", search)
+    site = "https://acme.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/1/apply/"
+    pages = {"email": (FIXTURES / "site" / "oracle-returning.html").read_text(encoding="utf-8"),
+             "review.html": (FIXTURES / "site" / "review.html").read_text(encoding="utf-8")}
+    job = srv.add_job(url=site + "email" + {"returning": "", "new": "?new", "in": "?in", "theirs": "?in"}[how],
+                      title="IT Project Manager", company="Example Energy")["job"]
+    applier = Applier(srv)
+    applier.auto_submit = True
+
+    async def go():
+        async def handler(route):
+            name = route.request.url.split("?")[0].rsplit("/", 1)[-1]
+            await route.fulfill(status=200, content_type="text/html", body=pages.get(name, pages["email"]))
+
+        await srv.browser.page()
+        await srv.browser._ctx.route("https://acme.fa.us2.oraclecloud.com/**", handler)
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"], submit=returning)  # (Submit for me: one with answers kept, never sent)
+            r.hands_on = how == "theirs"  # (as a Resume pressed on an earlier card)
+            await until(lambda: r.status not in ("queued", "running", "needs_you") or r.need not in ("email_code", ""),
+                        timeout=60, about=state(r))
+            return r, await r.page.evaluate("() => sessionStorage.getItem('adult')")
+        finally:
+            await applier.stop()
+
+    r, adult = run(go())
+    assert r.status == "ready" and "review.html" in r.url, (r.status, r.reason, r.log)
+    coded = any(line.startswith("entered the code from your email") for line in r.log)
+    assert coded == (how in ("returning", "new")), r.log
+    said = [line for line in r.log if "earlier application" in line]
+    if how == "theirs":
+        assert adult == "No" and not r.draft_changed and r.kept_unchecked, (adult, r.log)  # (as it was: theirs)
+        assert said and "I didn't check them" in said[0], r.log
+        assert "which I didn't check, as you'd worked in its tab, so Submit for me left it for you" in r.reason, \
+            r.reason
+        return
+    assert adult == "Yes", (adult, r.log)  # (the profile's: over 18)
+    if returning:
+        assert said, r.log
+        assert r.draft_changed and "filled this application with answers it kept from an earlier one of yours, and " \
+            "I changed some of its answers to your profile's (see What went in), so Submit for me left it for you" \
+            in r.reason, r.reason
+        assert r.public()["went_in"]["changed"] == [
+            "Are you over the age of 18 or will you be within the next 6 months?: No → Yes"], r.public()["went_in"]
+    else:
+        # (nothing kept, its preset country list none of it: filled as any other application, nothing said)
+        assert not r.draft_changed and not r.kept_answers and not said, r.log
+        assert not any("re-checked" in line for line in r.log), r.log
 
 
 @pytest.mark.parametrize("case", ["stopped", "refused"])

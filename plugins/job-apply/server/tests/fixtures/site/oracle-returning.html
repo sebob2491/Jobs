@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Job application form</title></head>
+<body>
+<!-- like an Oracle Recruiting Cloud application (NV Energy's, the accounts check's runs 176 and 177, Oct 31 and Nov 1):
+     its emailed code ("Confirm Your Identity", a box per digit: 123456) signs a returning applicant in, and the form
+     comes back filled with the answers the site kept from their earlier application: here "No" to being over 18,
+     where the profile says otherwise. The test serves it at an oraclecloud.com address. ?new: an applicant the site
+     has nothing kept for, whose form comes back empty. ?in: one the site signed in already (a second job there, or
+     after a restart of the desk): no code asked, the form filled with what it kept. -->
+<h2 id="title">Confirm Your Identity</h2>
+<div id="body"></div>
+<script>
+  const body = document.getElementById('body');
+  const params = new URLSearchParams(location.search);
+  const returning = !params.has('new');
+  const radios = (name, label, checked) => '<fieldset><legend>' + label + '</legend>'
+    + ['Yes', 'No'].map((v) => '<label><input type="radio" name="' + name + '" value="' + v + '"'
+      + (returning && v === checked ? ' checked' : '') + ' required> ' + v + '</label>').join('') + '</fieldset>';
+  const form = () => {
+    document.getElementById('title').textContent = 'Job application form';
+    // (a country list the site sets for anyone, new applicants too: never read as an answer it kept)
+    body.innerHTML = '<form id="app" novalidate><label for="country">Country</label><select id="country">'
+      + '<option value="">Select</option><option selected>United States</option><option>Canada</option></select>'
+      + radios('adult', 'Are you over the age of 18 or will you be within the next 6 months?', 'No')
+      + radios('auth', 'Are you currently authorized to work in the United States?', 'Yes')
+      + '<button type="button" id="next">Next</button></form>';
+    document.getElementById('next').addEventListener('click', () => {
+      if (document.querySelector('input[name=adult]:checked') && document.querySelector('input[name=auth]:checked')) {
+        sessionStorage.setItem('adult', document.querySelector('input[name=adult]:checked').value);
+        location.href = 'review.html';
+      }
+    });
+  };
+  body.innerHTML = '<form id="f" novalidate><span id="pin">Verification Code</span><fieldset>'
+    + [1, 2, 3, 4, 5, 6].map((i) => '<input class="pin" inputmode="numeric" aria-required="true" '
+      + 'aria-label="Enter verification code digit ' + i + ' of six.">').join('')
+    + '</fieldset><button type="submit">Verify</button></form>';
+  const pins = [...document.querySelectorAll('.pin')];
+  pins.forEach((el) => el.addEventListener('input', () => { el.value = el.value.replace(/\D/g, '').slice(-1); }));
+  document.getElementById('f').addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (pins.map((el) => el.value).join('') === '123456') form();
+  });
+  if (params.has('in')) form();
+</script>
+</body>
+</html>

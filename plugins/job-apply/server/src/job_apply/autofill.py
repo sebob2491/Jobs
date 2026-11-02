@@ -1200,7 +1200,7 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
                          # onsemi's "worked in any onsemi establishment" (never "worked in Arizona": a place)
                          rf"|\bwork\w* in (any |an? |the )?{first}( \w+)? (establishments?|facilit\w+|sites?|"
                          r"locations?|compan\w+|offices?|plants?|subsidiar\w+|affiliates?)\b"
-                         rf"|\b{first}( \w+)? (employee|employment|intern|contractor)s?\b"
+                         rf"|\b{first}( \w+)? (employee|employment|intern|contractor|team member)s?\b"
                          rf"|\bhired\b.{{0,60}}? (by|with|at) (the )?{first}\b", asked)
     if not (names_it or re.search(r"(employed|worked|hired) (by|for|at|with) (us|this|our|"
                                   r"the company)\b|former employee", asked)):
@@ -1218,6 +1218,45 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
         # sites": its customers'
         return None
     return _worked_here(prof, job, asked)
+
+
+def _currently_employed(prof: Profile, job: dict, label: str = "") -> Any:
+    """Does the person work for this employer now? ("Are you currently employed with Edward Jones?", "Are you a current
+    employee of Circle K?", "Are you currently a Station Casinos Team Member?": asked of the person at every employer in
+    run 177.) Only a question that names this employer by its own name or a short name of it (never its first word
+    alone: "the State of Arizona" isn't Arizona Public Service), as the one employing the person (the rule's words keep
+    out a relative's, someone else's, an agency's, a franchise's, "or in the last year"). "Yes" where the profile's job
+    now is there; "No" only where the profile says where the person works and has never had this employer (nor one
+    whose name may be its), so a choice that says "never" is true too; None where the person worked there before, or
+    the profile can't say (the reviews of 0.3.244)."""
+    company = str(job.get("company") or "")
+    own = _employer_key(re.sub(r"\([^)]*\)", " ", company))
+    names = sorted({n for n in (own, *employer_aliases(company)) if n}, key=len, reverse=True)
+    if not names:
+        return _NOT_ASKED
+    # the question alone (to its "?", without a bracket's words), and whatever follows it only a note ("If yes, please
+    # go to mysclife.net"): never "... as a Financial Advisor?", "... and do you hold a Series 7?" (the third review)
+    question, _, after = label.partition("?")
+    if norm(after) and not re.match(r"(if (yes|so|not|no)|note|please|required)\b", norm(after)):
+        return None
+    question = re.sub(r"\([^)]*\)|\b(?:required|optional)\s*$", " ", question, flags=re.I)
+    asked = norm(re.sub(r"\bUS\b|\bus(?= [A-Z])", "U.S.", question))
+    name = "(?:" + "|".join(re.escape(n) for n in names) + ")"
+    staff = r"(?:employee|team member|associate|staff member)s?"
+    # the person as the one employed there, and nothing more said of it: "are you (currently) (a|an) <name> team
+    # member", "are you a current employee of <name>", "do you currently work for <name>" (never "living with a
+    # Circle K employee", "married to one", "a full-time Edward Jones employee": the third review)
+    between = r"(?: (?:currently|presently|now|an?|the|current))*"
+    if not re.fullmatch(rf"(?:\d+ )?(?:are you|do you|current){between} (?:(?:employed (?:by|with|at|for)|"
+                        rf"work(?:ing)? (?:for|at)) (?:the )?{name}|{name} {staff}|{staff} (?:of|at|with|for) "
+                        rf"(?:the )?{name})", asked):
+        return _NOT_ASKED  # (another question, or another organization's: the next rule's)
+    said = _worked_here(prof, job, asked)
+    if said == "Yes, currently":
+        return "Yes"
+    works = [e for e in _listed(prof.get("work_history")) if isinstance(e, dict)] or prof.get(
+        "experience.current_company")
+    return "No" if said == "No" and works else None
 
 
 def _employer_names(job: dict) -> list[str]:
@@ -2237,12 +2276,26 @@ def _age(invert: bool) -> Getter:
     """Over 18 (or, inverted, under). Not answered from age alone when the question also asks
     about working or sponsorship ("at least 18 and legally authorized to work…?")."""
     def g(prof: Profile, job: dict, label: str = "") -> Any:
+        asked = norm(label)
+        # "Are you over the age of 18 or will you be within the next 6 months?" (NV Energy's Oracle, run 176): over 18
+        # now answers it Yes; anyone else's is theirs, who may turn 18 within those months. Only where that's all it
+        # adds, a time to come that ends the question (never "... or will you be by your start date, and legally
+        # authorized to work?": the review of 0.3.244)
+        soon = re.search(r"\bor (will|would) (you )?(be|turn)\b", asked)
+        if soon and not re.fullmatch(r"(?: 18(?: years(?: of age| old)?)?)?(?: (?:within|in) (?:the )?(?:next )?\w+ "
+                                     r"(?:months?|weeks?|days?)| (?:by|before|prior to|on|at|upon|as of) "
+                                     r"(?:the |your )?(?:start date|date of hire|time of hire|hire|hiring|time "
+                                     r"(?:you start|of employment|employment begins)|first day(?: of work| of "
+                                     r"employment)?|employment))?(?: required)?", asked[soon.end():]):
+            return None
         # (nor from a count of 18 months, hours, credits or units, or 18 years of experience or
         # work: the review of Oct 15)
-        if re.search(r"authori[sz]|sponsor|eligib|legally|permitted to work|able to work|right to work|"
-                     r"\b(months?|hours?|credits?|units?|experience|work(ed|ing)?)\b", norm(label)):
+        if re.search(r"authori[sz]|sponsor|eligib|legally|permitted to work|able to work|right to work", asked) \
+                or re.search(r"\b(months?|hours?|credits?|units?|experience|work(ed|ing)?)\b",
+                             asked[:soon.start()] if soon else asked):
             return None
-        return _yn("work_authorization.over_18", invert=invert)(prof, job)
+        said = _yn("work_authorization.over_18", invert=invert)(prof, job)
+        return None if soon and (invert or said != "Yes") else said
     return g
 
 
@@ -2769,8 +2822,8 @@ def _reads_question(getter: Getter) -> bool:
     return getter in _READS_QUESTION or bool(getattr(getter, "reads_question", False))
 
 
-_READS_QUESTION = {_relatives, _government, _travel, _previously_employed, _no_sponsorship, _sponsorship, _UNDER_18,
-                   _OVER_18, _phone, _masked_phone,
+_READS_QUESTION = {_relatives, _government, _travel, _previously_employed, _currently_employed, _no_sponsorship,
+                   _sponsorship, _UNDER_18, _OVER_18, _phone, _masked_phone,
                    _local_or_relocate, _lives_in, _veteran, _has_degree, _citizenship_proof, _clearance_held,
                    _clearance_said, _us_service, _military, _work_proof, _dod_employee}
 
@@ -3106,6 +3159,19 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("previous_employee", r"(previously|ever|formerly) (been )?(employed|worked)|former employee|"
      r"have you (ever )?worked (for|at)|worked .{0,40} before|have you (ever )?been hired\b",
      _previously_employed, None, None),  # (only about this employer: see _previously_employed)
+    # working for this employer now, asked of the person ("Are you currently employed by...?", "Are you a current
+    # employee of...?", "Current <employer> team member?"): never "now or before" (taken above) or "in the last year",
+    # nor "not"; nor a relative's, a household's, someone else's, a referral's or a hiring manager's; nor through an
+    # agency or as a contractor; nor a competitor's, a client's, a franchise's, a parent's or an affiliate's (the
+    # reviews of 0.3.244). The employer itself is read by _currently_employed
+    ("current_employee", r"^(?!.*\b(not|\w+n t|never|or|nor|last|within|recent\w*|past|previous\w*|prior|former\w*|"
+                         r"ever|relat\w*|famil\w*|spouse|husband|wife|partner|household|friends?|parents?|child\w*|"
+                         r"dependents?|anyone|someone|anybody|somebody|manager|supervisor|referr\w*|refer|agenc\w*|"
+                         r"staffing|temp\w*|through|via|contingent|contract\w*|consult\w*|vendors?|suppliers?|"
+                         r"competitors?|clients?|customers?|franchis\w*|subsidiar\w*|affiliat\w*)\b)(\d+ )?"
+                         r"(((are|do) you (\w+ )?(currently|presently|now)\b|are you (an? |the )?current\b|current\b)"
+                         r".*\b(employed|work(ing)? (for|at)|employees?|team members?|associates?|staff members?)\b)",
+     _currently_employed, None, _YES_NO_KINDS),
     # voluntary self-identification
     ("sexual_orientation", r"sexual orientation|\blgbt", _p("eeo.sexual_orientation"), None, None),
     ("gender", r"\bgender\b|\bsex\b", _eeo_gender, None, None),

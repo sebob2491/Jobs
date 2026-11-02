@@ -29,6 +29,17 @@ BANK = {q["id"]: q for q in config.question_bank()}
     ("adult", "Are you 18 years of age or older?"),
     ("essential_functions",
      "Are you able to perform the essential functions of the job, with or without reasonable accommodations?"),
+    # run 177's (Nov 2): EMD's, a casino's, Circle K's, and a degree program asked at Micron
+    ("essential_functions", "Are you able to perform the job functions for the position(s) you are seeking with or "
+                            "without reasonable accommodations?"),
+    ("adult_21", "Are you 21 years of age or older?"),
+    ("adult_21", "Are you at least 21?"),
+    ("age_16", "Are you at least 16 years old or older?"),
+    ("age_16", "Are you 16 years of age or older?"),
+    # (and "and older": the third review)
+    ("adult", "Are you 18 years of age and older?"),
+    ("adult_21", "Are you 21 years of age and over?"),
+    ("age_16", "Are you 16 years and older?"),
     ("terminated",
      "Have you ever been terminated or asked to resign by any former employer for the following reasons?"),
     ("shift", "What is your shift preference?"),
@@ -78,8 +89,28 @@ def test_each_common_question_covers_the_wordings_employers_asked(bank_id, label
     "Were you ever discharged from the military?",
     "Have you ever been dismissed from school?",
     "Are you able to work at least 16 hours?",
-    "Are you at least 16 years old or older?",  # (16 isn't 18: not the same question)
     "Which shift did you work?",
+    # (run 177's, the new entries') a count that's no age, a degree program gone by, a job's own requirement
+    "Do you have at least 21 credits of college coursework?",
+    "Are you willing to work 16 hour shifts?",
+    "Have you ever been enrolled in a degree program?",
+    "Were you enrolled in college in the past year?",
+    "Are you willing to perform the job functions listed in the description?",
+    # (the review of 0.3.244) an age range, an age and something more, a weight, a vehicle's, someone else's; and being
+    # enrolled now, never a common question (a degree's level or major, "or graduated": the person's each time)
+    "Are you at least 18 but not yet 21?",
+    "Are you between 16 and 21 years of age?",
+    "Are you aged 16 to 17?",
+    "Are you aged 16-17?",
+    "Do you hold a CDL and are at least 21 years of age?",
+    "Are you able to lift at least 16 lbs?",
+    "Is your vehicle at least 16 years old?",
+    "Are all drivers in your household at least 21 years old?",
+    "Are you NOT 21 years of age or older?",
+    "Are you currently enrolled in an accredited degree program (Bachelor's, Master's or PhD)?",
+    "Are you currently enrolled in a Master's degree program in Engineering?",
+    "Are you currently enrolled in a degree program or have you graduated in the last 12 months?",
+    "Is your dependent currently enrolled in college?",
     "Referral source name",
     "How did you hear about us? (If employee referral, please provide their name)",
     "Willing to relocate with relocation assistance?",

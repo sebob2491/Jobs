@@ -1265,6 +1265,14 @@ class Run:
     asked_once: dict[str, str] = field(default_factory=dict)
     mail_checked: float = 0.0  # when the inbox was last looked at for its emailed code or link
     mail_done: bool = False  # the code or link from the inbox went in: no more looking
+    # An Oracle application, which the site fills with the answers it kept from the person's earlier applications once
+    # its emailed code signs them in (NV Energy's, runs 176 and 177: "No" to being over 18 among them): looked at for
+    # them on the first of its pages with a list or choices (kept_looked); those answers checked as a saved draft's
+    # (kept_answers, with draft: Applier._autofill), or, where the person had worked in its tab before, left as they
+    # are and never sent by Submit for me (kept_unchecked: _finish)
+    kept_looked: bool = False
+    kept_answers: bool = False
+    kept_unchecked: bool = False
     # the employer's own mail domains, from its list (looked up once), and _another_employers_mail's answer for this
     # job (False: not looked up yet): the desk's own, never in public() (a frozenset and a function aren't JSON's)
     employer_mail: frozenset[str] | None = None
@@ -5961,7 +5969,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         # (jobs or schools left off, and a saved draft whose answers the desk changed to the profile's: the person's to
         # check, and to send: issue #112, note 38's review; and an application the desk opened again by itself after
         # the site's error, which may have gone in meanwhile elsewhere: Run.retry_held)
-        if sends and not run.entries_short and not run.draft_changed:
+        if sends and not run.entries_short and not run.draft_changed and not run.kept_unchecked:
             return await self._submit(run, by_person=False)
         srv._mark_ready(job, "filled by the Job Desk")
         run.status, run.need = "ready", ""
@@ -5976,8 +5984,15 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             run.reason += (f" Note: {_site(run, data)} shows only {names} (the Add button was covered): add the rest "
                            "in the desk's browser window before you press Submit.")
         if run.draft_changed:
-            run.reason += (" Note: this is an application the site kept from an earlier visit, and I changed some of "
-                           "its answers to your profile's (see What went in)"
+            run.reason += ((f" Note: {_site(run, data)} filled this application with answers it kept from an earlier "
+                            "one of yours" if run.kept_answers else
+                            " Note: this is an application the site kept from an earlier visit")
+                           + ", and I changed some of its answers to your profile's (see What went in)"
+                           + (", so Submit for me left it for you" if sends else "")
+                           + ": check them before you press Submit.")
+        elif run.kept_unchecked:
+            run.reason += (f" Note: {_site(run, data)} may have filled this application with answers it kept from an "
+                           "earlier one of yours, which I didn't check, as you'd worked in its tab"
                            + (", so Submit for me left it for you" if sends else "")
                            + ": check them before you press Submit.")
         # (the person's Submit from before a restart is never carried over: theirs to press again)
