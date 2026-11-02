@@ -17,16 +17,21 @@ import base64
 import binascii
 import contextlib
 import io
+import hashlib
 import json
 import os
 import re
 import tempfile
 import zipfile
+from collections.abc import Callable
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 from . import config, letters
-from .autofill import _END_KEYS, _START_KEYS, degree_key, entry_dates, is_present, parse_month_year
+from .autofill import _END_KEYS, _NOT_THAT_DEGREE, _PARTIAL_STUDY, _START_KEYS, degree_key, entry_dates, is_present, \
+    norm, parse_month_year
+from .autofill import _UNFINISHED as _NOT_FINISHED
 
 RESUME_MOST = 10 * 1024 * 1024  # bytes: the most a resume picked on the page may be
 RESUME_KINDS = (".pdf", ".docx")
@@ -57,17 +62,21 @@ AUTHORIZATION = {
 }
 CONSENTS = ("accept_cookies", "manage_accounts", "accept_notices")
 # A finished school's level, as education.degrees_earned writes it (the template's), and education.highest_degree's
-# words for each (as setup writes them: autofill's _DEGREE_NAMES reads them). "other": a certificate, a JD or an MD,
-# never counted as a degree
+# words for each (as setup writes them: autofill's _DEGREE_NAMES reads them). "other": a certificate, a JD, an MD or a
+# PharmD, never counted as a degree (setup's Stage 1 leaves them out of degrees_earned)
 LEVELS = ("high_school", "ged", "associate", "bachelor", "master", "doctorate")
 OTHER = "other"
+# What a school not finished was (the person picks): a high school, a college or university, or a trade or other
+# program (OTHER); each written in its own words, never as a degree
+COLLEGE = "college"
+_COLLEGE_LEVELS = ("associate", "bachelor", "master", "doctorate")
+NOT_COMPLETED = " (not completed)"  # after a trade or other program's name, not finished
 LEVEL_NAMES = {"high_school": "High School Diploma", "ged": "GED", "associate": "Associate's Degree",
                "bachelor": "Bachelor's Degree", "master": "Master's Degree", "doctorate": "Doctorate"}
 _RANK = {"high_school": 0, "ged": 0, "associate": 1, "bachelor": 2, "master": 3, "doctorate": 4}
 NO_DEGREE = "Some college (no degree)"  # a college not finished, as setup writes it (Workday's Degree box asks)
 SOME_COLLEGE = "Some college"  # education.highest_degree when no degree was finished
 SOME_HIGH_SCHOOL = "Some high school"
-_UNFINISHED = re.compile(r"\b(some college|some high school|no degree)\b", re.I)
 _DATE = re.compile(r"^(\d{4}-(0[1-9]|1[0-2])|\d{4}|present)$")
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _PHONE = re.compile(r"^[\d\s()+.\-]+(\s*(x|ext\.?)\s*\d{1,6})?$", re.I)
@@ -118,6 +127,24 @@ def read_rules() -> str:
 
 
 # ------------------------------------------------------------------ the form, as the profile has it
+class FormError(ValueError):
+    """A value the form can't save, with the window's step it's on (2: details, 3: jobs and schools, 4: consents; None:
+    the whole form), for the page to go back to."""
+
+    def __init__(self, said: str, step: int | None = None):
+        super().__init__(said)
+        self.step = step
+
+
+def profile_version() -> str:
+    """What profile.yaml holds now, in short (a hash of its bytes; "" for none): the window's form carries the one it
+    was made from, and a save over a profile changed since (its rows' places may be others now) is refused."""
+    try:
+        return hashlib.sha256(config.profile_path().read_bytes()).hexdigest()[:16]
+    except OSError:
+        return ""
+
+
 def _raw(prof: config.Profile, keys: tuple[str, ...]) -> Any:
     cur: Any = prof.data
     for key in keys:
@@ -142,11 +169,25 @@ def shown_date(value: Any) -> str:
 
 
 def _level_of(degree: str) -> str:
-    """The level a degree's words name ("BS Electrical Engineering": bachelor), for the person to check; "" for none."""
-    if re.search(r"\b(ged|hiset|equivalen\w*)\b", degree, re.I):
+    """The level a degree's words name ("BS Electrical Engineering": bachelor), for the person to check: "other" for
+    what's never counted as one (a certificate, a JD, an MD, a PharmD); "" for none, and for words saying it isn't
+    finished ("BS in progress", "Coursework toward BSEE", "BS EE (Expected 2027)"): the person says what it was."""
+    n = norm(degree)
+    if not n or _PARTIAL_STUDY.search(n) or _NOT_FINISHED.search(n):
+        return ""
+    if re.search(r"\b(ged|hiset|tasc|hsed|equivalen\w*)\b", n):
         return "ged"
+    if _NOT_THAT_DEGREE.search(n):
+        return OTHER
     key = degree_key(degree)
     return key if key in LEVELS else ""
+
+
+def _kind(level: Any) -> str:
+    """What a level is of: high school (a diploma, a GED), college (associate's to doctorate), or other."""
+    level = str(level or "")
+    return "high_school" if level in ("high_school", "ged") else COLLEGE if level in (COLLEGE, *_COLLEGE_LEVELS) \
+        else OTHER
 
 
 def _entries(prof: config.Profile, key: str) -> list[Any]:
@@ -154,10 +195,43 @@ def _entries(prof: config.Profile, key: str) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
+def listed_dicts(value: Any) -> list[dict[str, Any]]:
+    return [d for d in (value if isinstance(value, list) else [value]) if isinstance(d, dict)]
+
+
+def _earned_key(entry: dict[str, Any]) -> tuple[str, str]:
+    return str(entry.get("level") or "").strip().lower(), norm(entry.get("field"))
+
+
+def _school_row(e: dict[str, Any], i: int, earned: list[tuple[str, str]]) -> dict[str, Any]:
+    """A school's row as the profile says it. Finished: No where its degree says it wasn't (as this window writes
+    one); Yes only where a degrees_earned entry not yet matched to another school has its level and its field; else
+    unanswered, for the person to say."""
+    start, end = entry_dates(e)
+    degree = _shown(e.get("degree"))
+    field = _shown(e.get("major") or e.get("field"))
+    n = norm(degree)
+    finished: bool | None = None
+    if re.fullmatch(r"some high school", n):
+        finished, level = False, "high_school"
+    elif degree.endswith(NOT_COMPLETED):
+        finished, level, degree = False, OTHER, degree[:-len(NOT_COMPLETED)].strip()
+    elif re.fullmatch(r"some college( no degree)?", n):
+        finished, level = False, COLLEGE
+    else:
+        level = _level_of(degree)
+        if level in LEVELS and (level, norm(field)) in earned:
+            earned.remove((level, norm(field)))  # (one degree earned answers for one school)
+            finished = True
+    return {"school": _shown(e.get("school")), "degree": degree, "field": field, "start": shown_date(start),
+            "end": shown_date(end), "finished": finished, "level": level, "from": i}
+
+
 def form_of(prof: config.Profile) -> dict[str, Any]:
     """The form as the profile fills it: the person's own answers, and nothing the profile doesn't say (the template's
     `over_18: true` isn't theirs until they've answered the work authorization questions). Each job's and school's row
-    carries `from`, its place in the profile's list, so its other keys stay with it when it's saved."""
+    carries `from`, its place in the profile's list, so its other keys stay with it when it's saved; and the form
+    carries the profile's version, so a save over a profile changed since is refused."""
     personal = {k: _shown(_raw(prof, keys)) for k, (keys, _, _, _) in PERSONAL.items()}
     authorization = {k: v if isinstance(v := _raw(prof, ("work_authorization", k)), bool) else None
                      for k in AUTHORIZATION}
@@ -170,32 +244,16 @@ def form_of(prof: config.Profile) -> dict[str, Any]:
             jobs.append({"title": _shown(e.get("title")), "company": _shown(e.get("company")),
                          "location": _shown(e.get("location")), "start": shown_date(start), "end": shown_date(end),
                          "from": i})
-    earned = {str(d.get("level") or "").strip().lower()
-              for d in listed_dicts(_raw(prof, ("education", "degrees_earned")))}
-    schools = []
-    for i, e in enumerate(_entries(prof, "education_history")):
-        if not isinstance(e, dict):
-            continue
-        start, end = entry_dates(e)
-        degree = _shown(e.get("degree"))
-        unfinished = bool(_UNFINISHED.search(degree))
-        level = "high_school" if re.search(r"\bsome high school\b", degree, re.I) else "" if unfinished \
-            else _level_of(degree)
-        # (finished: Yes only where the profile's degrees_earned says so; No where its degree says none; else asked)
-        finished = False if unfinished else True if level and level in earned else None
-        schools.append({"school": _shown(e.get("school")), "degree": degree,
-                        "field": _shown(e.get("major") or e.get("field")), "start": shown_date(start),
-                        "end": shown_date(end), "finished": finished, "level": level, "from": i})
+    earned = [_earned_key(d) for d in listed_dicts(_raw(prof, ("education", "degrees_earned")))]
+    schools = [_school_row(e, i, earned) for i, e in enumerate(_entries(prof, "education_history"))
+               if isinstance(e, dict)]
     settings = prof.settings
     named = _raw(prof, ("documents", "resume"))
     resume = config.expand(named.strip()) if isinstance(named, str) and named.strip() else None
     return {"personal": personal, "work_authorization": authorization, "jobs": jobs, "schools": schools,
             "settings": {k: bool(getattr(settings, k)) for k in CONSENTS},
-            "resume": {"path": str(resume) if resume else "", "found": bool(resume and resume.is_file())}}
-
-
-def listed_dicts(value: Any) -> list[dict[str, Any]]:
-    return [d for d in (value if isinstance(value, list) else [value]) if isinstance(d, dict)]
+            "resume": {"path": str(resume) if resume else "", "found": bool(resume and resume.is_file())},
+            "version": profile_version()}
 
 
 # ------------------------------------------------------------------ the form's values, checked
@@ -216,6 +274,17 @@ def _date(value: Any, what: str) -> str:
         raise ValueError(f"{what[:1].upper() + what[1:]}: write the month as 2021-03 (or the year alone, 2021), or "
                          "present")
     return said
+
+
+def _not_ended(end: str, today: date | None = None) -> bool:
+    """An end that's still to come: present, a later year, or a later month this year."""
+    if end == "present":
+        return True
+    today = today or date.today()
+    month, year = parse_month_year(end)
+    if not year:
+        return False
+    return int(year) > today.year or int(year) == today.year and int(month or 0) > today.month
 
 
 def _rows(value: Any, most: int, what: str) -> list[dict[str, Any]]:
@@ -254,16 +323,25 @@ def _school(row: dict[str, Any], n: int, entries: list[Any]) -> dict[str, Any]:
     if not isinstance(finished, bool):
         raise ValueError(f"{school}: say whether you finished it (Yes or No)")
     level = row.get("level") or ""
-    if level not in (*LEVELS, OTHER, ""):
+    if level not in (*LEVELS, COLLEGE, OTHER, ""):
         raise ValueError(f"{school}: pick what you studied for there from the list")
     degree = _text(row.get("degree"), 120, f"{school}'s degree")
-    if finished and not level:
-        raise ValueError(f"{school}: pick the degree or diploma you finished there")
-    if finished and level == OTHER and not degree:
-        raise ValueError(f"{school}: name the certificate or degree you finished there")
+    end = _date(row.get("end"), f"{school}'s end")
+    if finished:
+        if level not in (*LEVELS, OTHER):
+            raise ValueError(f"{school}: pick the degree or diploma you finished there")
+        if level == OTHER and not degree:
+            raise ValueError(f"{school}: name the certificate or degree you finished there")
+        if end and _not_ended(end):
+            raise ValueError(f"{school}: it ends {end}, so it isn't finished yet. Answer No, or correct its end")
+    else:
+        if not level:
+            raise ValueError(f"{school}: pick what it was (high school, college or university, or a trade or other "
+                             "program)")
+        level = _kind(level)  # (what it was of: a degree not finished is never one)
     return {"school": school, "degree": degree, "field": _text(row.get("field"), 120, f"{school}'s field of study"),
-            "start": _date(row.get("start"), f"{school}'s start"), "end": _date(row.get("end"), f"{school}'s end"),
-            "finished": finished, "level": level, "from": _from(row, entries)}
+            "start": _date(row.get("start"), f"{school}'s start"), "end": end, "finished": finished, "level": level,
+            "from": _from(row, entries)}
 
 
 def _kept(entries: list[Any], at: int | None, form_keys: set[str]) -> dict[str, Any]:
@@ -278,11 +356,20 @@ def _job_entry(row: dict[str, Any], entries: list[Any]) -> dict[str, Any]:
     return {**out, **_kept(entries, row["from"], _JOB_KEYS)}
 
 
+def unfinished_degree(level: str, degree: str) -> str:
+    """How a school not finished is written: never as a degree (coursework isn't one)."""
+    if level == "high_school":
+        return SOME_HIGH_SCHOOL
+    if level == COLLEGE:
+        return NO_DEGREE
+    return f"{degree or 'Program'}{NOT_COMPLETED}"
+
+
 def _school_entry(row: dict[str, Any], entries: list[Any]) -> dict[str, Any]:
     if row["finished"]:
         degree = row["degree"] or LEVEL_NAMES.get(row["level"], "")
-    else:  # (never a degree: coursework isn't one)
-        degree = SOME_HIGH_SCHOOL if row["level"] in ("high_school", "ged") else NO_DEGREE
+    else:
+        degree = unfinished_degree(row["level"], row["degree"])
     out: dict[str, Any] = {"school": row["school"], "degree": degree}
     if row["field"]:
         out["major"] = row["field"]
@@ -290,24 +377,33 @@ def _school_entry(row: dict[str, Any], entries: list[Any]) -> dict[str, Any]:
     return {**out, **_kept(entries, row["from"], _SCHOOL_KEYS)}
 
 
-def degrees_of(schools: list[dict[str, Any]]) -> tuple[list[dict[str, str]], str | None]:
-    """education.degrees_earned (each finished school's level and field, a certificate's left out) and
-    education.highest_degree (the highest finished; "Some college" when none was, but a college was attended; None
-    when the schools say nothing of it)."""
+def degrees_of(schools: list[dict[str, Any]], had: Any = None) -> tuple[list[dict[str, str]], str | None]:
+    """education.degrees_earned and education.highest_degree for these schools: each finished school's level and field
+    (a certificate's left out), then the entries the profile had (`had`) that no school accounts for (a diploma
+    written without a school, say), kept; the highest of them all, "Some college" when none is a degree but a college
+    was attended ("Some high school" for a high school), or None when the schools say nothing of it (the caller then
+    leaves the profile's as it is)."""
     earned: list[dict[str, str]] = []
     for s in schools:
         if s["finished"] and s["level"] in LEVELS:
             entry = {"level": s["level"], **({"field": s["field"]} if s["field"] else {})}
             if entry not in earned:
                 earned.append(entry)
-    if earned:
-        best = max(_RANK[e["level"]] for e in earned)
+
+    def accounted(level: str, field: str) -> bool:  # (a school with its field: finished at that level, or not at all)
+        return any(norm(s["field"]) == field and (s["level"] == level if s["finished"] else s["level"] == _kind(level))
+                   for s in schools)
+
+    earned += [e for e in listed_dicts(had) if e not in earned and not accounted(*_earned_key(e))]
+    levels = [lv for e in earned if (lv := _earned_key(e)[0]) in _RANK]
+    if levels:
+        best = max(_RANK[lv] for lv in levels)
         if best == 0:
-            return earned, LEVEL_NAMES["high_school" if any(e["level"] == "high_school" for e in earned) else "ged"]
+            return earned, LEVEL_NAMES["high_school" if "high_school" in levels else "ged"]
         return earned, LEVEL_NAMES[next(lv for lv, r in _RANK.items() if r == best)]
-    if any(not s["finished"] and s["level"] not in ("high_school", "ged") for s in schools):
+    if any(not s["finished"] and s["level"] == COLLEGE for s in schools):
         return earned, SOME_COLLEGE
-    if any(not s["finished"] for s in schools):
+    if any(not s["finished"] and s["level"] == "high_school" for s in schools):
         return earned, SOME_HIGH_SCHOOL
     return earned, None
 
@@ -321,14 +417,11 @@ def _section(form: dict[str, Any], name: str) -> dict[str, Any]:
     return value
 
 
-def changes(form: Any, prof: config.Profile) -> list[tuple[tuple[str, ...], Any]]:
-    """What saving the form writes to the profile, checked: each place and its new value, only where the form changed
-    what the profile says. A value that can't be right (an email without its @, a date in another shape, a school
-    without its Yes or No) is a ValueError saying which, and then nothing is written."""
-    if not isinstance(form, dict):
-        raise ValueError("The form should be a set of answers")
-    before = form_of(prof)
-    writes: list[tuple[tuple[str, ...], Any]] = []
+Writes = list[tuple[tuple[str, ...], Any]]
+
+
+def _personal_writes(form: dict[str, Any], prof: config.Profile, before: dict[str, Any]) -> Writes:
+    writes: Writes = []
     personal = _section(form, "personal")
     for k, (keys, what, most, needed) in PERSONAL.items():
         if k not in personal:
@@ -357,6 +450,11 @@ def changes(form: Any, prof: config.Profile) -> list[tuple[tuple[str, ...], Any]
         had = _raw(prof, ("work_authorization", k))
         if not (isinstance(had, bool) and had == answer):
             writes.append((("work_authorization", k), answer))
+    return writes
+
+
+def _consent_writes(form: dict[str, Any], prof: config.Profile) -> Writes:
+    writes: Writes = []
     for k in CONSENTS:
         chosen = _section(form, "settings").get(k)
         if chosen is None:
@@ -366,27 +464,80 @@ def changes(form: Any, prof: config.Profile) -> list[tuple[tuple[str, ...], Any]
         had = _raw(prof, ("settings", k))
         if not (isinstance(had, bool) and had == chosen):  # (written when the profile doesn't say: their choice)
             writes.append((("settings", k), chosen))
-    if "jobs" in form:
-        entries = _entries(prof, "work_history")
-        jobs = [_job(r, n, entries) for n, r in enumerate(_rows(form["jobs"], JOBS_MOST, "jobs"), 1)]
-        if jobs != before["jobs"]:
-            writes.append((("work_history",), [_job_entry(r, entries) for r in jobs]))
-            # (and the job they have now as their current title and company, where the profile says none yet)
-            now = next((r for r in jobs if r["end"] == "present"), None)
-            for key, value in (("current_title", now["title"]), ("current_company", now["company"])) if now else ():
-                if _raw(prof, ("experience", key)) in (None, ""):
-                    writes.append((("experience", key), value))
-    if "schools" in form:
-        entries = _entries(prof, "education_history")
-        schools = [_school(r, n, entries) for n, r in enumerate(_rows(form["schools"], SCHOOLS_MOST, "schools"), 1)]
-        if schools != before["schools"]:
-            writes.append((("education_history",), [_school_entry(r, entries) for r in schools]))
-            earned, highest = degrees_of(schools)
-            if _raw(prof, ("education", "degrees_earned")) != earned:
-                writes.append((("education", "degrees_earned"), earned))
-            if _raw(prof, ("education", "highest_degree")) != highest:
-                writes.append((("education", "highest_degree"), highest))
     return writes
+
+
+def _job_writes(form: dict[str, Any], prof: config.Profile, before: dict[str, Any]) -> Writes:
+    entries = _entries(prof, "work_history")
+    jobs = [_job(r, n, entries) for n, r in enumerate(_rows(form["jobs"], JOBS_MOST, "jobs"), 1)]
+    if jobs == before["jobs"]:
+        return []
+    writes: Writes = [(("work_history",), [_job_entry(r, entries) for r in jobs])]
+    # the job they have now as their current title and company: where the profile says none, or still says the job
+    # that was current before (never one they wrote of their own)
+    was = next((r for r in before["jobs"] if r["end"] == "present"), None)
+    now = next((r for r in jobs if r["end"] == "present"), None)
+    for key, part in (("current_title", "title"), ("current_company", "company")):
+        had = _shown(_raw(prof, ("experience", key)))
+        new = now[part] if now else ""
+        if had != new and (not had or was is not None and had == was[part]):
+            writes.append((("experience", key), new or None))
+    return writes
+
+
+def _school_writes(form: dict[str, Any], prof: config.Profile, before: dict[str, Any]) -> Writes:
+    entries = _entries(prof, "education_history")
+    schools = [_school(r, n, entries) for n, r in enumerate(_rows(form["schools"], SCHOOLS_MOST, "schools"), 1)]
+    if schools == before["schools"]:
+        return []
+    writes: Writes = [(("education_history",), [_school_entry(r, entries) for r in schools])]
+    had = _raw(prof, ("education", "degrees_earned"))
+    earned, highest = degrees_of(schools, had)
+    if had != earned:
+        writes.append((("education", "degrees_earned"), earned))
+    if highest is not None and _raw(prof, ("education", "highest_degree")) != highest:
+        writes.append((("education", "highest_degree"), highest))
+    # education.school, .major and .graduation_year of a school now answered No aren't the person's degree's: cleared,
+    # so "Graduation year" isn't answered with the last year at a school they didn't finish
+    unfinished = [s for s in schools if not s["finished"]]
+    school = norm(_raw(prof, ("education", "school")))
+    year = _shown(_raw(prof, ("education", "graduation_year")))
+    finished_years = {parse_month_year(s["end"])[1] for s in schools if s["finished"]}
+    clear: list[str] = []
+    if school and any(norm(s["school"]) == school for s in unfinished):
+        clear = ["school", "major", "graduation_year"]
+    elif year and year not in finished_years and any(parse_month_year(s["end"])[1] == year for s in unfinished):
+        clear = ["graduation_year"]
+    writes += [(("education", k), None) for k in clear if _raw(prof, ("education", k)) not in (None, "")]
+    return writes
+
+
+def _in_step(step: int, work: Callable[[], Writes]) -> Writes:
+    try:
+        return work()
+    except FormError:
+        raise
+    except ValueError as e:
+        raise FormError(str(e), step) from None
+
+
+def changes(form: Any, prof: config.Profile) -> Writes:
+    """What saving the form writes to the profile, checked: each place and its new value, only where the form changed
+    what the profile says. A value that can't be right (an email without its @, a date in another shape, a school
+    without its Yes or No) is a FormError saying which, with the window's step it's on, and then nothing is
+    written; so is a form made from a profile that has changed since."""
+    if not isinstance(form, dict):
+        raise FormError("The form should be a set of answers")
+    if "version" in form and form["version"] != profile_version():
+        raise FormError("Your profile changed since this window opened (in another window, or by hand). Close this "
+                        "window and open it again.")
+    before = form_of(prof)
+    writes = _in_step(2, lambda: _personal_writes(form, prof, before))
+    if "jobs" in form:
+        writes += _in_step(3, lambda: _job_writes(form, prof, before))
+    if "schools" in form:
+        writes += _in_step(3, lambda: _school_writes(form, prof, before))
+    return writes + _in_step(4, lambda: _consent_writes(form, prof))
 
 
 def save_form(form: Any) -> dict[str, Any]:
@@ -402,10 +553,10 @@ def save_form(form: Any) -> dict[str, Any]:
             for keys, value in writes:
                 text = config.set_yaml_value(text, keys, value)
         except ValueError as e:
-            raise ValueError(f"Your profile couldn't be changed here ({e}). Change it in {path} by hand.") from None
+            raise FormError(f"Your profile couldn't be changed here ({e}). Change it in {path} by hand.") from None
         config.write_text_atomic(path, text)
     return {"saved": [".".join(keys) for keys, _ in writes],
-            "missing": config.Profile.load(path).missing_required()}
+            "missing": config.Profile.load(path).missing_required(), "version": profile_version()}
 
 
 # ------------------------------------------------------------------ the resume
@@ -491,8 +642,7 @@ def clean_draft(said: Any) -> dict[str, Any]:
                 "field": text(s.get("field"), 120), "start": date(s.get("start")), "end": date(s.get("end")),
                 "finished": None, "level": ""} for s in listed_dicts(said.get("schools"))[:SCHOOLS_MOST]]
     for s in schools:  # (the level its words name, for the person to check; never whether it was finished)
-        degree = str(s["degree"] or "")
-        s["level"] = "" if _UNFINISHED.search(degree) else _level_of(degree)
+        s["level"] = _level_of(str(s["degree"] or ""))
     return {"personal": personal, "jobs": [j for j in jobs if j["title"] or j["company"]],
             "schools": [s for s in schools if s["school"]]}
 
@@ -523,7 +673,11 @@ async def read_resume(form: Any) -> dict[str, Any]:
     if key is None:
         raise ValueError(NO_KEY)
     prof = config.Profile.load()
-    blocks, resume, _ = letters._resume_parts(prof, "")
+    try:
+        blocks, resume, _ = letters._resume_parts(prof, "")
+    except OSError as e:  # (the file there, but this computer won't let it be read: said, never a server error)
+        raise ValueError(f"Your resume couldn't be opened on this computer ({e.strerror or type(e).__name__}). "
+                         "Pick it again above, or type your details below.") from None
     if not blocks and not resume:
         raise ValueError("The desk has no resume it can read: pick your resume above (a PDF of up to "
                          f"{letters.PDF_MOST // (1024 * 1024)} MB, or a .docx), or type your details below")

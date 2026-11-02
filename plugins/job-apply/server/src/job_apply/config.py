@@ -750,8 +750,10 @@ _KEY_LINE = r"^(?P<indent>{indent}){key}:(?P<rest>.*)$"
 
 def _value_and_comment(rest: str) -> tuple[str, str]:
     """A key line's value and its trailing comment ("  # e.g. ..."), the comment kept as written: the first " #"
-    outside quotes and brackets. A flow list left open (written over several lines) is a ValueError."""
-    quote, depth, escaped = "", 0, False
+    outside quotes and brackets. A quote opens a quoted value only where one can start (the value's first character,
+    or after "[", "{" or ","; after ":" in a flow mapping): an apostrophe inside a plain value (Associate's Degree,
+    12 O'Brien St) is a letter. A flow list left open (written over several lines) is a ValueError."""
+    quote, depth, escaped, last = "", 0, False, ""
     for i, ch in enumerate(rest):
         if quote:  # (in double quotes a backslash escapes what follows, itself too: "Tech \\" ends at its quote)
             if escaped:
@@ -759,8 +761,9 @@ def _value_and_comment(rest: str) -> tuple[str, str]:
             elif quote == '"' and ch == "\\":
                 escaped = True
             elif ch == quote:
-                quote = ""
-        elif ch in "\"'":
+                quote, last = "", ch
+            continue
+        if ch in "\"'" and (last in ("", "[", "{", ",") or last == ":" and depth):
             quote = ch
         elif ch in "[{":
             depth += 1
@@ -769,6 +772,8 @@ def _value_and_comment(rest: str) -> tuple[str, str]:
         elif ch == "#" and (i == 0 or rest[i - 1] in " \t") and not depth:
             head = rest[:i]
             return head.strip(), rest[len(head.rstrip()):].rstrip()
+        if not ch.isspace():
+            last = ch
     if depth > 0 or quote:
         raise ValueError("a value written over several lines")
     return rest.strip(), ""
@@ -798,8 +803,9 @@ def set_yaml_value(text: str, keys: tuple[str, ...], value: Any) -> str:
         raise ValueError("it isn't laid out as sections of settings")
     bom = "\ufeff" if text.startswith("\ufeff") else ""  # (PowerShell 5 writes one before the first key)
     lines = text[len(bom):].splitlines(keepends=True)
+    nl = "\r\n" if "\r\n" in text else "\n"  # (the file's own line ending: Windows' too)
     if lines and not lines[-1].endswith("\n"):
-        lines[-1] += "\n"
+        lines[-1] += nl
     written = json.dumps(value, ensure_ascii=False)
     key = keys[-1]
     start, stop, indent = 0, len(lines), ""
@@ -811,8 +817,8 @@ def set_yaml_value(text: str, keys: tuple[str, ...], value: Any) -> str:
             if name in section:
                 raise ValueError(f"its {name} section is written in a way this can't change")
             # (this section, any under it and the value: at the end of the file, or the top of the section it's in)
-            added = [f"{indent}{'  ' * i}{k}:\n" for i, k in enumerate(keys[depth:-1])]
-            added.append(f"{indent}{'  ' * (len(keys) - 1 - depth)}{key}: {written}\n")
+            added = [f"{indent}{'  ' * i}{k}:{nl}" for i, k in enumerate(keys[depth:-1])]
+            added.append(f"{indent}{'  ' * (len(keys) - 1 - depth)}{key}: {written}{nl}")
             where = start if depth else len(lines)
             lines[where:where] = added
             return _checked(text, bom + "".join(lines), keys, value, before)
@@ -829,7 +835,7 @@ def set_yaml_value(text: str, keys: tuple[str, ...], value: Any) -> str:
     if at is None:
         if key in section:  # (spelled another way: quoted, a space before its colon; a second one would win)
             raise ValueError(f"its {key} is written in a way this can't change")
-        lines.insert(start if len(keys) > 1 else len(lines), f"{indent}{key}: {written}\n")
+        lines.insert(start if len(keys) > 1 else len(lines), f"{indent}{key}: {written}{nl}")
         return _checked(text, bom + "".join(lines), keys, value, before)
     m = pattern.match(lines[at].rstrip("\r\n"))
     assert m is not None
@@ -839,7 +845,7 @@ def set_yaml_value(text: str, keys: tuple[str, ...], value: Any) -> str:
         while end < stop and (not lines[end].strip() and end + 1 < stop and lines[end + 1].startswith(indent + " ")
                               or lines[end].startswith(indent + " ") or lines[end].startswith(indent + "- ")):
             end += 1
-    lines[at:end] = [f"{indent}{key}: {written}{comment}\n"]
+    lines[at:end] = [f"{indent}{key}: {written}{comment}{nl}"]
     return _checked(text, bom + "".join(lines), keys, value, before)
 
 

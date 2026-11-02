@@ -840,8 +840,9 @@ class Desk:
         if not self._allowed(request, api=True):
             return self._forbidden()
         try:
+            config.ensure_home()  # (the template first, when there's no profile: the form's version is the file's)
             form = profile_setup.form_of(config.Profile.load())
-        except ValueError as e:  # (a profile.yaml with a typo: said in the window)
+        except (ValueError, OSError) as e:  # (a profile.yaml with a typo: said in the window)
             return self._bad(e)
         return JSONResponse({"form": form, "can_read": letters.api_key() is not None,
                              "resume_most": profile_setup.RESUME_MOST}, headers={"Cache-Control": "no-store"})
@@ -856,7 +857,9 @@ class Desk:
             saved = await asyncio.to_thread(profile_setup.save_resume, body.get("name"), body.get("data"))
         except (ValueError, OSError) as e:
             return self._bad(e)
-        return JSONResponse({"resume": {"path": str(saved), "found": True}})
+        # (and the profile's new version: the window's form goes on from it)
+        return JSONResponse({"resume": {"path": str(saved), "found": True},
+                             "version": profile_setup.profile_version()})
 
     async def profile_read_view(self, request: Request) -> Response:
         """Read my resume: Claude's reading of it (with the saved API key) put into the form's empty boxes ({form}, as
@@ -866,7 +869,7 @@ class Desk:
         try:
             body = await self._body(request)
             out = await profile_setup.read_resume(body.get("form"))
-        except ValueError as e:
+        except (ValueError, OSError) as e:
             return self._bad(e)
         return JSONResponse(out, headers={"Cache-Control": "no-store"})
 
@@ -877,6 +880,8 @@ class Desk:
         try:
             body = await self._body(request)
             out = await asyncio.to_thread(profile_setup.save_form, body.get("form"))
+        except profile_setup.FormError as e:  # (with the window's step it's on, for the page to go back to)
+            return JSONResponse({"error": str(e), "step": e.step}, status_code=400)
         except (ValueError, OSError) as e:
             return self._bad(e)
         return JSONResponse(out)

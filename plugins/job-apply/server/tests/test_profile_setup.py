@@ -3,10 +3,12 @@ resume saved, read with an Anthropic API key (a fake one here: no network) into 
 form saved into profile.yaml with every other line and comment kept, a school not finished never counted as a degree.
 Made-up people only."""
 
+import asyncio
 import base64
 import io
 import json
 import zipfile
+from datetime import date
 
 import httpx
 import pytest
@@ -415,14 +417,28 @@ def test_the_page_walks_a_new_person_through_setting_up(srv, template_home, fake
                 await page.click("#setup-next")
                 assert await page.locator("#setup-schools .setup-row").count() == 2
                 assert await page.locator("#setup-schools input:checked").count() == 0
+                # Save with the schools' Yes or No unanswered: the window goes back to their step and says why
+                await page.click("#setup-next")
+                await page.click("#setup-save")
+                await page.wait_for_selector("#setup-error:not([hidden])")
+                assert "Step 3 of 5" in await page.inner_text("#setup-steps")
+                said = await page.inner_text("#setup-error")
+                assert said.startswith("Step 3, Your jobs and schools:") and "finished it" in said, said
                 await page.check("[data-k=finished][data-i='0'][value=yes]")
                 await page.check("[data-k=finished][data-i='1'][value=no]")
-                assert "Some college (no degree)" in await page.inner_text("#setup-schools")
+                # (a Bachelor's not finished: what it was, college, and the words it's saved as, never a degree)
+                assert await page.input_value("select[data-k=level][data-i='1']") == "college"
+                assert "Some college (no degree)" in await page.inner_text("[data-saved-as='1']")
+                await page.select_option("select[data-k=level][data-i='1']", "other")
+                assert "Bachelor of Science (not completed)" in await page.inner_text("[data-saved-as='1']")
+                await page.select_option("select[data-k=level][data-i='1']", "college")
                 await page.click("[data-setup-drop=jobs][data-i='1']")  # (a job they'd leave out)
                 assert await page.locator("#setup-jobs .setup-row").count() == 1
                 await page.click("#setup-next")
                 assert await page.is_checked("[data-sf-consent=manage_accounts]")
                 assert not await page.is_checked("[data-sf-consent=accept_cookies]")
+                consents = await page.inner_text("#setup-consents")
+                assert "(default: off)" in consents and consents.count("(default: on)") == 2
                 await page.click("#setup-save")
                 await page.wait_for_selector("#area[open]")
                 assert not await page.locator("#setup").evaluate("d => d.open")
@@ -439,3 +455,272 @@ def test_the_page_walks_a_new_person_through_setting_up(srv, template_home, fake
     assert data["education_history"][1]["degree"] == "Some college (no degree)"
     assert data["education"]["highest_degree"] == "Associate's Degree"
     assert config.Profile.load().missing_required() == []
+
+
+# ------------------------------------------------------------------ the review of the window (Nov 2)
+def _write(profile: dict) -> None:
+    config.profile_path().write_text(yaml.safe_dump(profile), encoding="utf-8")
+
+
+def _profile() -> dict:
+    return yaml.safe_load(_text())
+
+
+def test_finished_is_preset_only_for_a_degree_earned_with_its_level_and_its_field_once(job_apply_home):
+    """A Bachelor's in Finance earned answered Yes for every Bachelor's school, and for "Coursework toward BS
+    Accounting" too; a save after an unrelated change then added a Bachelor's in Accounting. Yes is preset only where
+    an entry not matched to another school has the school's level and field, and never for words saying it isn't
+    finished: the others are asked."""
+    profile = _profile()
+    profile["education"] = {"degrees_earned": [{"level": "bachelor", "field": "Finance"}],
+                            "highest_degree": "Bachelor's Degree"}
+    profile["education_history"] = [
+        {"school": "Example University A", "degree": "Bachelor of Science", "major": "Finance", "end": 2015},
+        {"school": "Example University C", "degree": "Bachelor of Arts", "major": "Finance", "end": 2012},
+        {"school": "Example College B", "degree": "Coursework toward BS Accounting", "major": "Accounting",
+         "end": 2018},
+        {"school": "Example University D", "degree": "Bachelor of Science", "major": "History", "end": 2010}]
+    _write(profile)
+    form = profile_setup.form_of(config.Profile.load())
+    assert [s["finished"] for s in form["schools"]] == [True, None, None, None]
+    assert form["schools"][2]["level"] == ""
+    form["personal"]["city"] = "Tempe"
+    with pytest.raises(profile_setup.FormError, match="Example University C: say whether you finished") as caught:
+        profile_setup.save_form(form)
+    assert caught.value.step == 3 and _profile()["education"] == profile["education"]
+
+
+def test_a_school_not_finished_says_what_it_was_and_is_saved_in_its_own_words(template_home):
+    """A school answered No with nothing picked was written "Some college (no degree)", a high school too. Now the
+    person says what it was: a high school ("Some high school"), a college ("Some college (no degree)") or a trade or
+    other program (its name, "(not completed)"); none of them a degree, and the form reads each back the same."""
+    row = {"school": "Example High School", "degree": "", "field": "", "start": "2010", "end": "2013",
+           "finished": False, "level": ""}
+    with pytest.raises(profile_setup.FormError, match="pick what it was") as caught:
+        profile_setup.save_form({"schools": [row]})
+    assert caught.value.step == 3
+    profile_setup.save_form({"schools": [{**row, "level": "high_school"},
+                                         {"school": "Example Welding Academy", "degree": "Welding certificate",
+                                          "finished": False, "level": "other"}]})
+    data = _data()
+    assert [e["degree"] for e in data["education_history"]] == ["Some high school",
+                                                                "Welding certificate (not completed)"]
+    assert data["education"]["degrees_earned"] == [] and data["education"]["highest_degree"] == "Some high school"
+    form = profile_setup.form_of(config.Profile.load())
+    assert [(s["finished"], s["level"], s["degree"]) for s in form["schools"]] == [
+        (False, "high_school", "Some high school"), (False, "other", "Welding certificate")]
+    # (a Bachelor's picked, then No: it was a college, never a degree)
+    profile_setup.save_form({"schools": [{**row, "school": "Example State University", "degree": "BS Biology",
+                                          "level": "bachelor"}]})
+    assert _data()["education_history"][0]["degree"] == "Some college (no degree)"
+    assert _data()["education"]["highest_degree"] == "Some college"
+
+
+def test_degrees_earned_that_no_school_accounts_for_are_kept_and_highest_never_emptied(job_apply_home):
+    """The schools changed rebuilt degrees_earned from their rows alone (a diploma written without a school was lost)
+    and wrote highest_degree null where the only school finished was a certificate."""
+    profile = _profile()
+    profile["education"] = {"degrees_earned": [{"level": "high_school"}], "highest_degree": "High School Diploma"}
+    profile["education_history"] = []
+    _write(profile)
+    cert = {"school": "Example Trade Institute", "degree": "HVAC certificate", "field": "", "start": "2019",
+            "end": "2020", "finished": True, "level": "other"}
+    profile_setup.save_form({"schools": [cert]})
+    data = _data()
+    assert data["education"]["degrees_earned"] == [{"level": "high_school"}]
+    assert data["education"]["highest_degree"] == "High School Diploma"
+    # a degree the person now says they didn't finish is taken out (its school accounts for it), and counted no more
+    profile["education"] = {"degrees_earned": [{"level": "high_school"}, {"level": "bachelor", "field": "Finance"}],
+                            "highest_degree": "Bachelor's Degree"}
+    profile["education_history"] = [{"school": "Example University A", "degree": "Bachelor of Science",
+                                      "major": "Finance", "end": 2015}]
+    _write(profile)
+    form = profile_setup.form_of(config.Profile.load())
+    assert form["schools"][0]["finished"] is True
+    form["schools"][0].update(finished=False, level="college")
+    profile_setup.save_form(form)
+    data = _data()
+    assert data["education"]["degrees_earned"] == [{"level": "high_school"}]
+    assert data["education"]["highest_degree"] == "High School Diploma"
+
+
+@pytest.mark.parametrize("degree, level", [
+    ("Juris Doctor", "other"), ("Doctor of Pharmacy (PharmD)", "other"), ("MD", "other"),
+    ("Welding Certificate", "other"), ("BS in progress", ""), ("Coursework toward BSEE", ""),
+    ("Master's coursework", ""), ("BS EE (Expected 2027)", ""), ("Bachelor of Science", "bachelor"),
+    ("GED", "ged"), ("High School Diploma", "high_school"), ("PhD, Physics", "doctorate"),
+])
+def test_the_level_a_degree_names_leaves_out_what_isnt_one_and_what_isnt_finished(degree, level):
+    """Setup's Stage 1 leaves a JD, an MD and a PharmD out of degrees_earned: "other". Words saying it isn't finished
+    preselect nothing under "What you finished there"."""
+    assert profile_setup._level_of(degree) == level
+    draft = profile_setup.clean_draft({"schools": [{"school": "Example University", "degree": degree}]})
+    assert draft["schools"][0]["level"] == level and draft["schools"][0]["finished"] is None
+
+
+@pytest.mark.parametrize("end", ["present", str(date.today().year + 1)])
+def test_a_school_still_under_way_cant_be_answered_finished(template_home, end):
+    row = {"school": "Example State University", "degree": "BS Biology", "field": "Biology", "start": "2024",
+           "end": end, "finished": True, "level": "bachelor"}
+    with pytest.raises(profile_setup.FormError, match="isn't finished yet"):
+        profile_setup.save_form({"schools": [row]})
+    assert "degrees_earned: []" in _text()
+
+
+def test_an_apostrophe_in_a_plain_value_is_a_letter_not_a_quote(job_apply_home):
+    """`highest_degree: Associate's Degree` (as yaml.safe_dump and setup write it) or `line1: 12 O'Brien St` read as
+    a quote left open: "a value written over several lines", and every save that changed the schools was refused."""
+    out = config.set_yaml_value("education:\n  highest_degree: Associate's Degree   # mine\n",
+                                ("education", "highest_degree"), "Bachelor's Degree")
+    assert out == 'education:\n  highest_degree: "Bachelor\'s Degree"   # mine\n'
+    out = config.set_yaml_value("personal:\n  address:\n    line1: 12 O'Brien St\n", ("personal", "address", "line1"),
+                                "14 O'Brien St")
+    assert yaml.safe_load(out)["personal"]["address"]["line1"] == "14 O'Brien St"
+    # (a quote where one starts is still one: a "#" inside it is no comment)
+    out = config.set_yaml_value("a:\n  b: 'x # y' # c\n  d: [\"p's\", 'q']  # e\n", ("a", "d"), ["r"])
+    assert out == "a:\n  b: 'x # y' # c\n  d: [\"r\"]  # e\n"
+    profile = _profile()
+    profile["education"] = {"highest_degree": "Associate's Degree", "degrees_earned": [{"level": "associate"}]}
+    _write(profile)
+    assert "highest_degree: Associate's Degree" in _text()
+    form = profile_setup.form_of(config.Profile.load())
+    form["schools"][0].update(finished=True, level="bachelor")
+    profile_setup.save_form(form)
+    assert _data()["education"]["highest_degree"] == "Bachelor's Degree"
+
+
+def test_the_current_title_and_company_follow_the_job_they_have_now(job_apply_home):
+    """experience.current_title and current_company were filled only when empty, so they went stale when the job
+    they have now changed. They follow it where they still said the old one; one of the person's own stays."""
+    profile = _profile()
+    profile["experience"] = {"current_title": "Equipment Technician", "current_company": "Intel"}
+    _write(profile)
+    form = profile_setup.form_of(config.Profile.load())
+    form.pop("schools")  # (its school unanswered: not this test's)
+    form["jobs"][0].update(title="Lead Equipment Technician")
+    profile_setup.save_form(form)
+    assert _data()["experience"] == {"current_title": "Lead Equipment Technician", "current_company": "Intel"}
+    form = profile_setup.form_of(config.Profile.load())
+    form.pop("schools")  # (its school unanswered: not this test's)
+    form["jobs"][0].update(end="2026-09")  # (no job now: nothing current)
+    profile_setup.save_form(form)
+    assert _data()["experience"] == {"current_title": None, "current_company": None}
+    profile = _profile()
+    profile["experience"] = {"current_title": "Senior Tech (my own words)", "current_company": None}
+    _write(profile)
+    form = profile_setup.form_of(config.Profile.load())
+    form.pop("schools")  # (its school unanswered: not this test's)
+    form["jobs"][0].update(end="present", title="Tech")
+    profile_setup.save_form(form)
+    assert _data()["experience"] == {"current_title": "Senior Tech (my own words)", "current_company": "Intel"}
+
+
+def test_a_school_answered_no_takes_its_graduation_year_and_name_out_of_education(job_apply_home):
+    """education.graduation_year and education.school kept a school now answered No: "Graduation year" got 2020."""
+    from job_apply import autofill
+    profile = _profile()
+    profile["education"] = {"school": "Arizona State University", "major": "Electrical Engineering",
+                            "graduation_year": 2020, "highest_degree": "Bachelor's Degree",
+                            "degrees_earned": [{"level": "bachelor", "field": "Electrical Engineering"}]}
+    _write(profile)
+    form = profile_setup.form_of(config.Profile.load())
+    assert form["schools"][0]["finished"] is True
+    form["schools"][0].update(finished=False, level="college")
+    profile_setup.save_form(form)
+    education = _data()["education"]
+    assert education["school"] is None and education["major"] is None and education["graduation_year"] is None
+    assert autofill._graduated(config.Profile.load(), {}) is None
+
+
+def test_a_file_with_windows_line_endings_keeps_them():
+    text = "personal:\r\n  first_name: Sam  # me\r\nsettings:\r\n  headless: false\r\n"
+    out = config.set_yaml_value(text, ("personal", "address", "city"), "Chandler")
+    out = config.set_yaml_value(out, ("personal", "first_name"), "Samuel")
+    out = config.set_yaml_value(out, ("work_history",), [])
+    assert out.count("\n") == out.count("\r\n") and "first_name: \"Samuel\"  # me\r\n" in out
+    assert yaml.safe_load(out)["personal"] == {"first_name": "Samuel", "address": {"city": "Chandler"}}
+
+
+def test_a_profile_changed_since_the_window_opened_is_never_saved_over(job_apply_home):
+    """The form's rows carry their places in the profile's lists: saved over a profile changed meanwhile, they could
+    name others. The save is refused, saying so; after a resume picked in the window, the page takes the profile's
+    new version (the resume's endpoint gives it) and the save goes on."""
+    form = profile_setup.form_of(config.Profile.load())
+    form.pop("schools")
+    form["personal"]["city"] = "Tempe"
+    config.profile_path().write_text(_text() + "# a note of my own\n", encoding="utf-8")
+    before = _text()
+    with pytest.raises(profile_setup.FormError, match="changed since this window opened"):
+        profile_setup.save_form(form)
+    assert _text() == before
+    form = profile_setup.form_of(config.Profile.load())
+    form.pop("schools")
+    form["personal"]["city"] = "Tempe"
+    profile_setup.save_resume("resume.docx", base64.b64encode(_docx()).decode())
+    form["version"] = profile_setup.profile_version()
+    assert profile_setup.save_form(form)["saved"][0] == "personal.address.city"
+
+
+def test_errors_say_the_step_and_a_resume_that_cant_be_opened_is_said(srv, template_home, fake_api, monkeypatch):
+    _point_at_resume(template_home)
+    config.save_site_password(config.API_KEY_NAME, KEY)
+
+    def locked(prof, none):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(letters, "_resume_parts", locked)
+
+    async def drive(c, h):
+        out = []
+        for form in ({"personal": {"email": "nope"}}, {"schools": [{"school": "Example U"}]},
+                     {"settings": {"accept_cookies": "yes"}}):
+            r = await c.post("/api/profile/save", headers=h, json={"form": form})
+            out.append((r.status_code, r.json().get("step")))
+        r = await c.post("/api/profile/resume", headers=h,
+                         json={"name": "resume.pdf", "data": base64.b64encode(PDF).decode()})
+        version = r.json().get("version")
+        r = await c.post("/api/profile/read", headers=h, json={"form": {}})
+        return out, version, r.status_code, r.json()
+
+    steps, version, status, said = _with_desk(srv, drive)
+    assert steps == [(400, 2), (400, 3), (400, 4)]
+    assert version == profile_setup.profile_version() != ""
+    assert status == 400 and "couldn't be opened on this computer (Permission denied)" in said["error"]
+    assert fake_api.asked == []
+
+
+@pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")
+def test_set_up_your_profile_never_opens_over_a_window_opened_meanwhile(srv, template_home):
+    """It opens by itself once its form comes; a window the person opened while the form was on its way (What and
+    where) stays the one in front."""
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                held: list = []
+
+                async def hold(route):
+                    held.append(route)
+
+                await page.route("**/api/profile/form", hold)
+                await page.goto(desk.url)
+                for _ in range(200):
+                    if held:
+                        break
+                    await asyncio.sleep(0.05)
+                assert held, "the form was never asked for"
+                await page.click("#area-btn")
+                await page.wait_for_selector("#area[open]")
+                await held[0].continue_()
+                await asyncio.sleep(0.5)
+                assert not await page.locator("#setup").evaluate("d => d.open")
+                assert await page.locator("#area").evaluate("d => d.open")
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())

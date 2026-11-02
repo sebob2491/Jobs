@@ -150,10 +150,12 @@ ask Claude to open it): while your
 profile lacks what an application needs, its **Set up your profile** window opens by itself
 (and **Your profile**, at the top, opens it any time). Pick your resume (a PDF or Word
 file), then check your contact details, answer the work authorization questions (none is
-answered for you), list your jobs and schools (each school asks whether you finished the
-degree: one you didn't is saved as "Some college (no degree)", never as a degree), and choose
-the three consents; Save writes `profile.yaml`, changing only what you changed and keeping its
-comments, and opens What and where. With an Anthropic API key saved under Site passwords,
+answered for you), list your jobs and schools (each school asks whether you finished it: one
+you didn't is saved as "Some college (no degree)", "Some high school" or the program "(not
+completed)", never as a degree), and choose the three consents. Save writes `profile.yaml`,
+changing only what you changed and leaving every other line, comments too, as it was (a list
+it changes, such as your jobs or schools, is written anew on one line, without comments of its
+own), then opens What and where. With an Anthropic API key saved under Site passwords,
 **Read my resume** has Claude read it and fill in the boxes that are still empty, each named
 for you to check; without one, you type them. The rest of setup's questions (stage 2) are
 asked on a job's card when an application needs them.
