@@ -55,7 +55,16 @@ match.
 
 ## Install in one step
 
-On Windows, open PowerShell (Start menu, type PowerShell) and paste:
+On Windows, download **[JobDeskSetup.exe](https://github.com/sebob2491/Jobs/releases/latest/download/JobDeskSetup.exe)**
+and double-click it. It installs the Job Desk for you alone (no administrator needed), with
+everything it runs on, and puts a **Job Desk** shortcut in the Start menu (and, if you like, on
+the desktop) that opens the Job Desk page in your browser. It doesn't need Claude Code; to use
+the chat features too, tick "Also set up Claude Code" as it installs. The installer isn't signed
+yet, so Windows may say it protected your PC: click **More info**, then **Run anyway**.
+Uninstalling it (Settings, Apps) leaves your `~/.job-apply` folder (your profile, resume and
+tracker) where it is. To update, download and run the newest one.
+
+Or, for the Claude Code plugin itself, open PowerShell (Start menu, type PowerShell) and paste:
 
 ```
 irm https://raw.githubusercontent.com/sebob2491/Jobs/main/plugins/job-apply/setup/install.ps1 | iex
@@ -67,7 +76,7 @@ On a Mac or Linux, open Terminal and paste:
 curl -fsSL https://raw.githubusercontent.com/sebob2491/Jobs/main/plugins/job-apply/setup/install.sh | bash
 ```
 
-It installs what's missing (Git, Claude Code, uv), adds this plugin to Claude Code (or updates
+Either line installs what's missing (Git, Claude Code, uv), adds this plugin to Claude Code (or updates
 it), gets a browser ready, makes your `~/.job-apply` folder, offers to copy your resume into
 it, and runs the plugin's doctor to check it all. It asks before installing Claude Code or Git, never
 asks for a password, and is safe to run again; running it again is also how to update. Then

@@ -6516,6 +6516,54 @@ def test_claudes_watch_for_mail_requests_is_a_long_wait_on_the_desk_behind_its_k
     assert out["gone"] and out["cmd closed"][0] == 1 and "isn't open" in out["cmd closed"][1]
 
 
+def test_starting_the_desk_again_opens_the_one_running_on_its_port(srv, monkeypatch, job_apply_home):
+    """The Windows installer's Start-menu Job Desk (the owner, Nov 2), pressed while the desk already runs: the page of
+    the desk on that port opens (its key read from the desk's watch file, and taken by the desk there), and no second
+    desk starts on another port with the same queue and browser. A watch file left by a desk that ended without
+    tidying up, or one whose key the desk there doesn't take, starts a desk as before."""
+    import socket as sockets
+
+    from job_apply import desk as desk_module
+    from job_apply.desk import running_desk, watch_path
+
+    opened: list[str] = []
+    monkeypatch.setattr(desk_module.webbrowser, "open", lambda url, *a, **k: opened.append(url) or True)
+
+    def second_desk(srv_module):
+        raise AssertionError("a second desk was started")
+
+    desk = Desk(srv)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            monkeypatch.setattr(desk_module, "get_desk", second_desk)  # (main() would serve one from here)
+            out = {"code": await asyncio.to_thread(desk_module.main, ["--port", str(desk.port)]),
+                   "quiet": await asyncio.to_thread(desk_module.main, ["--port", str(desk.port), "--no-browser"])}
+            path = watch_path(desk.port)
+            kept = path.read_text(encoding="utf-8")
+            path.write_text(json.dumps({"port": desk.port, "token": "not-this-desks", "pid": 1}), encoding="utf-8")
+            out["wrong key"] = await asyncio.to_thread(running_desk, desk.port)
+            path.write_text(kept, encoding="utf-8")
+        finally:
+            await desk.stop()
+        out["stopped"] = await asyncio.to_thread(running_desk, desk.port)
+        return out
+
+    out = run(go())
+    assert out["code"] == out["quiet"] == 0
+    assert opened == [desk.url]  # once: --no-browser opens nothing
+    assert out["wrong key"] is None and out["stopped"] is None
+    # a watch file left behind, for a port nothing answers on
+    with sockets.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        free = s.getsockname()[1]
+    watch_path(free).write_text(json.dumps({"port": free, "token": "left-behind", "pid": 1}), encoding="utf-8")
+    assert running_desk(free) is None
+    watch_path(free).write_text("{not json", encoding="utf-8")
+    assert running_desk(free) is None
+
+
 def test_claude_hands_the_desk_its_gmail_messages_and_hears_what_became_of_them_never_the_code(
         srv, monkeypatch, job_apply_home):
     """mail_requests() lists what a job waiting on its emailed code asks of Claude (the Gmail query alone: never the

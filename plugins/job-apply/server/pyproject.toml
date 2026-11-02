@@ -2,7 +2,7 @@
 name = "job-apply"
 version = "0.3.0"  # not the release version: plugin.json's is (config.plugin_version); bumping this changes uv.lock
 description = "MCP server that ingests job postings, tracks applications, and fills application forms in a real browser."
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.15"  # (below 3.15 until pydantic-core and rpds-py ship its wheels: a new install picking 3.15 would build them, which needs Rust)
 dependencies = [
     "mcp>=2.0,<3",
     "playwright>=1.51",
