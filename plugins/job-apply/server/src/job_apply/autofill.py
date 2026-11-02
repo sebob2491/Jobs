@@ -1200,7 +1200,7 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
                          # onsemi's "worked in any onsemi establishment" (never "worked in Arizona": a place)
                          rf"|\bwork\w* in (any |an? |the )?{first}( \w+)? (establishments?|facilit\w+|sites?|"
                          r"locations?|compan\w+|offices?|plants?|subsidiar\w+|affiliates?)\b"
-                         rf"|\b{first}( \w+)? (employee|employment|intern|contractor)s?\b"
+                         rf"|\b{first}( \w+)? (employee|employment|intern|contractor|team member)s?\b"
                          rf"|\bhired\b.{{0,60}}? (by|with|at) (the )?{first}\b", asked)
     if not (names_it or re.search(r"(employed|worked|hired) (by|for|at|with) (us|this|our|"
                                   r"the company)\b|former employee", asked)):
@@ -1218,6 +1218,16 @@ def _previously_employed(prof: Profile, job: dict, label: str = "") -> str | Non
         # sites": its customers'
         return None
     return _worked_here(prof, job, asked)
+
+
+def _currently_employed(prof: Profile, job: dict, label: str = "") -> str | None:
+    """Does the person work for this employer now? ("Are you currently employed with Edward Jones?", "Are you a current
+    employee of Circle K?", "Are you currently a Station Casinos Team Member?": asked of the person at every employer in
+    run 177.) Read as _previously_employed reads a question (one naming this employer, never another organization, its
+    subsidiaries or affiliates), and answered from the profile's job now: "Yes" where it's this employer, "No" where the
+    profile has the person working elsewhere or the work there is past, None where it can't say."""
+    said = _previously_employed(prof, job, label)
+    return None if said is None else "Yes" if said == "Yes, currently" else "No"
 
 
 def _employer_names(job: dict) -> list[str]:
@@ -2769,8 +2779,8 @@ def _reads_question(getter: Getter) -> bool:
     return getter in _READS_QUESTION or bool(getattr(getter, "reads_question", False))
 
 
-_READS_QUESTION = {_relatives, _government, _travel, _previously_employed, _no_sponsorship, _sponsorship, _UNDER_18,
-                   _OVER_18, _phone, _masked_phone,
+_READS_QUESTION = {_relatives, _government, _travel, _previously_employed, _currently_employed, _no_sponsorship,
+                   _sponsorship, _UNDER_18, _OVER_18, _phone, _masked_phone,
                    _local_or_relocate, _lives_in, _veteran, _has_degree, _citizenship_proof, _clearance_held,
                    _clearance_said, _us_service, _military, _work_proof, _dod_employee}
 
@@ -3106,6 +3116,13 @@ RULES: list[tuple[str, str, Getter, int | None, set[str] | None]] = [
     ("previous_employee", r"(previously|ever|formerly) (been )?(employed|worked)|former employee|"
      r"have you (ever )?worked (for|at)|worked .{0,40} before|have you (ever )?been hired\b",
      _previously_employed, None, None),  # (only about this employer: see _previously_employed)
+    # working for this employer now (never "now or before", taken above; a relative's or someone else's, a referral's, a
+    # contractor's: the person's to say)
+    ("current_employee", r"^(?!.*\b(previously|formerly|former|ever|past|prior|relatives?|family|friends?|spouse|"
+                         r"partner|anyone|someone|referr\w*|contract\w*)\b).*(\b(currently|presently|now) ((an? )?"
+                         r"(\w+ ){0,3}(employee|team member|associate|staff member)s?\b|(employed|working) "
+                         r"(by|for|at|with)\b)|\bcurrent (employee|team member|associate|staff member|worker)\b)",
+     _currently_employed, None, _YES_NO_KINDS),
     # voluntary self-identification
     ("sexual_orientation", r"sexual orientation|\blgbt", _p("eeo.sexual_orientation"), None, None),
     ("gender", r"\bgender\b|\bsex\b", _eeo_gender, None, None),

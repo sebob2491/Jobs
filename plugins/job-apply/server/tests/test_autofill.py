@@ -997,6 +997,42 @@ def test_worked_here_before_says_when_and_only_about_working_there():
                    job={"company": "Northwind Semi"}) == "Yes"
 
 
+def test_works_here_now_is_answered_from_the_profiles_job_now():
+    """The live check's questions (run 177, Nov 2): "Are you currently employed with Edward Jones?", "Are you a current
+    employee of Circle K?", "Are you currently a Station Casinos Team Member?" were asked of the person every time,
+    though the profile says where they work now (Example Fab). Answered as the worked-here question is: Yes where the
+    job now is there, No where it's elsewhere or the work there is past. Never a question about another organization,
+    the employer's subsidiaries or affiliates, a contractor, a relative or someone else, or working "now" in general."""
+    yes_no = ["Select One", "Yes", "No"]
+
+    def asked(label, company, prof=None):
+        return _answer(label, prof or _person(), kind="select", options=yes_no, job={"company": company})
+
+    for label, company in (("Are you currently employed with Edward Jones?", "Edward Jones"),
+                           ("Are you a current employee of Circle K?", "Circle K"),
+                           ("Are you currently an employee of Light & Wonder?", "Light & Wonder"),
+                           ("Are you currently a Station Casinos Team Member? If yes, please go to mysclife.net",
+                            "Station Casinos (Red Rock Resorts)"),
+                           ("Are you presently working for ASM?", "ASM")):  # (ASM's a job gone by: no longer there)
+        assert asked(label, company) == "No", label
+    assert asked("Are you currently employed with Example Fab?", "Example Fab") == "Yes"
+    # (working now at all is employed_now's, from the profile's job now: never this employer's)
+    employed = resolve_field(f("Are you currently employed?", "select", options=yes_no, value="Select One"),
+                             _person(), {"company": "Edward Jones"})
+    assert (employed.value, employed.rule) == ("Yes", "employed_now"), employed
+    for label, company in (("Are you currently employed by Infineon or one of its subsidiaries?", "Infineon"),
+                           ("Are you currently employed by the U.S. government?", "Edward Jones"),
+                           ("Are any of your relatives currently employed with Edward Jones?", "Edward Jones"),
+                           ("Is your spouse currently employed by Circle K?", "Circle K"),
+                           ("Are you a current or former contractor of Edward Jones?", "Edward Jones"),
+                           ("Were you referred by a current Circle K employee?", "Circle K")):
+        assert asked(label, company) is None, label
+    # (a job now whose name may be this one's: the person's to say)
+    services = _person(work_history=[{"company": "Example Fab Services", "title": "Technician", "start": "2022-06",
+                                      "end": "present"}])
+    assert asked("Are you currently employed with Example Fab?", "Example Fab", services) is None
+
+
 def test_an_answer_given_for_one_employer_isnt_given_to_another(job_apply_home):
     from job_apply import config
 
@@ -4074,7 +4110,10 @@ def test_a_date_box_asking_when_you_can_start_gets_the_day_the_profile_makes():
     assert answer("2 weeks after offer") == answer("Two weeks' notice") == in_two_weeks
     assert answer("1 month") == (today + timedelta(days=30)).strftime("%m/%d/%Y")
     assert answer("Immediately") == answer("ASAP") == today.strftime("%m/%d/%Y")
-    assert answer("2026-11-01") == answer("11/01/2026") == answer("November 1, 2026") == "11/01/2026"
+    # (a day still to come, whatever today is: a fixed one went by on Nov 1, 2026, and a day gone by is never offered)
+    ahead = today + timedelta(days=60)
+    assert answer(ahead.isoformat()) == answer(ahead.strftime("%m/%d/%Y")) \
+        == answer(f"{ahead.strftime('%B')} {ahead.day}, {ahead.year}") == ahead.strftime("%m/%d/%Y")
     for unread in ("After graduation", "2 weeks after graduation", "2-4 weeks", "December 2026", "Negotiable"):
         assert answer(unread) is None, unread  # (left, as before: never a day the profile doesn't say)
     for label in ("Available Start Date", "Earliest Start Date*", "Date available to start", "When can you start?"):
@@ -4082,7 +4121,7 @@ def test_a_date_box_asking_when_you_can_start_gets_the_day_the_profile_makes():
     # a date input takes the ISO form, a date's part its own
     assert answer("2 weeks after offer", kind="text", input_type="date", date=None) == \
         (today + timedelta(days=14)).isoformat()
-    assert answer("2026-11-01", kind="text", sublabel="Month", date=None) == "11"
+    assert answer(ahead.isoformat(), kind="text", sublabel="Month", date=None) == ahead.strftime("%m")
     # the common question's answer (the question bank's, in answers.yaml) too
     bank = Profile({"answers": [{"match": "(?:desired|earliest|preferred) start", "answer": "Two weeks after an offer",
                                  "bank": True}]})

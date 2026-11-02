@@ -59,10 +59,38 @@ questions:
     choices: ["Yes", "No"]
     seen: 3
 
+  - id: adult_21
+    example: "Are you 21 years of age or older?"
+    ask: Are you 21 or older? (Casinos and bars ask.)
+    # (run 177; as `adult`, never a count of 21 credits, hours or years of experience)
+    match: "^(?!.*\\b(?:under|hours?|months?|days?|weeks?|credits?|units?|experience|work(?:ed|ing)?)\\b).*(?:\\b(?:at least|aged?)\\s+21\\b|\\b21 (?:years|or older|or over|\\+))"
+    kind: choice
+    choices: ["Yes", "No"]
+    seen: 1
+
+  - id: age_16
+    example: "Are you at least 16 years old?"
+    ask: Are you 16 or older?
+    # (run 177's Circle K; never 16 hours, shifts or credits)
+    match: "^(?!.*\\b(?:under|hours?|shifts?|months?|days?|weeks?|credits?|units?|experience|work(?:ed|ing)?)\\b).*(?:\\b(?:at least|aged?)\\s+16\\b|\\b16 (?:years|or older|or over|\\+))"
+    kind: choice
+    choices: ["Yes", "No"]
+    seen: 1
+
+  - id: enrolled_now
+    example: "Are you currently enrolled in a degree program?"
+    ask: Are you enrolled in a degree program or college now?
+    # (run 177; never one gone by: "have you ever been", "were you")
+    match: "^(?!.*\\b(?:ever|were|was|past|previously)\\b).*\\b(?:currently|presently|now)\\b.{0,20}\\benrolled\\b.{0,60}\\b(?:degree|program|college|universit\\w*|school)"
+    kind: choice
+    choices: ["No", "Yes"]
+    seen: 1
+
   - id: essential_functions
     example: "Can you perform the essential functions of the job with or without reasonable accommodation?"
     ask: Can you do a job's essential functions, with or without reasonable accommodation?
-    match: "essential functions"
+    # (and "perform the job functions ... with or without reasonable accommodations", run 177; never a job's own list)
+    match: "essential functions|\\bperform (?:the )?(?:job|position'?s?) functions\\b.{0,80}\\baccommodat"
     kind: choice
     choices: ["Yes", "No"]
     seen: 1
