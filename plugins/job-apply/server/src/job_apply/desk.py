@@ -15,6 +15,7 @@ import argparse
 import asyncio
 import atexit
 import contextlib
+import http.client
 import json
 import math
 import os
@@ -23,6 +24,7 @@ import secrets
 import socket
 import sqlite3
 import time
+import urllib.request
 import webbrowser
 from collections import Counter
 from datetime import datetime
@@ -2028,12 +2030,39 @@ def get_desk(srv: Any) -> Desk:
     return _desk
 
 
+def running_desk(port: int) -> str | None:
+    """The page of a Job Desk already running on this port, or None: its watch file's key (watch_path), as the desk
+    answering on the port takes it. A second start (the Start menu's Job Desk pressed again, or one Claude's plugin
+    serves) opens that desk's page, never a second desk on another port with the same queue and browser."""
+    try:
+        said = json.loads(watch_path(port).read_text(encoding="utf-8"))
+        token = said["token"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not isinstance(token, str) or not token or said.get("port") != port:
+        return None
+    ask = urllib.request.Request(f"http://127.0.0.1:{port}/api/safety", headers={"x-desk-token": token})
+    no_proxy = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # (127.0.0.1 is never behind one)
+    try:
+        with no_proxy.open(ask, timeout=5) as answer:
+            if answer.status != 200:
+                return None
+    except (OSError, ValueError, http.client.HTTPException):
+        return None  # nothing on the port (a desk that ended without tidying up), or something else there
+    return f"http://127.0.0.1:{port}/?t={token}"
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the Job Desk on its own (without Claude Code)."""
     ap = argparse.ArgumentParser(description="Open the Job Desk")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--no-browser", action="store_true", help="don't open the page in your browser")
     args = ap.parse_args(argv)
+    if (url := running_desk(args.port)) is not None:
+        print(f"The Job Desk is already running: {url}", flush=True)
+        if not args.no_browser:
+            webbrowser.open(url)
+        return 0
     from . import server
 
     desk = get_desk(server)
