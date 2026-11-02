@@ -1689,6 +1689,7 @@ function renderHeader() {
     + `${esc(searchWords(sr.error, "something went wrong in it"))}</span>. Press Find jobs to try again.`});
   if (state.profile_problem) notes.push({cls: "notice bad", html: `Problem: your profile can't be read: ${esc(state.profile_problem)} Fix it and the desk picks it up again by itself.`});
   if (state.mail_problem) notes.push({cls: "notice bad", html: problemSaid(esc(state.mail_problem))});
+  if (state.vault_problem) notes.push({cls: "notice bad", html: problemSaid(esc(state.vault_problem))});
   if (state.letters_problem) notes.push({cls: "notice bad", html: problemSaid(esc(state.letters_problem))});
   if ((state.phone || {}).problem) notes.push({cls: "notice bad", html: problemSaid(esc(state.phone.problem))});
   if (state.answers_problem) notes.push({cls: "notice bad", html: `Problem: your saved answers aren't being used: ${esc(state.answers_problem)}.`});

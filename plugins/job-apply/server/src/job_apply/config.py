@@ -14,6 +14,7 @@ import os
 import re
 import time
 import shutil
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -657,23 +658,22 @@ SERVICE_KEYS = ("us_government_employee", "us_military")
 def get_secret(name: str) -> str | None:
     """Look up a secret by name without ever returning it to the model.
 
-    Order: env var JOB_APPLY_SECRET_<NAME>, then the computer's password vault (vault.py), then
-    ~/.job-apply/secrets.yaml.
+    Order: env var JOB_APPLY_SECRET_<NAME>, then ~/.job-apply/secrets.yaml, then the computer's
+    password vault (vault.py). The file only has a line the person wrote there by hand (the desk
+    saves to the vault and takes the line out), or one saved while the vault wouldn't take it:
+    either way the newer, which the desk's next start moves into the vault.
     """
     from . import vault
 
     env_key = "JOB_APPLY_SECRET_" + re.sub(r"[^A-Z0-9]", "_", name.upper())
     if os.environ.get(env_key):
         return os.environ[env_key]
-    value = vault.get(name)
-    if value:
-        return value
     path = secrets_path()
     if path.exists():
         value = read_secrets(path).get(name)
         if value:
             return value
-    return None
+    return vault.get(name) or None
 
 
 def read_secrets(path: Path) -> dict[str, str]:
@@ -714,17 +714,19 @@ NTFY_TOPIC_NAME = "ntfy_topic"
 NTFY_TOPIC = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 
 
+# Held across a save, a forget and the start's move of secrets.yaml into the vault
+_SECRETS_LOCK = threading.RLock()
+
 # The longest site password the desk keeps (a real one is far shorter; the file is read on every poll)
 PASSWORD_MAX = 256
 
 
 def save_site_password(name: str, value: str) -> None:
     """Store a career-site password the person typed into the Job Desk: in the computer's password vault
-    (vault.py), and then its line in secrets.yaml, if it had one, goes. Where there's no vault, in secrets.yaml:
-    only its own entry changes, and the rest of the file, comments included, stays as they wrote it (readable by
-    the person alone). All or nothing either way."""
-    from . import vault
-
+    (vault.py), and then its line in secrets.yaml, if it had one, goes. Where there's no vault (or it won't take it),
+    in secrets.yaml, which get_secret reads before the vault: only its own entry changes, and the rest of the file,
+    comments included, stays as they wrote it (readable by the person alone). All or nothing either way: a save that
+    fails leaves what was saved before."""
     if not SITE_PASSWORD.match(name) and name not in (API_KEY_NAME, NTFY_TOPIC_NAME):
         raise ValueError(f"not a site password name: {name!r}")
     if not value or not value.strip() or "\n" in value or "\r" in value:
@@ -739,25 +741,30 @@ def save_site_password(name: str, value: str) -> None:
     if len(value) > PASSWORD_MAX:
         raise ValueError(f"the password is longer than {PASSWORD_MAX} characters")
     ensure_home()
+    with _SECRETS_LOCK:  # (the start's move never puts the file's older one back over this: move_secrets_to_vault)
+        _save_secret(name, value)
+
+
+def _save_secret(name: str, value: str) -> None:
+    from . import vault
+
     path = secrets_path()
-    try:
-        before = vault.get(name, fresh=True)
-        if vault.put(name, value):
-            try:
-                _drop_secrets(path, [name])
-            except BaseException:
-                # (the file's older line would come back at the next start's move, over this one: the vault goes back
-                # to as it was, and the save fails as a whole)
-                with contextlib.suppress(Exception):
-                    if before is None:
-                        vault.forget(name)
-                    else:
-                        vault.put(name, before)
-                raise
-            return
-    except vault.Stuck:
-        raise ValueError(f"Your password vault ({vault.status().name}) holds an older one and wouldn't change it "
-                         "just now (is it locked?). Unlock it and save this again.") from None
+    before = vault.get(name, fresh=True)
+    if vault.put(name, value):
+        try:
+            _drop_secrets(path, [name])
+        except BaseException:
+            # (the file's older line still comes first, and would come back at the next start's move, over this one:
+            # the vault goes back to as it was, and the save fails as a whole)
+            with contextlib.suppress(Exception):
+                if before is None:
+                    vault.forget(name)
+                else:
+                    vault.put(name, before)
+            raise
+        return
+    # (the vault wouldn't take it, or there's none: in the file, which comes before whatever the vault still holds;
+    # the vault's is left as it was, so a file that can't be written either leaves the older one, never none)
     # always in double quotes, which YAML escapes everything awkward in (U+2028, a leading
     # no-break space, quotes, backslashes), and which read_secrets reads back exactly
     entry = f"{name}: " + yaml.safe_dump(value, default_style='"', allow_unicode=True, width=10**6).strip()
@@ -777,18 +784,19 @@ def forget_secret(name: str) -> bool:
 
     if name != NTFY_TOPIC_NAME:
         raise ValueError(f"not a secret the desk forgets: {name!r}")
-    there = vault.get(name, fresh=True) is not None
-    try:
-        vault.forget(name)
-    except vault.Stuck:
-        raise ValueError(f"Your password vault ({vault.status().name}) wouldn't let it go just now (is it locked?). "
-                         "Unlock it and try again.") from None
-    vault.unlist(name)
-    path = secrets_path()
-    if not path.exists() or name not in read_secrets(path):
-        return there
-    _drop_secrets(path, [name])
-    return True
+    with _SECRETS_LOCK:
+        there = vault.get(name, fresh=True) is not None
+        try:
+            vault.forget(name)
+        except vault.Stuck:
+            raise ValueError(f"Your password vault ({vault.status().name}) wouldn't let it go just now (is it "
+                             "locked?). Unlock it and try again.") from None
+        vault.unlist(name)
+        path = secrets_path()
+        if not path.exists() or name not in read_secrets(path):
+            return there
+        _drop_secrets(path, [name])
+        return True
 
 
 def set_setting(key: str, value: Any) -> None:
@@ -843,13 +851,23 @@ def move_secrets_to_vault() -> dict[str, int]:
     time and all or nothing: written to the vault, read back and compared, and only then taken out of the file, which
     keeps its comments and every entry that didn't move (one the vault refused or gave back otherwise, a value
     continued on lines below it). A line in the file is the newer (the desk saves to the vault and takes the file's
-    line out; a line there now was written since, by hand), so it replaces the vault's. Logs only names and counts,
-    never a value. Returns {"moved": n, "kept": m}."""
+    line out; a line there now was written since, by hand), so it replaces the vault's. An entry that changed or went
+    while it moved (a save from the page) is left as it is now. Logs only names and counts, never a value. Returns
+    {"moved": n, "kept": m}."""
     import logging
 
     from . import vault
 
     log = logging.getLogger(__name__)
+    if (moved_from := vault.moved_warning()) is not None:
+        log.warning("%s", moved_from)
+    with _SECRETS_LOCK:
+        return _move_secrets(log)
+
+
+def _move_secrets(log: Any) -> dict[str, int]:
+    from . import vault
+
     path = secrets_path()
     out = {"moved": 0, "kept": 0}
     if not path.exists() or not vault.status().usable:
@@ -867,10 +885,15 @@ def move_secrets_to_vault() -> dict[str, int]:
     kept: list[str] = []
     for name, value in entries.items():
         try:
+            if read_secrets(path).get(name) != value:  # (changed or gone since it was read: left as it is now)
+                continue
             ok = name not in continued and vault.put(name, value)
-        except (vault.Stuck, OSError):  # (an older one stuck in the vault; the list of names not written)
+        except (OSError, ValueError):  # (the file unreadable now; a name no secret is kept under in the vault)
             ok = False
         (moved if ok else kept).append(name)
+    with contextlib.suppress(OSError, ValueError):  # (only the lines still as they were moved)
+        now = read_secrets(path)
+        moved = [name for name in moved if now.get(name) == entries[name]]
     if moved:
         try:
             _drop_secrets(path, moved)

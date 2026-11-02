@@ -947,7 +947,8 @@ class Desk:
                 # the environment's wins (config.get_secret): saved here, it would never be used
                 raise ValueError(f"This password is set in your environment ({env}), which comes before one saved "
                                  "here. Change it there, or remove it there and save it here.")
-            config.save_site_password(name, str(body.get("value") or ""))
+            # (off the event loop: the vault's call can wait VAULT_WAIT seconds)
+            await asyncio.to_thread(config.save_site_password, name, str(body.get("value") or ""))
         except ValueError as e:
             return self._bad(e)
         if name == "email_password":
@@ -984,7 +985,7 @@ class Desk:
                     return JSONResponse({"error": "Phone alerts are on already: making a new topic needs replace.",
                                          "exists": True}, status_code=409)
                 name = phone.make_topic()
-                config.save_site_password(config.NTFY_TOPIC_NAME, name)
+                await asyncio.to_thread(config.save_site_password, config.NTFY_TOPIC_NAME, name)
                 self.phone.problem = None
                 return JSONResponse({"topic": name, "server": phone.server(settings)},
                                     headers={"Cache-Control": "no-store"})
@@ -995,7 +996,7 @@ class Desk:
                 return JSONResponse({"topic": kept, "server": phone.server(settings)},
                                     headers={"Cache-Control": "no-store"})
             if action == "off":
-                config.forget_secret(config.NTFY_TOPIC_NAME)
+                await asyncio.to_thread(config.forget_secret, config.NTFY_TOPIC_NAME)
                 self.phone.problem = None
                 return JSONResponse({"on": False})
             if action == "test":
@@ -1533,6 +1534,9 @@ class Desk:
             "phone": self.phone.public(settings, phone.topic() is not None),
             "password_systems": password_systems(),
             "mail_problem": self.applier.mail_problem,
+            # (a password vault that failed or stopped answering: its saved passwords can't be read until it's unlocked
+            # and the desk restarted)
+            "vault_problem": vault.problem(),
             "profile_problem": profile_problem,
             # a settings line that does nothing (a typo, a value it can't read), said where the person looks
             "settings_warnings": list(settings.warnings),
