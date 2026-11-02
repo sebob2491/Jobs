@@ -16,6 +16,8 @@ Each company in data/companies.yaml may carry a `search` block naming one of:
     talentbrew:      {host: www.commonspirit.careers, org: 35300}  (Radancy TalentBrew career sites)
     careerpages:     {url: https://www.azstatejobs.gov, state: AZ}  (career-pages.com job sites)
     jobvite:         <company>              (jobs.jobvite.com/<company>)
+    neogov:          <agency>               (NEOGOV's www.governmentjobs.com/careers/<agency>: public agencies;
+                                            {agency: .., place: "Clark County, NV"} for a board naming no place)
     amazon:          {loc_query: "Phoenix, AZ, USA", latitude: .., longitude: .., radius: 50km}  (amazon.jobs)
     randstad:        https://www.randstadusa.com/jobs/internal  (Randstad's own jobs)
     mcloud:          {company: companies/<id>}  (a Google Cloud Talent search at jobsapi-google.m-cloud.io:
@@ -69,6 +71,8 @@ from . import config
 from . import workplace as wplace
 from .ats import csod_parts, shared_system, workday_parts
 from .autofill import US_STATES, norm, within_words
+from .pay import fields as pay_fields
+from .pay import parse_pay
 from .postings import (USER_AGENT, csod_context, csod_place, html_to_text, icims_workplace, place_in_text, posted_date,
                        said_workplace, smartrecruiters_workplace, successfactors_place, successfactors_workplace)
 
@@ -80,7 +84,7 @@ FETCH_WHEN_FILTERING = 60  # results to scan per search when filtering by locati
 EMPLOYERS_AT_ONCE = 8  # employers searched at the same time (each its own site; ~50 s for the Phoenix list, not ~100)
 EMPLOYER_SECONDS = 120  # one employer's searches, all its wordings, at most (the slowest take ~30 s); then they stop
 CLIENT_SIDE = {"greenhouse", "lever", "applicantstack", "paycom", "ukg", "sfclassic", "infor", "phoenixchildrens",
-               "jobvite", "randstad", "kpmg"}  # whole board at once; titles filtered here
+               "jobvite", "randstad", "kpmg", "neogov"}  # whole board at once; titles filtered here
 # Searches that take the whole query and pace its wordings themselves (the State of Arizona's
 # site, whose bot check a quick run of requests sets off; Avature portals, which read an
 # opening's places once however many wordings find it)
@@ -1586,6 +1590,69 @@ def parse_jobvite(html: str | BeautifulSoup, base: str) -> list[Listing]:
     return out
 
 
+# ----------------------------------------------------------------- NEOGOV (governmentjobs.com: public agencies)
+NEOGOV_LIST = "https://www.governmentjobs.com/careers/home/index"
+NEOGOV_PAGES = 12  # pages read, at most; 10 openings a page (UMC's board: 72, Nov 2026)
+
+
+async def _neogov(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
+    """NEOGOV's agency boards (www.governmentjobs.com/careers/<agency>) answer their own page's list request with
+    the board as HTML, 10 openings a page and how many there are in all; its keyword box doesn't narrow that answer,
+    so the board is read whole (titles matched here). Each opening's row gives its type, pay, posting date and, on
+    most boards, its place; a board that names none (Clark County's) gets its entry's `place`. The plain address
+    (/careers/<agency>) answers only the page's frame, its list drawn by its script."""
+    agency = str(cfg["agency"] if isinstance(cfg, dict) else cfg).strip("/")
+    place = str(cfg.get("place") or "") if isinstance(cfg, dict) else ""
+    base = f"https://www.governmentjobs.com/careers/{agency}"
+    found: dict[str, Listing] = {}
+    pages = 1
+    n = 1
+    while n <= min(pages, NEOGOV_PAGES):
+        url = f"{NEOGOV_LIST}?" + urlencode({"agency": agency, "sort": "PositionTitle", "isDescendingSort": "false",
+                                             "page": n})
+        r = await _send(client, "GET", url, headers={"X-Requested-With": "XMLHttpRequest"})
+        _raise_for(r, url)
+        soup = BeautifulSoup(r.text, "html.parser")
+        rows = parse_neogov(soup, place)
+        if n == 1:
+            count = soup.select_one("#job-postings-number")
+            total = count.get_text(strip=True).replace(",", "") if count is not None else ""
+            if not total.isdigit():  # (see _whole_board)
+                raise SearchError(f"No job list from {base} (neither openings nor how many it has)")
+            pages = math.ceil(int(total) / len(rows)) if rows else 1
+        if not set(x.url for x in rows) - set(found):  # (a page past the last answers the first again)
+            break
+        found.update((x.url, x) for x in rows)
+        n += 1
+    return _titled(list(found.values()), query)
+
+
+def _neogov_column(row: Any, name: str) -> str:
+    cell = row.select_one(f"td.job-table-{name}")
+    return " ".join(cell.get_text(" ", strip=True).split()) if cell is not None else ""
+
+
+def parse_neogov(page: str | BeautifulSoup, place: str = "") -> list[Listing]:
+    """A NEOGOV board page's openings, from its table view (a column a class: job-table-type, -salary, -posted,
+    -location), or only their names from its list view's links when the table isn't there. Its pay column is the
+    system's own pay field ("$39.26 - $58.04 Hourly", "See Position Description"). `place`: for an opening whose row
+    names none."""
+    soup = page if isinstance(page, BeautifulSoup) else BeautifulSoup(page, "html.parser")
+    out: list[Listing] = []
+    rows = [(th, th.find_parent("tr") or th) for th in soup.select("th.job-table-title[data-job-id]")]
+    for cell, row in rows or [(li, li) for li in soup.select("li.list-item[data-job-id]")]:
+        link = cell.select_one("a.item-details-link[href]")
+        if link is None or not link.get_text(strip=True):
+            continue
+        out.append(Listing(company="", title=" ".join(link.get_text(" ", strip=True).split()),
+                           url=urljoin("https://www.governmentjobs.com/", str(link["href"])), ats="custom",
+                           location=_neogov_column(row, "location") or place,
+                           posted=posted_date(_neogov_column(row, "posted")), external_id=str(cell["data-job-id"]),
+                           employment_type=_neogov_column(row, "type"),  # ("Full-Time", "PERMANENT", "PART-TIME")
+                           **pay_fields(parse_pay(_neogov_column(row, "salary"), whole=True, source="structured"))))
+    return out
+
+
 # ----------------------------------------------------------------- Randstad's own jobs (randstadusa.com)
 RANDSTAD_PAGES = 4  # pages read nationwide; 30 openings a page
 
@@ -2684,6 +2751,7 @@ SEARCHERS: dict[str, Callable[[httpx.AsyncClient, Any, str, int, list[str]], Awa
     "talentbrew": _talentbrew,
     "careerpages": _careerpages,
     "jobvite": _jobvite,
+    "neogov": _neogov,
     "amazon": _amazon,
     "randstad": _randstad,
     "mcloud": _mcloud,
