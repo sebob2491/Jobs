@@ -244,6 +244,37 @@ def test_a_vault_that_stops_answering_is_out_of_use_and_said(srv, job_apply_home
         released.set()
 
 
+def test_a_vault_out_of_use_still_has_what_it_gave_scrubbed(job_apply_home, memory_vault, monkeypatch):
+    """The second review: once the vault stopped answering, values() gave nothing, so a password the desk had typed
+    from it was no longer scrubbed from "What went in" or a problem report. What the vault gave or took stays scrubbed
+    for the rest of the process; and a save with the vault out of use never waits on it again."""
+    import threading
+
+    config.save_site_password("workday_password", "Wd-typed-from-the-vault")
+    vault.reset()
+    assert config.get_secret("workday_password") == "Wd-typed-from-the-vault"  # (the desk reads it to type it)
+    monkeypatch.setattr(vault, "VAULT_WAIT", 0.3)
+    released, asked = threading.Event(), []
+
+    def hangs(*args):
+        asked.append(args)
+        released.wait(30)
+
+    monkeypatch.setattr(memory_vault, "get_password", hangs)
+    monkeypatch.setattr(memory_vault, "set_password", hangs)
+    try:
+        assert config.get_secret("icims_password") is None and vault.status().down
+        assert "Wd-typed-from-the-vault" in vault.values()
+        assert vault.put("taleo_password", "Ta-new") is False and len(asked) == 1  # (no second wait)
+        with pytest.raises(vault._Down):
+            vault._set("taleo_password", "Ta-new")
+        assert len(asked) == 1
+    finally:
+        released.set()
+    vault.reset()
+    assert "Wd-typed-from-the-vault" not in vault._seen
+
+
 def test_a_save_from_the_page_waits_off_the_event_loop(srv, job_apply_home, memory_vault, monkeypatch):
     """The page's save runs the vault's call on a thread, not on the desk's event loop."""
     import threading
@@ -516,7 +547,8 @@ def test_forgetting_the_phone_topic_takes_it_out_of_the_vault_its_list_and_the_f
     assert in_vault(memory_vault, config.NTFY_TOPIC_NAME) is None
     assert config.NTFY_TOPIC_NAME not in (job_apply_home / vault.INDEX_FILE).read_text(encoding="utf-8")
     assert config.secrets_path().read_text(encoding="utf-8") == "# mine\nworkday_password: keep-me\n"
-    assert config.get_secret(config.NTFY_TOPIC_NAME) is None and TOPIC not in pipeline._secret_values()
+    assert config.get_secret(config.NTFY_TOPIC_NAME) is None
+    assert TOPIC in pipeline._secret_values()  # (what the vault held stays scrubbed for the rest of the process)
     assert config.forget_secret(config.NTFY_TOPIC_NAME) is False  # (none left)
     with pytest.raises(ValueError):
         config.forget_secret("workday_password")  # (only the topic is forgotten from the desk)

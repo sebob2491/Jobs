@@ -86,6 +86,7 @@ _index_lock = threading.Lock()
 _status: Status | None = None
 _read: dict[tuple[str, str], tuple[float, str | None]] = {}  # (service, name) -> (when read, value)
 _said: set[str] = set()
+_seen: set[str] = set()  # every value the vault gave or took in this process: scrubbed even once it's out of use
 
 
 def reset() -> None:
@@ -95,6 +96,7 @@ def reset() -> None:
         _status = None
         _read.clear()
         _said.clear()
+        _seen.clear()
 
 
 def service() -> str:
@@ -250,6 +252,8 @@ def _get(name: str, fresh: bool = False) -> str | None:
         return None
     with _lock:
         _read[key] = (now, value)
+        if value and name != NAMES_ENTRY:
+            _seen.add(value)
     return value
 
 
@@ -260,7 +264,12 @@ def get(name: str, fresh: bool = False) -> str | None:
 
 
 def _set(name: str, value: str) -> str | None:
-    """Written, and what reads back. Raises _Down."""
+    """Written, and what reads back. Raises _Down (at once when the vault is out of use: never a second wait)."""
+    if not status().usable:
+        raise _Down("write")
+    if name != NAMES_ENTRY:
+        with _lock:
+            _seen.add(value)
     key = (service(), name)
     kr = _keyring()
     with _lock:
@@ -395,10 +404,14 @@ def names() -> set[str]:
 
 
 def values() -> set[str]:
-    """Every secret's value in the vault (none without one)."""
+    """Every secret's value in the vault, and every one it gave or took in this process (kept for scrubbing even once
+    the vault is out of use); none without one."""
     if not status().usable:
-        return set()
-    return {v for name in sorted(names()) if (v := get(name))}
+        with _lock:
+            return set(_seen)
+    found = {v for name in sorted(names()) if (v := get(name))}
+    with _lock:
+        return found | _seen
 
 
 def moved_from() -> str | None:
