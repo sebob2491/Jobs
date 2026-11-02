@@ -2,7 +2,7 @@
 # account there and the common questions answered) to the application's review page, or to its last button.
 # The desk's "Only where the desk goes all the way" switch shows these employers' openings alone.
 # Refresh it from each full nightly before a release: `uv run python scripts/nightly_summary.py --handled`.
-as_of: "2026-10-28: full run 170 (main d9e706a, 0.3.241); Edward Jones left out (it flips); EMD Electronics kept (its stop in run 170 was the desk's, fixed in 0.3.242)"
+as_of: "2026-11-02: full run of Nov 2 (main dbe5690, 0.3.243): Edward Jones added (no flips in the last 10 runs; Oct 31 was its site's maintenance); onsemi kept (its stop was Oracle's upload error, a site's)"
 employers:
   - "Air Liquide"
   - "Air Products"
@@ -34,6 +34,7 @@ employers:
   - "Desert Financial Credit Union"
   - "Early Warning Services"
   - "Ebara Technologies"
+  - "Edward Jones"
   - "Edwards Vacuum"
   - "EMD Electronics"
   - "Entegris"
