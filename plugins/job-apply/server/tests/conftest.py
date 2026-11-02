@@ -67,6 +67,9 @@ def job_apply_home(tmp_path, monkeypatch):
     from job_apply import browser
     monkeypatch.setattr(browser, "FORM_DRAW_WAIT", 50)
     monkeypatch.setenv("JOB_APPLY_NO_UPDATE_CHECK", "1")  # no look at GitHub for a newer version
+    # a developer's own phone alerts topic never gets a test's alerts (phone.py; its post refuses too, in a test without
+    # a transport of its own)
+    monkeypatch.delenv("JOB_APPLY_SECRET_NTFY_TOPIC", raising=False)
     return home
 
 

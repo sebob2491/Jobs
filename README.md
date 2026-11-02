@@ -263,7 +263,8 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
      the desk picks it up again by itself.
    - Press **Alert me** in the desk's header to get a desktop notification whenever a
      job needs you or is ready to submit, so you can leave the desk working in the
-     background.
+     background. For alerts on your phone, with the page closed too, see
+     [Phone alerts](#phone-alerts).
 4. Press **Submit** on each finished application, or turn on **Submit for me**, so
    that every application that needs nothing from you is sent. LinkedIn and Indeed
    are always yours to submit. Each finished application's card (and a stopped one's)
@@ -288,6 +289,30 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
    on its review page for your Submit, in case it went in meanwhile elsewhere. A site that turns
    the desk's browser away, can't be reached or limits how often it's asked, bot checks, and
    sign-in or account steps are never tried again by themselves.
+
+#### Phone alerts
+
+The desk's **Phone alerts** card sends a push to your phone through
+[ntfy](https://ntfy.sh), a free push service, while the desk runs (its page can be closed):
+
+- **Turn on phone alerts** makes a long random topic name. Install the ntfy app (App Store or
+  Google Play), press + and subscribe to that topic, then press **Send a test**. The topic is
+  kept in `~/.job-apply/secrets.yaml` like a password (anyone who knows it can read your alerts),
+  never in the desk's page, a log or a problem report. **Turn off** forgets it.
+- **When:** a job newly needs you (a bot check, questions, a sign-in, an emailed code you have to
+  type, a stuck page) or is ready for your Submit, once a job a stop, with those that come
+  close together in one message (one a minute at most); when cover letters stop; and a summary
+  of the day at the time you pick (6 PM by this computer's clock unless you change it):
+  "Today: 3 submitted, 1 ready for you, 2 need you, 1 reply".
+- **Private by default:** the alerts pass through ntfy's servers, so they say only counts and
+  kinds ("A job needs you: a bot check"), never an employer, a job or anything from your
+  profile. **Say which employer and job** adds the employer and the job's title.
+- If an alert can't be sent (no network, ntfy down), the desk says so once at the top of its
+  page and tries again with the next alert, or by itself a few minutes later; nothing else is
+  held up.
+- Never in practice mode (`submit_mode: dry_run`), which sends nothing (a test included), nor in
+  the plugin's live check. To use your own ntfy server, set `phone_alerts_server` to its https
+  address.
 
 #### Cover letters
 
@@ -477,7 +502,7 @@ Everything personal stays on your machine in `~/.job-apply/`. Set
 |---|---|
 | `profile.yaml` | Your answers. Edit it any time ([template](plugins/job-apply/templates/profile.example.yaml)). |
 | `resume.pdf` | Default resume |
-| `secrets.yaml` | Optional career-site passwords, such as `workday_password`. Save one from the Job Desk, or write the file yourself and run `chmod 600` on it. A password named for a job system goes only onto that system's sites; any other only onto that site's own domain (`acme_password` on acme.com) or its tenant on a shared job system (acme.wd5.myworkdayjobs.com), never an address that merely contains the name. |
+| `secrets.yaml` | Optional career-site passwords, such as `workday_password` (and the phone alerts' topic, `ntfy_topic`). Save one from the Job Desk, or write the file yourself and run `chmod 600` on it. A password named for a job system goes only onto that system's sites; any other only onto that site's own domain (`acme_password` on acme.com) or its tenant on a shared job system (acme.wd5.myworkdayjobs.com), never an address that merely contains the name. |
 | `tracker.db` | Application tracker (SQLite). `export_jobs_csv` writes a spreadsheet. |
 | `answers.yaml` | Answers you gave in the Job Desk, reused on later applications. Edit or delete entries freely. |
 | `companies.yaml` | Optional: which of the plugin's employer lists to search (`lists:`) and employers of your own, in place of the default list. |
@@ -514,6 +539,9 @@ Settings in `profile.yaml`:
 | `jobs_at_once` | `2` | How many applications the Job Desk fills at the same time (1 to 3), each in its own tab of the desk's browser window. Never two at one employer's site or job-system tenant; one at a time signs in, makes an account, resets a password or waits on an emailed code; while a sign-in or code needs you, no other job starts and no other tab comes to the front. `1` fills them one after another. The desk's **Jobs at once** buttons change it there (kept in `desk.json` until this setting changes). |
 | `follow_up_days` | `10` | The days an application you sent in waits with no reply (not even a "we received it" email) before the Job Desk's My applications marks it for a follow-up (1 to 90). |
 | `auto_submit_ats` | `[]` | With `submit_mode: auto`, the job systems Claude may submit on without asking (`workday`, `greenhouse`, `lever`, `eightfold`, `successfactors`). The Job Desk has its own switch, **Submit for me**. |
+| `phone_alert_details` | `false` | [Phone alerts](#phone-alerts) name the employer and the job too (they pass through ntfy's servers). The desk's **Say which employer and job** changes it. |
+| `phone_summary_at` | `"18:00"` | When the phone alerts' summary of the day comes, by this computer's clock (`off`: none). The desk's card changes it. |
+| `phone_alerts_server` | ntfy.sh | Your own ntfy server's https address, for phone alerts (http only for `localhost`; no name or password in it). |
 | `browser_channel` | `chrome` | The browser the desk drives: `chrome`, `msedge`, or `chromium` (Playwright's bundled browser). `headless: true` hides its window. |
 
 ## What's inside

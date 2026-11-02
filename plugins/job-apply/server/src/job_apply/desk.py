@@ -37,7 +37,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
-from . import autofill, config, employment, history, letters, pay, places, profile_setup, report, workplace
+from . import autofill, config, employment, history, letters, pay, phone, places, profile_setup, report, workplace
 from .browser import _cookie_setting
 from .pipeline import (DESK_PASSWORDS, MAIL_WATCH_MAX, QUEUE_NO_LOCK, Applier, _may_accept_notices,
                        _may_manage_accounts, _test_identity, placed_key, question_key)
@@ -202,6 +202,10 @@ class Desk:
         self.seen_since: float | None = None
         self._seen_written = 0.0
         self.found: dict[str, float] = read_found()  # when each opening was first found (openings_found.json)
+        # Phone alerts (phone.py): what's new pushed to the person's phone, with the page closed too; the day its daily
+        # summary last went is kept in desk.json
+        self.phone = phone.PhoneAlerts(self.applier, self.srv.tracker, saved=self._save_settings_quietly)
+        self._phone_task: asyncio.Task | None = None
         self._load()
 
     # ------------------------------------------------------------- persistence
@@ -234,6 +238,8 @@ class Desk:
             self.chips = {name: _chips(name, saved.get(name)) or [] for name in CHIP_FILTERS}
             self.companies = _companies(saved.get("companies")) or []
             self.auto_search = saved.get("auto_search") is True
+            if isinstance(saved.get("phone_summary_day"), str):
+                self.phone.summary_day = saved["phone_summary_day"]
             self.applier.dont_wait = saved.get("dont_wait") is True
             self.troubleshoot = saved.get("troubleshoot") is True and not self.handled_only
             self.applier.hold_submits = self.troubleshoot
@@ -265,7 +271,12 @@ class Desk:
                                                 "dont_wait": self.applier.dont_wait,
                                                 "jobs_at_once": self.applier.jobs_at_once,
                                                 "jobs_at_once_profile": self._at_once_profile,
+                                                "phone_summary_day": self.phone.summary_day,
                                                 "last_seen": self.last_seen, "seen_since": self.seen_since}))
+
+    def _save_settings_quietly(self) -> None:
+        with contextlib.suppress(OSError):
+            self._save_settings()
 
     def saw(self, now: float | None = None) -> None:
         """The person looked at the openings (the page loaded, or came to the front). A look VISIT_GAP or more after the
@@ -315,6 +326,7 @@ class Desk:
             r("/api/queue/{action}", self.queue_view, methods=["POST"]),
             r("/api/settings", self.settings_view, methods=["POST"]),
             r("/api/password", self.password_view, methods=["POST"]),
+            r("/api/phone/{action}", self.phone_view, methods=["POST"]),
             r("/api/add", self.add_view, methods=["POST"]),
             r("/api/bank", self.bank_view, methods=["POST"]),
             r("/api/area", self.area_view, methods=["POST"]),
@@ -350,6 +362,8 @@ class Desk:
                 atexit.register(self._remove_watch_file)
         if self._update_task is None or self._update_task.done():
             self._update_task = asyncio.get_running_loop().create_task(self._watch_updates())
+        if self._phone_task is None or self._phone_task.done():
+            self._phone_task = asyncio.get_running_loop().create_task(self._watch_phone())
         if open_browser:
             await asyncio.get_running_loop().run_in_executor(None, webbrowser.open, self.url)
         return self.url
@@ -360,6 +374,12 @@ class Desk:
             with contextlib.suppress(Exception):
                 await self.updates.refresh()
             await asyncio.sleep(600)
+
+    async def _watch_phone(self) -> None:
+        """Phone alerts' look at the jobs, every phone.TICK seconds while the desk runs (it never raises)."""
+        while True:
+            await self.phone.tick()
+            await asyncio.sleep(phone.TICK)
 
     def _write_watch_file(self) -> None:
         """The port and key Claude's watch (job-apply-wait-mail) reaches this desk with: written anew, readable and
@@ -412,10 +432,11 @@ class Desk:
     async def stop(self) -> None:
         self._remove_watch_file()
         await self.applier.stop()
-        if self._update_task is not None and not self._update_task.done():
-            self._update_task.cancel()
-            with contextlib.suppress(BaseException):
-                await self._update_task
+        for task in (self._update_task, self._phone_task):
+            if task is not None and not task.done():
+                task.cancel()
+                with contextlib.suppress(BaseException):
+                    await task
         if self._search_task is not None and not self._search_task.done():
             self._search_task.cancel()
             with contextlib.suppress(BaseException):
@@ -909,6 +930,9 @@ class Desk:
         try:
             body = await self._body(request)
             name = str(body.get("name") or "")
+            if re.sub(r"[^a-z0-9]", "_", name.strip().lower()) == config.NTFY_TOPIC_NAME:
+                # (the phone alerts' topic is made by the Phone alerts card alone: long and random, never typed)
+                raise ValueError("The phone alerts topic is made on the Phone alerts card, not saved here.")
             env = "JOB_APPLY_SECRET_" + re.sub(r"[^A-Z0-9]", "_", name.upper())
             if name and os.environ.get(env):
                 # the environment's wins (config.get_secret): saved here, it would never be used
@@ -928,6 +952,61 @@ class Desk:
             self.applier.letters_problem = None
             self.applier._letters_next()
         return JSONResponse({"saved": True})
+
+    async def phone_view(self, request: Request) -> Response:
+        """The Phone alerts card: `make` a new topic (saved in secrets.yaml, and given to this page alone to show, never
+        in its state), `show` it again, turn alerts `off` (the topic forgotten), send a `test`, or change its
+        `settings` ({details, summary_at}, written to profile.yaml's settings)."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        action = request.path_params["action"]
+        if action not in ("make", "show", "off", "test", "settings"):
+            return JSONResponse({"error": f"unknown action {action!r}"}, status_code=404)
+        try:
+            body = await self._body(request)
+            settings = config.Profile.load().settings
+            if action in ("make", "off") and phone.in_environment():
+                raise ValueError("Your phone alerts topic is set in your environment (JOB_APPLY_SECRET_NTFY_TOPIC), "
+                                 "which comes before one saved here. Change or remove it there.")
+            if action == "make":
+                if phone.topic() is not None and body.get("replace") is not True:
+                    # (a new topic cuts off the phone subscribed to the old one: only when the page says so)
+                    return JSONResponse({"error": "Phone alerts are on already: making a new topic needs replace.",
+                                         "exists": True}, status_code=409)
+                name = phone.make_topic()
+                config.save_site_password(config.NTFY_TOPIC_NAME, name)
+                self.phone.problem = None
+                return JSONResponse({"topic": name, "server": phone.server(settings)},
+                                    headers={"Cache-Control": "no-store"})
+            if action == "show":
+                kept = phone.topic()
+                if kept is None:
+                    return JSONResponse({"error": "Phone alerts are off: press Turn on phone alerts."}, status_code=409)
+                return JSONResponse({"topic": kept, "server": phone.server(settings)},
+                                    headers={"Cache-Control": "no-store"})
+            if action == "off":
+                config.forget_secret(config.NTFY_TOPIC_NAME)
+                self.phone.problem = None
+                return JSONResponse({"on": False})
+            if action == "test":
+                why = await self.phone.test(settings)
+                if why is not None:
+                    return JSONResponse({"error": why if why.startswith("Phone alerts")
+                                         else f"The test couldn't be sent: {why}."}, status_code=400)
+                return JSONResponse({"sent": True})
+            details, summary_at = body.get("details"), body.get("summary_at")
+            if details is not None and not isinstance(details, bool):
+                raise ValueError("details should be true or false")
+            if summary_at is not None:  # ("" for no summary: written as off)
+                said, wrong = config._phone_summary_at(summary_at or "off") if isinstance(summary_at, str) else ("", "")
+                if wrong or not isinstance(summary_at, str):
+                    raise ValueError("summary_at should be a time of day, such as 18:00 (empty for no summary)")
+                config.set_setting("phone_summary_at", said or "off")
+            if details is not None:
+                config.set_setting("phone_alert_details", details)
+        except (ValueError, OSError) as e:
+            return self._bad(e)
+        return JSONResponse({"ok": True})
 
     async def add_view(self, request: Request) -> Response:
         if not self._allowed(request, api=True):
@@ -1440,6 +1519,8 @@ class Desk:
             "passwords": {name.removesuffix("_password").removesuffix("_api_key"): saved for name, saved in
                           _saved([f"{ats}_password" for ats in SITE_PASSWORDS]
                                  + ["email_password", config.API_KEY_NAME]).items()},
+            # phone alerts on or off, and their settings: never the topic (phone.py)
+            "phone": self.phone.public(settings, phone.topic() is not None),
             "password_systems": password_systems(),
             "mail_problem": self.applier.mail_problem,
             "profile_problem": profile_problem,

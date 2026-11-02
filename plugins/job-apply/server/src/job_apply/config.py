@@ -285,11 +285,68 @@ def _cover_letter_model(raw: Any) -> tuple[str, str]:
                 "using the usual one.")
 
 
+# Phone alerts (phone.py, the owner's choice of Nov 2): the daily summary's time where the profile doesn't say (this
+# computer's clock, 24-hour)
+PHONE_SUMMARY_DEFAULT = "18:00"
+_CLOCK_TIME = re.compile(r"^(\d{1,2})(?:[:.](\d{2}))?\s*(?:([ap])\.?\s*m\.?)?$", re.I)
+
+
+def _phone_summary_at(raw: Any) -> tuple[str, str]:
+    """settings.phone_summary_at: the time of day the daily summary goes to the phone, as "HH:MM" ("" for none: false,
+    off or no), and what to say of one that isn't a time. "18:00", "6 PM", "6:30pm"; an 18:00 written without quotes,
+    which YAML reads as the number 1080 (minutes: base 60), is read as written."""
+    if raw is None or isinstance(raw, str) and not raw.strip():
+        return PHONE_SUMMARY_DEFAULT, ""
+    if raw is False or isinstance(raw, str) and raw.strip().lower() in ("off", "no", "false", "none", "never"):
+        return "", ""
+    hour: int | None = None
+    minute = 0
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        if 0 <= raw <= 23:
+            hour = raw
+        elif 0 <= raw < 24 * 60:
+            hour, minute = divmod(raw, 60)
+    elif isinstance(raw, str) and (m := _CLOCK_TIME.match(raw.strip())):
+        hour, minute = int(m.group(1)), int(m.group(2) or 0)
+        if m.group(3):  # "6 PM", "12 am"
+            hour = hour % 12 + (12 if m.group(3).lower() == "p" else 0) if 1 <= hour <= 12 else None
+    if hour is None or not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return PHONE_SUMMARY_DEFAULT, (f"settings.phone_summary_at should be a time of day, such as 18:00 or 6 PM (or "
+                                       f"off), not {raw!r}; using {PHONE_SUMMARY_DEFAULT}.")
+    return f"{hour:02d}:{minute:02d}", ""
+
+
+_LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
+
+
+def _phone_alerts_server(raw: Any) -> tuple[str, str]:
+    """settings.phone_alerts_server: the ntfy server phone alerts go through, for a person who runs their own ("" for
+    ntfy.sh's), and what to say of one that can't be used: only https (http only on this computer itself), and never
+    a name and password in the address (said without the address, which may hold them)."""
+    if raw is None or isinstance(raw, str) and not raw.strip():
+        return "", ""
+    said = str(raw).strip().rstrip("/")
+    try:
+        parsed = urlparse(said)
+        host = parsed.hostname or ""
+        credentials = parsed.username is not None or parsed.password is not None or "@" in parsed.netloc
+    except ValueError:
+        parsed, host, credentials = urlparse(""), "", False
+    if credentials:
+        return "", ("settings.phone_alerts_server has a name or password in its address, which phone alerts never "
+                    "send; using ntfy.sh. Give your server's address alone, such as https://ntfy.example.com.")
+    if (isinstance(raw, str) and host and not parsed.query and not parsed.fragment and not re.search(r"\s", said)
+            and (parsed.scheme == "https" or parsed.scheme == "http" and host in _LOCAL_HOSTS)):
+        return said, ""
+    return "", ("settings.phone_alerts_server should be your ntfy server's https address, such as "
+                "https://ntfy.example.com (http only on this computer: http://localhost); using ntfy.sh.")
+
+
 # The keys the desk reads under settings: (the template's); any other is said, as it has no effect
 # ("accept_notice: false")
 KNOWN_SETTINGS = ("submit_mode", "auto_submit_ats", "browser_channel", "headless", "email_codes", "email_tracking",
                   "accept_cookies", "manage_accounts", "accept_notices", "jobs_at_once", "follow_up_days",
-                  "cover_letter_model")
+                  "cover_letter_model", "phone_alert_details", "phone_summary_at", "phone_alerts_server")
 
 
 @dataclass
@@ -320,6 +377,12 @@ class Settings:
     # the model Claude Code writes the desk's cover letters with (the desk's "Write a cover letter for each job"; "":
     # letters.DEFAULT_MODEL)
     cover_letter_model: str = ""
+    # Phone alerts (phone.py; on once the desk's Phone alerts card made a topic, kept in secrets.yaml): whether they
+    # name the employer and the job (off: only counts and kinds go through ntfy's servers), the daily summary's time
+    # ("HH:MM"; "" for none) and the ntfy server ("" for ntfy.sh). Never in practice mode, which sends nothing
+    phone_alert_details: bool = False
+    phone_summary_at: str = PHONE_SUMMARY_DEFAULT
+    phone_alerts_server: str = ""
     # the live check's test identity (live_test_identity): accounts and notices in practice mode too
     test_identity: bool = False
     warnings: list[str] = field(default_factory=list)
@@ -342,7 +405,10 @@ class Settings:
         follow_up, follow_up_said = _whole_number(d.get("follow_up_days"), "follow_up_days", FOLLOW_UP_DAYS_DEFAULT,
                                                   FOLLOW_UP_DAYS_MAX)
         letter_model, letter_model_said = _cover_letter_model(d.get("cover_letter_model"))
-        warnings += [said for said in (at_once_said, follow_up_said, letter_model_said) if said]
+        summary_at, summary_said = _phone_summary_at(d.get("phone_summary_at"))
+        phone_server, phone_server_said = _phone_alerts_server(d.get("phone_alerts_server"))
+        warnings += [said for said in (at_once_said, follow_up_said, letter_model_said, summary_said, phone_server_said)
+                     if said]
         for key in d:  # a key the desk doesn't read, a letter short of one it does (the review of Oct 15): said
             if str(key) not in KNOWN_SETTINGS:
                 near = difflib.get_close_matches(str(key), KNOWN_SETTINGS, n=1, cutoff=0.6)
@@ -365,6 +431,10 @@ class Settings:
             jobs_at_once=at_once,
             follow_up_days=follow_up,
             cover_letter_model=letter_model,
+            # (what goes through ntfy's servers: the employer and job only for a real true, as written)
+            phone_alert_details=d.get("phone_alert_details") is True,
+            phone_summary_at=summary_at,
+            phone_alerts_server=phone_server,
         )
         if os.environ.get("JOB_APPLY_HEADLESS") == "1":
             s.headless = True
@@ -628,6 +698,10 @@ def read_secrets(path: Path) -> dict[str, str]:
 SITE_PASSWORD = re.compile(r"^[a-z][a-z0-9]{1,30}_password$")  # e.g. workday_password
 # The Anthropic API key the desk writes cover letters with (letters.api_key), saved as a site password is
 API_KEY_NAME = "anthropic_api_key"
+# The ntfy topic phone alerts go to (phone.py): anyone who knows it can read them, so it's kept as a password is, and
+# never in the desk's state, a log or a problem report. ntfy's own rule for a topic's name, at least 16 long here
+NTFY_TOPIC_NAME = "ntfy_topic"
+NTFY_TOPIC = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 
 
 # The longest site password the desk keeps (a real one is far shorter; the file is read on every poll)
@@ -638,10 +712,12 @@ def save_site_password(name: str, value: str) -> None:
     """Store a career-site password the person typed into the Job Desk. Only its own
     entry in secrets.yaml changes; the rest of the file, comments included, stays as
     they wrote it. The file is readable by the person alone."""
-    if not SITE_PASSWORD.match(name) and name != API_KEY_NAME:
+    if not SITE_PASSWORD.match(name) and name not in (API_KEY_NAME, NTFY_TOPIC_NAME):
         raise ValueError(f"not a site password name: {name!r}")
     if not value or not value.strip() or "\n" in value or "\r" in value:
         raise ValueError("the password is empty or has a line break")
+    if name == NTFY_TOPIC_NAME and not NTFY_TOPIC.match(value):
+        raise ValueError("A phone alerts topic is 16 to 64 letters, digits, - and _")
     if name == API_KEY_NAME:
         value = value.strip()
         if not value.startswith("sk-ant-"):
@@ -651,6 +727,20 @@ def save_site_password(name: str, value: str) -> None:
         raise ValueError(f"the password is longer than {PASSWORD_MAX} characters")
     ensure_home()
     path = secrets_path()
+    kept = _secrets_without(path, name)
+    # always in double quotes, which YAML escapes everything awkward in (U+2028, a leading
+    # no-break space, quotes, backslashes), and which read_secrets reads back exactly
+    entry = f"{name}: " + yaml.safe_dump(value, default_style='"', allow_unicode=True, width=10**6).strip()
+    # All or nothing, through a temporary file the person alone can read (mkstemp makes it 0600, and binary on Windows,
+    # so the text-mode write below puts Windows' own line ends once): the file was truncated before it was written,
+    # so a failure in between (a full disk, an exit, an antivirus hold) emptied every saved password, the review of
+    # Oct 18
+    write_text_atomic(path, "\n".join([*kept, entry]) + "\n")
+    path.chmod(0o600)
+
+
+def _secrets_without(path: Path, name: str) -> list[str]:
+    """secrets.yaml's lines, but for the entry `name` (and any lines continuing it)."""
     old = path.read_text(encoding="utf-8-sig").split("\n") if path.exists() else []
     old = [line.rstrip("\r") for line in old if line.strip() or line != ""]
     kept, skipping = [], False
@@ -662,15 +752,36 @@ def save_site_password(name: str, value: str) -> None:
             continue
         skipping = False
         kept.append(line)
-    # always in double quotes, which YAML escapes everything awkward in (U+2028, a leading
-    # no-break space, quotes, backslashes), and which read_secrets reads back exactly
-    entry = f"{name}: " + yaml.safe_dump(value, default_style='"', allow_unicode=True, width=10**6).strip()
-    # All or nothing, through a temporary file the person alone can read (mkstemp makes it 0600, and binary on Windows,
-    # so the text-mode write below puts Windows' own line ends once): the file was truncated before it was written,
-    # so a failure in between (a full disk, an exit, an antivirus hold) emptied every saved password, the review of
-    # Oct 18
-    write_text_atomic(path, "\n".join([*kept, entry]) + "\n")
+    return kept
+
+
+def forget_secret(name: str) -> bool:
+    """The entry `name` taken out of secrets.yaml (the phone alerts topic, turned off on the desk): the rest of the
+    file, comments included, stays as written. Whether there was one."""
+    if name != NTFY_TOPIC_NAME:
+        raise ValueError(f"not a secret the desk forgets: {name!r}")
+    path = secrets_path()
+    if not path.exists() or name not in read_secrets(path):
+        return False
+    write_text_atomic(path, "\n".join(_secrets_without(path, name)) + "\n")
     path.chmod(0o600)
+    return True
+
+
+def set_setting(key: str, value: Any) -> None:
+    """profile.yaml's settings.<key> set to `value` from the desk (its Phone alerts card), every other line and comment
+    kept as written. A ValueError when there's no profile, or it's laid out so it can't be changed safely."""
+    if key not in KNOWN_SETTINGS:
+        raise ValueError(f"not a setting: {key!r}")
+    path = profile_path()
+    if not path.exists():
+        raise ValueError("Set up your profile first")
+    try:
+        text = set_yaml_value(path.read_text(encoding="utf-8"), ("settings", key), value)
+    except ValueError as e:
+        raise ValueError(f"Your profile's settings couldn't be changed here ({e}): set {key} under settings: in "
+                         f"{path} yourself") from None
+    write_text_atomic(path, text)
 
 
 def _answers_file() -> dict[str, Any]:
