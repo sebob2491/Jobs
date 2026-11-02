@@ -92,9 +92,17 @@ def test_a_status_set_by_mistake_and_put_back_says_nothing(job_apply_home):
     later = _job(t, 4, "Later Fab")
     t.update(later, status="interviewing")
     t.update(later, status="rejected")
+    # (the second review: a real phone screen told to Claude, the job marked applied days later when the person says
+    # they sent it on the site: a move back long after the status isn't a correction of it)
+    screen = _job(t, 5, "Screen Fab")
+    t.update(screen, status="interviewing")
+    t.conn.execute("UPDATE events SET at = ? WHERE job_id = ? AND status = 'interviewing'",
+                   ((datetime.now(timezone.utc) - timedelta(days=5)).isoformat(timespec="seconds"), screen))
+    t.conn.commit()
+    t.update(screen, status="applied")
     rows = {r["company"]: (r["answered"], r["further"]) for r in t.outcomes()}
     assert rows == {"Oops Fab": (False, False), "Told Fab": (True, True), "No Fab": (False, False),
-                    "Later Fab": (True, True)}, rows
+                    "Later Fab": (True, True), "Screen Fab": (True, True)}, rows
 
 
 def test_the_days_to_an_answer_are_from_real_answer_times_only(job_apply_home):
@@ -106,6 +114,15 @@ def test_the_days_to_an_answer_are_from_real_answer_times_only(job_apply_home):
     talk = _job(t, 1, "Talk Fab")
     t.log_email(talk, "t-1", "interview", "Phone screen", _after(5))
     t.log_email(talk, "t-1", "rejection", "Not moving forward", _after(20))  # (the same thread, later)
+    # (the second review: a message that isn't an answer between them, in threads of their own)
+    between = _job(t, 4, "Between Fab")
+    t.log_email(between, "b-1", "interview", "Phone screen", _after(7))
+    t.log_email(between, "b-1", "other", "Directions to the site", _after(9))
+    t.log_email(between, "b-1", "rejection", "Not moving forward", _after(30))
+    thanks = _job(t, 5, "Thanks Fab")
+    t.log_email(thanks, "c-1", "interview", "Phone screen", _after(8))
+    t.log_email(thanks, "c-1", "other", "Directions to the site", _after(9))
+    t.log_email(thanks, "c-1", "confirmation", "We received your form", _after(10))
     hand = _job(t, 2, "Hand Fab")
     t.update(hand, status="rejected")
     straight = _job(t, 3, "Straight Fab", status="interviewing")
@@ -114,6 +131,8 @@ def test_the_days_to_an_answer_are_from_real_answer_times_only(job_apply_home):
     assert rows["Talk Fab"]["first_answer"] == _after(5) and rows["Talk Fab"]["applied_at"] == OLD
     heard = t.last_heard()[talk]
     assert (heard["category"], heard["received_at"], heard["emails"]) == ("rejection", _after(20), 1)
+    assert rows["Between Fab"]["first_answer"] == _after(7) and rows["Thanks Fab"]["first_answer"] == _after(8)
+    del rows["Between Fab"], rows["Thanks Fab"]
     assert rows["Hand Fab"]["answered"] and rows["Hand Fab"]["first_answer"] == ""
     assert rows["Straight Fab"]["applied_at"] == "" and rows["Straight Fab"]["first_answer"] == _after(6)
     learned = learn(list(rows.values()), [], now=NOW)

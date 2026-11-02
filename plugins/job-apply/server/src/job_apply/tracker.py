@@ -246,6 +246,9 @@ def _clock() -> datetime:
     return datetime.now(timezone.utc)
 
 
+CORRECTED_WITHIN = timedelta(days=2)  # (outcomes: a status moved back this soon was a correction, not an answer)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -1262,10 +1265,12 @@ class Tracker:
                                  (thread_id,)).fetchone()
         if seen and seen["category"] == category and (not received_at or seen["received_at"] == received_at):
             return {"already_logged": True, "status": job["status"], "changed": False}
-        # when the thread first answered: the row it replaces kept it (an interview, then the rejection under it),
-        # else this message, if it's an answer (outcomes' days to a first answer; the row says its latest message)
-        answered_at = (seen["answered_at"] or seen["received_at"] if seen and seen["category"] in ANSWER_CATEGORIES
-                       else received_at if category in ANSWER_CATEGORIES else "")
+        # when the thread first answered: the row it replaces kept it (an interview, then a message that isn't an
+        # answer, then the rejection under them), or was the answer itself, else this message, if it's an answer
+        # (outcomes' days to a first answer; the row says its latest message)
+        answered_at = ((seen["answered_at"] if seen else "")
+                       or (seen["received_at"] if seen and seen["category"] in ANSWER_CATEGORIES else "")
+                       or (received_at if category in ANSWER_CATEGORIES else ""))
         self.conn.execute(  # one row per thread: its latest message
             "INSERT OR REPLACE INTO emails (thread_id, job_id, category, summary, received_at, logged_at, answered_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -1346,14 +1351,21 @@ class Tracker:
             when = _moment(r["answered_at"] or (r["received_at"] if was else ""))
             if when is not None and (r["job_id"] not in firsts or when < firsts[r["job_id"]]):
                 firsts[r["job_id"]] = when
-        # the status changes, each job's in order: an answer's status counts unless the job was moved back after it
-        statuses: dict[int, builtins.list[str]] = {}
-        for r in self.conn.execute("SELECT job_id, status FROM events WHERE status != '' ORDER BY id"):
-            statuses.setdefault(r["job_id"], []).append(r["status"])
+        # the status changes, each job's in order: an answer's status counts unless the job was moved back soon after
+        # it (a correction: set by mistake, put back); a move back days later (a phone screen told first, the job
+        # marked applied when the person says they sent it on the site) leaves it counted
+        statuses: dict[int, builtins.list[tuple[str, datetime | None]]] = {}
+        for r in self.conn.execute("SELECT job_id, status, at FROM events WHERE status != '' ORDER BY id"):
+            statuses.setdefault(r["job_id"], []).append((r["status"], _moment(r["at"])))
         back = set(_PIPELINE[:_PIPELINE.index("applied") + 1])
+
+        def corrected(at: datetime | None, later: builtins.list[tuple[str, datetime | None]]) -> bool:
+            return any(s in back and (at is None or when is None or when - at <= CORRECTED_WITHIN)
+                       for s, when in later)
+
         for jid, said in statuses.items():
-            for i, status in enumerate(said):
-                if status in ("interviewing", "offer", "rejected") and not back & set(said[i + 1:]):
+            for i, (status, at) in enumerate(said):
+                if status in ("interviewing", "offer", "rejected") and not corrected(at, said[i + 1:]):
                     answered.add(jid)
                     if status != "rejected":
                         further.add(jid)
