@@ -983,18 +983,23 @@ def written_by() -> str:
     return BY_KEY if api_key() is not None else BY
 
 
-async def _ask_api(key: ApiKey, system: str, content: list[dict[str, Any]], model: str, timeout: float) -> str:
+async def _ask_api(key: ApiKey, system: str, content: list[dict[str, Any]], model: str, timeout: float,
+                   schema: dict[str, Any] | None = None) -> str:
     """One request to Anthropic's Messages API: the same system prompt and message the claude -p path sends, and no
     tools. Its text, or why there's none: Unavailable for what stops every letter (the key turned down, no credit, the
     rate limit, no connection, a model the key can't use), LetterError for this one's. Within `timeout` in all, the
     client's own retries of a busy service included (as claude -p is). Cancelled (the switch turned off, the job
-    skipped), its request is dropped with it."""
+    skipped), its request is dropped with it. With a `schema`, the answer is JSON in that shape (structured outputs:
+    the desk's reading of a resume, profile_setup.read_resume)."""
     import anthropic  # (here: the desk starts without loading it, and only a key's letters need it)
 
     ask: dict[str, Any] = {"model": model, "max_tokens": MAX_TOKENS, "system": system,
                            "messages": [{"role": "user", "content": content}]}
-    if model.startswith(_EFFORT_MODELS):
-        ask["output_config"] = {"effort": "medium"}
+    output: dict[str, Any] = {"effort": "medium"} if model.startswith(_EFFORT_MODELS) else {}
+    if schema is not None:
+        output["format"] = {"type": "json_schema", "schema": schema}
+    if output:
+        ask["output_config"] = output
     where: dict[str, Any] = {"base_url": ANTHROPIC_API} if key.saved else {}
     try:
         async with anthropic.AsyncAnthropic(api_key=key.value, timeout=timeout, max_retries=2, **where) as client:

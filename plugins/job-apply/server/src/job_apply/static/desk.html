@@ -192,6 +192,19 @@ button.idea { font-size: 12px; padding: 2px 8px; border-radius: 999px; }
 .ideas { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: baseline; margin-top: 8px; font-size: 13px; color: var(--muted); }
 #area-btn { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #area-error { color: var(--bad); }
+/* Set up your profile: a step at a time */
+#setup h3 { font-size: 14px; margin: 16px 0 4px; }
+#setup-error { color: var(--bad); }
+#setup-filled { color: var(--text); background: var(--info-bg); padding: 8px 10px; border-radius: 8px; }
+.setup-grid, .setup-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0 12px; }
+.setup-row { border: 1px solid var(--line); border-radius: 8px; padding: 2px 10px 8px; margin: 8px 0; }
+.setup-row > .wide { grid-column: 1 / -1; }
+.q input[type=file] { font: inherit; }
+fieldset.yesno { border: 0; padding: 0; margin: 10px 0; }
+fieldset.yesno legend { font-size: 14px; padding: 0; margin-bottom: 4px; }
+fieldset.yesno label { margin-right: 18px; }
+label.consent { display: flex; gap: 8px; align-items: flex-start; margin: 12px 0; }
+label.consent input { margin-top: 4px; }
 .pw details p { margin: 6px 0 0; }
 .pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
 .pw-row input { flex: 1; min-width: 0; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
@@ -225,6 +238,7 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
     <button id="pause-btn" data-act="pause" title="The job under way finishes what it is doing; no other job starts until you press Carry on with the queue" hidden>Pause queue</button>
     <button id="clear-queue-btn" data-act="clear-queue" title="Take the jobs not started yet out of the queue, back to the openings (not skipped); jobs already begun keep their cards" hidden>Clear the queue</button>
     <button class="link" id="week-btn" data-act="week" title="What the desk did in the last 7 days: jobs filled and sent, where it stopped for you, and how long each job took">This week</button>
+    <button class="link" id="setup-btn" data-act="setup" title="Your resume, contact details, work authorization, jobs and schools, and what the desk may do for you">Your profile</button>
     <button class="link" id="safety-btn" data-act="safety" title="What the desk does in your name, and what it never does: each setting as it is now, and where to change it">Safety</button>
     <button id="area-btn" data-act="area" title="What and where Find jobs searches: the job titles, places and employer lists">What and where</button>
     <button id="find" data-act="find">Find jobs</button>
@@ -402,6 +416,54 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
     <div class="actions" style="margin-top: 16px">
       <button class="primary" type="submit">Save and find jobs</button>
       <button type="button" data-act="area-close">Cancel</button>
+    </div>
+  </form>
+</dialog>
+<!-- Set up your profile (/api/profile/*, profile_setup.py): the resume, the person's details, jobs and schools, the
+     three consents; then the What and where window. The window works on a copy (setupForm), saved only by Save -->
+<dialog id="setup" aria-labelledby="setup-h">
+  <form id="setup-form" autocomplete="off" novalidate>
+    <h2 id="setup-h">Set up your profile</h2>
+    <p class="small" id="setup-steps"></p>
+    <section data-step="1">
+      <h3>Your resume</h3>
+      <p class="small" id="setup-resume-now"></p>
+      <label class="q"><span>Pick your resume: a PDF or Word (.docx) file, up to 10 MB</span>
+        <input type="file" id="setup-file" accept=".pdf,.docx"></label>
+      <p class="small">The desk keeps a copy in its own folder and uploads it where an application asks for a resume.</p>
+      <div id="setup-read"></div>
+    </section>
+    <section data-step="2" hidden>
+      <h3>Your contact details</h3>
+      <div class="setup-grid" id="setup-personal"></div>
+      <h3>Work authorization</h3>
+      <p class="small">Applications ask these. Each stays unanswered until you pick Yes or No.</p>
+      <div id="setup-auth"></div>
+    </section>
+    <section data-step="3" hidden>
+      <h3>Your jobs</h3>
+      <p class="small">Most recent first. Dates as 2021-03 (or the year alone, 2021); present for a job you have now.</p>
+      <div id="setup-jobs"></div>
+      <button type="button" data-act="setup-add-job">Add a job</button>
+      <h3>Your schools</h3>
+      <p class="small">Each school you went to, high school too if you like. Say whether you finished each degree:
+        applications ask, and employers check, so classes you took are never written down as a degree.</p>
+      <div id="setup-schools"></div>
+      <button type="button" data-act="setup-add-school">Add a school</button>
+    </section>
+    <section data-step="4" hidden>
+      <h3>What the desk may do for you</h3>
+      <p class="small">Each shows as your profile has it (its default, if you haven't chosen). Save keeps them as you
+        leave them here, as your own choice; you can change them here any time.</p>
+      <div id="setup-consents"></div>
+    </section>
+    <p class="small" id="setup-filled" role="status" hidden></p>
+    <p class="small" id="setup-error" role="alert" hidden></p>
+    <div class="actions" style="margin-top: 16px">
+      <button type="button" id="setup-back" data-act="setup-back">Back</button>
+      <button type="button" class="primary" id="setup-next" data-act="setup-next">Next</button>
+      <button type="submit" class="primary" id="setup-save" hidden>Save, then pick what and where</button>
+      <button type="button" data-act="setup-close">Close</button>
     </div>
   </form>
 </dialog>
@@ -600,7 +662,7 @@ async function api(path, body) {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), {status: res.status});
+  if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), {status: res.status, data});
   return data;
 }
 
@@ -1572,7 +1634,7 @@ function renderHeader() {
     : {cls: "notice info", html: esc(state.queue_note)});
   if (state.tailoring) notes.push({cls: "waiting", html: `<strong>${state.tailoring} job${state.tailoring === 1 ? "" : "s"} waiting for a tailored resume.</strong>
     <span>In Claude Code, say \u201ctailor my resumes\u201d. Each job carries on as soon as its resume is ready.</span>`});
-  if (p.missing && p.missing.length) notes.push({cls: "notice bad", html: `Problem: your profile still needs: ${esc(inWords(p.missing.map(profileField)))}. Run <code>/job-apply:setup</code> in Claude Code, or edit <code>${esc(p.path)}</code>.`});
+  if (p.missing && p.missing.length) notes.push({cls: "notice bad", html: `Problem: your profile still needs: ${esc(inWords(p.missing.map(profileField)))}. <button class="link" data-act="setup">Set up your profile</button> here, run <code>/job-apply:setup</code> in Claude Code, or edit <code>${esc(p.path)}</code>.`});
   if (p.gaps && p.gaps.length) notes.push({cls: "notice info", tip: "gaps:" + p.gaps.join(","), html: `Fewer stops: your profile could also hold ${esc(inWords(p.gaps.map(profileField)))}.`});
   // on by default since 0.3.67: said until the profile says either way
   if (s.manage_accounts && !s.manage_accounts_chosen) notes.push({cls: "notice info", tip: "accounts", html: `The desk now handles your job-site
@@ -1810,6 +1872,210 @@ function areaAdd(kind, value) {
   renderAreaDraft();
 }
 
+// Set up your profile (/api/profile/*): the resume, the person's details, jobs and schools, and the three consents, in
+// four short steps, then the What and where window. The window works on a copy of the form (setupForm), saved only by
+// Save. It opens by itself once a visit while the profile lacks what an application needs, and from Your profile
+let setupForm = null, setupStep = 1, setupCanRead = false, setupMost = 10 * 1024 * 1024;
+let setupOffered = false;
+const SETUP_STEPS = ["Your resume", "Your details", "Your jobs and schools", "What the desk may do for you",
+                     "What and where to search (next)"];
+const SETUP_PERSONAL = [["first_name", "First name", "given-name"], ["last_name", "Last name", "family-name"],
+  ["email", "Email", "email"], ["phone", "Phone", "tel"], ["line1", "Street address", "address-line1"],
+  ["city", "City", "address-level2"], ["state", "State", "address-level1"], ["postal_code", "ZIP code", "postal-code"],
+  ["country", "Country", "country-name"]];
+const SETUP_AUTH = [["authorized_to_work", "Are you legally authorized to work in the US?"],
+  ["requires_sponsorship", "Will you need visa sponsorship (an H-1B, say), now or in the future?"],
+  ["us_citizen", "Are you a US citizen?"],
+  ["us_person", "Are you a US person for export control rules (a US citizen, green card holder, refugee or asylee)? "
+    + "Semiconductor equipment employers often ask."],
+  ["over_18", "Are you 18 or older?"]];
+// (the levels education.degrees_earned takes, as the template documents them; Something else is never counted as one)
+const SETUP_LEVELS = [["", "Pick one"], ["high_school", "High school diploma"], ["ged", "GED"],
+  ["associate", "Associate's degree"], ["bachelor", "Bachelor's degree"], ["master", "Master's degree"],
+  ["doctorate", "Doctorate (a PhD, an EdD)"], ["other", "Something else (a certificate, a JD, an MD, a PharmD)"]];
+// A school not finished: what it was (profile_setup's kinds), and how it's saved, never as a degree
+const SETUP_UNFINISHED = [["", "Pick one"], ["high_school", "High school"], ["college", "College or university"],
+  ["other", "A trade school or other program"]];
+const SETUP_KIND = {high_school: "high_school", ged: "high_school", associate: "college", bachelor: "college",
+                    master: "college", doctorate: "college", college: "college", other: "other"};
+const unfinishedSaved = (s) => s.level === "high_school" ? "Some high school" : s.level === "college"
+  ? "Some college (no degree)" : s.level === "other" ? `${s.degree || "Program"} (not completed)` : "";
+// The three consents, said as setup says them (skills/setup/SKILL.md, step 4), each with its default
+const SETUP_CONSENTS = [
+  ["accept_cookies", "Accept cookie banners that can't be declined (default: off)",
+   "The desk declines cookie banners. One with no way to decline (TI's “Agree and Proceed”) waits for you, "
+   + "unless you tick this. Off unless you turn it on."],
+  ["manage_accounts", "Make my accounts on job sites (default: on)",
+   "Many employers' job sites need an account. With a password saved under Site passwords, the desk makes yours, "
+   + "agreeing to each site's terms in your name (and to being considered for other open positions where a site won't "
+   + "make the account without it; never job alerts or a newsletter), and when a site turns your saved password down, "
+   + "it resets it through that site's “Forgot password” email. Security questions come to you on the "
+   + "desk; a picture code stays yours. Off: the desk fills in Create Account for you to finish."],
+  ["accept_notices", "Agree to notices and attestations for me (default: on)",
+   "The desk agrees in your name to an employer's notice about AI screening of your application and to its privacy "
+   + "notice and terms of use, and picks an application's statement that your information is true and complete (or "
+   + "your consent to the background check that comes with applying), noting each in the job's log. Never a "
+   + "newsletter, job alerts, a talent community, texts, a legal waiver or the terms of your employment. It's true "
+   + "because every answer comes from your profile or from you. Off: the desk stops at each one for you."],
+];
+const setupSay = (text) => { $("setup-error").textContent = text; $("setup-error").hidden = !text; };
+// (opened by itself: never over a window the person opened meanwhile, while the form was on its way)
+async function openSetup(byItself = false) {
+  const out = await api("/api/profile/form");
+  if (byItself && document.querySelector("dialog[open]")) return;
+  setupForm = out.form;
+  setupCanRead = !!out.can_read;
+  setupMost = out.resume_most || setupMost;
+  setupStep = 1;
+  setupSay("");
+  $("setup-filled").hidden = true;
+  $("setup-file").value = "";
+  renderSetup();
+  if (!$("setup").open) $("setup").showModal();
+}
+function yesNo(name, question, value, attrs) {
+  return `<fieldset class="yesno"><legend>${esc(question)}</legend>
+    <label><input type="radio" name="sf-${name}" value="yes" ${attrs} ${value === true ? "checked" : ""}> Yes</label>
+    <label><input type="radio" name="sf-${name}" value="no" ${attrs} ${value === false ? "checked" : ""}> No</label></fieldset>`;
+}
+function renderSetup() {
+  const f = setupForm;
+  $("setup-steps").textContent = `Step ${setupStep} of ${SETUP_STEPS.length}: ${SETUP_STEPS[setupStep - 1]}`;
+  document.querySelectorAll("#setup [data-step]").forEach((s) => { s.hidden = Number(s.dataset.step) !== setupStep; });
+  const r = f.resume || {};
+  $("setup-resume-now").textContent = r.found ? `Your resume now: ${r.path}. Pick another file to use that one instead.`
+    : r.path ? `Your profile names ${r.path}, but nothing is there. Pick your resume.` : "No resume yet: pick yours.";
+  $("setup-read").innerHTML = setupCanRead
+    ? `<button type="button" data-act="setup-read" ${r.found ? "" : "disabled"}>Read my resume</button>
+       <span class="small">Claude reads it with your Anthropic API key and fills in the boxes on the next steps that
+       are empty, for you to check.</span>`
+    : `<p class="small">Type your details on the next steps, or save an Anthropic API key under Site passwords to have
+       your resume read for you.</p>`;
+  $("setup-personal").innerHTML = SETUP_PERSONAL.map(([k, label, auto]) => `<label class="q"><span>${label}</span>
+    <input type="text" data-sf="${k}" autocomplete="${auto}" value="${esc(f.personal[k] || "")}"></label>`).join("");
+  $("setup-auth").innerHTML = SETUP_AUTH.map(([k, q]) =>
+    yesNo(`auth-${k}`, q, f.work_authorization[k], `data-sf-auth="${k}"`)).join("");
+  renderSetupRows();
+  $("setup-consents").innerHTML = SETUP_CONSENTS.map(([k, label, says]) => `<label class="consent">
+    <input type="checkbox" data-sf-consent="${k}" ${f.settings[k] ? "checked" : ""}>
+    <span><strong>${esc(label)}</strong><br><span class="small">${esc(says)}</span></span></label>`).join("");
+  $("setup-back").hidden = setupStep === 1;
+  $("setup-next").hidden = setupStep === 4;
+  $("setup-save").hidden = setupStep !== 4;
+}
+function setupBox(kind, i, key, label, value, wide = false) {
+  return `<label class="q${wide ? " wide" : ""}"><span>${label}</span><input type="text" data-sf-row="${kind}" data-i="${i}"
+    data-k="${key}" value="${esc(value || "")}"></label>`;
+}
+// (drawn again when a row is added, removed, or a school's Yes or No changes what it asks; never as the person types)
+function renderSetupRows() {
+  const f = setupForm;
+  $("setup-jobs").innerHTML = f.jobs.map((j, i) => `<div class="setup-row">
+    ${setupBox("jobs", i, "title", "Job title", j.title)}${setupBox("jobs", i, "company", "Company", j.company)}
+    ${setupBox("jobs", i, "location", "Where (city, state)", j.location)}
+    ${setupBox("jobs", i, "start", "Started (2021-03)", j.start)}${setupBox("jobs", i, "end", "Ended (2023-06, or present)", j.end)}
+    <p class="wide"><button type="button" class="link" data-setup-drop="jobs" data-i="${i}">Remove this job</button></p>
+    </div>`).join("") || `<p class="small">None yet.</p>`;
+  $("setup-schools").innerHTML = f.schools.map((s, i) => `<div class="setup-row">
+    ${setupBox("schools", i, "school", "School", s.school)}
+    ${setupBox("schools", i, "degree", "Degree or program, as written", s.degree)}
+    ${setupBox("schools", i, "field", "Field of study", s.field)}
+    ${setupBox("schools", i, "start", "Started (2016)", s.start)}${setupBox("schools", i, "end", "Ended (2020, or present)", s.end)}
+    <div class="wide">${yesNo(`finished-${i}`, `Did you finish this degree${s.school ? ` at ${s.school}` : ""}?`, s.finished,
+      `data-sf-row="schools" data-i="${i}" data-k="finished"`)}</div>
+    <label class="q wide"><span>${s.finished === false ? "What it was" : "What you finished there"}</span>
+      <select data-sf-row="schools" data-i="${i}" data-k="level">${(s.finished === false ? SETUP_UNFINISHED : SETUP_LEVELS)
+        .map(([v, words]) => `<option value="${v}" ${s.level === v ? "selected" : ""}>${esc(words)}</option>`).join("")}
+      </select></label>
+    ${s.finished === false && unfinishedSaved(s) ? `<p class="small wide" data-saved-as="${i}">Saved as
+      “${esc(unfinishedSaved(s))}”: what you studied there, never counted as a degree.</p>` : ""}
+    <p class="wide"><button type="button" class="link" data-setup-drop="schools" data-i="${i}">Remove this school</button></p>
+    </div>`).join("") || `<p class="small">None yet.</p>`;
+}
+function setupInput(e) {
+  const t = e.target;
+  if (!setupForm) return;
+  if (t.dataset.sf) setupForm.personal[t.dataset.sf] = t.value;
+  else if (t.dataset.sfAuth) setupForm.work_authorization[t.dataset.sfAuth] = t.value === "yes";
+  else if (t.dataset.sfConsent) setupForm.settings[t.dataset.sfConsent] = t.checked;
+  else if (t.dataset.sfRow) {
+    const row = setupForm[t.dataset.sfRow][Number(t.dataset.i)];
+    if (!row) return;
+    if (t.dataset.k === "finished") {
+      if (e.type !== "change") return;
+      row.finished = t.value === "yes";
+      // (not finished: what it was of, from the level picked; finished: a level of its own to pick)
+      row.level = row.finished ? (SETUP_LEVELS.some(([v]) => v && v === row.level) ? row.level : "")
+        : SETUP_KIND[row.level] || "";
+      renderSetupRows();
+    } else {
+      row[t.dataset.k] = t.value;
+      if (t.dataset.k === "level" && e.type === "change" && row.finished === false) renderSetupRows();
+    }
+  }
+}
+function setupResume() {
+  const file = $("setup-file").files[0];
+  if (!file || !setupForm) return;
+  if (!/\.(pdf|docx)$/i.test(file.name)) { setupSay("Pick your resume as a PDF or a Word (.docx) file."); return; }
+  if (file.size > setupMost) { setupSay(`That file is bigger than ${Math.round(setupMost / 1048576)} MB: pick a smaller copy.`); return; }
+  const reader = new FileReader();
+  reader.onload = () => act(async () => {
+    try {
+      const out = await api("/api/profile/resume", {name: file.name, data: String(reader.result).split(",")[1] || ""});
+      if (!setupForm) return;
+      setupForm.resume = out.resume;
+      setupForm.version = out.version;  // (the profile now names it: the form goes on from that)
+      setupSay("");
+      renderSetup();
+    } catch (err) { setupSay(err.message); }
+  }, false);
+  reader.readAsDataURL(file);
+}
+function readResume(btn) {
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spin"></span> Reading…`;
+  act(async () => {
+    try {
+      const out = await api("/api/profile/read", {form: setupForm});
+      if (!setupForm) return;
+      setupForm = {...out.form, resume: setupForm.resume};
+      $("setup-filled").textContent = out.filled.length
+        ? `Filled in from your resume: ${inWords(out.filled)}. Check each one, and change what isn't right.`
+        : "Your resume added nothing: the boxes it speaks to are filled already.";
+      $("setup-filled").hidden = false;
+      setupSay("");
+      setupStep = 2;
+    } catch (err) { setupSay(err.message); }
+    if (setupForm) renderSetup();
+  }, false);
+}
+$("setup-form").addEventListener("input", setupInput);
+$("setup-form").addEventListener("change", (e) => { if (e.target.id === "setup-file") setupResume(); else setupInput(e); });
+$("setup-form").addEventListener("keydown", (e) => {  // (Enter in a box doesn't save the window)
+  if (e.key === "Enter" && e.target.tagName === "INPUT") e.preventDefault();
+});
+$("setup-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (!setupForm) return;
+  const {resume, ...form} = setupForm;
+  act(async () => {
+    let out;
+    try { out = await api("/api/profile/save", {form}); } catch (err) {
+      // (said on the step it's about: the jobs and schools, the details, or the consents)
+      const step = Number((err.data || {}).step);
+      if (setupForm && step >= 1 && step <= 4) { setupStep = step; renderSetup(); }
+      setupSay(step >= 1 && step <= 4 ? `Step ${step}, ${SETUP_STEPS[step - 1]}: ${err.message}` : err.message);
+      return;
+    }
+    setupForm = null;
+    $("setup").close();
+    toast(out.missing.length ? `Saved. Your profile still needs ${inWords(out.missing.map(profileField))}.`
+      : "Your profile is saved. Now, what and where to look.");
+    if (state) openArea();  // (the last step: what and where Find jobs searches)
+  });
+});
+
 function render() {
   if (!state) return;
   botStep();  // (the rounds first: the banner names the job they're on)
@@ -1822,6 +2088,12 @@ function render() {
   renderAlerts();
   renderNotes();
   announce();
+  // (a profile that lacks what an application needs: Set up your profile, once a visit, over no other window)
+  const missing = (state.profile || {}).missing || [];
+  if (!setupOffered && missing.length && !state.profile_problem && !document.querySelector("dialog[open]")) {
+    setupOffered = true;
+    openSetup(true).catch(() => { setupOffered = false; });
+  }
 }
 
 let loading = null;  // the refresh under way: one at a time, so an older state never lands after a newer one
@@ -2047,6 +2319,11 @@ document.addEventListener("click", (e) => {
     renderAreaDraft();
     return;
   }
+  if (t.dataset.setupDrop && setupForm) {  // Remove this job, Remove this school, in Set up your profile
+    setupForm[t.dataset.setupDrop].splice(Number(t.dataset.i), 1);
+    renderSetupRows();
+    return;
+  }
   if (t.dataset.areaAdd && areaDraft) {  // one of the window's ideas
     areaAdd(t.dataset.areaAdd, t.dataset.value);
     return;
@@ -2143,6 +2420,19 @@ document.addEventListener("click", (e) => {
   if (a === "find") act(() => api("/api/search", {}));
   if (a === "stop-search") act(() => api("/api/search/stop", {}));
   if (a === "area") openArea();
+  if (a === "setup") { setupOffered = true; act(openSetup, false); }
+  if (a === "setup-close") { setupForm = null; $("setup").close(); }
+  if (a === "setup-back" && setupForm) { setupStep = Math.max(1, setupStep - 1); renderSetup(); }
+  if (a === "setup-next" && setupForm) { setupStep = Math.min(4, setupStep + 1); setupSay(""); renderSetup(); }
+  if (a === "setup-read" && setupForm) readResume(t);
+  if (a === "setup-add-job" && setupForm) {
+    setupForm.jobs.push({title: "", company: "", location: "", start: "", end: ""});
+    renderSetupRows();
+  }
+  if (a === "setup-add-school" && setupForm) {
+    setupForm.schools.push({school: "", degree: "", field: "", start: "", end: "", finished: null, level: ""});
+    renderSetupRows();
+  }
   if (a === "area-close") { areaDraft = null; $("area").close(); }
   if (a === "area-title-add") { areaAdd("titles", $("area-title-new").value); $("area-title-new").value = ""; }
   if (a === "area-place-add") { areaAdd("places", $("area-place-new").value); $("area-place-new").value = ""; }
