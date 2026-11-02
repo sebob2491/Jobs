@@ -288,7 +288,8 @@ def test_everywhere_is_every_employer_on_the_lists_with_its_role_and_system():
               for c in yaml.safe_load(search.employer_lists()[name].read_text(encoding="utf-8"))["companies"]}
     assert set(by) | set(skipped) == listed and not set(by) & set(skipped)
     assert {"TSMC Arizona", "Maricopa Community Colleges", "City of Phoenix", "ADP", "American Airlines",
-            "Clark County", "Zappos"} <= set(skipped)
+            "PlayStudios", "Zappos"} <= set(skipped)
+    assert by["Clark County"]["system"] == "neogov"  # (searched since NEOGOV's boards are: Nov 2026)
     assert all(e["why"] != li.NO_REASON for e in skipped.values()), skipped  # (each list entry says why)
     assert skipped["TSMC Arizona"]["list"] == "semiconductor-az" and "Cloudflare" in skipped["TSMC Arizona"]["why"]
 
@@ -444,8 +445,8 @@ def test_live_smoke_everywhere_says_each_employer_it_cant_apply_at(tmp_path, smo
     lines = [json.loads(x[len("LIVE_SKIPPED "):]) for x in said.splitlines() if x.startswith("LIVE_SKIPPED ")]
     assert lines == [{"company": e["name"], "list": e["list"], "why": e["why"]} for e in li.skipped_employers()]
     by = {x["company"]: x for x in lines}
-    assert {"TSMC Arizona", "City of Phoenix", "ADP", "Clark County"} <= set(by)
-    assert by["Clark County"]["list"] == "las-vegas" and "NEOGOV" in by["Clark County"]["why"]
+    assert {"TSMC Arizona", "City of Phoenix", "ADP", "PlayStudios"} <= set(by)
+    assert by["PlayStudios"]["list"] == "las-vegas" and "Dayforce" in by["PlayStudios"]["why"]
     home = next(h for h in tmp_path.glob("job-apply-live-*") if (h / "companies.yaml").exists())
     assert yaml.safe_load((home / "companies.yaml").read_text(encoding="utf-8")) == {"lists": sorted(li.LIST_ROLES)}
     code, said = smoke_script(ENV, "--pipeline", "--test-identity", "--everywhere", "--machine", "1/4",

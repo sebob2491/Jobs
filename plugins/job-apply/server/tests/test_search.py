@@ -5,6 +5,7 @@ import asyncio
 import json
 import re
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
@@ -2182,6 +2183,120 @@ def test_a_jobvite_board_page_is_parsed_once(monkeypatch):
     out = asyncio.run(go())
     assert [r["title"] for r in out["results"]] == ["Transportation Recruiter"]
     assert parsed.count(board) == 1
+
+
+# City of Las Vegas's NEOGOV board, as its page's list request answers (Nov 2026; trimmed to three openings, its count
+# and pager saying 5 on two pages)
+NEOGOV_PAGE = (Path(__file__).parent / "fixtures" / "search" / "neogov_lasvegas.html").read_text(encoding="utf-8")
+NEOGOV_ROW = """<tr><th scope="row" class="job-table-title" data-job-id="{id}">
+  <a class="item-details-link" data-department-name="Public Works" href="/careers/{agency}/jobs/{id}/{slug}">{title}</a></th>
+  <td class="job-table-jobnumber">31920</td><td class="job-table-type">PERMANENT</td>
+  <td class="job-table-salary hidden-xs">{pay}</td><td class="job-table-posted hidden-sm hidden-xs">10/06/26</td>
+  <td class="job-table-closing">Continuous</td><td class="job-table-department">Public Works</td>{where}</tr>"""  # noqa: E501
+
+
+def neogov_page(agency, count, rows, where=True):
+    """A NEOGOV board page: its count and its table's rows, (id, title, pay) each; `where`: with a Location column
+    (Clark County's board has none)."""
+    cell = '<td class="job-table-location hidden-sm hidden-xs">Las Vegas, NV</td>' if where else ""
+    return (f'<div class="listing-title"><span id="job-postings-number">{count}</span> Job Postings found</div>'
+            '<table class="table"><tbody>'
+            + "".join(NEOGOV_ROW.format(id=i, agency=agency, slug=t.lower().replace(" ", "-"), title=t, pay=p,
+                                        where=cell) for i, t, p in rows)
+            + "</tbody></table>")
+
+
+def test_a_neogov_board_is_read_page_by_page_and_filtered_by_title():
+    """NEOGOV's agency boards (governmentjobs.com: Clark County, Las Vegas, Henderson, UMC) answer their page's list
+    request 10 openings a page, with how many there are; the keyword box doesn't narrow the answer, so every page
+    is read and titles are matched here. Each row gives the opening's type, pay (the system's own field), posting
+    date and place."""
+    asked = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        asked.append((request.url.path, dict(request.url.params), request.headers.get("X-Requested-With")))
+        if request.url.params.get("page") == "2":
+            return httpx.Response(200, text=neogov_page("lasvegas", 5, [
+                ("5533614", "IT Support Technician", "$33.13 Hourly"),
+                ("5517573", "Street Light Superintendent", "$36.34 - $53.73 Hourly")]))
+        return httpx.Response(200, text=NEOGOV_PAGE)
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+            return await search_companies("technician | project manager", location="Las Vegas, NV", client=client,
+                                          companies=[{"name": "City of Las Vegas", "search": {"neogov": "lasvegas"}}])
+    out = asyncio.run(go())
+    assert out["errors"] == {}
+    board = {"agency": "lasvegas", "sort": "PositionTitle", "isDescendingSort": "false"}
+    assert asked == [("/careers/home/index", {**board, "page": "1"}, "XMLHttpRequest"),
+                     ("/careers/home/index", {**board, "page": "2"}, "XMLHttpRequest")]
+    assert [(r["title"], r["url"], r["external_id"], r["location"], r["posted"], r["employment_type"],
+             r["pay_min"], r["pay_max"], r["pay_period"], r["pay_source"], r["pay_sure"]) for r in out["results"]] == [
+        ("Enterprise Project Manager", "https://www.governmentjobs.com/careers/lasvegas/jobs/5533546/"
+         "enterprise-project-manager", "5533546", "Nevada 89101, NV", "2026-10-28", "Full-Time",
+         87643.92, 113937.2, "year", "structured", True),
+        ("IT Support Technician", "https://www.governmentjobs.com/careers/lasvegas/jobs/5533614/it-support-technician",
+         "5533614", "Las Vegas, NV", "2026-10-06", "PERMANENT", 33.13, 33.13, "hour", "structured", True)]
+
+
+def test_a_neogov_boards_openings_are_read_with_their_pay_or_none():
+    """Its pay column says "See Position Description" for some openings: no pay, not a guess."""
+    found = search_module.parse_neogov(NEOGOV_PAGE)
+    assert [(x.title, x.external_id, x.location, x.posted, x.pay_min, x.pay_max, x.pay_period, x.ats)
+            for x in found] == [
+        ("Corrections Officer (Lateral Officers)", "4800033", "City of Las Vegas, NV", "2025-01-22", None, None, "",
+         "custom"),
+        ("Enterprise Project Manager", "5533546", "Nevada 89101, NV", "2026-10-28", 87643.92, 113937.2, "year",
+         "custom"),
+        ("Equipment Operator III", "5524667", "City of Las Vegas, NV", "2026-10-22", 28.62, 28.62, "hour", "custom")]
+    # its list view's links, should the table go: the openings still, by name
+    listed = search_module.parse_neogov(NEOGOV_PAGE[:NEOGOV_PAGE.index('<table class="table">')])
+    assert [(x.title, x.url, x.external_id) for x in listed] == [(x.title, x.url, x.external_id) for x in found]
+
+
+def test_a_neogov_board_that_names_no_place_gets_its_entrys():
+    """Clark County's board has no Location column: its openings get the place its list entry gives (`place`), so
+    a Las Vegas search keeps them as the county's, not as openings with no place given."""
+    page = neogov_page("clarkcounty", 2, [("5511162", "FACILITY MAINTENANCE TECHNICIAN", "$28.91 - $42.64 Hourly"),
+                                          ("5525016", "PLAN CHECKER I/II", "$31.20 - $49.74 Hourly")], where=False)
+    out = one_search("neogov", {"agency": "clarkcounty", "place": "Clark County, NV"},
+                     lambda request: httpx.Response(200, text=page), location="Las Vegas, NV")
+    assert [(r["title"], r["location"], r.get("notes")) for r in out["results"]] == [
+        ("FACILITY MAINTENANCE TECHNICIAN", "Clark County, NV", [])]
+    out = one_search("neogov", "clarkcounty", lambda request: httpx.Response(200, text=page), location="Las Vegas, NV")
+    assert [(r["location"], r["notes"]) for r in out["results"]] == [("", ["no location given; check the posting"])]
+
+
+def test_a_neogov_board_with_none_has_none_and_a_changed_page_is_said():
+    """A board whose count says 0 has none; an answer with neither openings nor a count is a page the reader no
+    longer reads, and is said. A page past the last (one answering the first again) ends the reading."""
+    out = one_search("neogov", "henderson", lambda request: httpx.Response(200, text=neogov_page("henderson", 0, [])))
+    assert out == {**out, "results": [], "errors": {}}
+    out = one_search("neogov", "henderson", lambda request: httpx.Response(200, text=CHANGED))
+    assert out["errors"] == {"X Co": "SearchError: No job list from https://www.governmentjobs.com/careers/henderson "
+                                     "(neither openings nor how many it has)"}
+    asked = []
+
+    def again(request: httpx.Request) -> httpx.Response:  # (says 30, but answers its first ten on every page)
+        asked.append(request.url.params["page"])
+        return httpx.Response(200, text=neogov_page("henderson", 30, [(str(i), f"Technician {i}", "") for i in
+                                                                         range(10)]))
+    out = one_search("neogov", "henderson", again)
+    assert asked == ["1", "2"] and len(out["results"]) == 10
+
+
+def test_the_las_vegas_lists_neogov_boards_are_searched():
+    """The Las Vegas list's public agencies on NEOGOV (Clark County, Las Vegas, Henderson, UMC) are searched, each its
+    careers page's agency, and Clark County's board, which names no place, with the county's."""
+    data = yaml.safe_load(search_module.employer_lists()["las-vegas"].read_text(encoding="utf-8"))
+    on_neogov = {c["name"]: c for c in data["companies"] if "governmentjobs.com" in c["careers_url"]}
+    assert len(on_neogov) == 4
+    for c in on_neogov.values():
+        cfg = c["search"]["neogov"]
+        agency = cfg["agency"] if isinstance(cfg, dict) else cfg
+        assert c["careers_url"] == f"https://www.governmentjobs.com/careers/{agency}" and "no_search" not in c
+    assert on_neogov["Clark County"]["search"]["neogov"] == {"agency": "clarkcounty", "place": "Clark County, NV"}
+    assert search_module.location_matches("Clark County, NV", location_terms("Las Vegas, NV")) is True
 
 
 def test_a_jibe_search_not_in_one_state_reads_further_and_takes_an_address():
