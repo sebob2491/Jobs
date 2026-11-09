@@ -3180,6 +3180,51 @@ def test_a_job_site_answering_its_search_with_a_page_is_said_to_be_down(body):
         asyncio.run(go())
 
 
+def test_a_job_site_that_sends_searches_to_a_host_named_for_its_outage_is_said_to_be_down():
+    """Sprouts (the live check, Nov 2026): jobs.sprouts.com sent every search on to outage.sprouts.com/sproutsdotcom/,
+    a host named for the outage where Workday's is a page named for it, and the page there was read as
+    "JSONDecodeError: Expecting value: line 1 column 1 (char 0)". It's said as the site being down, with where it
+    sends searches."""
+    def answer(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "jobs.acmefoods.example":
+            return httpx.Response(301, headers={"Location": "https://outage.acmefoods.example/acmedotcom/"})
+        return httpx.Response(200, html="<html><body>We'll be back soon.</body></html>")
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer), follow_redirects=True) as client:
+            return await search_module._jibe(client, "jobs.acmefoods.example", "analyst", 20, [])
+    with pytest.raises(search_module.SearchError,
+                       match=r"jobs\.acmefoods\.example is down for maintenance \(it sends searches to "
+                             r"outage\.acmefoods\.example/acmedotcom/\); try again in a few hours"):
+        asyncio.run(go())
+
+
+def test_every_search_reads_its_answer_through_the_reader_that_says_a_page_in_plain_words():
+    """Only Workday's search read its answer through _json, so any other site answering its search with a page (a
+    block, an outage, a sign-in wall) reached the person as "JSONDecodeError: Expecting value: line 1 column 1 (char
+    0)", as Sprouts' did. Every search reads through it, or reads the answer as the first thing in a `try` of its own
+    that says "No job list from ..." (KPMG's, Cornerstone's, Phenom's): no .json() in the module is anywhere else."""
+    lines = Path(search_module.__file__).read_text(encoding="utf-8").splitlines()
+    read = [i for i, line in enumerate(lines) if ".json()" in line]
+    assert len(read) == 4 and all(lines[i - 1].strip() == "try:" for i in read), [lines[i] for i in read]
+    for i in read:  # (and each try's own handler says it in plain words)
+        assert "raise SearchError(" in "\n".join(lines[i + 1:i + 8]), lines[i]
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<html><body>Sorry.</body></html>", headers={"Content-Type": "text/html"})
+
+    async def go(search, cfg):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer), follow_redirects=True) as client:
+            return await search(client, cfg, "analyst", 20, [])
+    for search, cfg, host in ((search_module._jibe, "jobs.acmefoods.example", "jobs.acmefoods.example"),
+                              (search_module._greenhouse, "acmefoods", "boards-api.greenhouse.io"),
+                              (search_module._lever, "acmefoods", "api.lever.co")):
+        with pytest.raises(search_module.SearchError,
+                           match=re.escape(host) + r" answered its job search with a page, not its list \(HTTP 200, "
+                                                   r"text/html\)"):
+            asyncio.run(go(search, cfg))
+
+
 @pytest.mark.parametrize("to", ["https://adco.wd1.myworkdayjobs.com/External/search/maintenance",
                                 "https://jobs.example.com/job/Maintenance-Technician",
                                 "https://jobs.example.com/careers/maintenance-planner"])

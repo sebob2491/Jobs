@@ -873,7 +873,7 @@ async def _workday_places(client: httpx.AsyncClient, cxs: str, base: str, listin
                 try:
                     r = await _send(client, "GET", url, headers={"Accept": "application/json"})
                     _raise_for(r, url)
-                    info = r.json().get("jobPostingInfo") or {}
+                    info = _json(r, url).get("jobPostingInfo") or {}
                 except Exception:  # an unreadable posting stays "check the posting" (and is tried again)
                     return
             places = [str(x).strip() for x in [info.get("location"), *(info.get("additionalLocations") or [])] if x]
@@ -899,7 +899,7 @@ async def _greenhouse(client: httpx.AsyncClient, cfg: Any, query: str, limit: in
     r = await _send(client, "GET", api)
     _raise_for(r, api)
     out = []
-    for j in r.json().get("jobs", []):
+    for j in _json(r, api).get("jobs", []):
         if not title_matches(j.get("title", ""), query):
             continue
         hosted = f"https://job-boards.greenhouse.io/{cfg}/jobs/{j.get('id')}"
@@ -916,7 +916,7 @@ async def _lever(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, te
     api = f"https://api.lever.co/v0/postings/{cfg}?mode=json"
     r = await _send(client, "GET", api)
     _raise_for(r, api)
-    data = r.json()
+    data = _json(r, api)
     if not isinstance(data, list):
         raise SearchError(f"Unexpected Lever response from {api}")
     out = []
@@ -1262,7 +1262,7 @@ async def _taleo(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, te
     for page in range(1, TALEO_PAGES + 1):
         r = await _send(client, "POST", api, json=_taleo_body(query, page), headers=headers)
         _raise_for(r, api)
-        data = r.json()
+        data = _json(r, api)
         rows = data.get("requisitionList") or []
         for req in rows:
             columns = [str(c) for c in req.get("column") or []]
@@ -1397,7 +1397,7 @@ async def _jibe(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, ter
         url = f"https://{host}/api/jobs?" + urlencode(params)
         r = await _send(client, "GET", url, headers={"Accept": "application/json"})
         _raise_for(r, url)
-        jobs = r.json().get("jobs") or []
+        jobs = _json(r, url).get("jobs") or []
         for item in jobs:
             data = item.get("data") or {}
             title, slug = str(data.get("title") or "").strip(), str(data.get("slug") or data.get("req_id") or "")
@@ -1444,7 +1444,7 @@ async def _talentbrew(client: httpx.AsyncClient, cfg: Any, query: str, limit: in
         r = await _send(client, "GET", url,
                         headers={"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"})
         _raise_for(r, url)
-        return r.json()
+        return _json(r, url)
 
     data = await page(1, {})
     facet: dict[str, Any] = {}
@@ -1726,7 +1726,7 @@ async def _mcloud(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, t
         r = await _send(client, "GET", MCLOUD_API, params={"companyName": company, "query": query,
                                                            "pageSize": MCLOUD_PAGE, "offset": offset})
         _raise_for(r, MCLOUD_API)
-        data = r.json()
+        data = _json(r, MCLOUD_API)
         hits = data.get("searchResults") or []
         for listing in parse_mcloud(data):  # an opening listed twice (two ids) counts once, by its number
             out.setdefault(listing.external_id or listing.url, listing)
@@ -2063,7 +2063,7 @@ async def _amazon(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, t
     r = await _send(client, "GET", url, headers={"Accept": "application/json"})
     _raise_for(r, url)
     out: list[Listing] = []
-    for job in r.json().get("jobs") or []:
+    for job in _json(r, url).get("jobs") or []:
         title, path = str(job.get("title") or "").strip(), str(job.get("job_path") or "")
         if not title or not path:
             continue
@@ -2576,7 +2576,7 @@ async def _eightfold(client: httpx.AsyncClient, cfg: Any, query: str, limit: int
         if r.status_code == 403 and "not enabled" in r.text:  # Insight's site: "PCSX is not enabled for this user"
             return await _eightfold_v2(client, host, domain, query, limit, terms)
         _raise_for(r, api)
-        data = r.json()
+        data = _json(r, api)
         batch = parse_eightfold(data, host)
         out.extend(batch)
         start += len(batch)
@@ -2602,7 +2602,7 @@ async def _eightfold_v2(client: httpx.AsyncClient, host: str, domain: str, query
                   **({"location": US_STATES[state]} if state else {})}
         r = await _send(client, "GET", api, params=params, headers={"Accept": "application/json"})
         _raise_for(r, api)
-        data = r.json()
+        data = _json(r, api)
         positions = data.get("positions") or []
         start += len(positions)
         batch = []
@@ -2633,7 +2633,7 @@ async def _smartrecruiters(client: httpx.AsyncClient, cfg: Any, query: str, limi
     while len(found) < limit:  # a page at a time: the area's openings can be past the first
         r = await _send(client, "GET", api, params={"q": query, "limit": SMARTRECRUITERS_PAGE, "offset": len(found)})
         _raise_for(r, api)
-        data = r.json()
+        data = _json(r, api)
         page = data.get("content") or []
         found += page
         if not page or len(found) >= int(data.get("totalFound") or 0):
@@ -2674,9 +2674,10 @@ async def _oracle(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, t
                f"requisitionList.requisitionFlexFields&finder={finder}")
         r = await _send(client, "GET", api, headers={"Accept": "application/json"})
         _raise_for(r, api)
-        page = _oracle_listings(r.json(), host, site)
+        answer = _json(r, api)
+        page = _oracle_listings(answer, host, site)
         out.extend(page)
-        total = next((i.get("TotalJobsCount") for i in r.json().get("items") or [] if i.get("TotalJobsCount")), None)
+        total = next((i.get("TotalJobsCount") for i in answer.get("items") or [] if i.get("TotalJobsCount")), None)
         if len(page) < ORACLE_PAGE or total is not None and offset + ORACLE_PAGE >= int(total):
             break
     return out[:limit]
@@ -2809,11 +2810,15 @@ async def _send(client: httpx.AsyncClient, method: str, url: str, **kw: Any) -> 
 # name, on another host: never a posting's address ("/job/Maintenance-Technician") or a search
 # for maintenance work on the site itself
 _DOWN = re.compile(r"maintenance(?:-page)?|outage", re.I)
+# ... or a host of its own named for it: jobs.sprouts.com sent every search to outage.sprouts.com/sproutsdotcom/ (the
+# live check, Nov 2026), and the page there was read as "JSONDecodeError: Expecting value"
+_DOWN_HOSTS = ("outage", "maintenance")
 
 
 def _raise_for(r: httpx.Response, url: str) -> None:
     asked = httpx.URL(url).host
-    if r.history and r.url.host != asked and _DOWN.fullmatch(r.url.path.rstrip("/").rsplit("/", 1)[-1]):
+    if r.history and r.url.host != asked and (_DOWN.fullmatch(r.url.path.rstrip("/").rsplit("/", 1)[-1])
+                                              or r.url.host.split(".")[0].lower() in _DOWN_HOSTS):
         raise SearchError(f"{asked} is down for maintenance (it sends searches to "
                           f"{r.url.host}{r.url.path}); try again in a few hours")
     if r.status_code >= 400:
@@ -2823,9 +2828,9 @@ def _raise_for(r: httpx.Response, url: str) -> None:
 
 
 def _json(r: httpx.Response, url: str) -> Any:
-    """A search's answer read as JSON. One that isn't (Workday's weekend maintenance, the live check's run 125, Oct 17:
-    every search answered at its own address, with no redirect, by an empty or HTML page) is said as the site not
-    giving its job list, not as a JSONDecodeError."""
+    """A search's answer read as JSON, which every search reads its answer through. One that isn't (Workday's weekend
+    maintenance, the live check's run 125, Oct 17: every search answered at its own address, with no redirect, by an
+    empty or HTML page) is said as the site not giving its job list, not as a JSONDecodeError."""
     try:
         return r.json()
     except ValueError:
