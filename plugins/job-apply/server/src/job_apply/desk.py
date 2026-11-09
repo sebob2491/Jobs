@@ -26,10 +26,12 @@ import socket
 import sqlite3
 import time
 import urllib.request
+import webbrowser
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import uvicorn
 from starlette.applications import Starlette
@@ -59,6 +61,7 @@ VISIT_GAP = 30 * 60  # a look at the openings this long (seconds) after the one 
 SEEN_WRITE = 60  # the time of the last look is written to desk.json at most this often (the page looks again and again)
 FOUND_KEEP = 5000  # the openings whose first-found time is kept (openings_found.json): the newest
 WHATS_NEW_MOST = 50  # the openings whats_new lists (it counts them all)
+OPEN_URL_MOST = 2000  # the longest address /api/open hands to the person's usual browser
 # a job's statuses once it's sent in, or waiting on its review page (APPLICATION_STATUSES): no opening to turn down
 SENT = frozenset(APPLICATION_STATUSES)
 # and once it's done with on the desk (the page's DONE): sent in, closed, or skipped. An opening in one is no news
@@ -128,6 +131,22 @@ def _count_param(request: Request, name: str, default: int, most: int) -> int:
     return int(said)
 
 
+def _web_address(url: str) -> bool:
+    """May /api/open hand this to the person's usual browser? Only a web address: at most OPEN_URL_MOST characters,
+    with no space or control character among them (nor any other that doesn't show), http or https, and with a host.
+    Never a file, another program's own kind of link (ms-settings:, javascript:) or anything else the computer would
+    open with something other than the browser."""
+    if not 0 < len(url) <= OPEN_URL_MOST:
+        return False
+    if any(c.isspace() or not c.isprintable() for c in url):  # (before it's parsed: urlsplit drops some of these)
+        return False
+    try:
+        parts = urlsplit(url)
+        return parts.scheme in ("http", "https") and bool(parts.hostname)
+    except ValueError:
+        return False
+
+
 class _QuietServer(uvicorn.Server):
     """uvicorn inside the MCP server: no signal handlers of its own (Claude Code owns them)."""
 
@@ -188,6 +207,11 @@ class Desk:
         # Find jobs searches when the person presses it. With this on (off unless they turn it on: issue #112, note
         # 44), the page also searches by itself once the openings are 12 hours old, but not while the queue is paused
         self.auto_search = False
+        # run on its own (job-apply-desk: main sets it), not inside Claude's plugin. Only then can the page stop the
+        # desk (its Quit the Job Desk: /api/quit sets `quitting`, which main waits on); inside Claude it stops with
+        # Claude
+        self.standalone = False
+        self.quitting = asyncio.Event()
         self.search: dict[str, Any] = {"status": "idle", "at": None, "error": None, "query": "", "location": None,
                                        "errors": {}, "browser_only": [], "auto": False, "stopped": None}
         self._search_task: asyncio.Task | None = None
@@ -337,6 +361,8 @@ class Desk:
             r("/api/profile/read", self.profile_read_view, methods=["POST"]),
             r("/api/profile/save", self.profile_save_view, methods=["POST"]),
             r("/api/mail/wait", self.mail_wait_view),
+            r("/api/open", self.open_view, methods=["POST"]),
+            r("/api/quit", self.quit_view, methods=["POST"]),
         ])
 
     async def start(self, port: int = DEFAULT_PORT, open_browser: bool = True) -> str:
@@ -533,6 +559,31 @@ class Desk:
         if not self._allowed(request, api=True):
             return self._forbidden()
         return JSONResponse(self.safety(), headers={"Cache-Control": "no-store"})
+
+    async def open_view(self, request: Request) -> Response:
+        """A link pressed in the desk's own window (window.py): opened in the person's usual browser, where they're
+        signed in to LinkedIn and the rest. A web address and nothing else (_web_address), whatever is sent."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        try:
+            url = (await self._body(request)).get("url")
+        except ValueError:
+            url = None
+        if not isinstance(url, str) or not _web_address(url):
+            return JSONResponse({"error": "Only web addresses can be opened."}, status_code=400)
+        await asyncio.get_running_loop().run_in_executor(None, webbrowser.open, url)
+        return JSONResponse({"opened": True})
+
+    async def quit_view(self, request: Request) -> Response:
+        """The page's Quit the Job Desk: a desk run on its own stops (main, which waits on `quitting`, stops it as
+        Ctrl+C does: the queue is kept, as at any restart). One inside Claude's plugin isn't the page's to stop."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        if not self.standalone:
+            return JSONResponse({"error": "The desk runs inside Claude here: close Claude to stop it."},
+                                status_code=409)
+        self.quitting.set()
+        return JSONResponse({"quitting": True})
 
     async def seen_view(self, request: Request) -> Response:
         """The page loaded, or came to the front: the person looked at the openings (saw)."""
@@ -1575,6 +1626,8 @@ class Desk:
             "tracker_damaged": damaged(tracker_problem or ""),
             "tracker_path": str(config.db_path()),
             "version": config.plugin_version(),
+            # run on its own, not inside Claude's plugin: the page may offer Quit the Job Desk (/api/quit)
+            "standalone": self.standalone,
             "update": self.updates.notice(),
             "answers_problem": config.answers_problem(),
             "search": self.search,
@@ -2277,13 +2330,13 @@ def main(argv: list[str] | None = None) -> int:
     from . import server
 
     desk = get_desk(server)
+    desk.standalone = True  # (the page may stop this desk: its Quit the Job Desk, /api/quit)
 
     async def run() -> None:
         url = await desk.start(port=args.port, open_browser=not args.no_browser)
         print(f"Job Desk: {url}\nLeave this window open while you use it; Ctrl+C stops it.", flush=True)
         try:
-            while True:
-                await asyncio.sleep(3600)
+            await desk.quitting.wait()  # (until the page's Quit the Job Desk; Ctrl+C ends the wait too)
         finally:
             await desk.stop()
             await server.browser.close()

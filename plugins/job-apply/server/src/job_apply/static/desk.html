@@ -235,6 +235,10 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
 .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -1px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+/* Quit the Job Desk went through: the desk has stopped, and the page shows only the words that say so */
+body.stopped > :not(#stopped) { display: none; }
+#stopped { max-width: 1240px; margin: 0 auto; padding: 64px 16px; text-align: center; }
+#stopped p { margin: 8px 0 0; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -601,6 +605,11 @@ footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--m
   Answers you give here are saved in <code>~/.job-apply/answers.yaml</code> unless you untick "remember".
   <span id="plugin-version"></span>
 </footer>
+<!-- (once the desk has stopped: body.stopped hides everything else of the body's, so this stays the body's own child) -->
+<div id="stopped" hidden>
+  <h1>The Job Desk has stopped</h1>
+  <p>You can close this window. Open Job Desk again to carry on.</p>
+</div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script>
 "use strict";
@@ -628,6 +637,7 @@ let sortBy = "fit";
 try { sortBy = localStorage.getItem(SORT_KEY) || "fit"; } catch (e) {}
 let state = null;
 let busy = false;
+let stopped = false;  // Quit the Job Desk went through: the desk is stopping, and the page no longer refreshes (stopPage)
 let reporting = false;  // a problem report being written
 let notesShown = [];  // the notes in the Notes panel: Clear removes those, not one taken since
 let autoSearchedAt = 0;
@@ -649,7 +659,7 @@ const SEEN_EVERY = 60, SEEN_STAYING = 300;  // seconds: between two looks told, 
 let seenSent = 0;
 async function sawOpenings(every = SEEN_EVERY) {
   const now = Date.now() / 1000;
-  if (!token || now - seenSent < every) return;
+  if (!token || stopped || now - seenSent < every) return;
   seenSent = now;
   try { await api("/api/seen", {}); } catch (e) { seenSent = 0; }
 }
@@ -2229,8 +2239,18 @@ let loading = null;  // the refresh under way: one at a time, so an older state 
 // the old chips: the first was lost). It's dropped, and a fresh one asked after it
 let changes = 0;
 let loadingAt = -1;  // the changes the refresh under way was asked after
+// Quit the Job Desk went through (/api/quit: only a desk run on its own stops; one inside Claude refuses, and act says
+// why). The desk is stopping, so the page stops refreshing (stopped: no state, no look told), shows only the words that
+// say so, and closes its window where the browser lets a page close its own (else the words stay, and say to close it)
+function stopPage() {
+  stopped = true;
+  document.title = "Job Desk";
+  document.body.classList.add("stopped");
+  $("stopped").hidden = false;
+  window.close();
+}
 function refresh() {
-  if (busy) return Promise.resolve();
+  if (busy || stopped) return Promise.resolve();
   if (loading && loadingAt === changes) return loading;
   const at = loadingAt = changes;
   const mine = loading = (loading || Promise.resolve()).then(() => load(at)).finally(() => {
@@ -2434,6 +2454,19 @@ function makeReport(job, again = false) {
   }, false);
 }
 
+// A link out of the desk's own window (deskWindow "app": it has no tabs for one to open in) opens in the person's usual
+// browser, where they're signed in to LinkedIn and the rest: the desk opens it there (/api/open, web addresses only).
+// If the desk can't, the link opens the ordinary way. In a tab, links are left as they are. (A cover letter's PDF is
+// no link: a file made in the page, which its button opens with window.open)
+document.addEventListener("click", (e) => {
+  if (deskWindow !== "app") return;
+  const a = e.target.closest('a[target="_blank"]');
+  if (!a || !webUrl(a.getAttribute("href"))) return;
+  e.preventDefault();
+  const url = a.href;  // (as the browser reads it: a space or the like in it percent-encoded)
+  api("/api/open", {url}).catch(() => window.open(url, "_blank", "noopener"));
+});
+
 document.addEventListener("click", (e) => {
   const t = e.target.closest("button");
   if (!t) return;
@@ -2565,6 +2598,9 @@ document.addEventListener("click", (e) => {
   if (a === "area-place-add") { areaAdd("places", $("area-place-new").value); $("area-place-new").value = ""; }
   if (a === "area-avoid-add") { areaAdd("avoid_titles", $("area-avoid-new").value); $("area-avoid-new").value = ""; }
   if (a === "pause" || a === "resume") act(() => api(`/api/queue/${a}`, {}));
+  if (a === "quit" && confirm("Quit the Job Desk? Jobs it is working on stop where they are. The queue is kept for next time.")) {
+    act(async () => { await api("/api/quit", {}); stopPage(); });
+  }
   if (a === "clear-queue") {
     const n = state.clearable || 0;
     if (n && confirm(`Take the ${n === 1 ? "job" : `${n} jobs`} not started yet out of the queue? They go back to the `
@@ -2851,7 +2887,7 @@ $("report-open").addEventListener("click", (e) => { if (e.currentTarget.href) $(
 
 (async function poll() {
   await refresh();
-  setTimeout(poll, 1500);
+  if (!stopped) setTimeout(poll, 1500);
 })();
 </script>
 </body>
