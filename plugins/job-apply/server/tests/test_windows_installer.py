@@ -268,7 +268,9 @@ def test_the_workflow_builds_on_windows_installs_checks_and_uninstalls_with_acti
     text = WORKFLOW.read_text(encoding="utf-8")
     flow = yaml.safe_load(text)
     on = flow[True]  # (YAML 1.1 reads the key `on` as true)
-    assert "workflow_dispatch" in on and on["push"] == {"tags": ["job-apply-v*"]}
+    # by hand, for a tag, and for every version: a push to main that changes the manifest, which each version bumps
+    assert "workflow_dispatch" in on and on["push"] == {
+        "tags": ["job-apply-v*"], "branches": ["main"], "paths": ["plugins/job-apply/.claude-plugin/plugin.json"]}
     assert flow["permissions"] == {"contents": "read"}
     (job,) = flow["jobs"].values()
     assert job["runs-on"] == "windows-latest"
@@ -290,7 +292,27 @@ def test_the_workflow_builds_on_windows_installs_checks_and_uninstalls_with_acti
     upload = next(s for s in job["steps"] if s.get("uses", "").startswith("actions/upload-artifact@"))
     assert upload["with"]["path"].endswith("Output/JobDeskSetup.exe")
     release = job["steps"][-1]
-    assert "refs/tags/job-apply-v" in release["if"] and "gh release upload" in release["run"]
+    assert release["if"] == "github.event_name == 'push' || inputs.release" and "gh release upload" in release["run"]
+
+
+def test_a_version_publishes_its_installer_once_with_its_sha256_under_its_own_number():
+    """The design of Nov 9 (F1): every version publishes its installer by itself, and the desk's Update button reads
+    the Release. So the step that publishes: refuses a tag that isn't the manifest's version (an installer never goes
+    out under another number), writes the installer's sha256 beside it as sha256sum would (the Update button checks a
+    download against it) and attaches both, and on a push never replaces an installer already published (only a run
+    by hand with `release` ticked does)."""
+    flow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    (job,) = flow["jobs"].values()
+    run = job["steps"][-1]["run"]
+    assert '$tag = "job-apply-v$version"' in run
+    assert "$env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne $tag" in run
+    refusal = run.index("throw \"The tag")
+    assert refusal < run.index("gh release view") < run.index("gh release upload")  # (before anything is published)
+    assert "Get-FileHash -Algorithm SHA256 -LiteralPath $exe" in run and '"$sum  JobDeskSetup.exe`n"' in run
+    assert 'gh release upload $tag $exe "$exe.sha256" --clobber' in run
+    kept = run.index("if ($has -and $env:GITHUB_EVENT_NAME -eq 'push')")
+    assert run.index("$names -contains 'JobDeskSetup.exe'") < kept < run.index("gh release create")
+    assert "exit 0" in run[kept:run.index("gh release create")]
 
 
 def test_the_readme_offers_the_installer_first_and_says_how_past_smartscreen():
