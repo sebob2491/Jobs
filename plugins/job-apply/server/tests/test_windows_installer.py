@@ -295,24 +295,87 @@ def test_the_workflow_builds_on_windows_installs_checks_and_uninstalls_with_acti
     assert release["if"] == "github.event_name == 'push' || inputs.release" and "gh release upload" in release["run"]
 
 
-def test_a_version_publishes_its_installer_once_with_its_sha256_under_its_own_number():
-    """The design of Nov 9 (F1): every version publishes its installer by itself, and the desk's Update button reads
-    the Release. So the step that publishes: refuses a tag that isn't the manifest's version (an installer never goes
-    out under another number), writes the installer's sha256 beside it as sha256sum would (the Update button checks a
-    download against it) and attaches both, and on a push never replaces an installer already published (only a run
-    by hand with `release` ticked does)."""
+def _publishing():
+    """The workflow, and its last step's script in the three parts it runs in: `before` the look at the Release,
+    `kept` (a push that finds an installer already out: it ends there), and `publish` (everything after)."""
     flow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     (job,) = flow["jobs"].values()
     run = job["steps"][-1]["run"]
-    assert '$tag = "job-apply-v$version"' in run
-    assert "$env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne $tag" in run
-    refusal = run.index("throw \"The tag")
-    assert refusal < run.index("gh release view") < run.index("gh release upload")  # (before anything is published)
-    assert "Get-FileHash -Algorithm SHA256 -LiteralPath $exe" in run and '"$sum  JobDeskSetup.exe`n"' in run
-    assert 'gh release upload $tag $exe "$exe.sha256" --clobber' in run
-    kept = run.index("if ($has -and $env:GITHUB_EVENT_NAME -eq 'push')")
-    assert run.index("$names -contains 'JobDeskSetup.exe'") < kept < run.index("gh release create")
-    assert "exit 0" in run[kept:run.index("gh release create")]
+    guard = "if (($names -contains 'JobDeskSetup.exe') -and -not $byHand) {\n"
+    ended = "  $global:LASTEXITCODE = 0\n  exit 0\n}\n"  # (the step's own indentation is gone once YAML has read it)
+    assert run.count(guard) == 1 and run.count(ended) == 1 and run.count("exit 0") == 1, run
+    before, rest = run.split(guard)
+    kept, publish = rest.split(ended)
+    return flow, before, kept, publish
+
+
+def test_a_version_publishes_its_installer_once_with_its_sha256_under_its_own_number():
+    """The design of Nov 9 (F1): every version publishes its installer by itself, and the desk's Update button reads
+    the Release. So the step that publishes: refuses a version that isn't numbers and dots and a tag that isn't the
+    manifest's version (an installer never goes out under another number) before it looks at anything, and writes the
+    installer's sha256 beside it exactly as sha256sum would (the Update button checks a download against it)."""
+    _flow, before, _kept, publish = _publishing()
+    assert "if ($version -notmatch '^\\d+(\\.\\d+)+$') { throw" in before
+    assert '$tag = "job-apply-v$version"' in before
+    assert "if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne $tag) {\n  throw \"The tag" in before
+    assert before.index('throw "The tag') < before.index("gh release view")  # (before anything is looked at)
+    assert "$byHand = $env:GITHUB_EVENT_NAME -ne 'push'" in before
+    # the digest in lower case, two spaces, the name, one LF and no more (no BOM, no CRLF: -NoNewline, ascii)
+    assert ("$sum = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLower()\n"
+            '  Set-Content -LiteralPath "$file.sha256" -Value "$sum  JobDeskSetup.exe`n" -NoNewline -Encoding ascii\n'
+            ) in before
+    assert publish.lstrip().startswith("Write-Sum $exe\n")  # (this build's sum, only once it's this build going out)
+    assert 'gh release create $tag $exe "$exe.sha256" --target $env:GITHUB_SHA' in publish
+    assert 'gh release upload $tag $exe "$exe.sha256" --clobber' in publish
+
+
+def test_a_push_never_replaces_an_installer_that_is_out_and_gives_it_its_sha256_if_it_has_none():
+    """The review of F1: the test let the upload sit above the guard (every push would then replace what's out), and
+    a push left an installer published without its sha256 (0.3.252's, or one whose upload was cut short) without one
+    for good. So: a push that finds JobDeskSetup.exe on the Release ends there, and nothing in that part can replace
+    a file (no --clobber, no upload of this build's installer, no Release made); where the sha256 is missing it is
+    worked out from the installer that's out, downloaded, and only it is attached. Every way of replacing or making
+    comes after that end."""
+    _flow, before, kept, publish = _publishing()
+    for part in (before, kept):
+        assert "--clobber" not in part and "gh release create" not in part and "gh release upload $tag $exe" not in part
+    assert "gh release upload" not in before and "gh release download" not in before
+    assert "if ($names -contains 'JobDeskSetup.exe.sha256') {" in kept
+    download = kept.index("gh release download $tag --pattern 'JobDeskSetup.exe' --dir $was")
+    summed = kept.index("Write-Sum $published")
+    attached = kept.index('gh release upload $tag "$published.sha256"')
+    assert download < kept.index("$published = Join-Path $was 'JobDeskSetup.exe'") < summed < attached
+    assert kept.count("gh release upload") == 1 and "$exe" not in kept  # (nothing of this build goes up)
+    assert publish.count("--clobber") == 1  # (only where no installer is out, or by hand)
+
+
+def test_a_release_is_made_with_its_files_one_run_at_a_time_and_an_older_one_is_not_the_latest():
+    """The review of F1, the rest. The Release was made empty and then filled (the README's link led nowhere in
+    between, and for good if the upload failed): it's made with both files, which gh keeps a draft until they're up.
+    Two runs for one version (a merge and its tag) could both pass the look and one replace the other's files: runs
+    that publish share one concurrency group, and none is cancelled. A Release made late for an older version would
+    become the latest, which the README's link and the Update button read: it's told not to be."""
+    flow, _before, _kept, publish = _publishing()
+    assert flow["concurrency"] == {
+        "group": "${{ (github.event_name == 'push' || inputs.release) && 'windows-installer-publish' "
+                 "|| format('windows-installer-{0}', github.run_id) }}",
+        "cancel-in-progress": False}
+    made = publish.index('gh release create $tag $exe "$exe.sha256" --target $env:GITHUB_SHA --title '
+                         '"job-apply $version" $latest `\n')
+    assert publish.count("gh release create") == 1 and "if (-not $there) {" in publish[:made]
+    listed = publish.index("$tags = @(gh api \"repos/$env:GITHUB_REPOSITORY/releases?per_page=100\" --jq "
+                           "'.[].tag_name')")
+    older = publish.index("$later = @($tags | Where-Object { $_ -match '^job-apply-v(\\d+(\\.\\d+)+)$' -and "
+                          "[version]$Matches[1] -gt [version]$version })")
+    chosen = publish.index("$latest = if ($later.Count -gt 0) { '--latest=false' } else { '--latest' }")
+    assert listed < older < chosen < made
+    # every gh call that changes or reads something says so when it fails (PowerShell goes on past a program's
+    # failure by itself)
+    lines = publish.splitlines()
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith(("gh release create", "gh release upload", "$tags = @(gh api")):
+            after = next(x for x in lines[i + 1:] if not x.lstrip().startswith("--notes"))
+            assert after.lstrip().startswith("if ($LASTEXITCODE -ne 0) { throw "), line
 
 
 def test_the_readme_offers_the_installer_first_and_says_how_past_smartscreen():
