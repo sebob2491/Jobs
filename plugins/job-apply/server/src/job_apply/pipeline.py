@@ -6106,7 +6106,9 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             run.keep_agreed("attestation", result["certified"], "pressed", result["certified"])
         if result.get("for_person"):  # (it went on to a page whose rest is the person's: said, nothing more pressed)
             srv._mark_ready(srv.tracker().get(run.job_id), "filled by the Job Desk; its final page is yours")
-            return self._pause(run, "your_submit", str(result["for_person"]), code="your_submit")
+            # (what happened and what to press are server._through_certify's words; the card's own button is said here)
+            return self._pause(run, "your_submit", f"{result['for_person']} When it has gone in, press \u201cI "
+                               "submitted it myself\u201d here.", code="your_submit")
         if result.get("submitted") and result.get("confirmed"):
             run.status, run.need, run.reason, run.marked = "submitted", "", "Submitted.", False  # (the desk's own send)
             self._forget_draft_changes(run)  # (gone in: its draft's changes are no longer kept)
