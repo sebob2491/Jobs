@@ -34,7 +34,7 @@ from .ats import ATS_NAMES, detect_ats, greenhouse_form_url, host_of, shared_sys
 from .autofill import common_questions as bank_questions
 from .autofill import (documents_asked, is_eeo_rule, is_empty_value, is_how_heard, is_name_rule, is_school_rule, norm,
                        place_words, plan_autofill, profile_entries, resolve_field)
-from .browser import BrowserSession, BrowserUnavailable, SiteDown, SubmitBlocked
+from .browser import BrowserSession, BrowserUnavailable, SiteDown, SubmitBlocked, final_text
 from .mailbox import MailboxError, site_domain
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .recommend import avoided_title
@@ -1597,6 +1597,55 @@ def _submit_policy(ats: str) -> str:
 
 # Tracker statuses that mean the application is no longer the desk's to send (pipeline.FINISHED, and a Skip)
 _SUBMIT_GONE = frozenset({"applied", "interviewing", "offer", "rejected", "withdrawn", "skipped"})
+# A review page's way on to the page that sends the application, which sends nothing itself (NEOGOV's "Proceed to
+# Certify and Submit": its Certify & Submit page's "Accept and Submit" does). Pressed only as a Submit is: by
+# submit_application, which goes on through the final page's own button
+_ON_TO_SUBMIT = re.compile(r"^proceed to (?:certify (?:and|&) )?submit$", re.I)
+# The page it leads to, by its heading (NEOGOV's "Certify & Submit")
+_CERTIFY_STEP = re.compile(r"\bcertify\b", re.I)
+
+
+async def _through_certify(first: dict[str, Any], review_url: str) -> tuple[dict[str, Any], str, str]:
+    """After a review page's way on to its final page (_ON_TO_SUBMIT) was pressed as the person's Submit: on through
+    that page's own final button, once, where it's NEOGOV's Certify & Submit. The first press sends nothing, so what it
+    seemed to confirm is never taken for the application sent (its certification's own words can read as one: "the
+    application submitted by me is accurate", the review of 0.3.252): sent is what the final press confirms, or, with
+    no final button left, what the page it led to says. Its final button certifies the application ("Accept and
+    Submit"): pressed only as settings.accept_notices allows (an attestation's rule), else the person's. On NEOGOV,
+    anything else (a page that didn't move on, errors on it, its way on still there, no final button and no
+    confirmation) stops there for the person, saying what's there. Another system's press is its Submit, read as any
+    other's (nothing more pressed). (result, for_person, certified): `for_person` the
+    reason the rest is theirs ("" when it went on), `certified` the final page's heading and button (when pressed)."""
+    from .browser import _FORM_ERROR
+    from .pipeline import _may_accept_notices
+
+    now = await browser.inspect(include_dropdown_options=False)
+    headings = " · ".join(str(h) for h in now.get("headings") or [])
+    errors = [str(e) for e in first.get("errors") or [] if _FORM_ERROR.search(str(e or ""))]
+    still = [a for a in now.get("actions") or [] if _ON_TO_SUBMIT.match(final_text(str(a.get("text") or "")))]
+    final = [b for b in await browser.find_submit() if not _ON_TO_SUBMIT.match(final_text(str(b.get("text") or "")))]
+    moved = now["url"] != review_url or bool(_CERTIFY_STEP.search(headings))
+    where = f"the page now shows “{headings[:120]}”" if headings else "the page it led to has no heading"
+    if detect_ats(now["url"]) != "neogov" or detect_ats(review_url) != "neogov":
+        return first, "", ""  # (another system's: its press is its Submit, read as any other's)
+    if errors or still or not moved:
+        said = f": {'; '.join(errors)[:300]}" if errors else ""
+        return first, (f"I pressed “Proceed to Certify and Submit”, but the page didn't move on{said}. Check it in the "
+                       "desk's browser window, then submit it yourself there."), ""
+    if not final:
+        if first.get("confirmed"):
+            return first, "", ""
+        return first, (f"I pressed “Proceed to Certify and Submit”, and {where}, with no button that sends it. Check "
+                       "it in the desk's browser window, then submit it yourself there."), ""
+    said = final_text(str(final[-1].get("text") or ""))
+    if not _may_accept_notices():
+        return first, (f"This application needs your certification: read the page in the desk's browser window and "
+                       f"press “{said}” yourself (settings.accept_notices is off, so certifying is yours)."), ""
+    try:
+        second = await browser.press_submit(final[-1]["id"])
+    except SubmitBlocked as e:  # (gone meanwhile: nothing more pressed)
+        return first, f"I couldn't press “{said}” on the page that sends it ({e}). Press it yourself there.", ""
+    return second, "", f"{headings or 'the final page'}: {said}"
 # A job the tracker kept apart from one it may be the same posting as (an Indeed job and the employer's): what Claude's
 # tools say while that one is begun or applied to, as the Job Desk's card asks (the review of 0.3.206)
 MAYBE_SAME_SAYS = "may be the job already started or applied to: ask the person before applying"
@@ -1711,8 +1760,17 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
     except OSError:
         earlier = None
     _write_record(record, {"confirmed": False, "state": "pressing", "at": datetime.now().isoformat()})
+    certified = ""
     try:
         result = await browser.press_submit(buttons[-1]["id"])
+        if _ON_TO_SUBMIT.match(final_text(buttons[-1].get("text") or "")):
+            result, for_person, certified = await _through_certify(result, page["url"])
+            if for_person:  # (on the page it led to, nothing more pressed: the person's, said so)
+                tracker().update(job["id"], note=f"pressed “{final_text(buttons[-1].get('text') or '')}”; the rest "
+                                 "is yours")
+                _write_record(record, {**result, "confirmed": False, "state": "left to the person",
+                                       "at": datetime.now().isoformat()})
+                return {"submitted": False, "for_person": for_person, "reason": for_person, "url": result["url"]}
     except SubmitBlocked as e:  # nothing was pressed: the record is as it was
         with contextlib.suppress(OSError):
             record.write_text(earlier, encoding="utf-8") if earlier is not None else record.unlink(missing_ok=True)
@@ -1731,6 +1789,7 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
     return {
         "submitted": True,
         "confirmed": result["confirmed"],
+        **({"certified": certified} if certified else {}),
         "empty_required_at_submit": empty_required,
         "errors": result["errors"],
         "url": result["url"],

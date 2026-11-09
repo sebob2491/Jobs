@@ -550,8 +550,10 @@ _PICTURE_CODE = re.compile(r"captcha|text in (?:the )?(?:image|picture)", re.I)
 # or contacted), the site saying the email already has an account (said of the account or
 # email, not "Already have an account? Sign in"), the way to a password reset (not a username
 # reminder), the buttons of a reset's pages, and its "we've emailed you a link"
-_MAKE_ACCOUNT = re.compile(r"^(create(?: an| my| your| a new)? account|register|sign ?up|create|submit|continue)$",
-                           re.I)
+_MAKE_ACCOUNT = re.compile(r"^(create(?: an| my| your| a new)? account|register|sign ?up|create|submit|continue|"
+                           # (NEOGOV's Create an account: "Continue with Email", beside "Continue with Google", which
+                           # _account_button never takes: _SOCIAL)
+                           r"continue with (?:your )?e-?mail)$", re.I)
 # and the button of its second step, on a page of its own (UKG Pro's "Create account" after a name and phone)
 _ACCOUNT_BUTTON = re.compile(r"^(create(?: an| my| your| a new)? account|register|sign ?up)$", re.I)
 _TERMS_ONLY = re.compile(r"terms|conditions|(?:privacy|data protection) (?:policy|notice|statement)"
@@ -6097,6 +6099,16 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             return
         if result.get("submitted") and not result.get("confirmed"):
             run.pressed_before = True  # it may have gone: Submit for me never presses it again
+        if result.get("certified"):  # (NEOGOV's Certify & Submit: its final button certifies the application)
+            self._log(run, f"certified the application for you by pressing “{_short(result['certified'])}” "
+                      "(settings.accept_notices)")
+            run.went_in.agree(f"certified “{_short(result['certified'])}”")
+            run.keep_agreed("attestation", result["certified"], "pressed", result["certified"])
+        if result.get("for_person"):  # (it went on to a page whose rest is the person's: said, nothing more pressed)
+            srv._mark_ready(srv.tracker().get(run.job_id), "filled by the Job Desk; its final page is yours")
+            # (what happened and what to press are server._through_certify's words; the card's own button is said here)
+            return self._pause(run, "your_submit", f"{result['for_person']} When it has gone in, press \u201cI "
+                               "submitted it myself\u201d here.", code="your_submit")
         if result.get("submitted") and result.get("confirmed"):
             run.status, run.need, run.reason, run.marked = "submitted", "", "Submitted.", False  # (the desk's own send)
             self._forget_draft_changes(run)  # (gone in: its draft's changes are no longer kept)
@@ -6938,6 +6950,8 @@ PASSWORD_SITES = {
     "icims": ("icims.com",), "applicantstack": ("applicantstack.com",), "ukg": ("ultipro.com",),
     "infor": ("inforcloudsuite.com",), "taleo": ("taleo.net", "myhiring.kforce.com"), "brassring": ("brassring.com",),
     "avature": ("avature.net",),
+    # (NEOGOV: one account at governmentjobs.com for every agency there; its sign-in is on that same host)
+    "neogov": ("governmentjobs.com",),
 }
 
 

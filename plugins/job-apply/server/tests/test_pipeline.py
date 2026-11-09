@@ -9221,6 +9221,16 @@ def test_the_saved_password_only_goes_to_its_own_system():
     assert password_for("https://seus.applicantstack.com/x/login") == "applicantstack_password"
     assert password_for("https://signin-us.ultipro.com/u/login?state=abc") == "ukg_password"
     assert password_for("https://css-benchmark-prd.inforcloudsuite.com/sso/SSOServlet") == "infor_password"
+    # NEOGOV's sign-in, sign-up and applications (one account at governmentjobs.com for every agency), and nowhere
+    # else: not an agency's own site, nor NEOGOV's other boards, nor an address that only names it
+    for url in ("https://www.governmentjobs.com/app/signin?returnUrl=%2Fcareers%2Fclarkcounty%2Fjobs%2F1%2Fx%2Fapply",
+                "https://www.governmentjobs.com/app/signup", "https://www.governmentjobs.com/careers/lasvegas/jobs/1/x/apply",
+                "https://governmentjobs.com/app/signin"):
+        assert password_for(url) == "neogov_password", url
+    for url in ("https://www.clarkcountynv.gov/government/departments/human_resources/employment.php",
+                "https://www.schooljobs.com/careers/ccsd", "https://governmentjobs.com.evil.example/app/signin",
+                "https://evil.example/www.governmentjobs.com/app/signin", "http://www.governmentjobs.com/app/signin"):
+        assert password_for(url) is None, url
     # lookalikes that only mention Workday in their address
     assert password_for("https://evil.example/myworkdayjobs.com/login") is None
     assert password_for("https://acme.myworkdayjobs.com.evil.example/login") is None

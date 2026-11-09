@@ -32,6 +32,11 @@ def test_detect_ats():
         "https://css-benchmark-prd.inforcloudsuite.com/hcm/Jobs/navigation/"
         "JobPosting%5BJobPostingSet%5D%281%2C12460%2C1%29.JobPostingDisplayNav": "infor",
         "https://linde.csod.com/ux/ats/careersite/23/home/requisition/33907?c=linde": "csod",
+        # NEOGOV: an agency's posting and NEOGOV's sign-in, both on governmentjobs.com (the Las Vegas list's
+        # government employers)
+        "https://www.governmentjobs.com/careers/clarkcounty/jobs/5452335/budget-analyst": "neogov",
+        "https://www.governmentjobs.com/app/signin?returnUrl=%2Fcareers%2Fumcsn%2Fjobs%2F1%2Fx%2Fapply": "neogov",
+        "https://governmentjobs.com.example.net/careers/clarkcounty": "company_site",
         "https://www.example-semi.com/careers/find-your-job/field-service-engineer-j00012345": "company_site",
         None: "company_site",
     }

@@ -1,0 +1,19 @@
+{
+  "source_url": "https://www.governmentjobs.com/app/signin",
+  "note": "NEOGOV's sign-in, where a posting's Apply leads when signed out (fetched publicly, Nov 2026)",
+  "fields": [
+    {
+      "label": "Email*",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "label": "Password*",
+      "kind": "password",
+      "required": true
+    }
+  ],
+  "actions": [
+    "Sign In"
+  ]
+}

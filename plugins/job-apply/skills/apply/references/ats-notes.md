@@ -236,3 +236,23 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
 - Postings are on asml.com. **Apply** may lead to Workday (`asml.wd3.myworkdayjobs.com`)
   or another system, so read `ats` from the page that opens and follow that job system's
   notes. Many US field roles ask export-control (US person) questions.
+
+## NEOGOV (`www.governmentjobs.com`): Clark County, City of Las Vegas, City of Henderson, UMC
+
+- Public agencies' boards: `www.governmentjobs.com/careers/<agency>`, a posting at
+  `.../jobs/<id>/<title>`. Its **Apply** goes to the posting's `/apply` address, which sends a
+  signed-out browser to NEOGOV's sign-in (`/app/signin?returnUrl=...`).
+- **One account at governmentjobs.com serves every agency**, with its own password (the
+  desk's NEOGOV password: at least 12 characters, upper and lower case letters, numbers and
+  symbols). The sign-in has Email, Password, **Sign In**; **Sign Up** (`/app/signup`) asks for
+  the email and the password twice, and **Continue with Email** makes the account: pressing it
+  agrees to NEOGOV's Terms of Use and Privacy Policy (there's no box). Never **Continue with
+  Google** or **Facebook**. NEOGOV then emails a confirmation link (it expires after 60 minutes);
+  the sign-up page says "Verify your account", and never says whether an email has an account
+  already. Once the link is opened, sign in again.
+- The application's steps are the agency's choice: contact information, work experience,
+  education, additional information, references, the agency-wide and supplemental questions
+  (often scored: only the person answers what the profile can't), attachments, then a review.
+  An "I certify that the information ... is true" box is the attestation (`accept_notices`).
+  The review's **Proceed to Certify and Submit** opens the Certify & Submit page, whose
+  **Accept and Submit** sends it: both are the person's Submit.

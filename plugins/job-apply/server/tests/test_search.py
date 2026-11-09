@@ -2245,10 +2245,10 @@ def test_a_neogov_boards_openings_are_read_with_their_pay_or_none():
     assert [(x.title, x.external_id, x.location, x.posted, x.pay_min, x.pay_max, x.pay_period, x.ats)
             for x in found] == [
         ("Corrections Officer (Lateral Officers)", "4800033", "City of Las Vegas, NV", "2025-01-22", None, None, "",
-         "custom"),
+         "neogov"),
         ("Enterprise Project Manager", "5533546", "Nevada 89101, NV", "2026-10-28", 87643.92, 113937.2, "year",
-         "custom"),
-        ("Equipment Operator III", "5524667", "City of Las Vegas, NV", "2026-10-22", 28.62, 28.62, "hour", "custom")]
+         "neogov"),
+        ("Equipment Operator III", "5524667", "City of Las Vegas, NV", "2026-10-22", 28.62, 28.62, "hour", "neogov")]
     # its list view's links, should the table go: the openings still, by name
     listed = search_module.parse_neogov(NEOGOV_PAGE[:NEOGOV_PAGE.index('<table class="table">')])
     assert [(x.title, x.url, x.external_id) for x in listed] == [(x.title, x.url, x.external_id) for x in found]

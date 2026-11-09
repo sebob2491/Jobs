@@ -198,6 +198,11 @@ NEVER: dict[str, re.Pattern[str]] = {kind: re.compile(words, re.I | re.S) for ki
                   r"\bsocial media (?:accounts?|profiles?|activit\w*|presence|posts?|review)\b|"
                   r"\breview\w*\b[^.]{0,40}\bsocial media\b",
     "their data kept": r"keep (?:my|your) (?:profile|information|data|resume)|retain (?:my|your)",
+    # the person's profile shown to employers who search for people (NEOGOV's Access Membership: "Become an Access
+    # Member and let employers find you", "Yes, let employers find me.": the review of 0.3.252)
+    "profile shown": r"\b(?:employers?|agencies|recruiters) (?:can |could |may |to )?find (?:you|me)\b|\bsearchable\b|"
+                     r"\bvisible to (?:employers|recruiters|agencies)\b|"
+                     r"\blet (?:employers|agencies|recruiters) (?:find|see|search)\b",
     "cookies": r"cookie",
     PARAGRAPH_WORDS: r"\btexts?\b|\bcalls?\b|\balerts?\b|\bnotif(?:y|ied|ications?)\b|partners|staffing|share your|"
                      r"recruit\w* agenc|\be-?mail (?:me|you)\b|\bopt(?:ing)?[- ]in\b|stay (?:connected|in touch)|"

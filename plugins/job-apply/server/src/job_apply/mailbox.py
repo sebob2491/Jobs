@@ -54,6 +54,7 @@ ATS_MAIL_DOMAINS = {
     "paycom": {"paycom.com", "paycomonline.net", "paycomonline.com"},
     "taleo": {"taleo.net", "oracle.com"},
     "brassring": {"brassring.com", "kenexa.com"},  # (IBM Kenexa BrassRing: Kenexa's own domain too)
+    "neogov": {"governmentjobs.com", "neogov.com", "neogov.net"},  # (its new account's confirmation link)
 }
 # A refusal says so, whatever else it says ("Too many login failures, try again later" is still one)
 _REFUSED = re.compile(r"authenticationfailed|authentication failed|invalid credentials|login failed|"

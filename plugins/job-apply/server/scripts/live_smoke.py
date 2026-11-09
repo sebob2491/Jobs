@@ -579,17 +579,26 @@ async def save_posting(url: str, answers: dict[str, Any]) -> Path | None:
     return path
 
 
+async def employers_postings(name: str, query: str, location: str | None, limit: int) -> dict[str, Any]:
+    """A search for one employer by name, with its own postings only. The tool finds employers as a person names
+    them, by part of a name too ("Clark County" is in "Clark County School District", "TEKsystems" in "TEKsystems
+    (consultant jobs)"), and the check took the best posting of all it found as this employer's: Clark County's rows
+    through run 198 were the school district's Taleo application, its own NEOGOV one never tried."""
+    # The MCP tool, so the Eightfold browser fallback and tracker marking run too.
+    found = await server.search_company_jobs(query, companies=[name], location=location, limit_per_company=limit)
+    return {**found, "results": [r for r in found["results"] if r.get("company") == name],
+            "errors": {k: v for k, v in (found.get("errors") or {}).items() if k == name}}
+
+
 async def check_company(company: dict[str, Any], out: Path, fixtures: bool, rec: dict[str, Any]) -> None:
     """Fills in rec as it goes, so whatever was found survives a crash."""
     rec["search_config"] = company.get("search")
-    # The MCP tool, so the Eightfold browser fallback and tracker marking run too.
-    az = await server.search_company_jobs(QUERY_AZ, companies=[company["name"]], location=STATE, limit_per_company=5)
+    az = await employers_postings(company["name"], QUERY_AZ, STATE, 5)
     rec["search_az"] = search_brief(az, company["name"])
     found = az
     if not az["results"]:
         # The tool again, so boards read in the browser (iCIMS, Paycom) get a posting to check too.
-        found = await server.search_company_jobs(QUERY_ANY, companies=[company["name"]], location=None,
-                                                 limit_per_company=3)
+        found = await employers_postings(company["name"], QUERY_ANY, None, 3)
         rec["search_any"] = search_brief(found, company["name"])
     if not found["results"]:
         return
@@ -2403,12 +2412,11 @@ def agreed_words(agreed: list[dict[str, Any]], seen: set[tuple[str, str, str]] |
 async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any], fixtures: bool = False) -> None:
     from job_apply.pipeline import Applier, placed_key, question_key
 
-    found = await server.search_company_jobs(QUERY_AZ, companies=[company["name"]], location=STATE, limit_per_company=5)
+    found = await employers_postings(company["name"], QUERY_AZ, STATE, 5)
     if not found["results"]:
-        found = await server.search_company_jobs(QUERY_ANY, companies=[company["name"]], location=None,
-                                                 limit_per_company=3)
+        found = await employers_postings(company["name"], QUERY_ANY, None, 3)
     if not found["results"]:
-        failed = next(iter((found.get("errors") or {}).values()), "")  # (a site down for maintenance, say)
+        failed = next(iter(found["errors"].values()), "")  # (a site down for maintenance, say)
         rec["note"] = "no postings found" + (f" (the search failed: {failed[:200]})" if failed else "")
         return
     first = best_posting(found["results"])

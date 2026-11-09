@@ -29,6 +29,9 @@ _DOMAINS: list[tuple[str, tuple[str, ...]]] = [
     ("ukg", ("ultipro.com", "ukg.net")),
     ("infor", ("inforcloudsuite.com",)),
     ("csod", ("csod.com",)),  # Cornerstone OnDemand: <company>.csod.com
+    # NEOGOV: public agencies' boards (www.governmentjobs.com/careers/<agency>), its sign-in (/app/signin) and its
+    # applications, all on governmentjobs.com; one account there serves every agency
+    ("neogov", ("governmentjobs.com",)),
 ]
 # Oracle's recruiting sites: a pod's own host, or a company's own address for its Oracle
 # site (careers.ti.com), known by its path
@@ -101,6 +104,7 @@ ATS_NAMES = {
     "ukg": "UKG Pro",
     "infor": "Infor",
     "csod": "Cornerstone",
+    "neogov": "NEOGOV",
     "company_site": "Company careers site",
 }
 

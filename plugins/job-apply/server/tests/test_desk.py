@@ -689,7 +689,7 @@ def test_a_site_password_goes_to_secrets_only(srv):
                 body = {"name": "workday_password", "value": "s3cret: #1"}
                 assert (await c.post("/api/password", json=body)).status_code == 403
                 none = {"workday": False, "successfactors": False, "icims": False, "applicantstack": False,
-                        "ukg": False, "infor": False, "taleo": False, "email": False,
+                        "ukg": False, "infor": False, "taleo": False, "neogov": False, "email": False,
                         "anthropic": False}
                 assert (await c.get("/api/state", headers=h)).json()["passwords"] == none
                 assert (await c.post("/api/password", headers=h, json=body)).json() == {"saved": True}
@@ -759,7 +759,7 @@ def test_a_hand_typed_secrets_file_doesnt_break_the_page(srv, job_apply_home):
     config.secrets_path().write_text("workday_password: [unclosed\nnot a line of names\n", encoding="utf-8")
     assert Desk(srv).state()["passwords"] == {"workday": True, "successfactors": False, "icims": False,
                                               "applicantstack": False, "ukg": False, "infor": False,
-                                              "taleo": False, "email": False, "anthropic": False}
+                                              "taleo": False, "neogov": False, "email": False, "anthropic": False}
     assert config.get_secret("workday_password") == "[unclosed"
 
 

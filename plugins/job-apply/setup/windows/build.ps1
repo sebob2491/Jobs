@@ -37,7 +37,7 @@ $url = "https://github.com/astral-sh/uv/releases/download/$UvVersion/$UvZip"
 Write-Host "Downloading uv $UvVersion ($url)"
 Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
 $got = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLower()
-if ($got -ne $UvSha256) { throw "$UvZip's sha256 is $got, not the pinned $UvSha256: not using it" }
+if ($got -ne $UvSha256) { throw "$UvZip's sha256 is $got, not the pinned ${UvSha256}: not using it" }
 $unpacked = Join-Path $build 'uv-unpacked'
 if (Test-Path -LiteralPath $unpacked) { Remove-Item -LiteralPath $unpacked -Recurse -Force }
 Expand-Archive -LiteralPath $zip -DestinationPath $unpacked

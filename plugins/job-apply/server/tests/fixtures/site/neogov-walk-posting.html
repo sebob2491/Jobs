@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Equipment Technician | Job Details tab | Career Pages</title></head>
+<body>
+<!-- A NEOGOV posting (www.governmentjobs.com/careers/<agency>/jobs/<id>/<title>), as the public pages were in Nov 2026:
+     the agency's header, the job's details, and "Apply" (button#apply-button, drawn with script), which goes to the
+     job's /apply address (neogov-walk-apply.html). Signed out, that sends the browser on to NEOGOV's sign-in
+     (/app/signin?returnUrl=..., neogov-walk-signin.html). Served by test_site_walks.py's fake_ats at NEOGOV's address.
+     Made-up agency and job. -->
+<header><span>Example County, NV</span> <a href="/careers/examplecounty">Back to Job Listings</a></header>
+<div class="entity-details-header">
+  <h2 class="entity-title">Equipment Technician</h2>
+  <div class="header-buttons">
+    <a class="print-button" href="/careers/examplecounty/jobs/newprint/1234567" rel="nofollow"><span class="hide">Print</span></a>
+    <button id="apply-button" class="btn btn-large btn-primary btn-app-primary switch-button">
+      Apply
+    </button>
+  </div>
+</div>
+<div class="tab-content entity-details-tabs">
+  <div id="info" class="entity-details-container">
+    <dl><dt>Salary</dt><dd>$25.00 - $31.00 Hourly</dd><dt>Location</dt><dd>Example County, NV</dd>
+      <dt>Job Type</dt><dd>Full-Time</dd><dt>Job Number</dt><dd>26-1234</dd></dl>
+    <h3>Description</h3>
+    <p>Install, maintain and repair the County's heating, ventilation and air conditioning equipment.</p>
+  </div>
+</div>
+<script>
+  document.getElementById('apply-button').addEventListener('click', () => { location.href = location.pathname + '/apply'; });
+</script>
+</body>
+</html>

@@ -33,6 +33,7 @@ SAID = {
     FUTURE_ROLES: "be kept on file for future job openings",
     "their data shared": "let Example Corp share my profile",
     "their data kept": "let Example Corp keep my resume on file",
+    "profile shown": "become an Access Member and let employers find me",
     "cookies": "allow the use of cookies",
     BEYOND_CHECK: "let Example Corp pull a consumer credit report",
     PARAGRAPH_WORDS: "hear from staffing firms",
@@ -840,3 +841,30 @@ def test_a_framed_gates_own_words_are_read_for_job_opportunities_never_the_caree
     assert not pipeline._terms_gate(gate, page, around + " You waive the right to a trial by jury.", own)
     assert not pipeline._terms_gate(gate, page, around, KFORCE_LIKE.format(
         clause="sending you further information about Example Staffing job opportunities"))
+
+
+@pytest.mark.parametrize("words", [
+    "Yes, let employers find me.", "Become an Access Member and let employers find you. It's free.",
+    "Make my profile searchable by recruiters", "Make my resume visible to employers"])
+def test_a_profile_shown_to_employers_is_never_agreed_to(words):
+    """NEOGOV's Access Membership (its header's "Yes, let employers find me."): the person's profile shown to
+    employers who search for people is never chosen for them, by any path (the review of 0.3.252)."""
+    assert _never_for_them(words, only={"profile shown"}) == "profile shown"
+    assert _never_for_them(words, only=pipeline._AGREEMENT_KINDS) is not None
+    assert _never_for_them(words, only=pipeline._ATTESTED_KINDS) is not None
+
+
+@pytest.mark.parametrize("words", [
+    # NEOGOV's own: its sign-in's and sign-up's terms line, its "Updated Terms" dialog, its Certify & Submit page
+    "By clicking one of the \"Continue\" options below, you will sign in to or create a Governmentjobs account managed "
+    "by Governmentjobs.com, Inc. d/b/a NEOGOV, and you agree to the Terms of Use and acknowledge NEOGOV's Privacy "
+    "Policy.",
+    "We've updated our Terms of Use and Privacy Policy. Your continued use of this website constitutes acceptance of "
+    "these updated policies.",
+    "By clicking \"Accept and Submit\", I certify that the information in this application is true and complete, and "
+    "that the information in the application submitted by me is accurate.",
+    "I certify that the information I have provided in this application is true and complete to the best of my "
+    "knowledge, and I understand that any false statement or omission may disqualify me from employment."])
+def test_neogovs_terms_and_certification_show_no_profile(words):
+    assert _never_for_them(words, only={"profile shown"}) is None
+    assert _never_for_them(words, only=pipeline._AGREEMENT_KINDS) is None

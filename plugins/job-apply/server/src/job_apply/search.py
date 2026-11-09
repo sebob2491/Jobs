@@ -1645,7 +1645,7 @@ def parse_neogov(page: str | BeautifulSoup, place: str = "") -> list[Listing]:
         if link is None or not link.get_text(strip=True):
             continue
         out.append(Listing(company="", title=" ".join(link.get_text(" ", strip=True).split()),
-                           url=urljoin("https://www.governmentjobs.com/", str(link["href"])), ats="custom",
+                           url=urljoin("https://www.governmentjobs.com/", str(link["href"])), ats="neogov",
                            location=_neogov_column(row, "location") or place,
                            posted=posted_date(_neogov_column(row, "posted")), external_id=str(cell["data-job-id"]),
                            employment_type=_neogov_column(row, "type"),  # ("Full-Time", "PERMANENT", "PART-TIME")

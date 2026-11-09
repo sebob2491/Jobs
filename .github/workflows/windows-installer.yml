@@ -105,6 +105,9 @@ jobs:
             if (-not ($report.checks | Where-Object { $_.name -eq $name })) { throw "The doctor's report lacks $name" }
           }
           if ($code -ne $(if ($problems.Count -gt 0) { 1 } else { 0 })) { throw "The doctor exited $code" }
+          # (the doctor's 1, for a clean computer's three, isn't this step's: the runner ends a step with the last
+          # program's exit code)
+          $global:LASTEXITCODE = 0
 
       - name: The Start menu's Job Desk starts the desk, and a second start opens it
         run: |
