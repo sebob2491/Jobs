@@ -281,6 +281,10 @@ def test_the_workflow_builds_on_windows_installs_checks_and_uninstalls_with_acti
     assert "'/VERYSILENT', '/SUPPRESSMSGBOXES', '/CURRENTUSER'" in runs
     doctor = next(line for line in runs.splitlines() if "job-apply-doctor" in line)
     assert "--launch" not in doctor
+    # the doctor ends with 1 on a clean computer (no folder, profile or resume yet), and GitHub's PowerShell ends a
+    # step with the last program's exit code: the second run (Nov 9) failed there with every check as expected
+    step = next(s["run"] for s in job["steps"] if "job-apply-doctor" in s.get("run", ""))
+    assert step.rstrip().endswith("$global:LASTEXITCODE = 0")
     assert "Job Desk.lnk" in runs and "http://127.0.0.1:8765/" in runs and "already running" in runs
     assert "unins000.exe" in runs and "keep-me.txt" in runs
     upload = next(s for s in job["steps"] if s.get("uses", "").startswith("actions/upload-artifact@"))
