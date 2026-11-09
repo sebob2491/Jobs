@@ -6530,7 +6530,8 @@ def test_starting_the_desk_again_opens_the_one_running_on_its_port(srv, monkeypa
     from job_apply.desk import running_desk, watch_path
 
     opened: list[str] = []
-    monkeypatch.setattr(desk_module.webbrowser, "open", lambda url, *a, **k: opened.append(url) or True)
+    # (the page opens through the desk's window, or a tab: window.open_window)
+    monkeypatch.setattr(desk_module.window, "open_window", lambda url, mode: opened.append(url) or mode)
 
     def second_desk(srv_module):
         raise AssertionError("a second desk was started")

@@ -345,12 +345,28 @@ def _phone_alerts_server(raw: Any) -> tuple[str, str]:
                 "https://ntfy.example.com (http only on this computer: http://localhost); using ntfy.sh.")
 
 
+# How the Job Desk's page opens (settings.desk_window, window.py): in a window of its own, where the profile doesn't
+# say, or in a tab of the person's usual browser
+DESK_WINDOWS = ("app", "tab")
+DESK_WINDOW_DEFAULT = "app"
+
+
+def _desk_window(raw: Any) -> tuple[str, str]:
+    """settings.desk_window as written ("tab", "Tab", nothing) -> "app" or "tab", and what to say of anything else."""
+    if raw is None or isinstance(raw, str) and not raw.strip():
+        return DESK_WINDOW_DEFAULT, ""
+    said = raw.strip().lower() if isinstance(raw, str) else ""
+    if said in DESK_WINDOWS:
+        return said, ""
+    return DESK_WINDOW_DEFAULT, f"Unknown settings.desk_window {raw!r}; using {DESK_WINDOW_DEFAULT}. Use app or tab."
+
+
 # The keys the desk reads under settings: (the template's); any other is said, as it has no effect
 # ("accept_notice: false")
 KNOWN_SETTINGS = ("submit_mode", "auto_submit_ats", "browser_channel", "headless", "email_codes", "email_tracking",
                   "accept_cookies", "manage_accounts", "accept_notices", "jobs_at_once", "follow_up_days",
                   "cover_letter_model", "phone_alert_details", "phone_summary_at", "phone_alerts_server",
-                  "learn_from_responses")
+                  "learn_from_responses", "desk_window")
 
 
 @dataclass
@@ -390,6 +406,9 @@ class Settings:
     # may the openings' scores lean on what worked before: the person's own applications' outcomes, kept on this
     # computer (recommend.worked_before; on unless the profile turns it off)
     learn_from_responses: bool = LEARN_FROM_RESPONSES_DEFAULT
+    # how the Job Desk's page opens: "app", in a window of its own (the person's own browser, with no tabs and no
+    # address bar: window.py), or "tab", in a tab of their usual browser
+    desk_window: str = DESK_WINDOW_DEFAULT
     # the live check's test identity (live_test_identity): accounts and notices in practice mode too
     test_identity: bool = False
     warnings: list[str] = field(default_factory=list)
@@ -414,7 +433,9 @@ class Settings:
         letter_model, letter_model_said = _cover_letter_model(d.get("cover_letter_model"))
         summary_at, summary_said = _phone_summary_at(d.get("phone_summary_at"))
         phone_server, phone_server_said = _phone_alerts_server(d.get("phone_alerts_server"))
-        warnings += [said for said in (at_once_said, follow_up_said, letter_model_said, summary_said, phone_server_said)
+        desk_window, desk_window_said = _desk_window(d.get("desk_window"))
+        warnings += [said for said in (at_once_said, follow_up_said, letter_model_said, summary_said, phone_server_said,
+                                       desk_window_said)
                      if said]
         for key in d:  # a key the desk doesn't read, a letter short of one it does (the review of Oct 15): said
             if str(key) not in KNOWN_SETTINGS:
@@ -444,6 +465,7 @@ class Settings:
             phone_alerts_server=phone_server,
             learn_from_responses=_on_unless_off(d.get("learn_from_responses"), malformed,
                                                 LEARN_FROM_RESPONSES_DEFAULT),
+            desk_window=desk_window,
         )
         if os.environ.get("JOB_APPLY_HEADLESS") == "1":
             s.headless = True

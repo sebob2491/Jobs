@@ -26,7 +26,6 @@ import socket
 import sqlite3
 import time
 import urllib.request
-import webbrowser
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -39,7 +38,7 @@ from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Respon
 from starlette.routing import Route
 
 from . import (autofill, config, employment, history, letters, outcomes, pay, phone, places, profile_setup, report,
-               vault, workplace)
+               vault, window, workplace)
 from .browser import _cookie_setting
 from .pipeline import (DESK_PASSWORDS, MAIL_WATCH_MAX, QUEUE_NO_LOCK, Applier, _may_accept_notices,
                        _may_manage_accounts, _test_identity, placed_key, question_key)
@@ -375,7 +374,8 @@ class Desk:
         if self._phone_task is None or self._phone_task.done():
             self._phone_task = asyncio.get_running_loop().create_task(self._watch_phone())
         if open_browser:
-            await asyncio.get_running_loop().run_in_executor(None, webbrowser.open, self.url)
+            # in a window of its own, or a tab of the person's usual browser (settings.desk_window: window.py)
+            await asyncio.get_running_loop().run_in_executor(None, window.open_window, self.url, _desk_window())
         return self.url
 
     async def _watch_updates(self) -> None:
@@ -1841,6 +1841,15 @@ def _profile_jobs_at_once() -> Any:
     return settings.get("jobs_at_once") if isinstance(settings, dict) else None
 
 
+def _desk_window() -> str:
+    """settings.desk_window, as the profile has it now: "app" (the desk's page in a window of its own) or "tab" (in
+    a tab of the person's usual browser); its default while the profile doesn't read."""
+    try:
+        return config.Profile.load().settings.desk_window
+    except Exception:
+        return config.DESK_WINDOW_DEFAULT
+
+
 def _first_line(e: BaseException) -> str:
     return ((str(e).strip().splitlines() or [type(e).__name__])[0])[:150]
 
@@ -2258,12 +2267,12 @@ def main(argv: list[str] | None = None) -> int:
     """Run the Job Desk on its own (without Claude Code)."""
     ap = argparse.ArgumentParser(description="Open the Job Desk")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
-    ap.add_argument("--no-browser", action="store_true", help="don't open the page in your browser")
+    ap.add_argument("--no-browser", action="store_true", help="don't open the Job Desk's window")
     args = ap.parse_args(argv)
     if (url := running_desk(args.port)) is not None:
         print(f"The Job Desk is already running: {url}", flush=True)
         if not args.no_browser:
-            webbrowser.open(url)
+            window.open_window(url, _desk_window())
         return 0
     from . import server
 
