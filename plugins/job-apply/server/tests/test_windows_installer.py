@@ -246,6 +246,24 @@ def test_the_build_fetches_a_pinned_uv_and_checks_its_sha256():
     assert "'.claude-plugin\\plugin.json'" in text
 
 
+def test_no_powershell_here_names_a_variable_straight_before_a_colon():
+    """The workflow's first run (Nov 9) stopped in build.ps1 before it built anything: "... the pinned $UvSha256: not
+    using it" is a parse error, as PowerShell reads `$name:` as a variable in a scope or drive ($env:PATH) and wants a
+    name after the colon. Written ${name}: it's the variable, then a colon. Nothing here runs PowerShell to find the
+    next one, so every script the installer's build and its workflow run is read for it."""
+    sources = {path.name: path.read_text(encoding="utf-8") for path in (BUILD, STOP, PLUGIN / "setup" / "install.ps1")}
+    flow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    for job in flow["jobs"].values():
+        for n, step in enumerate(job["steps"]):
+            if "run" in step:
+                sources[f"{WORKFLOW.name}, step {n + 1} ({step.get('name', 'unnamed')})"] = step["run"]
+    assert len(sources) > 6
+    for name, text in sources.items():
+        # ($env:PATH, $script:x and a type's $t::Member have a name, or a second colon, after it)
+        wrong = [line.strip()[:120] for line in text.splitlines() if re.search(r"\$[A-Za-z_]\w*:(?![\w:])", line)]
+        assert not wrong, (name, wrong)
+
+
 def test_the_workflow_builds_on_windows_installs_checks_and_uninstalls_with_actions_pinned_by_commit():
     text = WORKFLOW.read_text(encoding="utf-8")
     flow = yaml.safe_load(text)
