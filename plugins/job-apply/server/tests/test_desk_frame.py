@@ -198,7 +198,9 @@ def test_applications_chooses_my_applications_and_recommended_leads_back_to_open
                 await page.wait_for_selector("#rows li.row >> nth=1", state="detached")
                 seen["recommended"] = await page.evaluate(read)
                 await page.click('.nav a[href="#applications"]')  # (My applications is the Applications page)
-                await page.wait_for_function("location.hash === '#applications'")
+                # (the address changes at once; the page is switched a moment after, when the browser says it changed)
+                await page.wait_for_function(
+                    "location.hash === '#applications' && document.body.dataset.page === 'applications'")
                 seen["mine"] = await page.evaluate(read)
                 await page.wait_for_timeout(1700)  # (a refresh: the tab and the address stay as they are)
                 seen["later"] = await page.evaluate(read)
