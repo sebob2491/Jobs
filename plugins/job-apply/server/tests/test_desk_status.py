@@ -19,6 +19,8 @@ from job_apply.pipeline import Applier, Run
 FIVE = ("applied", "interviewing", "offer", "rejected", "withdrawn")
 NOTE = "set on the Job Desk"
 NOT_AN_APPLICATION = "That job isn't one of your applications."
+NOT_SENT_YET = ("That job hasn't been sent yet. If you sent it on the site yourself, press I submitted it myself on "
+                "its card on Home.")
 
 
 async def _until(check, timeout=60, about=None):
@@ -59,6 +61,9 @@ def test_api_job_status_sets_each_of_the_five_and_refuses_anything_else(srv):
     saved = srv.add_job(url="https://careers.example.com/jobs/2", title="Technician", company="Example Litho")["job"]
     skipped = srv.add_job(url="https://careers.example.com/jobs/3", title="Technician", company="Example Etch")["job"]
     t.update(skipped["id"], status="skipped")
+    # filled, waiting on its review page, never sent
+    filled = srv.add_job(url="https://careers.example.com/jobs/4", title="Technician", company="Example Dep")["job"]
+    t.update(filled["id"], status="ready_to_submit")
     desk = _idle_desk(srv, standalone=True)
 
     async def go():
@@ -88,6 +93,10 @@ def test_api_job_status_sets_each_of_the_five_and_refuses_anything_else(srv):
                     r = await c.post(f"/api/job/{job['id']}/status", headers=h, json={"status": "offer"})
                     assert (r.status_code, r.json()) == (400, {"error": NOT_AN_APPLICATION})
                     assert t.get(job["id"])["status"] == ("saved" if job is saved else "skipped")
+                for status in FIVE:  # (filled, never sent: no status, nor a time it was applied at)
+                    r = await c.post(f"/api/job/{filled['id']}/status", headers=h, json={"status": status})
+                    assert (r.status_code, r.json()) == (400, {"error": NOT_SENT_YET})
+                assert t.get(filled["id"])["status"] == "ready_to_submit" and not t.get(filled["id"])["applied_at"]
                 for job_id in (999999, 2 ** 63):  # (no such job; past what the tracker can hold)
                     r = await c.post(f"/api/job/{job_id}/status", headers=h, json={"status": "offer"})
                     assert r.status_code == 400, r.text
@@ -240,31 +249,48 @@ ASK_FOR_JOBS = " Or ask Claude: “add the start and end months of my jobs from 
 ASK_FOR_SCHOOLS = " Or ask Claude to add it from your resume (only what it says: never a degree you didn't finish)."
 
 
+NO_DEGREE = (" For a college where you took classes without finishing, your profile says Some college (no degree), "
+             "never a degree: answer No to “Did you finish this degree?”.")
+AFTER = (" From then on, the desk fills them in from your profile on every application. Or type them into the page in "
+         "the desk's browser window instead, then press Carry on.")
+
+
 @pytest.mark.parametrize("standalone", [True, False])
 def test_the_stops_about_past_jobs_and_schools_name_claude_only_inside_claude(srv, standalone):
-    """The stops for a past job's and a school's dates the profile lacks say to add them in the profile on the
-    desk, never in profile.yaml; inside Claude each adds what to ask Claude."""
+    """The stops for a past job's and a school's dates (or Degree) the profile lacks say to add them in the profile on
+    the desk, never in profile.yaml; inside Claude each adds what to ask Claude. A Degree box adds how a college not
+    finished is said (coursework is never a degree). Carry on is asked for once for each thing the person does."""
     path = config.profile_path()
     profile = yaml.safe_load(path.read_text(encoding="utf-8"))
     profile["work_history"][0].pop("start")
     profile["education_history"][0].pop("start")
+    profile["education_history"][0].pop("degree")
     path.write_text(yaml.safe_dump(profile), encoding="utf-8")
     applier = Applier(srv)
     applier.standalone = standalone
     site = {"url": "https://example.wd1.myworkdayjobs.com/x"}
     work = {"id": "a", "label": "From", "sublabel": "Year", "section": "Work Experience 1", "required": True}
     school = {"id": "b", "label": "From", "sublabel": "Year", "section": "Education 1", "required": True}
-    said_work, _, _ = applier._entry_gaps(Run(1, "Technician", "Example Litho"), site, [work])
-    said_school, _, _ = applier._entry_gaps(Run(1, "Technician", "Example Litho"), site, [school])
+    degree = {"id": "c", "label": "Degree*", "section": "Education 1", "required": True, "kind": "listbox"}
+
+    def said(*boxes):
+        return applier._entry_gaps(Run(1, "Technician", "Example Litho"), site, list(boxes))[0]
+
     jobs = ("Workday asks about your past jobs, and your profile doesn't have this for them: Equipment Technician at "
             "Intel (From). " + ADD_IT + ("" if standalone else ASK_FOR_JOBS))
-    schools = ("Workday asks about your schools, and your profile doesn't have this for them: Arizona State "
-               "University in Education 1 (From). " + ADD_IT + ("" if standalone else ASK_FOR_SCHOOLS))
-    assert said_work.startswith(jobs + " Then press Carry on"), said_work
-    assert said_school.startswith(schools + " Then press Carry on"), said_school
-    for said in (said_work, said_school):
-        assert "profile.yaml" not in said and "_history" not in said, said
-        assert ("Claude" in said) is not standalone, said
+
+    def schools(what):
+        return ("Workday asks about your schools, and your profile doesn't have this for them: Arizona State "
+                f"University in Education 1 ({what}). " + ADD_IT + ("" if standalone else ASK_FOR_SCHOOLS))
+
+    assert said(work) == jobs + AFTER
+    assert said(school) == schools("From") + AFTER
+    assert said(degree) == schools("Degree") + NO_DEGREE + AFTER
+    assert said(work, school) == jobs + " " + schools("From") + AFTER
+    for each in (said(work), said(school), said(degree), said(work, school)):
+        assert "profile.yaml" not in each and "_history" not in each, each
+        assert ("Claude" in each) is not standalone, each
+        assert "Then press Carry on" not in each and each.count("press Carry on") == each.count("Add it in") + 1
 
 
 def test_the_sentences_the_same_with_claude_and_without():

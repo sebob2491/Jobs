@@ -74,6 +74,9 @@ SENT = frozenset(APPLICATION_STATUSES)
 DONE = frozenset({"applied", "interviewing", "offer", "rejected", "withdrawn", "skipped"})
 # the statuses the person may set on one of their applications themselves (its Change status: /api/job/{id}/status)
 MARKED_STATUSES = ("applied", "interviewing", "offer", "rejected", "withdrawn")
+# and so the only ones a job's status is changed from there: one filled but never sent isn't the menu's
+NOT_SENT_YET = ("That job hasn't been sent yet. If you sent it on the site yourself, press I submitted it myself on "
+                "its card on Home.")
 
 
 def _recommendations_path() -> Path:
@@ -826,7 +829,8 @@ class Desk:
 
     async def status_view(self, request: Request) -> Response:
         """An application's Change status, on the Applications page (the design's C8): one of MARKED_STATUSES, for a
-        job in that list alone, written to the tracker as the person's own. Only the tracker's status changes: nothing
+        job the tracker holds as sent or further along (one of MARKED_STATUSES too; not one filled and never sent,
+        ready_to_submit) alone, written to the tracker as the person's own. Only the tracker's status changes: nothing
         is filled, pressed or sent. Anything else is a 400."""
         if not self._allowed(request, api=True):
             return self._forbidden()
@@ -837,7 +841,10 @@ class Desk:
                 raise ValueError(f"The status should be one of {', '.join(MARKED_STATUSES)}.")
             t = self.srv.tracker()
             job = t.get(job_id, with_description=False) if job_id < 2 ** 63 else None
-            if job is None or job.get("status") not in APPLICATION_STATUSES:
+            if job is not None and job.get("status") == "ready_to_submit":
+                # (filled, never sent: marked applied it would have a time it went in, its card waiting for Submit)
+                raise ValueError(NOT_SENT_YET)
+            if job is None or job.get("status") not in MARKED_STATUSES:  # (sent, or further along)
                 raise ValueError("That job isn't one of your applications.")
             t.update(job_id, status=status, note="set on the Job Desk")
         except (KeyError, ValueError) as e:

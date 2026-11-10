@@ -523,10 +523,17 @@ class FillingMixin:
                         f"{listed(missing['education'])}. Add it in your profile (Settings, Your profile), then press "
                         "Carry on."
                         + ("" if self.standalone else " Or ask Claude to add it from your resume (only what it says: "
-                           "never a degree you didn't finish)."))
+                           "never a degree you didn't finish).")
+                        # (a Degree box: coursework is never a degree. The profile's form saves a college not finished,
+                        # its "Did you finish this degree?" answered No, as Some college (no degree): profile_setup)
+                        + (" For a college where you took classes without finishing, your profile says Some college "
+                           "(no degree), never a degree: answer No to “Did you finish this degree?”."
+                           if re.search(r"degree|qualification|diploma", " ".join(
+                               w for boxes in missing["education"].values() for w in boxes).lower()) else ""))
         if said:
-            said.append("Then press Carry on: the desk fills them in from your profile on every application after "
-                        "that. Or type them into the page in the desk's browser window and press Carry on.")
+            # (the Carry on asked for above, said once: what it does, not a second press)
+            said.append("From then on, the desk fills them in from your profile on every application. Or type them "
+                        "into the page in the desk's browser window instead, then press Carry on.")
         if missing["extra"]:
             said.append(f"The page has more blocks than your profile has entries: {listed(missing['extra'])}. Remove "
                         "the extra block in the desk's browser window (or fill it in there), then press Carry on.")
