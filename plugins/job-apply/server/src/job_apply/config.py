@@ -868,7 +868,7 @@ def forget_secret(name: str) -> bool:
 def forget_password(name: str) -> bool:
     """A saved password forgotten on the desk's page (its Forget): a job system's, the email app password or the
     Anthropic API key (FORGETTABLE, by its exact name), taken out as forget_secret takes the phone alerts' topic out,
-    under the same lock and all or nothing. Whether there was one. A ValueError for any other name (the
+    under the same lock and all or nothing (_forget). Whether there was one. A ValueError for any other name (the
     topic's too: its own card turns it off), or when the vault won't let it go; VaultUnreachable while the vault is out
     of use (it can't take out what it can't reach, and the file's line alone going would leave the vault's to come
     back)."""
@@ -886,22 +886,30 @@ def forget_password(name: str) -> bool:
 
 
 def _forget(name: str) -> bool:
-    """forget_secret's and forget_password's work, for a name each has checked."""
+    """forget_secret's and forget_password's work, for a name each has checked. All or nothing: the vault's entry goes
+    first, then the file's line; should the file's fail (it can't be read or written), the vault's is put back as it
+    was, and the failure is raised. The name leaves the vault's list of names only once both are gone."""
     from . import vault
 
     with _SECRETS_LOCK:
-        there = vault.get(name, fresh=True) is not None
+        before = vault.get(name, fresh=True)
         try:
             vault.forget(name)
         except vault.Stuck:
             raise ValueError(f"Your password vault ({vault.status().name}) wouldn't let it go just now (is it "
                              "locked?). Unlock it and try again.") from None
-        vault.unlist(name)
         path = secrets_path()
-        if not path.exists() or name not in read_secrets(path):
-            return there
-        _drop_secrets(path, [name])
-        return True
+        try:
+            dropped = path.exists() and name in read_secrets(path)
+            if dropped:
+                _drop_secrets(path, [name])
+        except BaseException:
+            if before is not None:  # (the vault just answered: it takes its own back)
+                with contextlib.suppress(Exception):
+                    vault.put(name, before)
+            raise
+        vault.unlist(name)
+        return before is not None or dropped
 
 
 def set_setting(key: str, value: Any) -> None:

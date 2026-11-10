@@ -1216,3 +1216,33 @@ def test_make_a_new_one_and_forget_wait_while_a_job_is_being_filled_on_that_job_
     assert [answer.json() for answer in others] == [{"made": ["icims_password"]}, {"forgotten": True},
                                                     {"made": ["ukg_password", "taleo_password"]}]
 
+
+# ------------------------------------------------------------------ Forget, all or nothing
+def test_forget_whose_file_cant_be_changed_puts_the_vaults_password_back(srv, job_apply_home, memory_vault,
+                                                                        monkeypatch):
+    """The vault's entry goes first, then the file's line: should the file's fail, the vault's is put back as it was
+    (and stays on the list of names), and the answer says the file couldn't be changed. Nothing is forgotten."""
+    on_day(monkeypatch, "2026-11-10")
+    desk = idle_desk(srv)
+    path = config.secrets_path()
+    index = job_apply_home / vault.INDEX_FILE
+
+    def full(*args, **kwargs):
+        raise OSError("No space left on device")
+
+    async def go():
+        async with serving(desk) as (c, h):
+            await ask(c, h, MAKE, {"name": "workday_password"})
+            made = in_vault(memory_vault, "workday_password")
+            path.write_text('workday_password: "by hand, the newer"\n', encoding="utf-8")
+            with monkeypatch.context() as m:
+                m.setattr(config, "_drop_secrets", full)
+                answer = await ask(c, h, FORGET, {"name": "workday_password"}, 400)
+            return made, answer
+
+    made, answer = run(go())
+    assert "No space left" in answer.json()["error"] and made not in answer.text
+    assert in_vault(memory_vault, "workday_password") == made and keeps_the_rules(made)
+    assert "workday_password" in index.read_text(encoding="utf-8")
+    assert path.read_text(encoding="utf-8") == 'workday_password: "by hand, the newer"\n'
+    assert desk.made_passwords == {"workday_password": "2026-11-10"}
