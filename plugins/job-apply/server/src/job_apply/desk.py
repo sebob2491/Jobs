@@ -1081,7 +1081,7 @@ class Desk:
                 raise ValueError(wrong)
             if not config.profile_path().exists():
                 raise ValueError("Set up your profile first.")
-            await asyncio.to_thread(config.set_setting, key, value)
+            await asyncio.to_thread(config.set_setting, key, profile_setting_value(key, value))
             return JSONResponse(profile_settings(config.Profile.load().settings))
         except (ValueError, OSError) as e:
             return self._bad(e)
@@ -2140,11 +2140,35 @@ def profile_setting_problem(key: str, value: Any) -> str | None:
         return ("A model's name is 1 to 80 letters, digits and . _ : [ ] -, beginning with a letter or a digit, with "
                 "no spaces. Leave it empty for the usual one.")
     if key == "phone_alerts_server":
-        if value == "" or isinstance(value, str) and config._phone_alerts_server(value) == (value, ""):
+        if not isinstance(value, str):
+            return "Your own alert server is an address, such as https://ntfy.example.com."
+        said = value.strip()
+        if len(said) > ALERT_SERVER_LONGEST:
+            return f"Your own alert server's address is {ALERT_SERVER_LONGEST} characters at most."
+        if "?" in said or "#" in said:
+            return "Your own alert server is its address alone, with no ? or # in it."
+        try:
+            port = urlsplit(said).port
+        except ValueError:
+            port = -1
+        if port is not None and not 1 <= port <= 65535:
+            return "Your own alert server's port is a number from 1 to 65535."
+        if said == "" or config._phone_alerts_server(said)[1] == "":
             return None
         return ("Your own alert server is its https address alone, such as https://ntfy.example.com. Leave it empty to "
                 "use ntfy.sh.")
     return "That setting can't be changed here."
+
+
+ALERT_SERVER_LONGEST = 200  # characters: the most an alert server's address may be
+
+
+def profile_setting_value(key: str, value: Any) -> Any:
+    """A value profile_setting_problem took, as it's written: an alert server's address as config reads it (its
+    spaces and a trailing "/" gone); any other as it came."""
+    if key == "phone_alerts_server" and isinstance(value, str):
+        return config._phone_alerts_server(value)[0]
+    return value
 
 
 def profile_settings(s: config.Settings) -> dict[str, Any]:

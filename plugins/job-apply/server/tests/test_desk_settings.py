@@ -26,6 +26,7 @@ from job_apply.desk import PROFILE_SETTINGS, Desk
 
 CANT = "That setting can't be changed here."
 NO_PROFILE = "Set up your profile first."
+PORT = "Your own alert server's port is a number from 1 to 65535."
 APP_PASSWORD = "abcd efgh ijkl mnop"  # (a made-up app password, as Gmail shows one)
 ADDRESS = "sam.rivera@example.com"  # (the tests' profile's)
 
@@ -145,6 +146,16 @@ def test_profile_settings_writes_each_key_of_its_table_and_keeps_the_rest(srv, j
     ("cover_letter_model", None, None),
     ("phone_alerts_server", "http://ntfy.example.com", None),
     ("phone_alerts_server", "https://sam:secret@ntfy.example.com", None),
+    ("phone_alerts_server", None, "Your own alert server is an address, such as https://ntfy.example.com."),
+    ("phone_alerts_server", "https://ntfy.example.com/" + "a" * 180,
+     "Your own alert server's address is 200 characters at most."),
+    ("phone_alerts_server", "https://ntfy.example.com:70000", PORT),
+    ("phone_alerts_server", "https://ntfy.example.com:0", PORT),
+    ("phone_alerts_server", "https://ntfy.example.com:http", PORT),
+    ("phone_alerts_server", "https://ntfy.example.com/?",
+     "Your own alert server is its address alone, with no ? or # in it."),
+    ("phone_alerts_server", "https://ntfy.example.com/#top",
+     "Your own alert server is its address alone, with no ? or # in it."),
 ])
 def test_profile_settings_refuses_what_its_table_doesnt_take_and_changes_nothing(srv, job_apply_home, key, value,
                                                                                  said):
@@ -160,6 +171,19 @@ def test_profile_settings_refuses_what_its_table_doesnt_take_and_changes_nothing
         assert answer["error"].endswith(("for the usual one.", "to use ntfy.sh.")), answer
         assert "secret" not in answer["error"]
     assert (job_apply_home / "profile.yaml").read_bytes() == before
+
+
+@pytest.mark.parametrize("pasted", [" https://ntfy.example.com/ ", "https://ntfy.example.com/", "https://ntfy.example.com\n",
+                                    "https://ntfy.example.com:8443/"])
+def test_an_alert_server_pasted_with_a_slash_or_spaces_is_saved_as_config_reads_it(srv, job_apply_home, pasted):
+    """An address config takes (its spaces and a trailing "/" aside) is taken, saved as config reads it, and the
+    answer shows the saved form."""
+    [(status, answer)] = _calls(_desk(srv), [("POST", "/api/profile/settings",
+                                              {"key": "phone_alerts_server", "value": pasted})])
+    saved = pasted.strip().rstrip("/")
+    assert (status, answer["phone_alerts_server"]) == (200, saved), answer
+    assert yaml.safe_load((job_apply_home / "profile.yaml").read_text(encoding="utf-8"))["settings"][
+        "phone_alerts_server"] == saved
 
 
 def test_profile_settings_needs_the_key_and_a_profile(srv, job_apply_home):
