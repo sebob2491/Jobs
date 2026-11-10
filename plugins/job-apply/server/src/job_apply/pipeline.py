@@ -5971,9 +5971,10 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             # Carry on, as many times as the person presses it, never by the desk on its own)
             run.review_retyped |= {str(f["id"]) for f in lost}
             retyped = set(await srv.browser.retype([str(f["id"]) for f in lost], settle=REVIEW_RETYPE_SETTLE))
-            if retyped:
-                run.did("typed", [f for f in lost if str(f["id"]) in retyped])
-                names = ", ".join(clean_label(f.get("label") or "") for f in lost if str(f["id"]) in retyped)
+            again = [f for f in lost if str(f["id"]) in retyped]
+            if again:
+                run.did("typed", again)
+                names = ", ".join(clean_label(f.get("label") or "") for f in again)
                 self._log(run, f"typed again what the page said was empty though it showed your answer: {names}")
                 await asyncio.sleep(REVIEW_RETYPE_SETTLE)
                 data, text = await self._look()
