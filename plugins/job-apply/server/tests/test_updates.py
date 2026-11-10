@@ -6,6 +6,7 @@ network or starts a program: the check is handed a transport, and the update a P
 import asyncio
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import time
@@ -281,7 +282,7 @@ def _folder():
     return config.home() / "updates"
 
 
-def test_a_good_download_is_kept_and_the_installer_started_with_five_arguments_after_the_pause_then_the_desk_stops(
+def test_a_good_download_is_kept_and_the_installer_started_with_its_arguments_after_the_pause_then_the_desk_stops(
         copy, loop):
     _folder().mkdir(parents=True)
     (_folder() / "JobDeskSetup-0.4.2.exe").write_bytes(b"an older one")
@@ -291,7 +292,7 @@ def test_a_good_download_is_kept_and_the_installer_started_with_five_arguments_a
     assert sorted(p.name for p in _folder().glob("*.exe")) == ["JobDeskSetup-0.4.4.exe"]  # (older ones gone)
     assert steps == ["pause", "installer", "quit"]
     [(args, options)] = popen.calls
-    assert args == [str(saved), "/SILENT", "/CURRENTUSER", "/NORESTART", "/RELAUNCH=1",
+    assert args == [str(saved), "/SILENT", "/NOCANCEL", "/CURRENTUSER", "/NORESTART", "/RELAUNCH=1",
                     f"/LOG={_folder() / 'install-0.4.4.log'}"]
     assert not options.get("shell") and "executable" not in options
     if sys.platform == "win32":
@@ -472,40 +473,89 @@ def test_an_installer_watched_until_it_has_taken_over_then_the_desk_stops(copy, 
     assert steps == ["pause", "installer", "resume"] and check.state(standalone=True)["progress"] == "failed"
 
 
-def test_the_installer_starts_out_of_the_desks_job_where_windows_allows_it(monkeypatch, tmp_path):
+def _starter(calls, refuse_breakaway=False, refuse=None):
+    """A Popen that starts nothing: the flags it was handed; Windows' "access denied" for a start out of the job
+    (`refuse_breakaway`), or `refuse` for any start."""
+    def popen(args, **options):
+        calls.append(options.get("creationflags", options.get("start_new_session")))
+        if refuse is not None:
+            raise refuse
+        if refuse_breakaway and options["creationflags"] & window.CREATE_BREAKAWAY_FROM_JOB:
+            raise PermissionError(13, "Access is denied")
+        return Process()
+    return popen
+
+
+def test_the_installer_starts_out_of_the_desks_job_or_not_at_all(monkeypatch, tmp_path):
     """On Windows the installer is started out of the job the desk's process may be in (uv's launcher holds what it
     starts in one, and stop-desk.ps1 stops that process): CREATE_BREAKAWAY_FROM_JOB. A job that forbids it refuses
-    with access denied: then it starts without, and the update goes on. Elsewhere: a session of its own."""
+    with access denied: then nothing is started (inside the job, the desk's stopping could take the installer with it
+    part-way), and BreakawayRefused says so. Elsewhere: a session of its own."""
     calls = []
-
-    def starter(refuse_breakaway=False, refuse=None):
-        def popen(args, **options):
-            calls.append(options.get("creationflags", options.get("start_new_session")))
-            if refuse is not None:
-                raise refuse
-            if refuse_breakaway and options["creationflags"] & window.CREATE_BREAKAWAY_FROM_JOB:
-                raise PermissionError(13, "Access is denied")
-            return Process()
-        return popen
-
     log, exe = tmp_path / "install.log", tmp_path / "JobDeskSetup-0.4.4.exe"
     detached = window.DETACHED_PROCESS | window.CREATE_NEW_PROCESS_GROUP
     monkeypatch.setattr(window, "_system", lambda: "windows")
-    process, out = updates.start_installer(exe, log, starter())
-    assert isinstance(process, Process) and out is True  # (out of the starter's job)
+    assert isinstance(updates.start_installer(exe, log, _starter(calls)), Process)
     assert calls == [detached | window.CREATE_BREAKAWAY_FROM_JOB] and window.CREATE_BREAKAWAY_FROM_JOB == 0x01000000
     calls.clear()
-    process, out = updates.start_installer(exe, log, starter(refuse_breakaway=True))
-    assert isinstance(process, Process) and out is False  # (inside it: Windows refused)
-    assert calls == [detached | window.CREATE_BREAKAWAY_FROM_JOB, detached]
+    with pytest.raises(window.BreakawayRefused):
+        updates.start_installer(exe, log, _starter(calls, refuse_breakaway=True))
+    assert calls == [detached | window.CREATE_BREAKAWAY_FROM_JOB]  # (never again inside the job)
     calls.clear()
     with pytest.raises(FileNotFoundError):  # (anything else is no job's refusal: not tried again)
-        updates.start_installer(exe, log, starter(refuse=FileNotFoundError(2, "not there")))
+        updates.start_installer(exe, log, _starter(calls, refuse=FileNotFoundError(2, "not there")))
     assert calls == [detached | window.CREATE_BREAKAWAY_FROM_JOB]
     calls.clear()
     monkeypatch.setattr(window, "_system", lambda: "linux")
-    assert updates.start_installer(exe, log, starter())[1] is True  # (no such job here)
+    assert isinstance(updates.start_installer(exe, log, _starter(calls)), Process)  # (no such job here)
     assert calls == [True]
+
+
+def test_start_detached_still_falls_back_inside_the_job_for_its_other_callers(monkeypatch):
+    """start_detached's own fallback (started inside the job when Windows refuses out of it) stays as it was for any
+    caller but the update's installer."""
+    calls = []
+    monkeypatch.setattr(window, "_system", lambda: "windows")
+    detached = window.DETACHED_PROCESS | window.CREATE_NEW_PROCESS_GROUP
+    process, out = window.start_detached(["x.exe"], popen=_starter(calls, refuse_breakaway=True))
+    assert isinstance(process, Process) and out is False
+    assert calls == [detached | window.CREATE_BREAKAWAY_FROM_JOB, detached]
+
+
+def test_an_installer_windows_wont_start_outside_the_desks_job_fails_the_update_and_the_desk_stays(
+        copy, loop, monkeypatch):
+    """For the update there's no fallback: Windows refusing to start the installer outside the desk's job fails it with
+    its own sentence, nothing was started, the queue is resumed as after any failed start, and the desk stays."""
+    monkeypatch.setattr(window, "_system", lambda: "windows")
+    calls = []
+    check, steps, _ = _installed_update(copy, _site(), popen=_starter(calls, refuse_breakaway=True))
+    assert len(calls) == 1 and steps == ["pause", "resume"]  # (no "quit")
+    state = check.state(standalone=True)
+    assert (state["progress"], state["error"]) == ("failed", updates.NO_BREAKAWAY)
+    assert updates.NO_BREAKAWAY == ("This computer wouldn't let the desk start the installer by itself. Press What's "
+                                    "new, download the installer there, and run it.")
+    assert not (_folder() / "updated-to").exists()
+    assert (_folder() / "JobDeskSetup-0.4.4.exe").read_bytes() == INSTALLER  # (kept, for Update now again)
+
+
+def test_the_installer_is_handed_none_of_the_desks_secrets(copy, loop, monkeypatch):
+    """The installer gets the environment any child of the desk's that mustn't see its secrets gets
+    (letters.child_env), less what signs in to Anthropic: never a saved password's variable, the live check's, or the
+    API key. What Windows needs to run it goes as it is."""
+    secrets = {"JOB_APPLY_SECRET_WORKDAY": "made-up-1", "LIVE_TEST_EMAIL_PASSWORD": "made-up-2",
+               "ANTHROPIC_API_KEY": "made-up-3", "CLAUDE_CODE_OAUTH_TOKEN": "made-up-4", "CLAUDECODE": "made-up-5"}
+    for k, v in secrets.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("JOB_DESK_MADE_UP_SETTING", "kept")
+    # (what Windows and the installer need, as this computer has it: handed on as it is)
+    kept = {k: v for k, v in os.environ.items() if k.upper() in (
+        "SYSTEMROOT", "TEMP", "TMP", "LOCALAPPDATA", "USERPROFILE", "PATH", "HOME", "JOB_DESK_MADE_UP_SETTING")}
+    check, steps, popen = _installed_update(copy, _site())
+    assert steps == ["pause", "installer", "quit"]
+    [(_, options)] = popen.calls
+    env = {k.upper(): v for k, v in options["env"].items()}  # (Windows' own names are upper case)
+    assert not {k.upper() for k in secrets} & set(env) and not set(secrets.values()) & set(env.values())
+    assert "JOB_DESK_MADE_UP_SETTING" in kept and {k: env.get(k.upper()) for k in kept} == kept
 
 
 def test_a_queue_paused_before_the_update_stays_paused_when_the_installer_ends_at_once(srv, copy):

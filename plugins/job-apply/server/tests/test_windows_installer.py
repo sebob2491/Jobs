@@ -13,6 +13,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from job_apply import updates
+
 PLUGIN = Path(__file__).resolve().parents[2]  # plugins/job-apply
 REPO = PLUGIN.parents[1]
 WINDOWS = PLUGIN / "setup" / "windows"
@@ -452,46 +454,15 @@ def test_the_readme_offers_the_installer_first_and_says_how_past_smartscreen():
     assert readme.index(link) < readme.index("install.ps1 | iex")
 
 
-def test_an_update_reopens_the_desk_and_never_runs_the_claude_code_setup_again(iss):
-    """The desk's Update button starts the installer with /SILENT ... /RELAUNCH=1 (updates.py): only then does a [Run]
-    line start the desk again, exactly as the Start menu's shortcut does; the finish page's box stays skipped in a
-    silent install, and the Claude Code setup (a box the installer remembers) never runs in an update."""
+def _open_desk_args(iss) -> None:
+    """OpenDesk(App) starts the desk as the Start menu's shortcut does: its program, arguments and folder, not waited
+    for."""
     code = iss["code"]
-    assert re.search(r"function Relaunch\(\): Boolean;\s*begin\s*"
-                     r"Result := ExpandConstant\('\{param:RELAUNCH\|0\}'\) = '1';\s*end;", code), code
-    start_menu = iss["Icons"][0]
-    relaunch = [e for e in iss["Run"] if e.get("Check") == "Relaunch"]
-    assert len(relaunch) == 1
-    assert {k: v for k, v in relaunch[0].items() if k not in ("Flags", "Check")} == {
-        "Filename": start_menu["Filename"], "Parameters": start_menu["Parameters"],
-        "WorkingDir": start_menu["WorkingDir"]}
-    assert relaunch[0]["Flags"] == "nowait"
-    claude = next(e for e in iss["Run"] if e.get("Tasks") == "claudecode")
-    assert claude["Check"] == "not Relaunch"
-    finish = next(e for e in iss["Run"] if e.get("Description") == "Open the Job Desk now")
-    assert "skipifsilent" in finish["Flags"].split() and "Check" not in finish
-
-
-def test_an_update_that_didnt_finish_opens_the_desk_still_installed(iss):
-    """The desk stops for an update (PrepareToInstall), so an update the person cancelled, or one that failed and
-    rolled back, must open the desk still installed, or nothing would: DeinitializeSetup (run as Setup ends, whether it
-    finished or not) starts it as the Start menu's shortcut does, only for an update (Relaunch) that didn't finish
-    (Installed, set at ssDone, is false), and only when that desk is there."""
-    code = iss["code"]
-    assert re.search(r"var\s+Problems: String;\s*(\{[^}]*\}\s*)?Installed: Boolean;", code), code
-    assert re.search(r"if CurStep = ssDone then\s*begin\s*Installed := True;\s*"
-                     r"Log\('Job Desk: the install finished\.'\);\s*end;", code), code
-    proc = re.search(r"procedure DeinitializeSetup\(\);(.*?)\nend;", code, re.S)
+    proc = re.search(r"function OpenDesk\(const App: String\): Boolean;(.*?)\nend;", code, re.S)
     assert proc, code
-    body = proc.group(1)
-    assert re.search(r"begin\s*if Installed or not Relaunch\(\) then\s*Exit;", body), body
-    assert re.search(r"try\s*App := ExpandConstant\('\{app\}'\);\s*except\s*Exit;\s*end;", body), body
-    assert ("if not FileExists(App + '\\bin\\uvw.exe') or not FileExists(App + "
-            "'\\plugin\\server\\src\\job_apply\\desk.py') then\n    Exit;") in body, body
-    start = re.search(r"Exec\((.*?)\);", body, re.S)
-    assert start, body
-    args = [a.strip() for a in re.split(r",\s*", start.group(1).replace("\n", " "))]
-    # what it starts: the shortcut's program, arguments and folder, and it isn't waited for
+    start = re.search(r"Result := Exec\((.*?)\);", proc.group(1), re.S)
+    assert start, proc.group(1)
+    args = [a.strip() for a in re.split(r",\s*", re.sub(r"\s*\+\s*\n\s*", " + ", start.group(1)).replace("\n", " "))]
     start_menu = iss["Icons"][0]
     app = "{app}"
     assert args[0] == "App + '\\bin\\uvw.exe'" and start_menu["Filename"] == app + "\\bin\\uvw.exe"
@@ -499,6 +470,87 @@ def test_an_update_that_didnt_finish_opens_the_desk_still_installed(iss):
     assert said == "'" + start_menu["Parameters"] + "'", said
     assert args[2] == "App + '\\plugin\\server'" and start_menu["WorkingDir"] == app + "\\plugin\\server"
     assert args[3:] == ["SW_SHOWNORMAL", "ewNoWait", "Code"]
+
+
+def _step(code: str, step: str) -> str:
+    """CurStepChanged's branch for `step`, whole."""
+    proc = re.search(r"procedure CurStepChanged\(CurStep: TSetupStep\);(.*?)\nend;", code, re.S)
+    assert proc, code
+    branch = re.search(r"if CurStep = " + step + r" then\n  begin\n(.*?)\n  end;", proc.group(1), re.S)
+    assert branch, proc.group(1)
+    return branch.group(1)
+
+
+def test_an_update_reopens_the_desk_and_never_runs_the_claude_code_setup_again(iss):
+    """The desk's Update button starts the installer with /SILENT ... /RELAUNCH=1 (updates.py): only then is the desk
+    started again, exactly as the Start menu's shortcut does; the finish page's box stays skipped in a silent install,
+    and the Claude Code setup (a box the installer remembers) never runs in an update."""
+    code = iss["code"]
+    assert re.search(r"function Relaunch\(\): Boolean;\s*begin\s*"
+                     r"Result := ExpandConstant\('\{param:RELAUNCH\|0\}'\) = '1';\s*end;", code), code
+    _open_desk_args(iss)
+    claude = next(e for e in iss["Run"] if e.get("Tasks") == "claudecode")
+    assert claude["Check"] == "not Relaunch"
+    finish = next(e for e in iss["Run"] if e.get("Description") == "Open the Job Desk now")
+    assert "skipifsilent" in finish["Flags"].split() and "Check" not in finish
+
+
+def test_an_update_reopens_the_desk_only_once_its_packages_and_browser_are_set_up(iss):
+    """A [Run] line runs before ssPostInstall, where SetUp() installs the desk's packages and browser: the desk an
+    update opens again would start on a half set-up copy. So no [Run] line is for an update, and the desk is opened
+    from ssPostInstall, after SetUp() (and the message about what it couldn't do), for an update alone; the line the
+    workflow's update step waits for is still logged after, at ssDone."""
+    assert not [e for e in iss["Run"] if "Relaunch" in e.get("Check", "").replace("not Relaunch", "")], iss["Run"]
+    post = _step(iss["code"], "ssPostInstall")
+    setup = post.index("SetUp();")
+    reopen = re.search(r"if Relaunch\(\) then\s*begin\s*Log\('Job Desk: opening the updated desk\.'\);\s*"
+                       r"Reopened := OpenDesk\(ExpandConstant\('\{app\}'\)\);\s*end;", post)
+    assert reopen and reopen.start() > setup > -1, post
+    assert post.index("SuppressibleMsgBox('The Job Desk is installed, but:'") < reopen.start()
+    assert "Log('Job Desk: the install finished.');" in _step(iss["code"], "ssDone")
+
+
+def test_an_update_that_didnt_finish_opens_the_desk_still_installed(iss):
+    """The desk stops for an update (PrepareToInstall), so an update that stopped before its files began to change
+    must open the desk still installed, or nothing would: DeinitializeSetup (run as Setup ends, whether it finished or
+    not) starts it as the Start menu's shortcut does (OpenDesk), only for an update (Relaunch) that didn't finish
+    (Installed, set at ssDone, is false) and didn't open the desk already, and only when that desk is there."""
+    code = iss["code"]
+    assert re.search(r"var\s+Problems: String;\s*(\{[^}]*\}\s*)?Installed: Boolean;", code), code
+    assert re.search(r"if CurStep = ssDone then\s*begin\s*Installed := True;\s*"
+                     r"Log\('Job Desk: the install finished\.'\);\s*end;", code), code
+    proc = re.search(r"procedure DeinitializeSetup\(\);(.*?)\nend;", code, re.S)
+    assert proc, code
+    body = proc.group(1)
+    assert re.search(r"begin\s*if Installed or Reopened or not Relaunch\(\) then\s*Exit;", body), body
+    assert re.search(r"try\s*App := ExpandConstant\('\{app\}'\);\s*except\s*Exit;\s*end;", body), body
+    assert ("if not FileExists(App + '\\bin\\uvw.exe') or not FileExists(App + "
+            "'\\plugin\\server\\src\\job_apply\\desk.py') then\n    Exit;") in body, body
+    assert body.rstrip().endswith("OpenDesk(App);"), body
+    _open_desk_args(iss)
+
+
+def test_an_update_stopped_once_its_files_began_to_change_opens_nothing_and_says_so(iss):
+    """[InstallDelete] takes the older code before the copy, and a rollback brings back neither it nor the files
+    overwritten: an update that stops part-way through copying may leave a copy that won't open. So the desk starts the
+    installer with /NOCANCEL (no Cancel part-way), and an update that stopped after the copy began (CopyBegan, set at
+    ssInstall) opens nothing: it logs a line and says, in a message a silent install shows (unless message boxes are
+    suppressed), to run the installer again. Before the copy began, the desk still installed opens, as before."""
+    assert "/NOCANCEL" in updates.INSTALLER_ARGS
+    code = iss["code"]
+    assert re.search(r"Installed: Boolean;\s*(\{[^}]*\}\s*)?CopyBegan: Boolean;", code), code
+    assert _step(code, "ssInstall").split() == ["CopyBegan", ":=", "True;", "Log('Job", "Desk:", "copying", "the",
+                                                "files.');"], code
+    body = re.search(r"procedure DeinitializeSetup\(\);(.*?)\nend;", code, re.S).group(1)
+    began = re.search(r"if CopyBegan then\s*begin\s*"
+                      r"Log\('Job Desk: the update did not finish after its files began to change; nothing was "
+                      r"opened\.'\);\s*"
+                      r"SuppressibleMsgBox\('The Job Desk''s update didn''t finish, and the Job Desk may not open\. "
+                      r"Run the Job Desk''s ' \+\s*'installer again to put it right\.', mbError, MB_OK, IDOK\);\s*"
+                      r"Exit;\s*end;", body)
+    assert began, body
+    assert began.end() < body.index("OpenDesk(App);")
+    assert body.index("if Installed or Reopened or not Relaunch() then") < began.start()
 
 
 def test_the_workflow_tries_an_update_started_as_the_desk_starts_one(iss):
@@ -515,7 +567,8 @@ def test_the_workflow_tries_an_update_started_as_the_desk_starts_one(iss):
     uninstall = names.index("Uninstall silently; the person's job-apply folder stays")
     assert window + 1 == update == uninstall - 1, names
     run = job["steps"][update]["run"]
-    assert "_, out = updates.start_installer(Path(sys.argv[1]), Path(sys.argv[2]))" in run
+    assert "from job_apply import updates, window" in run
+    assert re.search(r"try:\n\s*updates\.start_installer\(Path\(sys\.argv\[1\]\), Path\(sys\.argv\[2\]\)\)\n", run), run
     assert re.search(r'Start-Process -FilePath "\$env:APP\\bin\\uvw\.exe" .*\n\s*"run --frozen --python 3\.13 '
                      r'--project `"\$env:SERVER`" python `"\$script`" `"\$exe`" `"\$log`" `"\$starterId`" '
                      r'`"\$starterSaid`""\)', run), run
@@ -524,10 +577,18 @@ def test_the_workflow_tries_an_update_started_as_the_desk_starts_one(iss):
     finished = re.search(r"Log\('(Job Desk: the install finished\.)'\);", iss["code"])
     assert finished and f"-Pattern '{finished.group(1)}' -SimpleMatch" in run
     assert "$now.pid -ne $before.pid" in run and 'http://127.0.0.1:$($now.port)/' in run
-    # which way the installer was started, out of the starter's job or inside it: said, and said again at the end
+    # how the installer was started: out of the starter's job, said again at the end; or not at all (Windows refused
+    # to start it outside: never inside it, which the desk's stopping could cut short), and the step fails at once
     out = "The installer was started out of the starter's job."
-    inside = "The installer was started inside the starter's job (Windows refused to start it outside)."
-    assert f'said = "{out}"' in run and f'said = "{inside}"' in run
+    refused = ("Refused: Windows wouldn't start the installer outside the starter's job, so the desk's Update button "
+               "would fail here and start nothing.")
+    assert "inside the starter's job" not in run
+    assert f'said, refused = "{out}", False' in run
+    assert f'except window.BreakawayRefused:\n    said, refused = "{refused}", True' in run.replace(" " * 10, "")
+    assert "if refused:\n    sys.exit(1)" in run.replace(" " * 10, "")
+    assert ("(Select-String -LiteralPath $starterSaid -Pattern 'Refused: ' -SimpleMatch -Quiet)) {\n"
+            "    $refused = $true\n    break") in run.replace(" " * 10, "")
+    assert run.index('if ($refused) { throw "Starter: $how" }') < run.index("$missing = @()")
     assert 'Path(sys.argv[4]).write_text(said, encoding="utf-8")' in run and "print(said, flush=True)" in run
     assert "$how = (Get-Content -Raw -LiteralPath $starterSaid).Trim()" in run
     assert run.rstrip().endswith('and the starter ($id) is gone. $how"')

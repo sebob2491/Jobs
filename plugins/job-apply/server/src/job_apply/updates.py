@@ -62,9 +62,14 @@ CHECKSUM = INSTALLER + ".sha256"
 MAX_DOWNLOAD = 300 * 1024 * 1024  # bytes: an installer bigger than this is refused
 MAX_SMALL = 1024 * 1024  # bytes: the Release's answer, plugin.json, the checksum file
 MAX_REDIRECTS = 5
-# Inno Setup's: progress window and errors shown, for the person alone (never an administrator), no restart, and the
-# desk opened again afterwards (JobDeskSetup.iss: Relaunch). /LOG= follows, with a path under `updates`
-INSTALLER_ARGS = ("/SILENT", "/CURRENTUSER", "/NORESTART", "/RELAUNCH=1")
+# Inno Setup's: progress window and errors shown, its Cancel button gone (an update stopped part-way through copying
+# could leave a copy that won't open), for the person alone (never an administrator), no restart, and the desk opened
+# again afterwards (JobDeskSetup.iss: Relaunch). /LOG= follows, with a path under `updates`
+INSTALLER_ARGS = ("/SILENT", "/NOCANCEL", "/CURRENTUSER", "/NORESTART", "/RELAUNCH=1")
+# What of the desk's environment the installer isn't handed (besides letters.child_env's: the desk's secrets, the live
+# check's, the Claude Code session's marks): what signs in to Anthropic. It needs none of it, and the desk it opens
+# again reads the key the person saved on the desk
+INSTALLER_ENV_DROPS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
 UNDER_WAY = ("downloading", "installing", "updating")
 UPDATED_TO = "updated-to"  # (in `updates`: the version an installer was started for, said once by the desk it opens)
 INSTALLER_SETTLE = 5.0  # seconds the installer is watched before the desk stops for it: one that ended by then didn't
@@ -80,6 +85,8 @@ NOT_SAVED = ("The new version couldn't be saved on this computer. Make some room
              "press Update now to try again.")
 WONT_START = "The installer couldn't be started. Wait a minute, then press Update now to try again."
 ENDED_EARLY = "The installer stopped as soon as it started. Press Update now to try again."
+NO_BREAKAWAY = ("This computer wouldn't let the desk start the installer by itself. Press What's new, download the "
+                "installer there, and run it.")
 NOT_FINISHED = "The update to version {} didn't finish. Press Update now to try again."
 STOPPED = "The update stopped before it began. Press Update now to try again."
 CLAUDE_FAILED = "Claude couldn't update the plugin."
@@ -159,14 +166,23 @@ def updates_folder() -> Path:
     return config.home() / "updates"
 
 
-def start_installer(installer: Path, log: Path, popen: Callable[..., Any] | None = None) -> tuple[Any, bool]:
-    """Start a downloaded installer on its own (window.start_detached: it outlives the desk, out of the desk's job where
-    Windows allows), with exactly INSTALLER_ARGS and /LOG=`log`, never through a shell, nothing of the desk's in its
-    input or output. Gives back what `popen` (subprocess.Popen) gave, and whether it was started out of the desk's job
-    (False: inside it, Windows having refused). The installer workflow's update step calls this too, with the
-    installer it built, and says which way it went."""
-    return window.start_detached([str(installer), *INSTALLER_ARGS, f"/LOG={log}"], popen=popen,
-                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+def installer_env() -> dict[str, str]:
+    """The environment the installer is started with: the desk's, less what letters.child_env leaves out of any child
+    (the desk's secrets, the live check's, the Claude Code session's marks) and INSTALLER_ENV_DROPS. What Windows and
+    the installer need (SystemRoot, TEMP, LOCALAPPDATA, USERPROFILE, PATH and the like) goes as it is."""
+    return {k: v for k, v in letters.child_env().items() if k.upper() not in INSTALLER_ENV_DROPS}
+
+
+def start_installer(installer: Path, log: Path, popen: Callable[..., Any] | None = None) -> Any:
+    """Start a downloaded installer on its own (window.start_detached: it outlives the desk, out of the desk's job),
+    with exactly INSTALLER_ARGS and /LOG=`log`, never through a shell, nothing of the desk's in its input or output,
+    and installer_env() for its environment. Gives back what `popen` (subprocess.Popen) gave. Where Windows won't start
+    it outside the desk's job, nothing is started (window.BreakawayRefused): inside it, the desk's stopping could take
+    the installer with it part-way. The installer workflow's update step calls this too, with the installer it built."""
+    process, _ = window.start_detached([str(installer), *INSTALLER_ARGS, f"/LOG={log}"], popen=popen, fallback=False,
+                                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL, env=installer_env())
+    return process
 
 
 def _sha256(path: Path) -> str:
@@ -382,7 +398,9 @@ class UpdateCheck:
                 raise UpdateFailed(NOT_SAVED) from e
             recorded = True
             try:
-                process, _ = start_installer(saved, folder / f"install-{version}.log", self.popen)
+                process = start_installer(saved, folder / f"install-{version}.log", self.popen)
+            except window.BreakawayRefused as e:  # (nothing started: never one the desk's stopping could cut short)
+                raise UpdateFailed(NO_BREAKAWAY) from e
             except (OSError, ValueError, subprocess.SubprocessError) as e:
                 raise UpdateFailed(WONT_START) from e
             # 7. the desk stops only once the installer has taken over: one that already ended never began

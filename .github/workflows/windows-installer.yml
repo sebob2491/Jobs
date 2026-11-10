@@ -196,7 +196,9 @@ jobs:
         # here the way the desk starts it, with the code's own function (updates.start_installer), from the installed
         # program's Python run through its uvw.exe as the Start menu's shortcut runs the desk (so stop-desk.ps1 stops
         # it too), while the desk the steps before started runs. Then, within 3 minutes: the installer's log says the
-        # install finished, a new desk answers on the port the watch file names, and the starter is gone.
+        # install finished, a new desk answers on the port the watch file names, and the starter is gone. Where
+        # Windows won't start the installer outside the starter's job, the desk's update fails with its sentence and
+        # starts nothing (updates.NO_BREAKAWAY), and so does this step, at once, saying so.
         run: |
           $ErrorActionPreference = 'Stop'
           $folder = Join-Path $HOME '.job-apply'
@@ -211,10 +213,10 @@ jobs:
           $watch = Join-Path $folder 'desk_watch_8765.json'
           $before = Get-Content -Raw -LiteralPath $watch | ConvertFrom-Json
           Write-Host "The desk before the update: process $($before.pid), port $($before.port)"
-          # the starter: it writes its own process id, starts the installer as the Update button does, says whether
-          # that was out of its own job (uvw.exe's) or inside it (Windows refused), and waits to be stopped (the desk
-          # itself would stop once the installer had taken over). uvw.exe has no console, so what it says is also
-          # written to a file, for this step to say again
+          # the starter: it writes its own process id, starts the installer as the Update button does (out of its own
+          # job, uvw.exe's, or not at all), says which, and waits to be stopped (the desk itself would stop once the
+          # installer had taken over). uvw.exe has no console, so what it says is also written to a file, for this
+          # step to say again
           $script = Join-Path $env:RUNNER_TEMP 'start_update.py'
           Set-Content -LiteralPath $script -Encoding utf8 -Value @'
           import os
@@ -222,16 +224,18 @@ jobs:
           import time
           from pathlib import Path
 
-          from job_apply import updates
+          from job_apply import updates, window
 
           Path(sys.argv[3]).write_text(str(os.getpid()), encoding="utf-8")
-          _, out = updates.start_installer(Path(sys.argv[1]), Path(sys.argv[2]))
-          if out:
-              said = "The installer was started out of the starter's job."
-          else:
-              said = "The installer was started inside the starter's job (Windows refused to start it outside)."
+          try:
+              updates.start_installer(Path(sys.argv[1]), Path(sys.argv[2]))
+              said, refused = "The installer was started out of the starter's job.", False
+          except window.BreakawayRefused:
+              said, refused = "Refused: Windows wouldn't start the installer outside the starter's job, so the desk's Update button would fail here and start nothing.", True
           print(said, flush=True)
           Path(sys.argv[4]).write_text(said, encoding="utf-8")
+          if refused:
+              sys.exit(1)
           time.sleep(600)
           '@
           Start-Process -FilePath "$env:APP\bin\uvw.exe" -WorkingDirectory $env:SERVER -ArgumentList (
@@ -239,11 +243,17 @@ jobs:
           $finished = $false
           $answers = $false
           $gone = $false
+          $refused = $false
           $id = $null
           $now = $null
           $deadline = (Get-Date).AddMinutes(3)
           while ((Get-Date) -lt $deadline -and -not ($finished -and $answers -and $gone)) {
             Start-Sleep 3
+            # (Windows refused to start it outside the starter's job: nothing was started, nothing to wait for)
+            if ((Test-Path -LiteralPath $starterSaid) -and (Select-String -LiteralPath $starterSaid -Pattern 'Refused: ' -SimpleMatch -Quiet)) {
+              $refused = $true
+              break
+            }
             if (-not $id -and (Test-Path -LiteralPath $starterId)) { $id = [int](Get-Content -Raw -LiteralPath $starterId) }
             if ($id) { $gone = -not (Get-Process -Id $id -ErrorAction SilentlyContinue) }
             if (-not $finished -and (Test-Path -LiteralPath $log)) {
@@ -262,10 +272,11 @@ jobs:
             }
           }
           if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 40 }
-          # how the installer was started: either way is a pass, only said
+          # how the installer was started: out of the starter's job, or not at all (this step fails then)
           $how = "The starter didn't say how it started the installer."
           if (Test-Path -LiteralPath $starterSaid) { $how = (Get-Content -Raw -LiteralPath $starterSaid).Trim() }
           Write-Host "Starter: $how"
+          if ($refused) { throw "Starter: $how" }
           $missing = @()
           if (-not $id) { $missing += 'The starter never ran: it wrote no process id, so the installer was never started' }
           if (-not $finished) { $missing += "The installer's log doesn't say the install finished (it was stopped, or failed: its log is above)" }
