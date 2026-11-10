@@ -16425,8 +16425,9 @@ def test_a_file_the_profile_has_no_place_for_is_named_as_the_persons(srv):
     assert applier._stop_for_what_is_left(both, "", [], [cover, sample])
     assert both.reason == (
         "The form wants a file (Please upload your Letter of Application/Cover Letter.*) and your profile doesn't have "
-        "one. Add it in Settings, under Resume and cover letters, then press Carry on. It also wants a file your profile has no place for: “Please upload a writing sample”: attach it in "
-        "the desk's browser window."), both.reason
+        "one. Add it in Settings, under Resume and cover letters, then press Carry on. It also wants a file your "
+        "profile has no place for: “Please upload a writing sample”: attach it in the desk's browser window."
+    ), both.reason
 
 
 def test_a_file_for_another_document_of_the_profiles_names_the_slot_to_fill(srv, job_apply_home):

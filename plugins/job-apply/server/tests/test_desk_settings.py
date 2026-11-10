@@ -93,7 +93,8 @@ def test_profile_settings_writes_each_key_of_its_table_and_keeps_the_rest(srv, j
     desk = _desk(srv)
     asks = [("POST", "/api/profile/settings", {"key": k, "value": v}) for k, v in NEW_VALUES.items()]
     asks += [("POST", "/api/profile/settings", {"key": "cover_letter_model", "value": ""}),
-             ("POST", "/api/profile/settings", {"key": "cover_letter_model", "value": NEW_VALUES["cover_letter_model"]}),
+             ("POST", "/api/profile/settings", {"key": "cover_letter_model",
+                                                "value": NEW_VALUES["cover_letter_model"]}),
              ("GET", "/api/state", None)]
     said = _calls(desk, asks)
     for (status, answer), (key, value) in zip(said, NEW_VALUES.items()):
