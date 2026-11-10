@@ -657,7 +657,8 @@ def test_the_new_settings_and_help_cards_say_the_designs_words(srv):
         'Nothing is submitted until you press Submit, unless you turned on "Submit for me". LinkedIn and Indeed are '
         "always submitted by you."], seen["how"]
     assert seen["how-h"].startswith("How the desk works Find jobs searches") and seen["how-h"].endswith(
-        'Answers you give here are saved in ~/.job-apply/answers.yaml unless you untick "remember".'), seen["how-h"]
+        'The desk remembers the answers you give, unless you untick "remember". The Your answers page lists '
+        "them."), seen["how-h"]
     assert seen["notes-card-h"] == ("Notes on the desk's stops Each time a job stops on something the desk most likely "
                                     "got wrong, it takes a note. Filing the notes is how the next version gets better. "
                                     "No notes right now."), seen["notes-card-h"]

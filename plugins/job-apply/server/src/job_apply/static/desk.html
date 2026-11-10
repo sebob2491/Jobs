@@ -267,7 +267,7 @@ details.setmore > .setmore-b { margin: 0; padding: 0 18px 13px; color: var(--mut
    for an ID until Show), Change and Forget at the right; a row being changed has its box and Save and Cancel there */
 #remembered > .setrow:first-child { border-top: 0; }
 #remembered .ans { margin: 4px 0 0; color: var(--text); font-size: 14px; overflow-wrap: anywhere; white-space: pre-wrap; }
-#remembered .ans.empty { color: var(--muted); font-style: italic; }
+#remembered .ans.left { color: var(--muted); font-style: italic; }
 #remembered .ans .dots { letter-spacing: 2px; }
 #remembered .setrow input[type=text] { width: 100%; margin-top: 6px; }
 #remembered-problem { margin: 12px 18px; }
@@ -2924,7 +2924,7 @@ function rememberedRow(a, i) {
     acts = `<button class="btn sm primary" data-ans-save="${id}"${busy}>Save</button>`
       + `<button class="btn sm" data-ans-cancel="${id}"${busy}>Cancel</button>`;
   } else {
-    value = !words ? `<p class="ans empty">Left empty</p>` : shown ? `<p class="ans">${esc(words)}</p>`
+    value = !words ? `<p class="ans left">Left empty</p>` : shown ? `<p class="ans">${esc(words)}</p>`
       : `<p class="ans"><span class="dots" role="img" aria-label="Hidden">••••••••</span></p>`;
     acts = (a.private && words ? `<button class="btn sm ghost" data-ans-show="${id}" aria-describedby="${q}">${shown ? "Hide" : "Show"}</button>` : "")
       + `<button class="btn sm" data-ans-change="${id}" aria-describedby="${q}"${busy}>Change</button>`

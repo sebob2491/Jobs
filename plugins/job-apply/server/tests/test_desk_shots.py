@@ -313,3 +313,69 @@ def test_a_picture_of_a_new_persons_home(srv, job_apply_home, monkeypatch, look,
 
     run(go())
     assert path.stat().st_size > 2000
+
+
+@pytest.mark.parametrize("window", WINDOWS, ids=lambda w: f"{w[0]}x{w[1]}")
+@pytest.mark.parametrize("look", LOOKS)
+def test_a_picture_of_your_answers_with_remembered_answers(srv, job_apply_home, monkeypatch, look, window):
+    """Your answers (the openings state) with answers the desk remembers (the design's D5): an ID kept for one
+    employer (dots), one answered everywhere being changed (its box, Save and Cancel), one left empty at another
+    employer, and a second ID; scrolled to the card, in each look and window size; saved as
+    answers-remembered-<look>-<w>x<h>.png. Made-up values only."""
+    from test_desk_answers import _write
+
+    folder = Path(SHOTS)
+    folder.mkdir(parents=True, exist_ok=True)
+    _write(job_apply_home)
+    desk = _canned(srv, monkeypatch, _state("state-openings.json"))
+    path = folder / f"answers-remembered-{look}-{window[0]}x{window[1]}.png"
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": window[0], "height": window[1]}, color_scheme=look)
+                await open_desk(page, desk, "answers")
+                await page.wait_for_selector("#remembered-card[data-loaded]", state="attached")
+                row = page.locator("#remembered > .setrow").nth(1)
+                await row.locator("button", has_text="Change").click()
+                await row.locator("input[type=text]").fill("Yes, any weekend")
+                await page.evaluate("() => document.getElementById('remembered-card').scrollIntoView()")
+                await page.wait_for_timeout(150)
+                await page.screenshot(path=str(path))
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert path.stat().st_size > 2000
+
+
+@pytest.mark.parametrize("window", WINDOWS, ids=lambda w: f"{w[0]}x{w[1]}")
+@pytest.mark.parametrize("look", LOOKS)
+def test_a_picture_of_the_safety_window(srv, job_apply_home, monkeypatch, look, window):
+    """Settings' Applying panel with the Safety window open, each "where" that names a panel a link to it (the
+    design's D4), in each look and window size; saved as settings-safety-<look>-<w>x<h>.png."""
+    from test_desk_buttons import _idle_desk
+
+    folder = Path(SHOTS)
+    folder.mkdir(parents=True, exist_ok=True)
+    desk = _idle_desk(srv)
+    path = folder / f"settings-safety-{look}-{window[0]}x{window[1]}.png"
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": window[0], "height": window[1]}, color_scheme=look)
+                await open_desk(page, desk, "settings/applying")
+                await page.click("#safety-btn")
+                await page.wait_for_selector("#safety[open] #safety-body li")
+                await page.wait_for_timeout(150)
+                await page.screenshot(path=str(path))
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert path.stat().st_size > 2000

@@ -1002,7 +1002,8 @@ def test_the_passwords_and_email_codes_words_name_claude_only_where_claude_is(sr
     assert ("desktop's keyring), or in a file only you can read where it has none. Use passwords you don't use "
             "anywhere else.") in card, card
     assert card.endswith("(about 10 to 20 cents a letter, written and checked)."), card
-    assert "Your email: with an app password" not in card and "manage_accounts" not in card and "secrets.yaml" not in card, card
+    assert "Your email: with an app password" not in card, card
+    assert "manage_accounts" not in card and "secrets.yaml" not in card, card
     email = " ".join(seen["email"].split())
     assert email.startswith("How this works Your email: with an app password for the address in your profile"), email
     assert ("Claude reads it through Gmail" in email) is not standalone, email

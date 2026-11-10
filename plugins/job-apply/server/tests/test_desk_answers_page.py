@@ -26,7 +26,8 @@ _ROWS = """() => [...document.querySelectorAll('#remembered > .setrow')].map((r)
   box: (r.querySelector('input[type=text]') || {}).value ?? null,
   buttons: [...r.querySelectorAll('button')].map((b) => b.textContent)}))"""
 _PAGE = "() => document.documentElement.outerHTML"
-_FOCUSED = "() => { const f = document.activeElement; return f && (f.dataset.ansBox !== undefined ? 'box' : f.textContent); }"
+_FOCUSED = ("() => { const f = document.activeElement; "
+            "return f && (f.dataset.ansBox !== undefined ? 'box' : f.textContent); }")
 
 
 async def _loaded(page) -> None:
