@@ -94,7 +94,8 @@
   "commands": [
    "claude plugin marketplace update sebob-jobs",
    "claude plugin update job-apply@sebob-jobs"
-  ]
+  ],
+  "notes": null
  },
  "answers_problem": null,
  "search": {

@@ -21,12 +21,13 @@ COMMANDS = list(updates.UPDATE_COMMANDS)
 
 
 def _update(**more) -> dict:
-    """The state's `update`, with F2's eight keys: version 0.4.3 here, nothing newer found, looked 2 hours ago."""
+    """The state's `update`, with F2's nine keys: version 0.4.3 here, nothing newer found, looked 2 hours ago."""
     return {"current": "0.4.3", "latest": "0.4.3", "newer": False, "kind": "installed", "checked_at": NOW - 7200,
-            "progress": None, "error": None, "commands": COMMANDS, **more}
+            "progress": None, "error": None, "commands": COMMANDS, "notes": None, **more}
 
 
-NEWER = {"latest": "0.4.4", "newer": True}
+NOTES = "https://github.com/example/desk/releases/tag/job-apply-v0.4.4"
+NEWER = {"latest": "0.4.4", "newer": True, "notes": NOTES}
 
 
 class StandIn:
@@ -68,52 +69,55 @@ async def _page(browser):
 _CARD = """() => { const $ = (id) => document.getElementById(id), card = $('update-card');
   return {shown: card.getClientRects().length > 0, title: $('update-h').textContent, said: $('update-said').textContent,
           more: [...$('update-more').querySelectorAll('p')].map((p) => p.innerText).join('|'),
-          buttons: [...$('update-acts').querySelectorAll('button')].map((b) => [b.textContent, b.disabled])}; }"""
+          buttons: [...$('update-acts').querySelectorAll('button')].map((b) => [b.textContent, b.disabled]),
+          links: [...$('update-acts').querySelectorAll('a')].map((a) => [a.textContent, a.getAttribute('href'),
+                                                                        a.target])}; }"""
+WHATS_NEW = [["What's new", NOTES, "_blank"]]  # (a link like any other: the desk's own window hands it to the browser)
 
 # F2's card, row by row: (the state's update, a job being filled or not) and what the card says
 ROWS = {
     "nothing newer": (_update(), None, {
         "title": "You have the newest version", "said": "Version 0.4.3. Checked 2 hours ago.", "more": "",
-        "buttons": [["Check now", False]]}),
+        "links": [], "buttons": [["Check now", False]]}),
     "never looked": (_update(latest=None, checked_at=0), None, {
         "title": "Version 0.4.3", "said": "The desk couldn't look for a newer one. It needs the internet for that.",
-        "more": "", "buttons": [["Check now", False]]}),
+        "more": "", "links": [], "buttons": [["Check now", False]]}),
     "newer, installed": (_update(**NEWER), None, {
         "title": "Version 0.4.4 is ready", "said": "You have 0.4.3. Updating takes about a minute. The desk closes, "
-        "installs, and opens again. Your queue is kept.", "more": "", "buttons": [["Update now", False]]}),
+        "installs, and opens again. Your queue is kept.", "more": "", "links": WHATS_NEW, "buttons": [["Update now", False]]}),
     "newer, plugin": (_update(**NEWER, kind="plugin"), None, {
         "title": "Version 0.4.4 is ready", "said": "You have 0.4.3. The desk updates the plugin. Then restart Claude "
-        "to use it.", "more": "", "buttons": [["Update now", False]]}),
+        "to use it.", "more": "", "links": WHATS_NEW, "buttons": [["Update now", False]]}),
     "newer, manual": (_update(**NEWER, kind="manual"), None, {
         "title": "Version 0.4.4 is out", "said": "You have 0.4.3. This copy isn't one the desk can update by itself.",
-        "more": "", "buttons": []}),
+        "more": "", "links": WHATS_NEW, "buttons": []}),
     "newer, installed, a job being filled": (_update(**NEWER), "current", {
         "title": "Version 0.4.4 is ready", "said": "You have 0.4.3. Updating takes about a minute. The desk closes, "
         "installs, and opens again. Your queue is kept. Wait for the jobs being filled to finish, or pause the queue.",
-        "more": "", "buttons": [["Update now", True]]}),
+        "more": "", "links": WHATS_NEW, "buttons": [["Update now", True]]}),
     "newer, plugin, a job being filled": (_update(**NEWER, kind="plugin"), "running", {
         "title": "Version 0.4.4 is ready", "said": "You have 0.4.3. The desk updates the plugin. Then restart Claude "
         "to use it. Wait for the jobs being filled to finish, or pause the queue.", "more": "",
-        "buttons": [["Update now", True]]}),
+        "links": WHATS_NEW, "buttons": [["Update now", True]]}),
     "downloading": (_update(**NEWER, progress="downloading"), None, {
-        "title": "Downloading version 0.4.4", "said": "This takes a moment.", "more": "", "buttons": []}),
+        "title": "Downloading version 0.4.4", "said": "This takes a moment.", "more": "", "links": [], "buttons": []}),
     "installing": (_update(**NEWER, progress="installing"), None, {
         "title": "Installing version 0.4.4", "said": "This window closes, and the Job Desk opens again by itself.",
-        "more": "", "buttons": []}),
+        "more": "", "links": [], "buttons": []}),
     "updating": (_update(**NEWER, kind="plugin", progress="updating"), None, {
-        "title": "Updating the plugin", "said": "This takes a moment.", "more": "", "buttons": []}),
+        "title": "Updating the plugin", "said": "This takes a moment.", "more": "", "links": [], "buttons": []}),
     "done": (_update(**NEWER, kind="plugin", progress="done"), None, {
-        "title": "Updated to 0.4.4", "said": "Restart Claude to use it.", "more": "", "buttons": []}),
+        "title": "Updated to 0.4.4", "said": "Restart Claude to use it.", "more": "", "links": [], "buttons": []}),
     "failed, installed": (_update(**NEWER, progress="failed", error=updates.NOT_WHOLE), None, {
         "title": "The update didn't go through", "said": "The download didn't arrive whole. Nothing was changed.",
-        "more": "", "buttons": [["Update now", False]]}),
+        "more": "", "links": [], "buttons": [["Update now", False]]}),
     "failed, didn't finish": (_update(**NEWER, progress="failed", error=updates.NOT_FINISHED.format("0.4.4")), None, {
         "title": "The update didn't go through", "said": "The update to version 0.4.4 didn't finish. Press Update now "
-        "to try again. Nothing was changed.", "more": "", "buttons": [["Update now", False]]}),
+        "to try again. Nothing was changed.", "more": "", "links": [], "buttons": [["Update now", False]]}),
     "failed, plugin": (_update(**NEWER, kind="plugin", progress="failed", error=updates.CLAUDE_FAILED), None, {
         "title": "The update didn't go through", "said": "Claude couldn't update the plugin. Nothing was changed.",
         "more": "You can also run these in a terminal:|claude plugin marketplace update sebob-jobs\n"
-                "claude plugin update job-apply@sebob-jobs", "buttons": [["Update now", False]]}),
+                "claude plugin update job-apply@sebob-jobs", "links": [], "buttons": [["Update now", False]]}),
 }
 
 
@@ -368,8 +372,10 @@ def test_the_page_says_once_that_the_desk_was_updated(srv, monkeypatch):
 def test_while_the_desk_is_down_for_its_installer_the_page_says_so_and_comes_back(srv, monkeypatch):
     """The brief's item 6, with F2's installing: the desk stops for its installer (its state said installing), so the
     page closes its window where the browser lets it, and says "The Job Desk is updating. This window will show it
-    again when it is back." in place of "the desk isn't answering"; when the desk answers again, it reloads itself.
-    Without an update under way, a desk gone is said as before."""
+    again when it is back." in place of "the desk isn't answering"; three minutes on with no desk, it says to open
+    the Job Desk again. The desk the installer opens has a key and a window of its own: when it answers (refusing
+    this window's key), the page says the desk was updated and that this window can be closed, never that its key is
+    out of date, and stops asking. Without an update under way, a desk gone is said as before."""
     state = {**_state("state-openings.json"), "update": _update(**NEWER, progress="installing")}
     desk, _ = _desk(srv, monkeypatch, state)
 
@@ -387,15 +393,21 @@ def test_while_the_desk_is_down_for_its_installer_the_page_says_so_and_comes_bac
                 await page.wait_for_function(NOTICE_SAYS.format("updating"))
                 await page.wait_for_timeout(3500)  # (two more refreshes: still said, and the window closed once)
                 down = await page.evaluate(_NOTICES), await page.evaluate("window.__closed")
+                await page.clock.set_fixed_time(NOW + 200)  # (past three minutes with no desk)
+                await page.wait_for_function(NOTICE_SAYS.format("come back"))
+                long = await page.evaluate(_NOTICES)
                 again = Desk(srv)
                 again.applier.start = lambda: None
                 # (the same port again, as the desk the installer opens takes its usual one: here the port the test's
                 # desk had, which the system may hold a little while after it closed)
                 monkeypatch.setattr(desk_module, "_free_port", lambda preferred: port)
-                async with page.expect_navigation(timeout=20000):
-                    await again.start(port=port, open_browser=False)
-                await page.wait_for_selector("#notices p")
-                back = await page.evaluate(_NOTICES)
+                asked = []
+                page.on("request", lambda r: asked.append(r.url) if "/api/" in r.url else None)
+                await again.start(port=port, open_browser=False)
+                await page.wait_for_function(NOTICE_SAYS.format("was updated"), timeout=20000)
+                del asked[:]
+                await page.wait_for_timeout(3500)  # (two refreshes' time: the page has stopped asking)
+                back = await page.evaluate(_NOTICES), await page.evaluate("window.__closed"), list(asked)
                 # (and a desk gone with no update under way: said as before)
                 state["update"] = _update()
                 await page.goto("about:blank")
@@ -404,17 +416,17 @@ def test_while_the_desk_is_down_for_its_installer_the_page_says_so_and_comes_bac
                 await page.wait_for_function(NOTICE_SAYS.format("answering"))
                 gone = await page.evaluate(_NOTICES)
                 await browser.close()
-                return card, down, back, gone
+                return card, down, long, back, gone
         finally:
             for running in (desk, again):  # (stopping one stopped already does nothing)
                 if running is not None:
                     await running.stop()
 
-    card, (down, closed), back, gone = run(go())
+    card, (down, closed), long, (back, closed_again, asked), gone = run(go())
     assert card == "Installing version 0.4.4"
     assert down == ["The Job Desk is updating. This window will show it again when it is back."], down
     assert closed == 1
-    # (reloaded, with the key of the desk before: the desk opened again by the installer has a window of its own)
-    assert back == ["Problem: the desk was restarted, and this window's key is out of date. Close it and open the Job "
-                    "Desk again."], back
+    assert long == ["Problem: the Job Desk hasn't come back from its update yet. Open the Job Desk again."], long
+    assert back == ["The Job Desk was updated, and it opened again in a window of its own. You can close this one."]
+    assert closed_again == 2 and asked == [], (closed_again, asked)
     assert len(gone) == 1 and gone[0].startswith("Problem: the desk isn't answering ("), gone

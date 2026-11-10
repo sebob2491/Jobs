@@ -59,7 +59,8 @@ def test_a_newer_published_version_is_said_with_how_to_get_it(monkeypatch, loop)
     state = check.state()
     assert state == {"current": "0.3.70", "latest": "0.3.71", "newer": True, "kind": "manual",
                      "checked_at": state["checked_at"], "progress": None, "error": None,
-                     "commands": updates.UPDATE_COMMANDS}
+                     "commands": updates.UPDATE_COMMANDS,
+                     "notes": "https://github.com/sebob2491/Jobs/releases/tag/job-apply-v0.3.71"}
     assert state["checked_at"] > 0
     run(check.refresh())  # not looked at again within CHECK_EVERY
     assert len(seen) == 1
@@ -916,3 +917,28 @@ def test_the_desk_page_says_a_newer_version_is_out(srv, monkeypatch):
     assert "claude plugin marketplace update sebob-jobs" not in text and "claude plugin update" not in text
     for same in ("0.3.70", None):  # (the state's update is always there now: the notice only when newer)
         assert "is ready" not in run(go(same))
+
+
+
+@pytest.mark.parametrize("latest, current, notes", [
+    ("0.3.71", "0.3.70", "https://github.com/sebob2491/Jobs/releases/tag/job-apply-v0.3.71"),
+    ("0.3.70", "0.3.70", None),  # nothing newer: nothing to read about
+    (None, "0.3.70", None),  # never looked
+])
+def test_whats_new_is_the_newer_versions_release_page_and_nothing_else(monkeypatch, latest, current, notes):
+    """The state's `notes` (the card's "What's new"): the Release page of the newer version, built from the installed
+    plugin.json's repository and the version alone; None when nothing is newer."""
+    monkeypatch.setattr(config, "plugin_version", lambda: current)
+    check = updates.UpdateCheck()
+    check.latest = latest
+    assert check.state()["notes"] == notes
+
+
+@pytest.mark.parametrize("version", ["0.3.71/../../evil", "0.3.71?x=1", "v0.3.71", "", "0.3.71#a", "0.3.71 ", "0.3.x"])
+def test_whats_new_is_never_built_from_anything_but_a_versions_digits(version):
+    assert updates.notes_url(version) is None
+
+
+def test_whats_new_needs_a_repository_the_plugin_names(monkeypatch):
+    monkeypatch.setattr(updates, "repository", lambda: None)
+    assert updates.notes_url("0.3.71") is None

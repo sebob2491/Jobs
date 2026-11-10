@@ -3519,6 +3519,10 @@ function renderUpdate() {
   const updateNow = `<button class="btn sm primary" data-act="update-start"${filling ? " disabled" : ""}>Update now</button>`;
   const checkNow = `<button class="btn sm" data-act="update-check">Check now</button>`;
   const canUpdate = up.newer && up.kind !== "manual";
+  // (What's new: the newer version's Release page, a link like any other: the desk's own window hands it to the
+  // person's usual browser)
+  const whatsNew = up.newer && webUrl(up.notes)
+    ? `<a class="btn sm" href="${esc(up.notes)}" target="_blank" rel="noopener">What's new</a>` : "";
   let title, said, more = "", buttons = "";
   if (up.progress === "downloading") [title, said] = [`Downloading version ${latest}`, "This takes a moment."];
   else if (up.progress === "installing") [title, said] = [`Installing version ${latest}`, "This window closes, and the Job Desk opens again by itself."];
@@ -3535,12 +3539,13 @@ function renderUpdate() {
     buttons = checkNow;
   } else if (up.kind === "manual") {
     [title, said] = [`Version ${latest} is out`, `You have ${current}. This copy isn't one the desk can update by itself.`];
+    buttons = whatsNew;
   } else {
     title = `Version ${latest} is ready`;
     said = `You have ${current}. ` + (up.kind === "installed"
       ? "Updating takes about a minute. The desk closes, installs, and opens again. Your queue is kept."
       : "The desk updates the plugin. Then restart Claude to use it.") + fillingSaid;
-    buttons = updateNow;
+    buttons = whatsNew + updateNow;
   }
   $("update-h").textContent = title;
   for (const [id, html] of [["update-said", said], ["update-more", more], ["update-acts", buttons]]) {
@@ -3959,8 +3964,12 @@ function refresh() {
 
 // The desk gone while an update was under way (the brief's item 6): an installed copy's desk stops for its installer,
 // and opens again by itself. The page says so in place of "the desk isn't answering", closes its window where the
-// browser lets it (F2: installing), and reloads itself the moment the desk answers again
-let updateDown = false;
+// browser lets it (F2: installing). The desk the installer opens again has a key of its own and a window of its own,
+// so when a desk answers again and refuses this window's key, the page says the update is done and that this window
+// can be closed (and stops asking); a desk that answers any other way is this one again, and the page reloads. A desk
+// that hasn't answered UPDATE_LONG seconds on says how to open it
+let updateDown = false, updateDownAt = 0;
+const UPDATE_LONG = 180;
 async function load(at = changes) {
   try {
     // (the first look told before the first state, whose New marks go from it; then now and then while in front)
@@ -3981,10 +3990,21 @@ async function load(at = changes) {
   } catch (e) {
     const up = (state || {}).update;
     if (updateDown || (e.status === undefined && up && UPDATING.includes(up.progress))) {
-      if (e.status !== undefined) { location.reload(); return; }  // (it answers again, whatever it says)
-      if (!updateDown && up.progress === "installing") window.close();
+      if (e.status === 403) {  // (the updated desk, with its own key and window)
+        stopped = true;
+        $("notices").innerHTML = `<p class="notice info">The Job Desk was updated, and it opened again in a window of its own. You can close this one.</p>`;
+        window.close();
+        return;
+      }
+      if (e.status !== undefined) { location.reload(); return; }  // (this desk again, whatever it says)
+      if (!updateDown) {
+        updateDownAt = Date.now();
+        if (up.progress === "installing") window.close();
+      }
       updateDown = true;
-      $("notices").innerHTML = `<p class="notice info">The Job Desk is updating. This window will show it again when it is back.</p>`;
+      $("notices").innerHTML = Date.now() - updateDownAt < UPDATE_LONG * 1000
+        ? `<p class="notice info">The Job Desk is updating. This window will show it again when it is back.</p>`
+        : `<p class="notice bad">Problem: the Job Desk hasn't come back from its update yet. Open the Job Desk again.</p>`;
       return;
     }
     $("notices").innerHTML = e.status === 403

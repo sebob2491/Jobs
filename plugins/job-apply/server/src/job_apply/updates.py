@@ -128,6 +128,15 @@ def download_url(version: str, name: str) -> str | None:
     return f"https://github.com/{repo[0]}/{repo[1]}/releases/download/{TAG_PREFIX}{version}/{name}"
 
 
+def notes_url(version: str | None) -> str | None:
+    """A version's Release page (the card's "What's new"), from the installed plugin.json's repository and the tag
+    built from `version` alone: nothing of what the network answered but the version's own digits."""
+    repo = repository()
+    if repo is None or not version or _parts(version) is None:
+        return None
+    return f"https://github.com/{repo[0]}/{repo[1]}/releases/tag/{TAG_PREFIX}{version}"
+
+
 def _parts(version: str) -> tuple[int, ...] | None:
     if not isinstance(version, str) or not _VERSION.fullmatch(version):
         return None
@@ -253,12 +262,13 @@ class UpdateCheck:
         return version
 
     def state(self, standalone: bool = False) -> dict[str, Any]:
-        """The state's `update`: always these eight keys."""
+        """The state's `update`: always these nine keys (`notes`: the newer version's Release page, or None)."""
         current = config.plugin_version()
-        return {"current": current, "latest": self.latest,
-                "newer": bool(self.latest and newer(self.latest, current)), "kind": self.kind(standalone),
+        is_newer = bool(self.latest and newer(self.latest, current))
+        return {"current": current, "latest": self.latest, "newer": is_newer, "kind": self.kind(standalone),
                 "checked_at": self.checked_at, "progress": self.progress,
-                "error": self.error if self.progress == "failed" else None, "commands": UPDATE_COMMANDS}
+                "error": self.error if self.progress == "failed" else None, "commands": UPDATE_COMMANDS,
+                "notes": notes_url(self.latest) if is_newer else None}
 
     # ------------------------------------------------------------ downloads
     async def _fetch(self, client: httpx.AsyncClient, url: str, limit: int, take: Callable[[bytes], None]) -> None:
