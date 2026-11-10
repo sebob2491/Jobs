@@ -847,7 +847,10 @@ def forget_password(name: str) -> bool:
     its own card turns it off), or when the vault won't let it go."""
     if not isinstance(name, str) or name not in FORGETTABLE:
         raise ValueError(f"not a password the desk forgets: {name!r}")
-    return _forget(name)
+    with _SECRETS_LOCK:
+        if (path := secrets_path()).exists():
+            read_secrets(path)  # (a file that can't be read stops it here, before the vault's is taken out)
+        return _forget(name)
 
 
 def _forget(name: str) -> bool:

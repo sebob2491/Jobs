@@ -1306,15 +1306,19 @@ class Desk:
     async def _password_route(self, request: Request,
                               act: Callable[[dict[str, Any]], Awaitable[Response]]) -> Response:
         """One of the three routes below, answered: behind the page's key as every route is, and never kept by a browser
-        or a proxy (Cache-Control: no-store on every answer, a refusal's and a failure's too). No password is logged:
-        a failure nobody foresaw is answered and logged by its kind alone, never in its own words."""
+        or a proxy (Cache-Control: no-store on every answer, a refusal's and a failure's too). No password is logged,
+        nor said in a failure's words: a failure the route didn't foresee is answered and logged by its kind alone,
+        never in its own words (which, where a password is at hand, could be about it)."""
         try:
             if not self._allowed(request, api=True):
                 answer = self._forbidden()
             else:
-                answer = await act(await self._body(request))
-        except (ValueError, OSError) as e:  # (config's and the vault's own words, which never hold a password)
-            answer = self._bad(e)
+                try:
+                    body = await self._body(request)
+                except ValueError as e:  # (not JSON, or not an object: said as every route says it)
+                    answer = self._bad(e)
+                else:
+                    answer = await act(body)
         except Exception as e:
             logging.getLogger(__name__).warning("%s failed (%s)", request.url.path, type(e).__name__)
             answer = JSONResponse({"error": f"The desk couldn't do that just now ({type(e).__name__})."},
@@ -1336,14 +1340,14 @@ class Desk:
         name, replace = body.get("name"), body.get("replace") is True  # (not "false", which bool() calls true)
         if name is None:
             if replace:  # (never a new one for every job system at once)
-                raise ValueError("Making a new one needs its job system's name.")
+                return JSONResponse({"error": "Making a new one needs its job system's name."}, status_code=400)
             names = list(DESK_PASSWORDS)
         elif isinstance(name, str) and name in DESK_PASSWORDS:
             if replace and _from_environment(name):
                 return JSONResponse({"error": FROM_ENVIRONMENT}, status_code=409)
             names = [name]
         else:
-            raise ValueError("The desk makes a password for a job system only.")
+            return JSONResponse({"error": "The desk makes a password for a job system only."}, status_code=400)
         made: list[str] = []
         async with self._passwords_turn:
             try:
@@ -1352,6 +1356,11 @@ class Desk:
                     if await asyncio.to_thread(config.make_site_password, each, replace):
                         made.append(each)
                         self.made_passwords[each] = _today()
+            except OSError as e:
+                # (a save the file couldn't take, in the system's own words: they name the file, never a password.
+                # Any other failure is _password_route's, said by its kind alone: a secrets.yaml that isn't text
+                # fails in words that quote a byte of it)
+                return self._bad(e)
             finally:
                 if made:  # (those made before a save that failed keep their day too)
                     self._save_settings_quietly()
@@ -1373,6 +1382,7 @@ class Desk:
         value = await asyncio.to_thread(_secret, name)
         if not value:
             return JSONResponse({"error": f"No password is saved for {DESK_PASSWORDS[name]}."}, status_code=404)
+        # (one that can't be written as an answer fails by its kind alone, in _password_route: never in words about it)
         return JSONResponse({"value": value})
 
     async def password_forget_view(self, request: Request) -> Response:
@@ -1385,13 +1395,19 @@ class Desk:
     async def _forget_password(self, body: dict[str, Any]) -> Response:
         name = body.get("name")
         if isinstance(name, str) and re.sub(r"[^a-z0-9]", "_", name.strip().lower()) == config.NTFY_TOPIC_NAME:
-            raise ValueError("Phone alerts are turned off on the Phone alerts card, not forgotten here.")
+            return JSONResponse({"error": "Phone alerts are turned off on the Phone alerts card, not forgotten here."},
+                                status_code=400)
         if not isinstance(name, str) or name not in config.FORGETTABLE:
-            raise ValueError("That isn't a password the desk keeps.")
+            return JSONResponse({"error": "That isn't a password the desk keeps."}, status_code=400)
         if _from_environment(name):
             return JSONResponse({"error": FROM_ENVIRONMENT}, status_code=409)
         async with self._passwords_turn:
-            await asyncio.to_thread(config.forget_password, name)  # (off the event loop, as a save is)
+            try:
+                await asyncio.to_thread(config.forget_password, name)  # (off the event loop, as a save is)
+            except UnicodeError:  # (a secrets.yaml that isn't text: the failure's words quote a byte of it)
+                raise
+            except (ValueError, OSError) as e:  # (the vault wouldn't let it go, or secrets.yaml couldn't be changed)
+                return self._bad(e)
             if self.made_passwords.pop(name, None) is not None:
                 self._save_settings_quietly()
         if name == "email_password":

@@ -851,6 +851,60 @@ def test_every_answer_of_the_three_routes_says_no_store_a_refusal_and_a_failure_
     assert config.get_secret("workday_password") == "Typed-Workday-1"
 
 
+def test_a_password_show_cant_put_in_its_answer_is_said_in_no_words_about_it(srv, job_apply_home, memory_vault,
+                                                                           caplog):
+    """A saved password that can't be written as an answer (half of a character pair, from a page gone wrong): Show
+    fails by its kind alone, in its answer and in the log. The failure's own words say which character it was, and
+    where in the password."""
+    odd = "Typed-" + chr(0xD83D) + "-half-1"
+    config.save_site_password("workday_password", odd)
+    assert config.get_secret("workday_password") == odd
+    caplog.set_level(logging.DEBUG)
+    desk = idle_desk(srv)
+
+    async def go():
+        async with serving(desk) as (c, h):
+            return await ask(c, h, SHOW, {"name": "workday_password"}, 500)
+
+    answer = run(go())
+    assert answer.json() == {"error": "The desk couldn't do that just now (UnicodeEncodeError)."}
+    for said in ("d83d", "surrogates not allowed", "Typed-", "half-1"):
+        assert said not in answer.text and said not in caplog.text, said
+
+
+def test_a_secrets_file_that_isnt_text_fails_make_and_forget_by_their_kind_alone_and_changes_nothing(
+        srv, job_apply_home, memory_vault, monkeypatch, caplog):
+    """secrets.yaml saved by an editor in another encoding (a hand-typed password with an accent): reading it fails in
+    words that quote a byte of the file. Make and Forget fail by their kind alone, in the answer and in the desk's
+    log, and change nothing; Show finds none the desk could type."""
+    on_day(monkeypatch, "2026-11-10")
+    caplog.set_level(logging.DEBUG)
+    desk = idle_desk(srv)
+
+    def kept() -> dict:  # (the vault's passwords: all but its own list of names)
+        return {name: value for (_, name), value in memory_vault.store.items() if name != vault.NAMES_ENTRY}
+
+    async def go():
+        async with serving(desk) as (c, h):
+            await ask(c, h, MAKE, {"name": "icims_password"})
+            before = kept()
+            config.secrets_path().write_bytes(b"workday_password: caf\xe9-pass-1\n")
+            failed = [await ask(c, h, MAKE, {}, 500),
+                      await ask(c, h, MAKE, {"name": "taleo_password", "replace": True}, 500),
+                      await ask(c, h, FORGET, {"name": "icims_password"}, 500)]
+            return before, failed, await ask(c, h, SHOW, {"name": "workday_password"}, 404)
+
+    before, failed, none = run(go())
+    assert list(before) == ["icims_password"] and kept() == before
+    assert all(answer.json() == {"error": "The desk couldn't do that just now (UnicodeDecodeError)."}
+               for answer in failed)
+    said = [record.getMessage() for record in caplog.records if record.name == "job_apply.desk"]
+    assert len(said) == 3 and all(line.endswith("failed (UnicodeDecodeError)") for line in said), said
+    for text in (*(answer.text for answer in (*failed, none)), *said):
+        assert "0xe9" not in text and "can't decode" not in text and "pass-1" not in text
+    assert made_days(job_apply_home) == {"icims_password": "2026-11-10"}
+
+
 def test_the_three_routes_ask_for_a_saved_password_off_the_desks_event_loop(srv, job_apply_home, memory_vault,
                                                                            monkeypatch):
     """The vault's call can wait vault.VAULT_WAIT seconds (a keyring locked since): each route makes it on a thread, as
