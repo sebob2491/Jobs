@@ -11,7 +11,7 @@ import threading
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse
 from conftest import browser_available, person_browser, run
 from test_desk import _client, _fit, _jobs, _keep_queue, _kept_queue, _stopped_desk, _until
 from test_desk_buttons import _POLLS, _idle_desk
@@ -226,14 +226,20 @@ def test_api_window_needs_the_pages_key_and_gives_a_new_code_each_time(srv):
     assert len({_code(a) for a in addresses}) == 3
 
 
-def test_a_second_start_opens_the_keyed_address_where_the_running_desk_has_no_api_window(srv, monkeypatch):
-    """A desk from before /api/window, found running by a second start: its page opens at the address with its key,
-    as before, rather than not at all."""
+def test_a_second_start_opens_with_a_code_or_the_keyed_address_where_the_running_desk_has_no_api_window(srv,
+                                                                                                        monkeypatch):
+    """A second start opens the running desk's page with the one-time code /api/window gives. A desk from before
+    /api/window (Not Found there) has its page opened at the address with its key, as before, rather than not at
+    all."""
     opened: list[tuple[str, str]] = []
     monkeypatch.setattr(window, "open_window", lambda url, mode: opened.append((url, mode)) or mode)
-    every_route = Desk.app
-    monkeypatch.setattr(Desk, "app", lambda self: Starlette(
-        routes=[route for route in every_route(self).routes if getattr(route, "path", "") != "/api/window"]))
+    older = [False]
+    window_view = Desk.window_view
+
+    async def maybe_older(self, request):  # (an older desk: no such route)
+        return PlainTextResponse("Not Found", status_code=404) if older[0] else await window_view(self, request)
+
+    monkeypatch.setattr(Desk, "window_view", maybe_older)
     desk = _idle_desk(srv)
 
     def second_desk(server):
@@ -244,14 +250,19 @@ def test_a_second_start_opens_the_keyed_address_where_the_running_desk_has_no_ap
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
+            assert await asyncio.to_thread(desk_module.main, ["--port", str(desk.port)]) == 0
+            older[0] = True
             async with _client(desk) as c:
                 assert (await c.post("/api/window", headers={"x-desk-token": desk.token}, json={})).status_code == 404
-            return await asyncio.to_thread(desk_module.main, ["--port", str(desk.port)])
+            assert await asyncio.to_thread(desk_module.main, ["--port", str(desk.port)]) == 0
         finally:
             await desk.stop()
 
-    assert run(go()) == 0
-    assert opened == [(desk.url, "app")]
+    run(go())
+    assert len(opened) == 2, opened
+    (coded, mode), keyed = opened
+    assert coded == f"http://127.0.0.1:{desk.port}/?c={_code(coded)}" and mode == "app", coded
+    assert keyed == (desk.url, "app")
 
 
 def test_api_quit_is_for_a_desk_run_on_its_own_and_needs_the_pages_key(srv):

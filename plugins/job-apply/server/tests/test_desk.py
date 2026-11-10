@@ -6524,6 +6524,7 @@ def test_starting_the_desk_again_opens_the_one_running_on_its_port(srv, monkeypa
     the desk on that port opens (its key read from the desk's watch file, and taken by the desk there), and no second
     desk starts on another port with the same queue and browser. A watch file left by a desk that ended without
     tidying up, or one whose key the desk there doesn't take, starts a desk as before."""
+    import re
     import socket as sockets
 
     from job_apply import desk as desk_module
@@ -6556,7 +6557,8 @@ def test_starting_the_desk_again_opens_the_one_running_on_its_port(srv, monkeypa
 
     out = run(go())
     assert out["code"] == out["quiet"] == 0
-    assert opened == [desk.url]  # once: --no-browser opens nothing
+    # once (--no-browser opens nothing), with a one-time code from the desk there in place of its key (/api/window)
+    assert len(opened) == 1 and re.fullmatch(rf"http://127\.0\.0\.1:{desk.port}/\?c=[A-Za-z0-9_-]+", opened[0]), opened
     assert out["wrong key"] is None and out["stopped"] is None
     # a watch file left behind, for a port nothing answers on
     with sockets.socket() as s:
