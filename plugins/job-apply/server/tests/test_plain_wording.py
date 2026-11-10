@@ -119,9 +119,18 @@ def _python_said(text: str) -> list[tuple[int, str]]:
 
 
 def _page_said(text: str) -> list[tuple[int, str]]:
-    """Every line of the page that may say something: its styles and comments left out."""
+    """Every line of the page that may say something: its styles and comments left out. Lines joined by a `+` (one
+    ending with it, or the next beginning with it) are read as one, at the first one's number, with the string pieces
+    they join run together ("in profile." + "yaml" reads "in profile.yaml")."""
     text = re.sub(r"(?s)<style>.*?</style>|<!--.*?-->|/\*.*?\*/", lambda m: "\n" * m.group().count("\n"), text)
-    return [(i, re.sub(r"(?<![:\\\"'])//.*", "", line)) for i, line in enumerate(text.splitlines(), 1)]
+    lines = [(i, re.sub(r"(?<![:\\\"'])//.*", "", line)) for i, line in enumerate(text.splitlines(), 1)]
+    said: list[tuple[int, str]] = []
+    for i, line in lines:
+        if said and (said[-1][1].rstrip().endswith("+") or line.lstrip().startswith("+")):
+            said[-1] = (said[-1][0], said[-1][1].rstrip() + " " + line.strip())
+        else:
+            said.append((i, line))
+    return [(i, re.sub(r"[\"'`]\s*\+\s*[\"'`]", "", s)) for i, s in said]
 
 
 def _said(name: str) -> list[tuple[int, str]]:
@@ -194,6 +203,12 @@ def test_the_test_finds_what_it_looks_for():
                       "<p>Open PowerShell</p>\nconst a = 1; // settings.submit_mode\nconst u = \"https://x.example/\";")
     assert [s for _, s in page if NAMES.search(s)] == ["<p>Open PowerShell</p>"]
     assert any("https://x.example/" in s for _, s in page)
+    # (a name split across the lines of a `+` join, the `+` ending a line or beginning the next, at the first line)
+    joined = _page_said('<p>One</p>\nconst a = "Set it in profile." +\n  "yaml, then press Carry on.";\n'
+                        'const b = `Open the ${x} desk.` \n  + `json file`;\nconst c = "Nothing here.";')
+    assert [(i, s) for i, s in joined if NAMES.search(s)] == [
+        (2, 'const a = "Set it in profile.yaml, then press Carry on.";'),
+        (4, "const b = `Open the ${x} desk.json file`;")], joined
     assert NAMES.search("Use settings.submit_mode") and not NAMES.search("Turn it on in Settings. Then press Carry on.")
     assert not NAMES.search("const on = state.settings.auto_submit && s.settings.dry_run;")
     # (every file named is there, and the page is read in one list or the other, never both)
