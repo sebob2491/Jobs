@@ -634,7 +634,7 @@ def test_the_new_settings_and_help_cards_say_the_designs_words(srv):
     assert [" ".join(line.split()) for line in seen["how"]] == [
         "Find jobs searches the career sites of the employers on your lists, and ranks what it finds against your "
         "profile.",
-        "You pick openings and press Apply to selected. The desk fills each application in the desk's browser window, "
+        "You pick openings and press Apply. The desk fills each application in the desk's browser window, "
         "up to its review page.",
         "When a site needs you (a question, a sign-in, a bot check), the job waits under Needs you on the Home page.",
         'Nothing is submitted until you press Submit, unless you turned on "Submit for me". LinkedIn and Indeed are '

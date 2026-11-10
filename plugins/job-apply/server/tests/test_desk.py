@@ -5305,6 +5305,20 @@ def test_the_safety_window_says_each_setting_as_the_desk_acts_on_it(srv, job_app
     assert status == 200 and said == desk.safety() and said["problem"] is None
 
 
+def test_the_safety_window_says_where_each_switch_is_since_the_openings_table(srv, job_apply_home):
+    """Version B moved four switches: Jobs at once and Troubleshooting to Settings (Searching and applying), Submit for
+    me and Cover letter into the bar that shows on Openings once a job is ticked. The Safety window's "where" says where
+    each is now (it still said "under Openings" and "under Openings, More")."""
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    where = {line["key"]: line["where"] for line in desk.safety()["lines"]}
+    assert not [key for key, said in where.items() if "under Openings" in said], where
+    assert where["jobs_at_once"].startswith("The Jobs at once buttons in Settings, under Searching and applying")
+    assert where["troubleshoot"] == "The Troubleshooting switch in Settings, under Searching and applying"
+    bar = "in the bar that shows on Openings once a job is ticked"
+    assert bar in where["auto_submit"] and bar in where["cover_letters"], where
+
+
 def test_the_page_marks_new_openings_hides_one_not_wanted_with_undo_and_shows_safety(srv, job_apply_home):
     """The desk page (on a phone's width, with no sideways scroll): openings first saved since the last visit carry a
     New mark and make the bar's New group; a score pressed shows how it adds up; Not interested asks why (or not),

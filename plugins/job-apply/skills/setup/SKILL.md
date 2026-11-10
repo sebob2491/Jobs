@@ -244,7 +244,7 @@ soon, with the least answered that it needs:
      say (never a degree, certification or skill they don't state), written through their own
      Claude Code sign-in, so it uses their Claude plan and needs no key. The first one waits on
      its job's card for their **Use it**; after that they go in without asking. Ask whether
-     they'd like it; if so, they tick **Write a cover letter for each job** under Openings
+     they'd like it; if so, they turn on **Cover letter** in the bar that shows on Openings once a job is ticked
      (`settings.cover_letter_model` picks another model; leave it empty for the usual one). If
      the desk then says it can't find `claude` or it isn't signed in, they run `claude` in a
      terminal and sign in.
