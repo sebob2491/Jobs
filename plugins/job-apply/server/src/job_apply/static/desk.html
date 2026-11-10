@@ -93,6 +93,7 @@ body > .app { display: grid; grid-template-columns: 244px minmax(0, 1fr); height
 .queue .btn.sm { width: 100%; height: auto; min-height: 30px; padding: 5px 10px; margin-top: 10px; white-space: normal;
   line-height: 1.25; text-align: center; }
 .queue .btn.sm + .btn.sm { margin-top: 4px; }
+#pause-btn .ico { display: none; }
 /* the person: one button, for their profile */
 button.me { display: flex; align-items: center; justify-content: flex-start; gap: 10px; width: 100%; height: auto;
   margin-top: 6px; padding: 8px; border: 0; border-radius: 8px; background: none; box-shadow: none; color: var(--text);
@@ -433,13 +434,18 @@ body.stopped > :not(#stopped) { display: none; }
 #stopped h1 { margin: 0; font-size: 18px; font-weight: 700; }
 #stopped p { margin: 8px 0 0; color: var(--muted); }
 
-/* narrow windows. Under 1,024 px the side menu is 64 px of icons: each link's name is its tooltip, and the queue's
-   card and the person's name are out of sight (the name still there for a screen reader) */
+/* narrow windows. Under 1,024 px the side menu is 64 px of icons: each link's name is its tooltip, the queue's card is
+   its Pause queue button alone, an icon as wide as the links (its words its tooltip and label), and the person's name
+   is out of sight (still there for a screen reader) */
 @media (max-width: 1023.98px) {
   body > .app { grid-template-columns: 64px minmax(0, 1fr); }
   .side { padding: 14px 10px 10px; align-items: center; }
   .brand { padding: 2px 0 14px; }
-  .brand b, .nav a .label, .queue { display: none; }
+  .brand b, .nav a .label { display: none; }
+  .queue { align-self: stretch; padding: 0; border: 0; background: none; box-shadow: none; }
+  .queue .r1, .queue p, .queue .bar, #clear-queue-btn { display: none; }
+  .queue #pause-btn { width: 100%; height: 36px; min-height: 0; margin: 0; padding: 0; font-size: 0; gap: 0; }
+  #pause-btn .ico { display: block; }
   .nav { align-self: stretch; }
   .nav a { justify-content: center; padding: 0; position: relative; }
   .nav a .count { position: absolute; top: 1px; right: 0; min-width: 16px; margin: 0; padding: 0 4px; font-size: 10px;
@@ -518,7 +524,7 @@ body.stopped > :not(#stopped) { display: none; }
       <div class="r1"><span class="dot" id="queue-dot"></span><span id="queue-said"></span></div>
       <p id="queue-more"></p>
       <div class="bar" id="queue-bar" role="progressbar" aria-label="Jobs the desk has taken as far as it can" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"><i></i></div>
-      <button class="btn sm" id="pause-btn" data-act="pause" title="The job under way finishes what it is doing; no other job starts until you press Carry on with the queue" hidden>Pause queue</button>
+      <button class="btn sm" id="pause-btn" data-act="pause" title="The job under way finishes what it is doing; no other job starts until you press Carry on with the queue" hidden><svg class="ico" aria-hidden="true"><use href="#i-pause"/></svg>Pause queue</button>
       <button class="btn sm ghost" id="clear-queue-btn" data-act="clear-queue" title="Take the jobs not started yet out of the queue, back to the openings (not skipped); jobs already begun keep their cards" hidden>Clear the queue</button>
     </div>
     <button class="me" data-act="setup" title="Your profile"><span class="avatar" id="me-avatar" aria-hidden="true"><svg class="ico" aria-hidden="true"><use href="#i-user"/></svg></span><span class="me-words"><b id="who"></b><small id="plugin-version"></small></span></button>
@@ -1970,6 +1976,10 @@ function searchWords(e, otherwise = "its job list couldn't be read") {
   return otherwise + listed;
 }
 
+// Under 1,024 px wide the side menu shows its icons only (the CSS's narrow window), Pause queue's among them
+const NARROW = matchMedia("(max-width: 1023.98px)"), PAUSE_TITLE = $("pause-btn").title;
+NARROW.addEventListener("change", () => { if (state) renderHeader(); });
+
 // The top bar's controls, the cards' switches, the queue's two buttons and the notices (the old header's: its name stays)
 function renderHeader() {
   const p = state.profile, s = state.settings;
@@ -1985,7 +1995,12 @@ function renderHeader() {
   const lined = allRuns(), lineWaits = lined.filter((r) => r.status === "queued").length;
   $("pause-btn").hidden = !state.paused && !lineWaits && !lined.some((r) => r.status === "running");
   $("pause-btn").dataset.act = state.paused ? "resume" : "pause";
-  $("pause-btn").textContent = state.paused ? `Carry on with the queue${lineWaits ? ` (${lineWaits} waiting)` : ""}` : "Pause queue";
+  const pauseSaid = state.paused ? `Carry on with the queue${lineWaits ? ` (${lineWaits} waiting)` : ""}` : "Pause queue";
+  const pauseHtml = `<svg class="ico" aria-hidden="true"><use href="#i-${state.paused ? "play" : "pause"}"/></svg>${esc(pauseSaid)}`;
+  if ($("pause-btn").dataset.html !== pauseHtml) { $("pause-btn").innerHTML = pauseHtml; $("pause-btn").dataset.html = pauseHtml; }
+  // (in a narrow window only its icon shows: its words are its tooltip and its label there)
+  $("pause-btn").title = NARROW.matches ? pauseSaid : PAUSE_TITLE;
+  if (NARROW.matches) $("pause-btn").setAttribute("aria-label", pauseSaid); else $("pause-btn").removeAttribute("aria-label");
   $("clear-queue-btn").hidden = !state.clearable;  // (the jobs not started yet: taken out, back to the openings)
   const fresh = (state.listings || []).filter((r) => isNew(r) && (r.added || (r.fit && r.fit.recommended))).length;
   $("searched").textContent = sr.status === "running"

@@ -652,8 +652,8 @@ _SIDE = """() => { const inSight = (el) => el.getClientRects().length > 0, side 
 def test_a_narrow_window_shows_the_menus_icons_only_and_every_page_fits(srv, monkeypatch):
     """The design's A3: 1,024 px wide or more, the side menu is 244 px wide, with each page's name, the queue's card
     and the person's name. Under that it is 64 px of icons, each link's name kept as its tooltip and its label for a
-    screen reader, without the queue's card or the name. The menu fills the window's height, and no page scrolls
-    sideways, down to a phone's width."""
+    screen reader, the queue's card only its Pause queue icon (that test's below), without the name. The menu fills
+    the window's height, and no page scrolls sideways, down to a phone's width."""
     desk = _canned(srv, monkeypatch, _state("state-ready.json"))  # (jobs under way: the queue's card has words)
 
     async def go():
@@ -684,7 +684,7 @@ def test_a_narrow_window_shows_the_menus_icons_only_and_every_page_fits(srv, mon
                                "sideways": dict.fromkeys(PAGES, 0), "current": "#help"}, (width, seen[width])
     for width in (1023, 390):
         assert seen[width] == {"width": 64, "height": 800, "window": 800, "labels": [], "names": names, "icons": 7,
-                               "queue": False, "brand": False, "name": False, "sideways": dict.fromkeys(PAGES, 0),
+                               "queue": True, "brand": False, "name": False, "sideways": dict.fromkeys(PAGES, 0),
                                "current": "#help"}, (width, seen[width])
 
 
@@ -726,3 +726,68 @@ def test_see_to_these_first_leads_to_the_page_of_the_card_it_names(srv, job_appl
     assert 64 <= seen["top"] and seen["bottom"] <= seen["window"], seen  # (under the top bar, in the window)
     assert seen["focused"] == ("pw" if page_name == "settings" else ""), seen
     assert tasks == []  # (nothing was applied to)
+
+
+# The queue's card as it shows: each of its parts in sight or not, the Pause queue button's words (and whether they're
+# drawn), title, label and icon, and its width beside the menu's links
+_NARROW_QUEUE = """() => { const inSight = (id) => document.getElementById(id).getClientRects().length > 0;
+  const btn = document.getElementById('pause-btn'), use = btn.querySelector('svg.ico use');
+  const drawn = document.createRange();
+  drawn.selectNodeContents(btn.lastChild);
+  return {card: inSight('queue-card'), said: inSight('queue-said'), more: inSight('queue-more'),
+          bar: inSight('queue-bar'), clear: inSight('clear-queue-btn'), pause: inSight('pause-btn'),
+          words: btn.textContent.trim(), drawn: Math.round(drawn.getBoundingClientRect().width) > 0, title: btn.title,
+          label: btn.getAttribute('aria-label'),
+          icon: use && use.getClientRects().length ? use.getAttribute('href') : null,
+          width: Math.round(btn.getBoundingClientRect().width),
+          link: Math.round(document.querySelector('.nav a').getBoundingClientRect().width)}; }"""
+_PAUSE_TITLE = ("The job under way finishes what it is doing; no other job starts until you press Carry on with the "
+                "queue")
+
+
+def test_a_narrow_window_keeps_pause_queue_as_an_icon_in_the_menu(srv):
+    """The design's A3: under 1,024 px the queue's card shrinks to its Pause queue button alone, an icon as wide as the
+    menu's (pause while the queue runs, play while it is paused), its usual words its title and its label: a window
+    snapped to half of a 1920 px screen (960 px) can still pause the queue. Pressed there, it pauses it. At 1,280 px the
+    card is as it was: its two lines, its bar, the button's words, and Clear the queue."""
+    from job_apply.pipeline import Run
+
+    desk = _idle_desk(srv)
+    a = desk.applier
+    for i in range(4):
+        job_id = srv.add_job(url=f"https://careers.example.com/fab/{i}", title=f"Technician {i}",
+                             company="Example Fab")["job"]["id"]
+        a.runs[job_id] = Run(job_id, "Technician", "Example Fab", status="queued")
+        a.tasks.append(("apply", job_id))
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 960, "height": 800})
+                await open_desk(page, desk)
+                await page.wait_for_selector("#pause-btn", state="visible")
+                narrow = await page.evaluate(_NARROW_QUEUE)
+                await page.click("#pause-btn")
+                await _until(lambda: a.paused, "Pause queue reached the desk")
+                await page.wait_for_selector("#pause-btn[aria-label='Carry on with the queue (4 waiting)']")
+                paused = await page.evaluate(_NARROW_QUEUE)
+                await page.set_viewport_size({"width": 1280, "height": 800})
+                await page.wait_for_selector("#queue-said", state="visible")
+                wide = await page.evaluate(_NARROW_QUEUE)
+                await browser.close()
+                return narrow, paused, wide
+        finally:
+            await desk.stop()
+
+    narrow, paused, wide = run(go())
+    assert narrow == {"card": True, "said": False, "more": False, "bar": False, "clear": False, "pause": True,
+                      "words": "Pause queue", "drawn": False, "title": "Pause queue", "label": "Pause queue",
+                      "icon": "#i-pause", "width": narrow["link"], "link": narrow["link"]}, narrow
+    assert paused == {**narrow, "words": "Carry on with the queue (4 waiting)",
+                      "title": "Carry on with the queue (4 waiting)",
+                      "label": "Carry on with the queue (4 waiting)", "icon": "#i-play"}, paused
+    assert wide == {"card": True, "said": True, "more": True, "bar": True, "clear": True, "pause": True,
+                    "words": "Carry on with the queue (4 waiting)", "drawn": True, "title": _PAUSE_TITLE,
+                    "label": None, "icon": None, "width": wide["width"], "link": wide["link"]}, wide
+    assert wide["width"] > 150  # (full width in the card, as it was)
