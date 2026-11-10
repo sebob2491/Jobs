@@ -46,6 +46,11 @@ import httpx
 
 from . import config, letters, window
 
+# The claude command, for a plugin copy's update: found as cover letters find it, and looked for under this module's
+# own name, so the letters' own rule (look once, then not again until the switch is turned off and on) counts only
+# the letters' looks
+find_claude = letters.find_claude
+
 CHECK_EVERY = 6 * 3600  # seconds between looks by itself
 CHECK_AT_MOST = 60  # seconds between looks the page asks for (Check now)
 # How a person updates: the marketplace this repository publishes, and the plugin in it
@@ -192,7 +197,7 @@ class UpdateCheck:
             if installed_copy():
                 self._kinds[standalone] = ("installed", None)
             else:
-                claude = None if standalone else letters.find_claude()
+                claude = None if standalone else find_claude()
                 self._kinds[standalone] = ("plugin", claude) if claude else ("manual", None)
         return self._kinds[standalone]
 

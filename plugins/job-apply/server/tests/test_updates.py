@@ -14,7 +14,7 @@ import httpx
 import pytest
 from conftest import browser_available, person_browser, run
 
-from job_apply import config, letters, updates, window
+from job_apply import config, updates, window
 from job_apply.desk import Desk
 
 REPO = "https://github.com/sebob2491/Jobs"
@@ -53,7 +53,7 @@ def _github(monkeypatch, respond):
 
 def test_a_newer_published_version_is_said_with_how_to_get_it(monkeypatch, loop):
     seen = _github(monkeypatch, lambda r: httpx.Response(200, json={"name": "job-apply", "version": "0.3.71"}))
-    monkeypatch.setattr(letters, "find_claude", lambda: None)
+    monkeypatch.setattr(updates, "find_claude", lambda: None)
     check = updates.UpdateCheck()
     run(check.refresh())
     state = check.state()
@@ -111,7 +111,7 @@ def copy(tmp_path, monkeypatch):
     write()
     monkeypatch.setattr(config, "PLUGIN_ROOT", root)
     monkeypatch.setenv("JOB_APPLY_NO_UPDATE_CHECK", "0")
-    monkeypatch.setattr(letters, "find_claude", lambda: "/found/claude")
+    monkeypatch.setattr(updates, "find_claude", lambda: "/found/claude")
     write.installed = installed
     return write
 
@@ -766,7 +766,7 @@ def test_a_command_that_runs_too_long_or_wont_start_gives_failed(copy, loop):
 
 
 def test_no_claude_command_makes_the_kind_manual(copy, monkeypatch):
-    monkeypatch.setattr(letters, "find_claude", lambda: None)
+    monkeypatch.setattr(updates, "find_claude", lambda: None)
     assert updates.UpdateCheck().kind(standalone=False) == "manual"
 
 
