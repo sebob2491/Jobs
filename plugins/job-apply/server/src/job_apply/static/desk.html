@@ -251,6 +251,11 @@ input[type=checkbox]:disabled { opacity: .5; cursor: default; }
 /* (a row's controls that are disabled together while it saves: the email's app password and its Save) */
 .setrow fieldset.box { margin: 0; padding: 0; border: 0; min-width: 0; }
 .setrow .acts { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+/* (a row whose control is wide, the app password's: under its words where the panel beside Settings' menu is narrow) */
+@media (max-width: 1280px) {
+  .setrow.stack { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .setrow.stack > form { justify-self: start; }
+}
 .set-err { grid-column: 1 / -1; margin: -6px 0 0; color: var(--bad); font-size: 13px; }
 /* under a card's rows, a button of its own (the Safety window's) */
 .setfoot { padding: 13px 18px; border-top: 1px solid var(--line-2); }
@@ -1157,7 +1162,7 @@ body.stopped > :not(#stopped) { display: none; }
                  never drawn back: the box is emptied once it's saved, and only "Saved" or "Not saved" comes from the
                  state; Test it signs in and out again, /api/mail/test; Claude's Gmail only inside Claude) -->
             <section class="card" aria-labelledby="panel-email-h">
-              <div class="setrow">
+              <div class="setrow stack">
                 <div><p class="t" id="mail-pw-name">Your email's app password</p>
                   <p class="s" id="mail-pw-said">A separate password your email provider gives to one program. With it, the desk reads only mail from the job's own site that arrived after the job began waiting, and marks nothing as read. Works with Gmail, Yahoo, iCloud and AOL addresses.</p>
                   <p class="s"><a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">How to make one for Gmail</a></p></div>
