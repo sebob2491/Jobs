@@ -37,8 +37,8 @@ CloudSuite (Benchmark), Cornerstone (Linde, Matheson), Phenom (EMD Electronics) 
 Arizona sites, including equipment makers whose field service engineers work at
 Arizona fabs, and the suppliers whose technicians run the fabs' gases and chemicals.
 
-Looking for other work, or somewhere else? The Job Desk's **What and where** button (or
-asking Claude) sets the job titles to look for, the places to look (a city and state
+Looking for other work, or somewhere else? The Job Desk's **What and where** button (over
+Openings, or under Settings, Job search; or asking Claude) sets the job titles to look for, the places to look (a city and state
 each, such as "Las Vegas, NV") and which of the plugin's employer lists to search:
 - `semiconductor-az`, the list above;
 - `phoenix-metro`, large Phoenix-area employers in health care, education, finance,
@@ -79,7 +79,8 @@ curl -fsSL https://raw.githubusercontent.com/sebob2491/Jobs/main/plugins/job-app
 Either line installs what's missing (Git, Claude Code, uv), adds this plugin to Claude Code (or updates
 it), gets a browser ready, makes your `~/.job-apply` folder, offers to copy your resume into
 it, and runs the plugin's doctor to check it all. It asks before installing Claude Code or Git, never
-asks for a password, and is safe to run again; running it again is also how to update. Then
+asks for a password, and is safe to run again; running it again is also how to update (or, when the
+Job Desk says a newer version is out, press **Update now** under Settings, Updates and about). Then
 open the Claude app (or run `claude`) and say **"set up job-apply"**: Claude reads your resume
 and asks the few questions it can't answer.
 
@@ -148,14 +149,15 @@ desk's browser window only if you'll paste their job links. The sign-ins persist
 Job Desk shortcut JobDeskSetup.exe made, `uv run --project <plugin>/server job-apply-desk`, or
 ask Claude to open it): while your
 profile lacks what an application needs, its **Set up your profile** window opens by itself
-(and **Your profile**, at the top, opens it any time). Pick your resume (a PDF or Word
+(and **Edit your profile**, under Settings, Your profile, opens it any time). Pick your resume (a PDF or Word
 file), then check your contact details, answer the work authorization questions (none is
 answered for you), list your jobs and schools (each school asks whether you finished it: one
 you didn't is saved as "Some college (no degree)", "Some high school" or the program "(not
 completed)", never as a degree), and choose the three consents. Save writes `profile.yaml`,
 changing only what you changed and leaving every other line, comments too, as it was (a list
 it changes, such as your jobs or schools, is written anew on one line, without comments of its
-own), then opens What and where. With an Anthropic API key saved under Site passwords,
+own), then opens What and where. With an Anthropic API key saved in the Site passwords card
+under Settings, Accounts and passwords,
 **Read my resume** has Claude read it and fill in the boxes that are still empty, each named
 for you to check; without one, you type them. The rest of setup's questions (stage 2) are
 asked on a job's card when an application needs them.
@@ -196,7 +198,7 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
 > 4. Answer what it asks under **Needs you**.
 > 5. Check each review page and press **Submit**: nothing is sent before you do (unless you turn on **Submit for me**).
 >
-> Once: save a password for each job system under **Site passwords**, and the desk makes your accounts.
+> Once: save a password for each job system under **Settings, Accounts and passwords**, and the desk makes your accounts.
 
 1. **Find jobs** searches every employer's career site for your target titles in
    your area. Each opening gets a fit score, with the reasons and concerns under it:
@@ -216,7 +218,7 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
    applying to it. For Company, that employer's other openings score 10 lower, said in their
    score's breakdown.
    It searches only when you press it, unless you turn on **Search by itself every 12
-   hours** (in Settings, under Searching and applying; off by default; it waits while
+   hours** (Settings, Job search; off by default; it waits while
    the queue is paused). Each switch that's on is said in a line under the head. A search running is
    shown in the header, with **Stop search** beside it.
 2. Tick the ones you want, or press **Select recommended**, then **Apply** in the bar
@@ -225,7 +227,7 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
    desk couldn't open to check, or whose posting puts the job in another state.
    They're under **All**, with the reason, so you can still tick them yourself.
    The desk works through them in the desk's browser window, two at a time, each in its own
-   tab (**Jobs at once**, in Settings under Searching and applying, sets 1 to 5), the ones most likely to
+   tab (**Jobs at once**, under Settings, Applying, sets 1 to 5), the ones most likely to
    go all the way first: employers where the plugin's live check reached the review page,
    then job systems it usually gets through, then the rest, and last LinkedIn's and Indeed's
    (their Submit is always yours) and employers where the desk met bot checks more often
@@ -252,11 +254,11 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
      legal waiver, or the terms of your employment), and picks an application's attestation
      that its information is true and complete, or
      your consent to the background check that comes with applying, noting each in the job's
-     log. To answer those yourself, set `accept_notices: false` under `settings:` in your
-     profile. Practice mode never agrees to them.
+     log. To answer those yourself, turn off **Agree to required notices** (Settings, Applying),
+     or set `accept_notices: false` under `settings:` in your profile. Practice mode never agrees to them.
    - Sign-ins, bot checks, CAPTCHAs and emailed codes. You deal with those in the
      desk's browser window, and the desk carries on by itself (with a site's password and your
-     email app password saved in **Site passwords**, below, it does the sign-ins and the
+     email app password saved under **Settings, Email codes**, below, it does the sign-ins and the
      codes itself). A link a site emails you to
      confirm your address opens in your usual browser, so reload that job's tab in the
      desk's browser window once you've opened it. The other jobs wait while you work in that
@@ -264,7 +266,7 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
      comes to the front. If nothing happens in it for 5 minutes, they go ahead without it, so you can
      leave a batch running and come back. Finish each waiting job in its tab later, and
      the desk picks it up again by itself.
-   - Press **Alert me** in the desk's header to get a desktop notification whenever a
+   - Press **Alert me** (Settings, Phone alerts) to get a desktop notification whenever a
      job needs you or is ready to submit, so you can leave the desk working in the
      background. For alerts on your phone, with the page closed too, see
      [Phone alerts](#phone-alerts).
@@ -295,7 +297,7 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
 
 #### Phone alerts
 
-The desk's **Phone alerts** card sends a push to your phone through
+The **Phone alerts** card (Settings, Phone alerts) sends a push to your phone through
 [ntfy](https://ntfy.sh), a free push service, while the desk runs (its page can be closed):
 
 - **Turn on phone alerts** makes a long random topic name. Install the ntfy app (App Store or
@@ -314,17 +316,18 @@ The desk's **Phone alerts** card sends a push to your phone through
   page and tries again with the next alert, or by itself a few minutes later; nothing else is
   held up.
 - Never in practice mode (`submit_mode: dry_run`), which sends nothing (a test included), nor in
-  the plugin's live check. To use your own ntfy server, set `phone_alerts_server` to its https
-  address.
+  the plugin's live check. To use your own ntfy server, type its https address under **Your own
+  alert server**, below the card (`phone_alerts_server` in your profile).
 
 #### Cover letters
 
-Turn on **Cover letter** (beside Submit for me, in the bar that shows once a job is ticked) and each job you
+Turn on **Cover letter** (beside Submit for me, in the bar that shows once a job is ticked; or **Write a
+cover letter for each job** under Settings, Resume and cover letters) and each job you
 apply to gets a cover letter of its own, written while the job waits in the queue and
 uploaded wherever its application has a cover letter box:
 
 - **Who writes it:** Claude, one of two ways:
-  - **With an Anthropic API key** saved on the desk (Site passwords, "Anthropic API key"; make
+  - **With an Anthropic API key** saved on the desk (Settings, Accounts and passwords, "Anthropic API key"; make
     one in the [Claude Console](https://console.anthropic.com/settings/keys) and add credit
     under Billing): each letter is written through Anthropic's API, billed to that key (about
     10 to 20 cents a letter, written and checked). Claude Code isn't needed for this. A key set
@@ -334,7 +337,8 @@ uploaded wherever its application has a cover letter box:
 
   If neither works (no key saved and `claude` isn't on this computer or isn't signed in, or the
   key is turned down or out of credit), the desk says so once at the top of the page, and your
-  applications go on with your usual cover letter (`documents.cover_letter` in your profile),
+  applications go on with your usual cover letter (**Your usual cover letter** under Settings,
+  Resume and cover letters, or `documents.cover_letter` in your profile),
   or none.
 - **What it says:** one page from your resume, your profile and the job's posting, using
   only what they say: never a degree, certification, clearance, years of experience or skill
@@ -358,11 +362,12 @@ uploaded wherever its application has a cover letter box:
   they're written, tell Claude in the chat what to change; or press **Turn cover letters
   off**. Each job's log says when its letter was written, and its card's **Cover letter**
   opens it. The letter is saved in the job's folder, and a job tried again keeps it.
-- `settings.cover_letter_model` in your profile picks the model (the usual one is
+- **Which model writes the letters** (Settings, Resume and cover letters), or
+  `settings.cover_letter_model` in your profile, picks the model (the usual one is
   `claude-opus-5-5`, at medium effort; `claude-sonnet-5-5` is lighter on your plan's usage).
 
-Each employer has its own account on its job site. In the desk's **Site passwords**
-card, save one password for a job system: Workday (15 of the semiconductor employers and 27 of the
+Each employer has its own account on its job site. Under **Settings, Accounts and
+passwords**, save one password for a job system: Workday (15 of the semiconductor employers and 27 of the
 Phoenix list's), SuccessFactors
 (Edwards, Qorvo, Amkor), iCIMS (Daifuku), ApplicantStack (SCREEN), UKG Pro (Nikon
 Precision), Infor (Benchmark) or Taleo (Kforce). The desk then creates your account at each of that system's
@@ -384,7 +389,7 @@ open the reset email where the site says the email already has an account. An ac
 there before that was never verified (the site refuses the sign-in with "Verify your account
 before you sign in") isn't reset: with the email app password the desk presses the site's
 "Resend Account Verification" once and opens the new email's link; without it the card names
-that button. To do these steps yourself, set
+that button. To do these steps yourself, turn off **Make my accounts** (Settings, Applying), or set
 `manage_accounts: false` under `settings:` in your profile: the desk then fills in Create
 Account for you to finish. Practice mode never creates an account. On Qorvo's one-page application
 it puts the password in both boxes. The password goes from the page straight into your
@@ -394,10 +399,11 @@ Linux, or a keyring that's locked), and is only ever typed into that system's
 own addresses (for Workday, `*.myworkdayjobs.com` and `*.myworkday.com`). Claude never sees
 it, and the desk only reports whether one is saved.
 
-The same card takes an **email app password** for the address in your profile (for
+**Settings, Email codes** takes an **email app password** for the address in your profile (for
 Gmail, make one at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords);
 it needs 2-Step Verification; Yahoo, iCloud and AOL addresses work the same way, but
-Outlook.com and Hotmail no longer accept app passwords). With it saved, a job waiting on
+Outlook.com and Hotmail no longer accept app passwords), and **Test it now** there checks that it
+signs in (the Site passwords card takes it too). With it saved, a job waiting on
 an emailed code or confirmation link gets it from your inbox:
 - the desk types the code in and presses Verify, Confirm, Continue or Next (never
   Submit), or opens the link in its own browser and reloads the job's tab;
@@ -439,7 +445,7 @@ Claude to open the job desk): its key is new each time the desk starts.
 begun, after asking: they go back to the openings, not skipped, to apply to again. Jobs it had
 begun keep their cards, and a Submit you pressed still goes. **Find jobs** searches again
 whether or not a queue is waiting. To leave the desk going through a long list, turn on
-**Don't wait for me** (in Settings, beside Jobs at once): a sign-in, or an emailed code only you
+**Don't wait for me** (Settings, Applying, under Jobs at once): a sign-in, or an emailed code only you
 can read, then waits on its card while the other jobs go on (never another job at the same
 site). A code the desk reads itself (from your inbox, or Claude from your Gmail) still holds
 them while it's looked for, usually a minute: one code at a time, so it never goes to another job. The **Company** box above
@@ -456,12 +462,12 @@ sent by the desk and marked as applied, its stops for you by kind, failed and sk
 time with the desk (waits included, and jobs filled at once overlap), and the employers it
 stopped at most, with the latest lines. Or ask Claude how the week went.
 
-**Safety** in the header lists what the desk does in your name, and what it never does, as
-your settings stand now: practice mode, Submit for me, LinkedIn and Indeed (always yours),
+**See everything the desk may and may not do** (Settings, Applying) opens the **Safety** window. It
+lists what the desk does in your name, and what it never does, as your settings stand now: practice mode, Submit for me, LinkedIn and Indeed (always yours),
 agreeing to notices, making accounts, cookie banners, emailed codes and the email app
 password's limits, reading replies, Jobs at once, Troubleshooting, bot checks (always yours)
 and passwords. Each line says what it means for you ("Submit for me: off. The desk stops at
-each review page; you press Submit.") and where to change it. It only shows them: nothing
+each review page; you press Submit.") and where to change it, a link to that Settings panel. It only shows them: nothing
 there changes a setting.
 
 **A morning check.** Ask Claude "what's new?" and it calls `whats_new`: the openings first
@@ -474,12 +480,13 @@ newest first, with where it stands and when the employer last wrote: "Heard 2026
 confirmation" (point at it for the email's one-line summary), or "No reply yet". The bar
 over it groups them: **Waiting**, **Heard back**, **Interviews** (interviewing or an offer)
 and **Closed** (rejected or withdrawn). One you applied to 10 days ago or more
-(`follow_up_days`) with no email at all, not even a "we received your application", is
+(`follow_up_days`; **Remind me to follow up**, under Settings, Job search) with no email at all, not even a "we received your application", is
 marked with the day its follow-up became due, and **Follow up** copies a request for you
 to paste to Claude, which drafts a polite follow-up as a Gmail draft, for you to send. An interview's row has **Prep me**, which copies a request
 ("Prep me for my interview: job 12, ...") for you to paste to Claude, which then prepares
 you for it. The replies come from `/job-apply:track-responses`, which reads them through
-the Gmail connector with `email_tracking` on, never with the desk's email app password, and
+the Gmail connector with `email_tracking` on (**Let Claude look for replies in my email**,
+Settings, Job search), never with the desk's email app password, and
 can offer to run that check every day as a scheduled task. **Change status** (the ⋯ at the end of
 a row) sets an application you sent to Applied, Interviewing, Offer, Rejected or Withdrawn by
 hand. A Job Desk started on its own, without Claude, shows no Follow up, Prep me or Tailor my
@@ -503,16 +510,16 @@ apply there in your everyday browser, or through the same posting on Indeed.
 
 ## Where your data lives
 
-Everything personal stays on your machine in `~/.job-apply/`. Set
-`JOB_APPLY_HOME` to put it somewhere else.
+Everything personal stays on your machine in `~/.job-apply/` (**Open the folder**, under Settings,
+Updates and about, opens it). Set `JOB_APPLY_HOME` to put it somewhere else.
 
 | Path | Contents |
 |---|---|
-| `profile.yaml` | Your answers. Edit it any time ([template](plugins/job-apply/templates/profile.example.yaml)). |
+| `profile.yaml` | Your answers. The Job Desk's profile window and Settings change it for you, or edit it any time ([template](plugins/job-apply/templates/profile.example.yaml)). |
 | `resume.pdf` | Default resume |
 | `secrets.yaml` | Optional career-site passwords, such as `workday_password` (and the phone alerts' topic, `ntfy_topic`), where your computer has no password vault. Save one from the Job Desk, or write the file yourself and run `chmod 600` on it. Where there is a vault (Windows Credential Manager, the macOS Keychain, a Linux desktop's keyring), the desk keeps saved passwords there instead, under `job-apply`, and moves what you write in this file into it when it starts (comments and anything it couldn't move stay); `vault-names.json` lists their names, never a value. A line you write in this file comes before the vault's until then, and a password set in the environment as `JOB_APPLY_SECRET_<NAME>` comes before both. `job-apply-doctor` says which it uses. The vault's entries belong to this folder where it is: move the folder (or `JOB_APPLY_HOME`) and save them again. Deleting `~/.job-apply` doesn't take them out of the vault: run `uv run --project <plugin>/server job-apply-doctor --forget-passwords` first, or remove the `job-apply` entries in Windows Credential Manager (Keychain Access on a Mac, Passwords and Keys on Linux). A password named for a job system goes only onto that system's sites; any other only onto that site's own domain (`acme_password` on acme.com) or its tenant on a shared job system (acme.wd5.myworkdayjobs.com), never an address that merely contains the name. |
 | `tracker.db` | Application tracker (SQLite). `export_jobs_csv` writes a spreadsheet. |
-| `answers.yaml` | Answers you gave in the Job Desk, reused on later applications. Edit or delete entries freely. |
+| `answers.yaml` | Answers you gave in the Job Desk, reused on later applications. The desk's **Your answers** page lists the ones given on a job's card under **Answers the desk remembers**, with **Change** and **Forget** (an ID shows as dots until **Show**). Edit or delete entries freely. |
 | `companies.yaml` | Optional: which of the plugin's employer lists to search (`lists:`) and employers of your own, in place of the default list. |
 | `recommendations.json`, `desk.json` | The Job Desk's last search, and its switches ("Submit for me", "Jobs at once") and when you last looked at it |
 | `openings_found.json`, `whats_new.json` | When each opening was first found (for **New** and `whats_new`), and when `whats_new` was last called |
@@ -522,7 +529,7 @@ Everything personal stays on your machine in `~/.job-apply/`. Set
 | `applications/<id>-<company>-<title>/` | Tailored resume and cover letter, a reference list made for the job, screenshots, submission record, `debug/` snapshots |
 
 Documents in `profile.yaml`: `documents.resume` (and, optionally, `documents.cover_letter`) go up where a form
-asks for a resume or a cover letter. Three more are optional, each one file or a list of files, for the forms that
+asks for a resume or a cover letter (choose them under Settings, Resume and cover letters, too). Three more are optional, each one file or a list of files, for the forms that
 ask for them (schools, cities, counties and other public employers often do): `documents.transcripts` (unofficial
 transcripts), `documents.references` (a reference list) and `documents.certificates` (certificates, licenses or
 diplomas). Only a box asking for one of them gets it: never a box for something else (a letter of reference, a form
@@ -534,24 +541,25 @@ relationship, company, phone and email: only what you write) on one page in the 
 only while it holds them as they are. A required box for one you haven't added waits for you, its card naming the
 line to add. Your references' names, phones and emails are kept out of problem reports like your own details.
 
-Settings in `profile.yaml`:
+Settings in `profile.yaml` (most are switches on the Job Desk too: where, in each row):
 
 | Setting | Default | Effect |
 |---|---|---|
-| `submit_mode` | `review` | Set to `auto` to let Claude submit complete applications without asking, for the job systems in `auto_submit_ats`. `dry_run` fills everything and never submits, which is good for a first practice run. |
-| `email_codes` | `false` | Claude may read the sign-in codes and verification links that career sites email you (needs the Gmail connector): when you apply with Claude in the chat, and for the Job Desk while its chat is open and no email app password is saved on it (Claude reads only that job's own mail since it began waiting, and the desk puts the code in) |
-| `email_tracking` | `false` | Claude may search your email for replies to your applications (needs the Gmail connector) |
-| `accept_notices` | `true` | The Job Desk agrees for you to an employer's notice about AI screening of your application and to its privacy notice and terms of use (never a newsletter, job alerts or a talent community, texts or automated calls, a legal waiver, or the terms of your employment), and picks an application's attestation that its information is true (or your consent to its background check), noting each in the job's log. Never in practice mode. `false` leaves them to you. |
-| `accept_cookies` | `false` | The Job Desk declines cookie banners. One with no way to decline (TI's "Agree and Proceed") waits for you, unless this is `true`: then the desk accepts it for you. |
-| `manage_accounts` | `true` | The Job Desk creates your account at a job system with the password you saved on the desk for it (ticking the site's terms, never a newsletter), resets a password the site refuses through its "Forgot password" email, and presses "Resend Account Verification" for an account never verified. A form's security questions are asked on the desk's card and never remembered; a picture code stays yours. Never in practice mode. `false`: the desk fills in Create Account for you to finish. |
-| `jobs_at_once` | `2` | How many applications the Job Desk fills at the same time (1 to 5), each in its own tab of the desk's browser window. Never two at one employer's site or job-system tenant; one at a time signs in, makes an account, resets a password or waits on an emailed code; while a sign-in or code needs you, no other job starts and no other tab comes to the front. `1` fills them one after another. The desk's **Jobs at once** buttons change it there (kept in `desk.json` until this setting changes). |
-| `follow_up_days` | `10` | The days an application you sent in waits with no reply (not even a "we received it" email) before the Job Desk's My applications marks it for a follow-up (1 to 90). |
-| `auto_submit_ats` | `[]` | With `submit_mode: auto`, the job systems Claude may submit on without asking (`workday`, `greenhouse`, `lever`, `eightfold`, `successfactors`). The Job Desk has its own switch, **Submit for me**. |
-| `phone_alert_details` | `false` | [Phone alerts](#phone-alerts) name the employer and the job too (they pass through ntfy's servers). The desk's **Say which employer and job** changes it. |
-| `phone_summary_at` | `"18:00"` | When the phone alerts' summary of the day comes, by this computer's clock (`off`: none). The desk's card changes it. |
-| `phone_alerts_server` | ntfy.sh | Your own ntfy server's https address, for phone alerts (http only for `localhost`; no name or password in it). |
-| `desk_window` | `app` | How the Job Desk opens: `app`, in a window of its own (in Edge or Chrome, whichever it finds; without either, in a tab), or `tab`, in a tab of your usual browser. |
-| `browser_channel` | `chrome` | The browser the desk drives: `chrome`, `msedge`, or `chromium` (Playwright's bundled browser). `headless: true` hides its window. |
+| `submit_mode` | `review` | Set to `auto` to let Claude submit complete applications without asking, for the job systems in `auto_submit_ats`. `dry_run` fills everything and never submits, which is good for a first practice run. On the desk: **Practice mode** (Settings, Applying) switches between `review` and `dry_run`; `auto` is set here only. |
+| `email_codes` | `false` | Claude may read the sign-in codes and verification links that career sites email you (needs the Gmail connector): when you apply with Claude in the chat, and for the Job Desk while its chat is open and no email app password is saved on it (Claude reads only that job's own mail since it began waiting, and the desk puts the code in). On the desk: **Let Claude read codes through Gmail** (Settings, Email codes). |
+| `email_tracking` | `false` | Claude may search your email for replies to your applications (needs the Gmail connector). On the desk: **Let Claude look for replies in my email** (Settings, Job search). |
+| `accept_notices` | `true` | The Job Desk agrees for you to an employer's notice about AI screening of your application and to its privacy notice and terms of use (never a newsletter, job alerts or a talent community, texts or automated calls, a legal waiver, or the terms of your employment), and picks an application's attestation that its information is true (or your consent to its background check), noting each in the job's log. Never in practice mode. `false` leaves them to you. On the desk: **Agree to required notices** (Settings, Applying). |
+| `accept_cookies` | `false` | The Job Desk declines cookie banners. One with no way to decline (TI's "Agree and Proceed") waits for you, unless this is `true`: then the desk accepts it for you. On the desk: **Cookie banners** (Settings, Applying). |
+| `manage_accounts` | `true` | The Job Desk creates your account at a job system with the password you saved on the desk for it (ticking the site's terms, never a newsletter), resets a password the site refuses through its "Forgot password" email, and presses "Resend Account Verification" for an account never verified. A form's security questions are asked on the desk's card and never remembered; a picture code stays yours. Never in practice mode. `false`: the desk fills in Create Account for you to finish. On the desk: **Make my accounts** (Settings, Applying). |
+| `jobs_at_once` | `2` | How many applications the Job Desk fills at the same time (1 to 5), each in its own tab of the desk's browser window. Never two at one employer's site or job-system tenant; one at a time signs in, makes an account, resets a password or waits on an emailed code; while a sign-in or code needs you, no other job starts and no other tab comes to the front. `1` fills them one after another. The desk's **Jobs at once** buttons (Settings, Applying) change it there (kept in `desk.json` until this setting changes). |
+| `follow_up_days` | `10` | The days an application you sent in waits with no reply (not even a "we received it" email) before the Job Desk's My applications marks it for a follow-up (1 to 90). On the desk: **Remind me to follow up** (Settings, Job search). |
+| `auto_submit_ats` | `[]` | With `submit_mode: auto`, the job systems Claude may submit on without asking (`workday`, `greenhouse`, `lever`, `eightfold`, `successfactors`). The Job Desk has its own switch, **Submit for me** (Settings, Applying, and the bar that shows once a job is ticked). |
+| `phone_alert_details` | `false` | [Phone alerts](#phone-alerts) name the employer and the job too (they pass through ntfy's servers). The desk's **Say which employer and job** (Settings, Phone alerts) changes it. |
+| `phone_summary_at` | `"18:00"` | When the phone alerts' summary of the day comes, by this computer's clock (`off`: none). The desk's **Summary of the day at** (Settings, Phone alerts) changes it. |
+| `phone_alerts_server` | ntfy.sh | Your own ntfy server's https address, for phone alerts (http only for `localhost`; no name or password in it). On the desk: **Your own alert server** (Settings, Phone alerts). |
+| `desk_window` | `app` | How the Job Desk opens: `app`, in a window of its own (in Edge or Chrome, whichever it finds; without either, in a tab), or `tab`, in a tab of your usual browser. On the desk: **Open the desk in** (Settings, Updates and about). |
+| `browser_channel` | `chrome` | The browser the desk drives: `chrome`, `msedge`, or `chromium` (Playwright's bundled browser). `headless: true` hides its window (set here only). On the desk: **The browser the desk fills forms in** (Settings, Updates and about). |
+| `learn_from_responses` | `true` | Once enough of your applications have had an answer, openings like the ones that got answers are listed higher; a job's fit number doesn't change. On the desk: **Learn from what worked** (Settings, Job search). |
 
 ## What's inside
 
