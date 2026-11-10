@@ -1,3 +1,144 @@
+## needs-h
+Needs you
+15
+Equipment Technician · Example Sign In Sign in
+Sign in on Example Sign In's site in the desk's browser window, then press Carry on.
+Show me
+Carry on
+Later
+Skip job
+I submitted it myself
+Report a problem
+Equipment Technician · Example Questions Questions
+2 questions your profile doesn't answer.
+What went in (1 answer)
+My Information
+First Name
+Sam
+Do you have a valid driver's license?
+Yes
+No
+Remember for later applications
+Desired salary
+Remember for later applications
+Employee ID (if previously employed)
+Optional: left empty, it isn't asked again for this job. Left empty with Remember ticked and Fill these in, it isn't asked at Example Questions again either (to be asked there again, ask Claude to clear it from answers.yaml, or put your ID in your profile's history.employee_ids).
+Remember for this employer only
+WWID
+Remember for this employer only
+Northwind Employee ID
+For this application only.
+Show me
+Fill these in
+Carry on
+Skip job
+I submitted it myself
+Report a problem
+Equipment Technician · Example Code Emailed code
+The site emailed a code: type it in the desk's browser window, then press Carry on.
+Claude is looking in your Gmail for the code. You can still enter it yourself: whichever comes first goes in.
+Show me
+Carry on
+Skip job
+I submitted it myself
+Report a problem
+Process Technician · Example Code Emailed code
+The site emailed a code: type it in the desk's browser window, then press Carry on.
+Claude can't tell this job's code from another job's in your Gmail (one sender emails both, and the other began its own email step after this one paused), so it's yours to enter in the desk's browser window.
+Show me
+Carry on
+Skip job
+I submitted it myself
+Report a problem
+Equipment Technician · Example Bot Bot check
+A bot check: solve it in the desk's browser window. The desk never does.
+Show me
+Carry on
+Skip job
+I submitted it myself
+Report a problem
+Equipment Technician · Example Captcha CAPTCHA
+A CAPTCHA before Submit: tick it, then press Submit here.
+Show me
+Submit
+I submitted it myself
+Skip job
+Report a problem
+Equipment Technician · Example Stuck Stuck
+I couldn't find the button that moves this application on.
+Show me
+Carry on
+Skip job
+I submitted it myself
+Report a problem
+Equipment Technician · Example Site Error Stuck
+Example Site Error's site said “Something went wrong” again and asked for the page to be refreshed, and I had reloaded once already for this application. That's the site's own trouble: reload the page in the desk's browser window (now, or later if it still says so), then press Carry on. The site had an error, so I'll try this job again by itself at HH:MM PM (once), or press Try now.
+Show me
+Carry on
+Try now
+Skip job
+I submitted it myself
+Report a problem
+Equipment Technician · Example Not Sent Stuck
+Submit was pressed and the form is still there.
+Show me
+Submit
+I submitted it myself
+Skip job
+Report a problem
+Equipment Technician · Example Own Submit Your Submit
+Its send button reads Apply: yours to press.
+Show me
+I submitted it myself
+Skip job
+Report a problem
+Equipment Technician · Example Check Check if it went in
+Submit was pressed and no confirmation showed.
+Show me
+I submitted it myself
+Skip job
+Report a problem
+Equipment Technician · Example Tailor Waiting for a resume
+Waiting for Claude to write a resume for this job.
+Use my usual resume
+Skip job
+Report a problem
+Equipment Technician · Example Twice Already begun?
+This may be a job you began or applied to on Indeed.
+Apply anyway
+Skip job
+Report a problem
+Equipment Technician · Example Restart Restarted
+Begun before the desk restarted.
+Carry on
+Skip job
+I submitted it myself
+Report a problem
+Equipment Technician · Example Letter Cover letter to check
+This is the first cover letter the desk wrote for you (with your Claude login), and this job waits for your say. If it's right, press Use it: from then on each job's letter goes in without asking. To change how they're written, tell Claude in the chat what to change, or press Turn cover letters off.
+# Sam Rivera
+sam.rivera@example.com · 480-555-0123 · Chandler, AZ
+Dear Hiring Team,
+I am applying for the Equipment Technician position at Example Letter. <b>Made-up</b> letter text.
+Sincerely,
+Sam Rivera
+Use it
+Turn cover letters off
+Skip job
+Report a problem
+
+## done-h
+Ready and done
+Nothing yet.
+No applications tracked yet.
+
+## work-h
+Working on
+Idle.
+
+## idle-h
+(hidden)
+
 ## list-h
 Openings
 Recommended
@@ -143,150 +284,6 @@ Example Letter · Phoenix, AZ · YYYY-MM-DD · pay not listed
 title matches
 Cover letter to check
 
-## idle-h
-(hidden)
-
-## needs-h
-Needs you
-15
-Equipment Technician · Example Sign In Sign in
-Sign in on Example Sign In's site in the desk's browser window, then press Carry on.
-Show me
-Carry on
-Later
-Skip job
-I submitted it myself
-Report a problem
-Equipment Technician · Example Questions Questions
-2 questions your profile doesn't answer.
-What went in (1 answer)
-My Information
-First Name
-Sam
-Do you have a valid driver's license?
-Yes
-No
-Remember for later applications
-Desired salary
-Remember for later applications
-Employee ID (if previously employed)
-Optional: left empty, it isn't asked again for this job. Left empty with Remember ticked and Fill these in, it isn't asked at Example Questions again either (to be asked there again, ask Claude to clear it from answers.yaml, or put your ID in your profile's history.employee_ids).
-Remember for this employer only
-WWID
-Remember for this employer only
-Northwind Employee ID
-For this application only.
-Show me
-Fill these in
-Carry on
-Skip job
-I submitted it myself
-Report a problem
-Equipment Technician · Example Code Emailed code
-The site emailed a code: type it in the desk's browser window, then press Carry on.
-Claude is looking in your Gmail for the code. You can still enter it yourself: whichever comes first goes in.
-Show me
-Carry on
-Skip job
-I submitted it myself
-Report a problem
-Process Technician · Example Code Emailed code
-The site emailed a code: type it in the desk's browser window, then press Carry on.
-Claude can't tell this job's code from another job's in your Gmail (one sender emails both, and the other began its own email step after this one paused), so it's yours to enter in the desk's browser window.
-Show me
-Carry on
-Skip job
-I submitted it myself
-Report a problem
-Equipment Technician · Example Bot Bot check
-A bot check: solve it in the desk's browser window. The desk never does.
-Show me
-Carry on
-Skip job
-I submitted it myself
-Report a problem
-Equipment Technician · Example Captcha CAPTCHA
-A CAPTCHA before Submit: tick it, then press Submit here.
-Show me
-Submit
-I submitted it myself
-Skip job
-Report a problem
-Equipment Technician · Example Stuck Stuck
-I couldn't find the button that moves this application on.
-Show me
-Carry on
-Skip job
-I submitted it myself
-Report a problem
-Equipment Technician · Example Site Error Stuck
-Example Site Error's site said “Something went wrong” again and asked for the page to be refreshed, and I had reloaded once already for this application. That's the site's own trouble: reload the page in the desk's browser window (now, or later if it still says so), then press Carry on. The site had an error, so I'll try this job again by itself at HH:MM PM (once), or press Try now.
-Show me
-Carry on
-Try now
-Skip job
-I submitted it myself
-Report a problem
-Equipment Technician · Example Not Sent Stuck
-Submit was pressed and the form is still there.
-Show me
-Submit
-I submitted it myself
-Skip job
-Report a problem
-Equipment Technician · Example Own Submit Your Submit
-Its send button reads Apply: yours to press.
-Show me
-I submitted it myself
-Skip job
-Report a problem
-Equipment Technician · Example Check Check if it went in
-Submit was pressed and no confirmation showed.
-Show me
-I submitted it myself
-Skip job
-Report a problem
-Equipment Technician · Example Tailor Waiting for a resume
-Waiting for Claude to write a resume for this job.
-Use my usual resume
-Skip job
-Report a problem
-Equipment Technician · Example Twice Already begun?
-This may be a job you began or applied to on Indeed.
-Apply anyway
-Skip job
-Report a problem
-Equipment Technician · Example Restart Restarted
-Begun before the desk restarted.
-Carry on
-Skip job
-I submitted it myself
-Report a problem
-Equipment Technician · Example Letter Cover letter to check
-This is the first cover letter the desk wrote for you (with your Claude login), and this job waits for your say. If it's right, press Use it: from then on each job's letter goes in without asking. To change how they're written, tell Claude in the chat what to change, or press Turn cover letters off.
-# Sam Rivera
-sam.rivera@example.com · 480-555-0123 · Chandler, AZ
-Dear Hiring Team,
-I am applying for the Equipment Technician position at Example Letter. <b>Made-up</b> letter text.
-Sincerely,
-Sam Rivera
-Use it
-Turn cover letters off
-Skip job
-Report a problem
-
-## work-h
-Working on
-Idle.
-
-## done-h
-Ready and done
-Nothing yet.
-No applications tracked yet.
-
-## working-h
-(hidden)
-
 ## bank-h
 Common questions
 0 of 12 answered
@@ -304,6 +301,19 @@ No
 Yes
 What pay are you looking for? Write it as the site would ask, e.g. "$28 per hour" or "$60,000 per year".
 Show all 12
+
+## working-h
+(hidden)
+
+## profile-h
+Your profile
+Your details, work history and education, and the answers that go on every application.
+Edit your profile
+
+## safety-card-h
+Safety
+What the desk may do for you and what it never does, as it is set now.
+See your safety settings
 
 ## pw-h
 Site passwords
@@ -331,4 +341,27 @@ A push on your phone when a job needs you or is ready for your Submit, and a sum
 Turn on phone alerts
 How this works
 The alerts go through ntfy's servers to the topic your phone subscribes to. So they say only counts and kinds ("A job needs you: a bot check", "2 applications are ready for your Submit"), never an employer, a job or anything about you, unless you turn on Say which employer and job. The topic is a long random name kept on this computer, with your passwords; Turn off forgets it (a new one is made next time). One alert a job a stop, those that come together in one; the summary at the time you pick (empty: none). To use your own ntfy server, set phone_alerts_server under settings: in your profile.
+
+## alerts-h
+Alerts on this computer
+A note on your screen when a job needs you.
+Alert me
+
+## program-h
+This program
+Version 0.0.0.
+The desk runs inside Claude here. It stops when you close Claude.
+
+## how-h
+How the desk works
+Find jobs searches the career sites of the employers on your lists, and ranks what it finds against your profile.
+You pick openings and press Apply to selected. The desk fills each application in the desk's browser window, up to its review page.
+When a site needs you (a question, a sign-in, a bot check), the job waits under Needs you on the Home page.
+Nothing is submitted until you press Submit, unless you turned on "Submit for me". LinkedIn and Indeed are always submitted by you.
+Answers you give here are saved in ~/.job-apply/answers.yaml unless you untick "remember".
+
+## notes-card-h
+Notes on the desk's stops
+Each time a job stops on something the desk most likely got wrong, it takes a note. Filing the notes is how the next version gets better.
+No notes right now.
 
