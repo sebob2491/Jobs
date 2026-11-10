@@ -554,15 +554,15 @@ class FillingMixin:
                         "that box is yours (the desk never picks a degree you didn't earn): choose in the desk's "
                         "browser window, or delete that school's block with its Delete button where the site doesn't "
                         "need it (your resume still shows the classes), then press Carry on. If you did finish a "
-                        "degree there, add it to that school under education_history in profile.yaml (degree: the "
-                        "one you earned), and the desk fills it in from then on.")
+                        "degree there, add the one you earned to that school in your profile (Settings, Your "
+                        "profile), and the desk fills it in from then on.")
         if kinds:
             # the list has the level, in kinds the profile doesn't choose between: never one it didn't say
             said.append("; ".join(f"The Degree list for {name} has several kinds of {degree} ({', '.join(options[:4])})"
                                   for name, (degree, options) in kinds.items())
                         + ", and your profile doesn't say which you earned, so that box is yours: choose it in the "
-                        "desk's browser window, then press Carry on. Or write it in full under education_history in "
-                        "profile.yaml (degree: Bachelor of Science, say), and the desk picks it from then on.")
+                        "desk's browser window, then press Carry on. Or write it in full in your profile (Settings, "
+                        "Your profile), Bachelor of Science, say, and the desk picks it from then on.")
         if unloaded:
             one = sum(len(w) for w in unloaded.values()) == 1
             said.append(f"{site}'s {'list' if one else 'lists'} for {listed(unloaded)} showed no choices at all, only "

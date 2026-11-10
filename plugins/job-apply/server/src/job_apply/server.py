@@ -1704,8 +1704,8 @@ async def submit_application(job_id: int | None = None, user_confirmed: bool = F
     policy = _submit_policy(ats)
     if policy == "dry_run":
         _mark_ready(job, "dry run: filled, not submitted")
-        return {"submitted": False, "reason": "Dry run (settings.submit_mode: dry_run): the form is filled and "
-                                              "left unsubmitted. Nothing was sent."}
+        return {"submitted": False, "reason": "Practice mode: the form is filled and left unsubmitted. "
+                                              "Nothing was sent."}
     if policy == "user_clicks_submit":
         _mark_ready(job, f"filled on {ATS_NAMES.get(ats, ats)}")
         return {

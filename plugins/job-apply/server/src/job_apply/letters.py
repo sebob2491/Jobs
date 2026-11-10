@@ -128,29 +128,29 @@ _CHILD_SECRET = re.compile(r"^(JOB_APPLY_SECRET_|LIVE_TEST_|CLAUDE_BG_)")
 
 TAIL = (" The desk tries again in 10 minutes, or at once when you turn Write a cover letter for each job off and on. "
         "Meanwhile your usual cover letter, if you have one, goes in.")
-NO_CLAUDE = ("Cover letters aren't being written: no Anthropic API key is saved on the desk, and it can't find Claude "
-             "Code's claude command on this computer. Save an API key under Site passwords (Anthropic API key), or "
-             "install Claude Code (or put claude on your PATH) and sign in to it." + TAIL)
+NO_CLAUDE = ("Cover letters aren't being written: the desk has nothing to write them with. Save an Anthropic API key "
+             "in Settings, under Accounts and passwords, or install Claude Code and sign in to it." + TAIL)
 KEY_REFUSED = ("Cover letters aren't being written: Anthropic turned down the API key saved on the desk. Make a new "
-               "one in the Claude Console (console.anthropic.com, API keys) and save it under Site passwords." + TAIL)
+               "one in the Claude Console (console.anthropic.com, API keys) and save it in Settings, under Accounts "
+               "and passwords." + TAIL)
 KEY_NOT_ALLOWED = ("Cover letters aren't being written: Anthropic turned the desk's API key away for this (the key's "
                    "workspace may not be allowed the model it asks for). Check the key in the Claude Console "
-                   "(console.anthropic.com), or save another under Site passwords." + TAIL)
+                   "(console.anthropic.com), or save another in Settings, under Accounts and passwords." + TAIL)
 NO_CREDIT = ("Cover letters aren't being written: the Anthropic account behind the desk's API key is out of credit. "
              "Add some in the Claude Console (console.anthropic.com, Billing)." + TAIL)
 KEY_AT_LIMIT = ("Cover letters aren't being written: the desk's API key has reached its rate limit for now. Wait a "
                 "few minutes." + TAIL)
 API_OFFLINE = ("Cover letters aren't being written: the desk couldn't reach Anthropic's API (no internet connection, "
                "or a proxy or firewall in the way)." + TAIL)
-NOT_SIGNED_IN = ("Cover letters aren't being written: Claude Code isn't signed in on this computer. In a terminal, run "
-                 "claude and sign in (/login)." + TAIL)
-TOO_OLD = ("Cover letters aren't being written: your Claude Code is too old to write them without tools. Update it "
-           "(run claude update in a terminal)." + TAIL)
+NOT_SIGNED_IN = ("Cover letters aren't being written: Claude Code isn't signed in on this computer. Open Claude Code "
+                 "and sign in, or save an Anthropic API key in Settings, under Accounts and passwords." + TAIL)
+TOO_OLD = ("Cover letters aren't being written: your Claude Code is too old to write them without tools. Update Claude "
+           "Code, or save an Anthropic API key in Settings, under Accounts and passwords." + TAIL)
 AT_LIMIT = ("Cover letters aren't being written: your Claude plan's usage limit is reached for now. Wait for it to "
             "reset." + TAIL)
 TOOLS_ON = ("Cover letters aren't being written: Claude Code started with tools, MCP servers or plugins though the "
-            "desk asked for none, so its letters aren't used. Update Claude Code, and tell Claude about it in the "
-            "chat." + TAIL)
+            "desk asked for none, so its letters aren't used. Update Claude Code. If it still happens, press Report a "
+            "problem on a job's card." + TAIL)
 OFFLINE = ("Cover letters aren't being written: Claude Code couldn't reach Claude (no internet connection, or a "
            "proxy or firewall in the way)." + TAIL)
 MANAGED_MCP = ("Cover letters aren't being written: your organization's Claude Code settings (an enterprise MCP "
@@ -159,8 +159,8 @@ MANAGED_MCP = ("Cover letters aren't being written: your organization's Claude C
 
 
 def no_model(model: str) -> str:
-    return (f"Cover letters aren't being written: Claude Code can't use the model {model!r} (settings."
-            "cover_letter_model in profile.yaml). Fix that line, or remove it for the usual one." + TAIL)
+    return (f"Cover letters aren't being written: Claude Code can't use the model {model!r}. Change it in Settings, "
+            "under Resume and cover letters, or empty that box for the usual one." + TAIL)
 
 
 def not_started(why: str) -> str:

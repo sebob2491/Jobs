@@ -3325,10 +3325,10 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         noplace = "a file the desk doesn't attach by itself" if held else "a file your profile has no place for"
         if missing_files:
             self._pause(run, "stuck", ("The form wants a file (" + ", ".join(f["label"] for f in documents)
-                                       + ") and the profile doesn't say where yours is: ask Claude to set "
-                                       "documents.resume (or documents.cover_letter) in profile.yaml, then press Carry "
-                                       "on." + (f" It also wants {_slots_said(slotted, False, folder)}." if slotted
-                                                else "")
+                                       + ") and your profile doesn't have one. Add it in Settings, under "
+                                       "Resume and cover letters, then press Carry on."
+                                       + (f" It also wants {_slots_said(slotted, False, folder)}." if slotted
+                                          else "")
                                        + (f" It also wants {noplace}: {named}: {attach}." if others else "")
                                        if documents else
                                        f"The form wants {_slots_said(slotted, True, folder)}"
@@ -3868,9 +3868,9 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                 await self._bring_forward(run)
                 return self._pause(run, "stuck", f"{_site(run, data)} shows a cookie banner over the page that the "
                                    "desk can't decline for you. Choose in the banner in the desk's browser window, "
-                                   "then press Carry on." + ("" if _cookie_setting() else " (To let the desk accept "
-                                   "banners with no way to decline for you, set accept_cookies: true under "
-                                   "settings: in profile.yaml.)"), code="cookie_banner")
+                                   "then press Carry on." + ("" if _cookie_setting() else " To have the desk accept "
+                                   "banners that have no way to decline, choose that in Settings, under Applying."),
+                                   code="cookie_banner")
             if cookies:
                 data, text = await self._look()
                 run.page_info = _page_info(data)
@@ -4365,8 +4365,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                 asks = ("It asks you to read and accept its data privacy statement, which agrees to something "
                         "in your name, so it's yours: open it in the desk's browser window and accept it if "
                         "you're happy to, then create the account (then verify your email if they ask)")
-                first += (" (The desk accepts an employer's privacy notice for you with accept_notices: true "
-                          "under settings: in profile.yaml, outside practice mode.)" if not _may_accept_notices()
+                first += (" (The desk accepts an employer's privacy notice for you outside practice mode: turn on "
+                          "Agree to required notices in Settings, under Applying.)" if not _may_accept_notices()
                           else " I tried to open it and accept it for you, and couldn't." if lap.manage else "")
                 # (the statement it opened for them is open still: paused on)
                 lap.data, _ = await self._look(text=False)
@@ -5817,7 +5817,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                     f"“{_short(heading)}”. Read it and press its button in the desk's browser window, then press "
                     "Carry on; the desk fills the form in after that." + (
                         " (The desk agrees to an employer's notice about AI screening, its privacy notice or terms for "
-                        "you with accept_notices: true under settings: in profile.yaml, outside practice mode.)"
+                        "you outside practice mode: turn on Agree to required notices in Settings, under Applying.)"
                         if ai and agree is not None
                         and not allowed else ""), code="notice_theirs")
         return "paused"
@@ -8584,8 +8584,8 @@ def _went_left(run: Run, result: dict[str, Any], *pages: dict[str, Any]) -> None
         if q.get("employer_id") and not theirs:
             continue  # (asked on its card: theirs to answer, not left)
         # (left empty at this employer on an earlier job's card: said with how it's undone, the third review's LOW 1)
-        why = (f"you left it empty at {run.company or 'this employer'} before (to be asked again, ask Claude to clear "
-               "it from answers.yaml, or set history.employee_ids)" if q.get("left_here")
+        why = (f"you left it empty at {run.company or 'this employer'} before (to be asked there again, forget it on "
+               "the Your answers page)" if q.get("left_here")
                else "you left it empty" if theirs
                else f"your profile's answer “{q['unmatched']}” isn't one of its choices" if q.get("unmatched")
                else "it wouldn't take your profile's answer" if q.get("error") else "your profile doesn't answer it")

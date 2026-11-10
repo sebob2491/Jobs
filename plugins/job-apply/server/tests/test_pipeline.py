@@ -10968,8 +10968,8 @@ def test_an_optional_id_question_is_put_to_the_person_once():
     pipeline._went_left(fresh, {**result, "needs_input": [before]}, {**page, "fields": [before]})
     # (said with how it's undone: the third review's LOW 1)
     assert [(e["label"], e["why"]) for e in fresh.went_in.public()["left"]] == [
-        (pipeline._short(WWID), "you left it empty at Example Fab before (to be asked again, ask Claude to clear it "
-                                "from answers.yaml, or set history.employee_ids)")]
+        (pipeline._short(WWID), "you left it empty at Example Fab before (to be asked there again, forget it on the "
+                                "Your answers page)")]
 
 
 def test_an_answer_that_doesnt_stick_the_first_time_is_filled_again_not_asked_again(srv, monkeypatch):
@@ -16402,8 +16402,8 @@ def test_what_a_filled_page_still_needs_is_said_the_same_way_on_each_path(srv):
     unfilled = {"label": "Country of Residence", "kind": "combobox", "error": "TimeoutError: Locator.evaluate"}
     assert applier._stop_for_what_is_left(run_, "", [unfilled], [{"label": "Resume/CV*"}])
     assert run_.need == "stuck" and run_.reason.startswith(
-        "The form wants a file (Resume/CV*) and the profile doesn't say where yours is: ask Claude to set "
-        "documents.resume (or documents.cover_letter) in profile.yaml, then press Carry on. "), run_.reason
+        "The form wants a file (Resume/CV*) and your profile doesn't have one. Add it in Settings, under Resume and "
+        "cover letters, then press Carry on. "), run_.reason
     nothing = Run(2)
     assert not applier._stop_for_what_is_left(nothing, "", [], []) and nothing.status != "needs_you"
 
@@ -16424,9 +16424,8 @@ def test_a_file_the_profile_has_no_place_for_is_named_as_the_persons(srv):
     both = Run(2)
     assert applier._stop_for_what_is_left(both, "", [], [cover, sample])
     assert both.reason == (
-        "The form wants a file (Please upload your Letter of Application/Cover Letter.*) and the profile doesn't say "
-        "where yours is: ask Claude to set documents.resume (or documents.cover_letter) in profile.yaml, then press "
-        "Carry on. It also wants a file your profile has no place for: “Please upload a writing sample”: attach it in "
+        "The form wants a file (Please upload your Letter of Application/Cover Letter.*) and your profile doesn't have "
+        "one. Add it in Settings, under Resume and cover letters, then press Carry on. It also wants a file your profile has no place for: “Please upload a writing sample”: attach it in "
         "the desk's browser window."), both.reason
 
 
@@ -16467,8 +16466,8 @@ def test_a_file_for_another_document_of_the_profiles_names_the_slot_to_fill(srv,
     with_resume = Run(4)
     assert applier._stop_for_what_is_left(with_resume, "", [], [{"label": "Resume/CV*", "kind": "file"}, transcripts])
     assert with_resume.reason == (
-        "The form wants a file (Resume/CV*) and the profile doesn't say where yours is: ask Claude to set "
-        "documents.resume (or documents.cover_letter) in profile.yaml, then press Carry on. It also wants your "
+        "The form wants a file (Resume/CV*) and your profile doesn't have one. Add it in Settings, under Resume and "
+        "cover letters, then press Carry on. It also wants your "
         "transcripts (“Please upload your Unofficial Transcripts”): add documents.transcripts to your profile (the "
         "file your profile names for documents.transcripts isn't there), or attach it in the desk's browser "
         "window."), with_resume.reason

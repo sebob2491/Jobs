@@ -29,11 +29,7 @@ ALLOWED = [
     ("desk.py", "can't tell until profile.yaml is fixed"),
     ("desk.py", "nothing is filled until profile.yaml is fixed."),
     ("pipeline_mail.py", "The desk can't watch your inbox until profile.yaml reads again: "),
-    # the Safety window's lines, and the settings' warnings: Version D
-    ("desk.py", "profile.yaml, under settings:"),
-    ("desk.py", "(kept in desk.json)"),
-    ("desk.py", "your usual one (documents.cover_letter in profile.yaml)"),
-    ("desk.py", "JOB_APPLY_NEVER_SUBMIT=1 in the environment, which comes before profile.yaml"),
+    # the settings' warnings: a line of the profile that does nothing, said with the key the person wrote
     ("config.py", "Unknown settings.browser_channel "),
     ("config.py", "settings.cover_letter_model should be a model's name"),
     ("config.py", "settings.phone_alerts_server should be your ntfy server's https address"),
@@ -43,20 +39,11 @@ ALLOWED = [
     ("config.py", "settings.phone_summary_at should be a time of day"),
     # the header written at the top of answers.yaml itself, never shown on the desk
     ("config.py", "edit or delete entries freely. profile.yaml's own answers come after these."),
-    # letters.py's NOT_SIGNED_IN, TOO_OLD and no_model: Version D
-    ("letters.py", "In a terminal, run claude and sign in (/login)."),
-    ("letters.py", "(run claude update in a terminal)"),
-    ("letters.py", "(settings.cover_letter_model in profile.yaml)"),
-    # the driver's stops and log lines that name a setting's key or profile.yaml: Version D
+    # the job's log lines that name a setting's key (the live check's audit reads their words), and the mail watch's
+    # word to Claude: not in Version D's table, left as they are
     ("pipeline.py", "(manage_accounts: false in profile.yaml leaves this to you)"),
-    ("pipeline.py", "ask Claude to clear it from answers.yaml"),
     ("pipeline.py", "(settings.accept_notices)"),
-    ("pipeline.py", "with accept_notices: true under settings: in profile.yaml"),
-    ("pipeline.py", "set accept_cookies: true under settings: in profile.yaml"),
-    ("pipeline.py", "ask Claude to set documents.resume (or documents.cover_letter) in profile.yaml"),
     ("pipeline_accounts.py", "(settings.manage_accounts)"),
-    ("pipeline_filling.py", "add it to that school under education_history in profile.yaml"),
-    ("pipeline_filling.py", "Or write it in full under education_history in profile.yaml"),
     ("pipeline_mail.py", "settings.email_codes is off"),
     # the page's: the Common questions card, the Site passwords card's long paragraph, the Help page's line on answers,
     # the question card for an employee ID, the What's working card, #auto-hint, the What and where window: Version D
