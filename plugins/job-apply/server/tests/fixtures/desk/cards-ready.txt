@@ -142,24 +142,28 @@ Field Service Engineer
 Example Ready · Phoenix, AZ
 Not listed
 YYYY-MM-DD
+Workday
 Ready to submit
 72
 Technician
 Example Failed · Phoenix, AZ
 Not listed
 YYYY-MM-DD
+Workday
 Didn't finish
 72
 Technician
 Example Sent · Phoenix, AZ
 Not listed
 YYYY-MM-DD
+Workday
 Submitted
 72
 Technician
 Example Skipped · Phoenix, AZ
 Not listed
 YYYY-MM-DD
+Workday
 Skipped
 Undo
 72
@@ -167,18 +171,21 @@ Process Technician
 Example Running · Phoenix, AZ
 Not listed
 YYYY-MM-DD
+Workday
 Working…
 72
 Technician
 Example Queued · Phoenix, AZ
 Not listed
 YYYY-MM-DD
+Workday
 Queued
 72
 Technician
 Example Queued Too · Phoenix, AZ
 Not listed
 YYYY-MM-DD
+Workday
 Queued
 
 ## bank-h

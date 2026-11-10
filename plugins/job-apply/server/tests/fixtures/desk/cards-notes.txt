@@ -114,12 +114,14 @@ Technician
 Example Stuck · Phoenix, AZ
 Not listed
 YYYY-MM-DD
+Workday
 Stuck
 72
 Technician
 Example Failed · Phoenix, AZ
 Not listed
 YYYY-MM-DD
+Workday
 Didn't finish
 
 ## bank-h
