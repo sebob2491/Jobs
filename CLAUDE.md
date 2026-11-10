@@ -283,6 +283,8 @@ this file says otherwise, it wins.
     `config.live_test_identity`), so a person's own profile never turns it on; Submit stays refused in it.
 - **Passwords:**
   - a saved password goes only onto its own system's sites;
+  - a password the desk makes is made on this computer, kept as a saved one is, and goes only onto its own
+    system's sites;
   - the inbox app password only reads sign-up codes (and, with `manage_accounts`, the reset
     email a site was just asked for, from that site);
   - the desk's "Test it now" (Settings, Email codes) signs in to the inbox with that password and out again: it opens
@@ -293,6 +295,8 @@ this file says otherwise, it wins.
     the inbox's (`mailbox.pick`) and types the code itself; Claude never sends, deletes, labels or marks mail,
     and a password reset's email is never asked of it (resets stay with the app password: the owner's call, Oct 21);
   - never ask for a password in chat (the desk page holds them).
+  - a site password is shown on the desk page only when the person presses Show or Copy there; the inbox app
+    password, the API key and the alert channel are never shown.
 - **Updating:** the desk's Update button fetches only this repository's own Release (the repository named in the
   installed `plugin.json`; nothing the page or the network's answer says changes where from), over https, and runs the
   installer only after its SHA-256 matches the Release's checksum file. It runs with the person's own rights, never
