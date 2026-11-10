@@ -1,0 +1,59 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Submit application</title></head>
+<body>
+<!-- like Micron's Eightfold application (the live check, run 200): one page whose own "Submit application" is its
+     review, with the name asked twice, under Contact Information and again in Application questions' Legal Name.
+     Where it stopped, that second Last Name showed the last name typed into it, marked invalid with "Error: Last
+     Name cannot be left blank." beside it: the page's own record of the box was empty. The saved page shows only
+     that end state. How the record came to be empty is this page's model, not the saved page's: the box takes a
+     change into its record a moment after it is made, a change still waiting when the box is left is dropped, and
+     leaving the box checks it against the record (so a fill that leaves the box at once, and a fill typed again the
+     same way, are lost; typing it and waiting a moment before leaving it is kept, as a person's typing is).
+     ?refuse: the record never takes what is typed into that Last Name, so it stays marked.
+     ?other: that Last Name shows another name than the profile's (the site's own) on load, marked the same way.
+     window.record is the page's record, by label; window.sent counts presses of Submit application. -->
+<h2>Contact Information</h2>
+<form id="app" novalidate onsubmit="return false">
+  <label for="c_fn">First name</label><input id="c_fn" name="First name" aria-required="true">
+  <label for="c_ln">Last name</label><input id="c_ln" name="Last name" aria-required="true">
+  <label for="c_em">Email</label><input id="c_em" name="Email" aria-required="true">
+  <h2>Application questions</h2>
+  <h3>Legal Name</h3>
+  <label for="a_fn">First Name</label>
+  <input id="a_fn" name="First Name" aria-required="true" aria-invalid="false" aria-describedby="a_fn_error">
+  <div id="a_fn_error"><div role="status" aria-atomic="true"></div></div>
+  <label for="a_ln">Last Name</label>
+  <input id="a_ln" name="Last Name" aria-required="true" aria-invalid="false" aria-describedby="a_ln_error">
+  <div id="a_ln_error"><div role="alert" aria-atomic="true"></div></div>
+  <h3>Address</h3>
+  <label for="a_ad">Address Line 1</label><input id="a_ad" name="Address Line 1" aria-required="true">
+  <label for="a_ci">City</label><input id="a_ci" name="City" aria-required="true">
+  <label for="a_zp">Postal Code</label><input id="a_zp" name="Postal Code" aria-required="true">
+  <button type="button" id="send">Submit application</button>
+</form>
+<script>
+  const q = new URLSearchParams(location.search);
+  const lastName = document.getElementById('a_ln');
+  window.record = {};
+  window.sent = 0;
+  const check = () => {
+    const lost = !window.record['Last Name'];
+    lastName.setAttribute('aria-invalid', lost ? 'true' : 'false');
+    document.querySelector('#a_ln_error [role]').textContent = lost ? 'Error: Last Name cannot be left blank.' : '';
+  };
+  if (q.has('other')) { lastName.value = 'Rivers'; check(); }  // shown, and missing from the page's record
+  let waiting = null;
+  for (const el of document.querySelectorAll('input')) {
+    el.addEventListener('input', () => {
+      if (el !== lastName) { window.record[el.name] = el.value; return; }
+      clearTimeout(waiting);
+      const value = el.value;
+      if (!q.has('refuse')) waiting = setTimeout(() => { window.record['Last Name'] = value; waiting = null; }, 300);
+    });
+  }
+  lastName.addEventListener('blur', () => { clearTimeout(waiting); waiting = null; check(); });
+  document.getElementById('send').addEventListener('click', () => { window.sent += 1; });
+</script>
+</body>
+</html>

@@ -13505,6 +13505,54 @@ def test_a_review_page_with_errors_after_an_earlier_press_says_both(srv, monkeyp
     assert "Last Name cannot be left blank" in r.reason, r.reason
 
 
+def _lost_name_run(srv, monkeypatch, query: str = "") -> tuple[Run, int, dict]:
+    """tests/fixtures/site/eightfold-lost-name.html with `query`, run until the job stops or is ready: the run, how
+    many times Submit application was pressed, and the page's own record of its boxes (by label)."""
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
+    job = srv.add_job(url=fixture_url("site/eightfold-lost-name.html") + query, title="Equipment Technician",
+                      company="Example Fab")["job"]
+    applier = Applier(srv)
+
+    async def go():
+        applier.start()
+        try:
+            r = applier.enqueue(job["id"])
+            await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return r, await r.page.evaluate("() => window.sent"), await r.page.evaluate("() => window.record")
+        finally:
+            await applier.stop()
+
+    return run(go())
+
+
+def test_a_box_the_review_says_is_blank_though_it_shows_the_profiles_answer_is_typed_again(srv, monkeypatch):
+    """Micron's Eightfold application (the live check, run 200): its one page, whose own Submit is its review, showed
+    the profile's last name in Legal Name's Last Name, marked invalid with "Error: Last Name cannot be left blank."
+    beside it: the page's own record of the box was empty. The check before the job is called ready stopped on it
+    (three rounds, Carry on and all). A text box the page says is blank while it shows the profile's answer for that
+    very box is typed again, key by key, once, and the page read again: ready, with the page's record holding it."""
+    r, sent, record = _lost_name_run(srv, monkeypatch)
+    assert r.status == "ready", (r.status, r.reason, r.log)
+    assert record.get("Last Name") == "Rivera", record
+    assert any(line.startswith("typed again what the page said was empty") and "Last Name" in line
+               for line in r.log), "\n".join(r.log)
+    assert sent == 0
+
+
+@pytest.mark.parametrize("query", ["?refuse", "?other"])
+def test_a_box_the_review_still_refuses_or_that_shows_another_answer_stops_for_the_person(srv, monkeypatch, query):
+    """The same page, where typing the box again doesn't help (?refuse: typed again once, never more, and the job is
+    the person's with what the page says), and where the box shows a name that isn't the profile's (?other: never
+    typed again, never replaced: the person's)."""
+    r, sent, record = _lost_name_run(srv, monkeypatch, query)
+    assert (r.status, r.need, r.code) == ("needs_you", "stuck", "review_errors"), (r.status, r.reason, r.log)
+    assert "Last Name cannot be left blank" in r.reason and r.reason.endswith("the desk checks the page again."), \
+        r.reason
+    typed = [line for line in r.log if line.startswith("typed again what the page said was empty")]
+    assert len(typed) == (1 if query == "?refuse" else 0), r.log
+    assert "Last Name" not in record and sent == 0, record
+
+
 def _left_empty_run(srv, monkeypatch, query: str) -> tuple[Run, int, dict]:
     """tests/fixtures/site/required-left-empty.html with `query`, run until the job stops or is ready: the run, how
     many times the step's own button was pressed, and what its boxes hold (by id)."""
