@@ -23,8 +23,9 @@ DESK_FIXTURES = Path(__file__).parent / "fixtures" / "desk"
 PAGES = {"home": "Home", "openings": "Openings", "applications": "Applications", "answers": "Your answers",
          "working": "What's working", "settings": "Settings", "help": "Help"}
 # The cards each page shows (each by its heading's id, in the page's order) on a desk with a job stopped for the person,
-# one ready to submit and nothing sent in yet: Home's four cards (not Done this visit), no What's working card
-CARDS = {"home": ["needs-h", "done-h", "work-h", "thisweek-h"], "openings": ["list-h"], "applications": ["apps-h"],
+# one ready to submit and nothing sent in yet: Home's five cards (Getting started first; not Done this visit), no What's
+# working card
+CARDS = {"home": ["start-h", "needs-h", "done-h", "work-h", "thisweek-h"], "openings": ["list-h"], "applications": ["apps-h"],
          "answers": ["bank-h"], "working": [],
          "settings": ["profile-h", "safety-card-h", "searching-h", "pw-h", "phone-h", "alerts-h", "program-h"],
          "help": ["how-h", "notes-card-h"]}

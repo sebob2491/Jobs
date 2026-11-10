@@ -470,6 +470,9 @@ button.score:hover { box-shadow: 0 0 0 2px var(--control-line); }
 .pass .said { color: var(--muted); font-size: 13px; font-weight: 600; white-space: nowrap; }
 .pass .btn .ico { width: 16px; height: 16px; }
 .task.now { box-shadow: inset 3px 0 0 var(--accent); }
+/* Getting started (C6): a line each, ticked or an empty circle; a line done is dimmed and has no button */
+#start .card-head button.link { font-size: 13px; color: var(--muted); }
+#start .item.done { opacity: .6; }
 /* Home's four tiles (C5): a number with a line under it and an icon at the right; one that waits on the person, marked */
 .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
 .tile { padding: 15px 18px 14px; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px;
@@ -692,6 +695,7 @@ body.stopped > :not(#stopped) { display: none; }
 <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 2.8 19.5h18.4z"/><path d="M12 10v4.5"/><path d="M12 17.2h.01"/></symbol>
 <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7"/></symbol>
 <symbol id="i-checkc" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12.3 2.7 2.7L16 9.5"/></symbol>
+<symbol id="i-ring" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></symbol>
 <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
 <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 17h6"/></symbol>
 <symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17z"/><path d="m14.5 7.5 3 3"/></symbol>
@@ -756,6 +760,10 @@ body.stopped > :not(#stopped) { display: none; }
       <!-- Home (C1): Getting started (C6) goes first, above the tiles; then four tiles; then what needs the person at the
            left, what the desk is working on and this week at the right -->
       <div class="page" data-pages="home">
+        <section class="card" id="start" aria-labelledby="start-h" hidden>
+          <div class="card-head"><h2 id="start-h">Getting started</h2><span class="pill" id="start-count"></span><span class="grow"></span><button class="link" data-act="dismiss" data-tip="checklist">Hide this</button></div>
+          <div id="start-lines"></div>
+        </section>
         <div class="tiles" id="tiles"></div>
         <div class="cols" id="home-cols">
           <div class="stack">
@@ -2492,6 +2500,51 @@ function bankQuestion(q) {
   return {key: `${q.id}:${q.answer || ""}`, html: `<label class="bankq"><span>${esc(q.ask)}</span>${input}</label>`};
 }
 
+// (a common question not answered yet; and the counts the Your answers and Settings pages show, which Getting started
+// says too)
+const unanswered = (q) => q.answer == null || q.answer === "";
+const bankSaid = () => { const bank = state.bank || []; return `${bank.filter((q) => !unanswered(q)).length} of ${bank.length} answered`; };
+const pwSaid = () => { const pws = Object.values(state.passwords || {}); return `${pws.filter(Boolean).length} of ${pws.length} saved`; };
+
+// Getting started (C6), at the top of Home: seven lines, each done by its rule, until lines 1, 2, 6 and 7 are done
+// (then gone for good, kept as Hide this keeps it) or Hide this is pressed
+const START_TIP = "checklist", OWN_PASSWORDS = new Set(["email", "anthropic"]);
+function startLines() {
+  const p = state.profile || {}, area = state.area || {}, pws = state.passwords || {}, sr = state.search || {};
+  const settings = {href: "#settings", button: "Open Settings"};
+  return [
+    {name: "Set up your profile", said: "Your details, your work history and your resume.",
+      act: "setup", button: "Set up", done: !(p.missing || []).length},
+    {name: "Choose what to look for, and where", said: "The job titles and the places Find jobs searches.",
+      act: "area", button: "Choose", done: !!(area.titles || []).length && !!(area.places || []).length},
+    {name: "Save your site passwords", said: `The desk signs in with them and makes your accounts. ${pwSaid()}.`,
+      ...settings, done: Object.entries(pws).some(([site, saved]) => saved && !OWN_PASSWORDS.has(site))},
+    {name: "Let the desk read emailed codes",
+      said: "Optional. Many sites email a code when you sign in. With this, the desk enters it for you.",
+      ...settings, done: !!pws.email},
+    {name: "Answer the common questions", said: `${bankSaid()}. Each answer is one stop fewer.`,
+      href: "#answers", button: "Answer them", done: !(state.bank || []).some(unanswered)},
+    {name: "Find jobs", said: "Search the employers on your lists.",
+      act: "find", button: "Find jobs", done: !!sr.at || !!(state.listings || []).length},
+    {name: "Apply to your first job", said: "Tick an opening and press Apply. Nothing is sent until you press Submit.",
+      href: "#openings", button: "Go to Openings", done: !!allRuns().length || !!(state.applications || []).length},
+  ];
+}
+function renderStart() {
+  const lines = startLines();
+  if ([0, 1, 5, 6].every((i) => lines[i].done) && !dismissed().has(START_TIP)) dismiss(START_TIP);
+  const away = dismissed().has(START_TIP);
+  $("start").hidden = away;
+  if (away) return;
+  $("start-count").textContent = `${lines.filter((l) => l.done).length} of ${lines.length} done`;
+  const html = lines.map((l) => `<div class="item${l.done ? " done" : ""}">
+    <span class="itico ${l.done ? "green" : "gray"}" role="img" aria-label="${l.done ? "Done" : "Not done yet"}"><svg class="ico" aria-hidden="true"><use href="#${l.done ? "i-checkc" : "i-ring"}"/></svg></span>
+    <div><p class="t">${l.name}</p><p class="s">${esc(l.said)}</p></div>
+    <div class="acts">${l.done ? "" : l.act ? `<button class="btn sm" data-act="${l.act}">${l.button}</button>`
+      : `<a class="btn sm" href="${l.href}">${l.button}</a>`}</div></div>`).join("");
+  if ($("start-lines").dataset.html !== html) { $("start-lines").innerHTML = html; $("start-lines").dataset.html = html; }
+}
+
 // The unanswered ones the card shows until Show all is pressed: the most asked (each entry's `seen`), so the cards under it
 // stay in sight on a first visit
 const BANK_SHOWN = 4;
@@ -2501,8 +2554,8 @@ function renderBank() {
   const bank = state.bank || [];
   $("bank-card").hidden = !bank.length;
   $("bank-none").hidden = !!bank.length;  // (its page says so in a line, while there's no card)
-  const open = bank.filter((q) => q.answer == null || q.answer === ""), given = bank.filter((q) => !open.includes(q));
-  $("bank-count").textContent = `${given.length} of ${bank.length} answered`;
+  const open = bank.filter(unanswered), given = bank.filter((q) => !open.includes(q));
+  $("bank-count").textContent = bankSaid();
   $("bank-count").className = "pill " + (open.length ? "warn" : "good");
   // (most asked first; the bank's own order among those asked as often)
   const asked = open.map((q, i) => [q, i]).sort((a, b) => (b[0].seen || 0) - (a[0].seen || 0) || a[1] - b[1]).map((x) => x[0]);
@@ -2628,7 +2681,7 @@ function renderHeader() {
     pick.dataset.named = named;
   }
   const pws = Object.entries(state.passwords || {});
-  $("pw-count").textContent = `${pws.filter(([, saved]) => saved).length} of ${pws.length} saved`;
+  $("pw-count").textContent = pwSaid();
   $("pw-count").className = "pill " + (pws.some(([, saved]) => saved) ? "good" : "");
   // a pill for each one saved (the count says how many aren't): no row of grey "not saved" on a first visit
   $("pw-state").innerHTML = pws.filter(([, saved]) => saved).map(([site]) =>
@@ -3281,6 +3334,7 @@ function render() {
   botStep();  // (the rounds first: the banner names the job they're on)
   reviewStep();
   renderHeader();
+  renderStart();
   renderRows();
   renderApps();
   renderSide();
@@ -3727,7 +3781,7 @@ document.addEventListener("click", (e) => {
   if (a === "review-submit" && asShown) act(() => api(`/api/job/${named}/submit`, {}));
   if (a === "review-applied" && asShown) act(() => api(`/api/job/${named}/applied`, {}));
   if ((a === "review-submit" || a === "review-applied") && !asShown) renderHeader();
-  if (a === "dismiss") { dismiss(t.dataset.tip); renderHeader(); }
+  if (a === "dismiss") { dismiss(t.dataset.tip); renderHeader(); renderStart(); }
   if (a === "report-close") $("report").close();
   if (a === "week") act(async () => { renderWeek(await api("/api/history?days=7")); if (!$("week").open) $("week").showModal(); }, false);
   if (a === "week-close") $("week").close();

@@ -512,7 +512,7 @@ def test_the_tiles_and_this_week_from_fixed_applications_and_a_fixed_clock(srv, 
                                    ["Working on", "2", "3 more waiting", False],
                                    ["Ready to submit", "2", "Filled in, waiting for your OK", False],
                                    ["Sent this week", "4", "7 sent in all", False]],
-                         **week, "order": ["tile-needs", "tile-work", "tile-ready", "tile-sent", "needs-h", "done-h",
+                         **week, "order": ["start", "tile-needs", "tile-work", "tile-ready", "tile-sent", "needs-h", "done-h",
                                            "finished-h", "work-h", "thisweek-h"]}, busy_seen
     assert quiet_seen["tiles"] == [["Needs you", "0", "Nothing right now", False],
                                    ["Working on", "0", "Nothing waiting", False],
@@ -524,3 +524,123 @@ def test_the_tiles_and_this_week_from_fixed_applications_and_a_fixed_clock(srv, 
                                     ["Working on", "0", "Paused", False],
                                     ["Ready to submit", "1", "The desk submits these for you", False],
                                     ["Sent this week", "4", "7 sent in all", False]], paused_seen
+
+
+# Getting started (C6): its count, and each line's name, sentence, whether it's done (ticked and dimmed) and its button
+_START = """() => {
+  const card = document.getElementById('start');
+  return {shown: !!card && card.getClientRects().length > 0,
+    count: card ? document.getElementById('start-count').innerText : null,
+    lines: card ? [...card.querySelectorAll('#start-lines > .item')].map((l) => [l.querySelector('.t').innerText,
+      l.querySelector('.s').innerText, l.classList.contains('done'),
+      l.querySelector('.itico use').getAttribute('href'),
+      [...l.querySelectorAll('.acts .btn')].map((b) => [b.innerText, b.dataset.act || b.getAttribute('href')])]) : []};
+}"""
+_NAMES = ["Set up your profile", "Choose what to look for, and where", "Save your site passwords",
+          "Let the desk read emailed codes", "Answer the common questions", "Find jobs", "Apply to your first job"]
+_SAID = ["Your details, your work history and your resume.", "The job titles and the places Find jobs searches.",
+         "The desk signs in with them and makes your accounts. {pw}.",
+         "Optional. Many sites email a code when you sign in. With this, the desk enters it for you.",
+         "{bank}. Each answer is one stop fewer.", "Search the employers on your lists.",
+         "Tick an opening and press Apply. Nothing is sent until you press Submit."]
+_BUTTONS = [["Set up", "setup"], ["Choose", "area"], ["Open Settings", "#settings"], ["Open Settings", "#settings"],
+            ["Answer them", "#answers"], ["Find jobs", "find"], ["Go to Openings", "#openings"]]
+
+
+def _lines(done: list[bool], pw: str, bank: str) -> list:
+    return [[name, said.format(pw=pw, bank=bank), d, "#i-checkc" if d else "#i-ring", [] if d else [button]]
+            for name, said, d, button in zip(_NAMES, _SAID, done, _BUTTONS)]
+
+
+def _question(n: int, answer: str | None) -> dict:
+    return {"id": f"q{n}", "ask": f"Made-up question {n}?", "kind": "choice", "choices": ["Yes", "No"],
+            "answer": answer, "seen": 0}
+
+
+def test_getting_started_ticks_each_line_by_its_rule_and_goes_for_good(srv, job_apply_home, monkeypatch):
+    """C9's test 9. Getting started, at the top of Home: seven lines, each ticked, dimmed and without its button exactly
+    when its rule says, and "n of 7 done" beside the title. Its numbers are the Settings and Your answers pages'. The
+    setup window still opens by itself while the profile is incomplete. The card goes for good once lines 1, 2, 6 and 7
+    are done (even if one of them comes undone after), and "Hide this" puts it away across a reload."""
+    state = Desk.state
+    over: dict = {}
+
+    def drawn(self):
+        s = state(self)
+        out = {**s, **{k: v for k, v in over.items() if k != "profile"}}
+        out["profile"] = {**s["profile"], **over.get("profile", {})}
+        return out
+
+    monkeypatch.setattr(Desk, "state", drawn)
+    # One done: the profile lacks a phone, no job titles, only the inbox's password saved (no job system's), one
+    # common question of three answered, never searched, no openings, no job begun, nothing applied for
+    nothing = {"profile": {"missing": ["personal.phone"]}, "area": {"titles": [], "places": ["Phoenix, AZ"]},
+               "passwords": {"workday": False, "icims": False, "email": True, "anthropic": False},
+               "bank": [_question(1, "Yes"), _question(2, None), _question(3, "")],
+               "search": {"status": "idle", "at": None}, "listings": [], "others": [], "applications": []}
+    # Five done: the profile, what and where, a job system's password, every common question, and an opening found
+    # (the desk's own, below; never searched here); not the inbox's password, and no job begun
+    some = {"profile": {"missing": []}, "area": {"titles": ["Technician"], "places": ["Phoenix, AZ"]},
+            "passwords": {"workday": True, "icims": False, "email": False, "anthropic": True},
+            "bank": [_question(1, "Yes"), _question(2, "No")], "search": {"status": "idle", "at": None},
+            "others": [], "applications": []}
+    # Lines 1, 2, 6 and 7 done: searched, no openings left, one application
+    four = {**some, "search": {"status": "done", "at": 1000.0}, "listings": [],
+            "applications": [_app(1, "2026-11-02T16:00:00+00:00")]}
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            seen = {}
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                over.clear()
+                over.update(nothing)
+                await open_desk(page, desk, "home")
+                await page.wait_for_selector("#setup[open]")  # (by itself, once a visit: the profile lacks a phone)
+                await page.click("[data-act=setup-close]")
+                await page.wait_for_selector("#start-lines > .item")
+                seen["nothing"] = await page.evaluate(_START)
+                seen["first"] = await page.evaluate("""() => [...document.querySelectorAll('[data-pages=home] .card')]
+                    .map((c) => c.id || c.getAttribute('aria-labelledby')).slice(0, 2)""")
+                await page.click("#start [data-act=dismiss][data-tip=checklist]")  # Hide this
+                await page.wait_for_selector("#start", state="hidden")
+                await page.reload()
+                await page.wait_for_selector("#plugin-version:not(:empty)", state="attached")
+                await page.wait_for_timeout(500)
+                seen["hidden"] = await page.evaluate(_START)
+                await browser.close()
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                over.clear()
+                over.update(some)
+                await open_desk(page, desk, "home")
+                await page.wait_for_selector("#start-lines > .item")
+                seen["some"] = await page.evaluate(_START)
+                over.update(four)  # (the card goes at the next refresh)
+                await page.wait_for_selector("#start", state="hidden")
+                seen["four"] = await page.evaluate(_START)
+                over.update({"applications": [], "search": {"status": "idle", "at": None}})  # (lines 6 and 7 undone)
+                await page.reload()
+                await page.wait_for_selector("#plugin-version:not(:empty)", state="attached")
+                await page.wait_for_timeout(2000)  # (a refresh after the first draw)
+                seen["for good"] = await page.evaluate(_START)
+                await browser.close()
+            return seen
+        finally:
+            await desk.stop()
+
+    desk, _ = _stopped_desk(srv, {})
+    desk.listings = [{"company": "Example Fab", "title": "Technician", "url": "https://example.com/1",
+                      "location": "Phoenix, AZ"}]
+    seen = run(go())
+    assert seen["nothing"] == {"shown": True, "count": "1 of 7 done",
+                               "lines": _lines([False, False, False, True, False, False, False], "1 of 4 saved",
+                                               "1 of 3 answered")}, seen["nothing"]
+    assert seen["first"] == ["start", "tile-needs"], seen["first"]
+    assert seen["hidden"]["shown"] is False, seen["hidden"]
+    assert seen["some"] == {"shown": True, "count": "5 of 7 done",
+                            "lines": _lines([True, True, True, False, True, True, False], "2 of 4 saved",
+                                            "2 of 2 answered")}, seen["some"]
+    assert seen["four"]["shown"] is False, seen["four"]
+    assert seen["for good"]["shown"] is False, seen["for good"]

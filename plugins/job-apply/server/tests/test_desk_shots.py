@@ -163,3 +163,35 @@ def test_a_picture_of_home_with_many_jobs(srv, job_apply_home, monkeypatch, card
 
     run(go())
     assert path.stat().st_size > 2000
+
+
+@pytest.mark.parametrize("window", WINDOWS, ids=lambda w: f"{w[0]}x{w[1]}")
+@pytest.mark.parametrize("look", LOOKS)
+def test_a_picture_of_a_new_persons_home(srv, job_apply_home, monkeypatch, look, window):
+    """Home for someone new (the design's C6): Getting started at the top with a few of its lines done (the profile,
+    what and where, the inbox's password and one of the common questions answered; never searched, nothing found or
+    applied for), in each look and window size; saved as new-home-<look>-<w>x<h>.png."""
+    folder = Path(SHOTS)
+    folder.mkdir(parents=True, exist_ok=True)
+    state = _state("state-openings.json")
+    state.update(listings=[], others=[], applications=[], search={**state["search"], "status": "idle", "at": None},
+                 area={**state["area"], "titles": ["Technician"], "places": ["Phoenix, AZ"]})
+    state["profile"]["missing"] = []
+    desk = _canned(srv, monkeypatch, state)
+    path = folder / f"new-home-{look}-{window[0]}x{window[1]}.png"
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": window[0], "height": window[1]}, color_scheme=look)
+                await open_desk(page, desk, "home")
+                await page.wait_for_selector("#start-lines > .item")
+                await page.wait_for_timeout(150)
+                await page.screenshot(path=str(path))
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert path.stat().st_size > 2000
