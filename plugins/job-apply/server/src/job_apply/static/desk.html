@@ -377,7 +377,7 @@ ul.rows { list-style: none; margin: 0; padding: 0; }
 /* the Applications page's table: Job, Applied, Last heard, Status, and the row's buttons, on one column template (the
    header row and each application's row alike); at 1100px and below, Applied and Last heard under the Job cell, and
    at a phone's width every cell under the one before it */
-.apps-head, .row.app { grid-template-columns: minmax(0, 1fr) 112px 220px 220px 116px;
+.apps-head, .row.app { grid-template-columns: minmax(0, 1fr) 112px 220px 220px 128px;
   grid-template-areas: "job applied heard state acts"; padding: 0 18px; }
 .apps-head { display: grid; align-items: center; column-gap: 12px; position: sticky; top: 0; z-index: 2;
   min-height: 40px; background: var(--side); border-top: 1px solid var(--line-2); border-bottom: 1px solid var(--line);
@@ -392,8 +392,23 @@ ul.rows { list-style: none; margin: 0; padding: 0; }
 .row.app > .c-heard { overflow-wrap: anywhere; }
 .c-acts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .c-acts button { height: 28px; padding: 0 10px; font-size: 13px; border-radius: 7px; }
+/* a menu (details.menu): its summary an icon button, its panel of plain buttons under it at its right end, the one
+   chosen ticked (aria-pressed). An application's Change status */
+details.menu { position: relative; padding: 0; border: 0; font-size: 13px; }
+details.menu > summary { list-style: none; width: 28px; height: 28px; border-radius: 7px; color: var(--body); }
+details.menu > summary::-webkit-details-marker { display: none; }
+details.menu > summary:hover { text-decoration: none; }
+details.menu[open] > summary { background: var(--hover); }
+.menu-panel { position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; display: grid; min-width: 168px;
+  padding: 6px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); box-shadow: var(--shadow-lg); }
+details.menu .menu-panel button { justify-content: flex-start; height: 32px; padding: 0 10px 0 8px; border: 0;
+  border-radius: 7px; background: none; box-shadow: none; color: var(--body); font-size: 13.5px; }
+details.menu .menu-panel button:hover { background: var(--hover); }
+details.menu .menu-panel button .ico { visibility: hidden; color: var(--accent); }
+details.menu .menu-panel button[aria-pressed="true"] { color: var(--text); font-weight: 600; }
+details.menu .menu-panel button[aria-pressed="true"] .ico { visibility: visible; }
 @media (max-width: 1100px) {
-  .apps-head, .row.app { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 190px 116px; row-gap: 6px;
+  .apps-head, .row.app { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 190px 128px; row-gap: 6px;
     grid-template-areas: "job job state acts" "applied heard state acts"; }
   .apps-head { padding-top: 6px; padding-bottom: 6px; }
 }
@@ -1353,17 +1368,19 @@ const profileField = (k) => {
   const doc = /^documents\.(transcripts|references|certificates) \(file not found: (.*)\)$/.exec(k);
   if (doc) return `your ${{transcripts: "transcripts", references: "reference list", certificates: "certificates"}[doc[1]]} `
     + `file where documents.${doc[1]} says (nothing is at ${doc[2]})`;
+  // (what to ask Claude for it, after a colon: only with Claude beside the desk, C7)
+  const ask = (what) => state && state.standalone ? "" : `: ask Claude to "${what}"`;
   const undated = /^work_history dates: (.*)$/.exec(k);
-  if (undated) return `the start and end months of your jobs (${undated[1]}): ask Claude to "add the start and end months `
-    + `of my jobs from my resume to my profile"`;
+  if (undated) return `the start and end months of your jobs (${undated[1]})`
+    + ask("add the start and end months of my jobs from my resume to my profile");
   const degree = /^education_history degree: (.*)$/.exec(k);
   if (degree) return `the degree you earned at each school (${degree[1]}; "Some college (no degree)" where you took classes `
     + `without finishing one)`;
   if (/^background: /.test(k)) return `your answers to the yes/no questions most employers ask (government, military or `
-    + `Defense work, relatives at the company, a non-compete, patents, another job or a board seat): ask Claude to "ask me `
-    + `the Job Desk's background questions"`;
+    + `Defense work, relatives at the company, a non-compete, patents, another job or a board seat)`
+    + ask("ask me the Job Desk's background questions");
   if (/^history: /.test(k)) return `whether you've ever worked for the U.S. federal government or served in the U.S. `
-    + `military: ask Claude to "ask me the Job Desk's background questions"`;
+    + `military` + ask("ask me the Job Desk's background questions");
   return PROFILE_FIELDS[k] || k;
 };
 const inWords = (xs) => xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
@@ -1454,7 +1471,7 @@ function renderWeek(h) {
     return `<li><span class="when">${esc(whenSaid(e.ended))}</span>${esc(e.company || "")}${e.title ? ` · ${esc(e.title)}` : ""}:
       ${esc(ended)}${took}${why}</li>`;
   }).join("");
-  body.innerHTML = `<p class="small">The last ${h.days} days, from the desk's history (~/.job-apply/runs.jsonl).</p>
+  body.innerHTML = `<p class="small">The last ${h.days} days, from the desk's own history.</p>
     <ul>${said.map((s) => `<li>${esc(s)}</li>`).join("")}</ul>
     ${stops ? `<h3>Where it stopped most</h3><ul>${stops}</ul>` : ""}
     <h3>Latest</h3><ul id="week-recent">${recent}</ul>`;
@@ -1631,31 +1648,52 @@ function renderApps() {
   const apps = state.applications || [];
   renderAppGroups(apps);
   $("apps-head").hidden = !apps.length;
-  const days = (state.settings || {}).follow_up_days;
+  const days = (state.settings || {}).follow_up_days, claude = !state.standalone;
   const entries = apps.filter((j) => appGroup === "all" || j.group === appGroup).map((j) => {
     const [text, cls] = STATUS[j.status] || [j.status, ""];
     const when = j.applied_at ? esc(shownDay(j.applied_at)) : `Updated ${esc(shownDay(j.updated_at))}`;
     const h = j.last_heard;
     const heard = h ? `<span class="heard" title="${esc((h.summary || "") + (j.emails > 1 ? ` (${j.emails} emails logged)` : ""))}">Heard
       ${esc(h.day || shownDay(h.received_at))}: ${esc(HEARD_WORDS[h.category] || h.category)}</span>` : `<span class="heard">No reply yet</span>`;
-    const dueTip = `No reply${days ? ` ${days} days` : ""} after you applied. Follow up copies a request for Claude to draft `
-      + "a polite follow-up email (saved as a Gmail draft, for you to send): paste it to Claude. Nothing is sent anywhere.";
+    // (Follow up and Prep me copy a request to paste to Claude: a desk without Claude offers neither, C7)
+    const dueTip = `No reply${days ? ` ${days} days` : ""} after you applied.` + (claude ? " Follow up copies a request for "
+      + "Claude to draft a polite follow-up email (saved as a Gmail draft, for you to send): paste it to Claude. Nothing "
+      + "is sent anywhere." : "");
     const due = j.follow_up_due ? `<span class="pill warn" title="${esc(dueTip)}">Follow-up due ${esc(j.follow_up_due)}</span>` : "";
-    const follow = j.follow_up_due ? `<button data-act="follow-up" data-job="${j.id}" title="${esc(dueTip)}">Follow up</button>` : "";
+    const follow = claude && j.follow_up_due ? `<button data-act="follow-up" data-job="${j.id}" title="${esc(dueTip)}">Follow up</button>` : "";
     const prepTip = `Copies a request for Claude to prep you for this ${prepWhat(j)}: paste it to Claude. Nothing is sent anywhere.`;
-    const prep = prepFor(j) ? `<button data-act="prep" data-job="${j.id}" title="${esc(prepTip)}">Prep me</button>` : "";
+    const prep = claude && prepFor(j) ? `<button data-act="prep" data-job="${j.id}" title="${esc(prepTip)}">Prep me</button>` : "";
     return {key: "app" + j.id, html: `<li class="row app" role="row">
       <div class="c-job" role="cell">${link(j.url, esc(j.title || "Untitled job"), "title")}<div class="meta">${esc(j.company || "")}</div></div>
       <div class="c-applied" role="cell">${when}</div>
       <div class="c-heard" role="cell">${heard}</div>
       <div class="state" role="cell"><span class="pill ${cls}">${esc(text)}</span>${due}</div>
-      <div class="c-acts" role="cell">${follow}${prep}</div></li>`};
+      <div class="c-acts" role="cell">${follow}${prep}${statusMenu(j)}</div></li>`};
   });
   if (!entries.length) entries.push({key: "empty", html: `<li class="empty" role="row"><span role="cell">${apps.length
     ? "None here right now. Press All to see them all."
     : "No applications yet. Each one you send in shows up here with where it stands."}</span></li>`});
   patch($("app-rows"), entries);
+  // (a menu the person opened stays open when its row is drawn again: the row's HTML never says whether it's open)
+  for (const d of $("app-rows").querySelectorAll("details.menu[data-menu]")) d.open = d.dataset.menu === menuOpen;
 }
+
+// Change status (C8), in the last cell of an application's row: a menu of the five statuses the person can give it
+// (/api/job/{id}/status), the one it's at ticked. Only on a job sent in or further along: the route refuses one filled
+// and never sent (ready_to_submit), whose card on Home has I submitted it myself
+const MARKED = ["applied", "interviewing", "offer", "rejected", "withdrawn"];
+let menuOpen = "";  // the job whose menu is open ("": none), kept across the refreshes that draw its row again
+const statusMenu = (j) => !MARKED.includes(j.status) ? "" : `<details class="menu" data-menu="${j.id}">
+  <summary class="btn icon" aria-label="Change status" title="Change status"><svg class="ico" aria-hidden="true"><use href="#i-more"/></svg></summary>
+  <div class="menu-panel" role="group" aria-label="Change status">${MARKED.map((s) => `<button data-status="${s}" data-act="set-status" data-job="${j.id}" aria-pressed="${s === j.status}"><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg>${esc(STATUS[s][0])}</button>`).join("")}</div></details>`;
+document.addEventListener("toggle", (e) => {
+  const d = e.target;
+  if (!(d instanceof HTMLDetailsElement) || !d.dataset.menu) return;
+  if (d.open) {
+    menuOpen = d.dataset.menu;
+    for (const other of document.querySelectorAll("details.menu[open]")) if (other !== d) other.open = false;
+  } else if (menuOpen === d.dataset.menu && d.isConnected) menuOpen = "";
+}, true);  // (a toggle doesn't bubble: heard on its way down)
 
 // A word at the foot of the window for a few seconds; with `undo` (an opening's address), an Undo for its Not interested
 let toastTimer = null;
@@ -1915,7 +1953,7 @@ function renderRows() {
       ...(maybeClearance(fit) ? [`<span class="chip" title="Read from the posting's text: No clearance needed never hides this job for it">may need a security clearance</span>`] : []),
       // and a degree read so: "asks a Bachelor's, read from the text" (the degree chip never hides it for that)
       ...(maybeDegree(fit) ? [`<span class="chip" title="Read from the posting's text, not a labelled Education line: the degree chip never hides this job for it">${esc(maybeDegree(fit))}</span>`] : []),
-      ...(noSponsorship(fit) ? [`<span class="chip" title="The posting says so in plain words, and your profile says you need sponsorship (work_authorization.requires_sponsorship).">won't sponsor a work visa</span>`] : []),
+      ...(noSponsorship(fit) ? [`<span class="chip" title="The posting says so in plain words, and your profile says you need sponsorship.">won't sponsor a work visa</span>`] : []),
     ].join("");
     const checked = selected.has(r.url) && !done ? "checked" : "";
     // skipped (here or before the desk restarted): Undo puts it back
@@ -2512,13 +2550,15 @@ const START_TIP = "checklist", OWN_PASSWORDS = new Set(["email", "anthropic"]);
 function startLines() {
   const p = state.profile || {}, area = state.area || {}, pws = state.passwords || {}, sr = state.search || {};
   const settings = {href: "#settings", button: "Open Settings"};
+  const systems = Object.entries(pws).filter(([site]) => !OWN_PASSWORDS.has(site));
   return [
     {name: "Set up your profile", said: "Your details, your work history and your resume.",
       act: "setup", button: "Set up", done: !(p.missing || []).length},
     {name: "Choose what to look for, and where", said: "The job titles and the places Find jobs searches.",
       act: "area", button: "Choose", done: !!(area.titles || []).length && !!(area.places || []).length},
-    {name: "Save your site passwords", said: `The desk signs in with them and makes your accounts. ${pwSaid()}.`,
-      ...settings, done: Object.entries(pws).some(([site, saved]) => saved && !OWN_PASSWORDS.has(site))},
+    // (counted, and done, by the job systems' passwords alone: not the inbox's nor the API key, Settings' count has those)
+    {name: "Save your site passwords", said: `The desk signs in with them and makes your accounts. ${systems.filter(([, saved]) => saved).length} of ${systems.length} saved.`,
+      ...settings, done: systems.some(([, saved]) => saved)},
     {name: "Let the desk read emailed codes",
       said: "Optional. Many sites email a code when you sign in. With this, the desk enters it for you.",
       ...settings, done: !!pws.email},
@@ -2629,6 +2669,7 @@ function renderHeader() {
     : "Off: a sign-in or emailed code holds the other jobs until you're done, or 5 minutes pass.";
   const tailor = $("tailor");
   if (document.activeElement !== tailor) tailor.checked = !!s.tailor_resumes;
+  tailor.closest("label").hidden = !!state.standalone;  // (only Claude writes a tailored resume: C7)
   const letters = $("letters");
   if (document.activeElement !== letters) letters.checked = !!s.cover_letters;
   const handledOnly = $("handled-only");
@@ -2663,7 +2704,7 @@ function renderHeader() {
   const troubleshootOn = $("troubleshoot");
   if (document.activeElement !== troubleshootOn) troubleshootOn.checked = !!s.troubleshoot;
   $("plugin-version").textContent = state.version ? `Version ${state.version}` : "";
-  $("tailor-hint").textContent = s.tailor_resumes ? "On: each job waits for Claude to write a resume for it." : "Off: your usual resume goes with every application.";
+  $("tailor-hint").textContent = state.standalone ? "" : s.tailor_resumes ? "On: each job waits for Claude to write a resume for it." : "Off: your usual resume goes with every application.";
   const writer = state.letters_by || "your Claude login";
   $("letters-hint").textContent = !s.cover_letters ? "Off: your usual cover letter, if you have one, goes in."
     : s.cover_letters_approved ? `On: Claude writes one for each job, with ${writer}.`
@@ -2723,9 +2764,10 @@ function renderHeader() {
       ? ` <button data-act="clear-queue">Clear the queue</button>` : ""}`});
   if (state.queue_note) notes.push(state.queue_note_problem ? {cls: "notice bad", html: problemSaid(esc(state.queue_note))}
     : {cls: "notice info", html: esc(state.queue_note)});
-  if (state.tailoring) notes.push({cls: "waiting", html: `<strong>${state.tailoring} job${state.tailoring === 1 ? "" : "s"} waiting for a tailored resume.</strong>
-    <span>In Claude Code, say \u201ctailor my resumes\u201d. Each job carries on as soon as its resume is ready.</span>`});
-  if (p.missing && p.missing.length) notes.push({cls: "notice bad", html: `Problem: your profile still needs: ${esc(inWords(p.missing.map(profileField)))}. <button class="link" data-act="setup">Set up your profile</button> here, run <code>/job-apply:setup</code> in Claude Code, or edit <code>${esc(p.path)}</code>.`});
+  // (a desk without Claude never holds a job for a resume, C7: the banner is never shown there)
+  if (state.tailoring && !state.standalone) notes.push({cls: "waiting", html: `<strong>${state.tailoring} job${state.tailoring === 1 ? "" : "s"} waiting for a tailored resume.</strong>
+    <span>In your chat with Claude, say \u201ctailor my resumes\u201d. Each job carries on as soon as its resume is ready.</span>`});
+  if (p.missing && p.missing.length) notes.push({cls: "notice bad", html: `Problem: your profile still needs: ${esc(inWords(p.missing.map(profileField)))}. <button class="link" data-act="setup">Finish your profile</button>`});
   if (p.gaps && p.gaps.length) notes.push({cls: "notice info", tip: "gaps:" + p.gaps.join(","), html: `Fewer stops: your profile could also hold ${esc(inWords(p.gaps.map(profileField)))}.`});
   // on by default since 0.3.67: said until the profile says either way
   if (s.manage_accounts && !s.manage_accounts_chosen) notes.push({cls: "notice info", tip: "accounts", html: `The desk now handles your job-site
@@ -2753,7 +2795,7 @@ function renderHeader() {
   else if (state.tracker_problem) notes.push({cls: "notice bad", html: `Problem: your list of jobs can't be opened right now `
     + `(${esc(state.tracker_problem)}): it may be in use. The desk tries again by itself.`});
   for (const w of state.settings_warnings || []) notes.push({cls: "notice bad", html: `Problem: a line in your profile's settings does nothing: ${esc(w)}`});
-  if (!token) notes.push({cls: "notice bad", html: "Problem: this page needs the address the desk printed (it carries a key). Open it from Claude with “open the job desk”."});
+  if (!token) notes.push({cls: "notice bad", html: "Problem: this window has lost its key. Close it and open the Job Desk again."});
   const closed = dismissed();
   patch($("notices"), notes.filter((n) => !closed.has(n.tip)).map((n) => ({key: n.cls + ":" + n.html, html: n.tip
     ? `<p class="${n.cls} tip"><span>${n.html}</span><button class="link close" data-act="dismiss" data-tip="${esc(n.tip)}" title="Close this tip" aria-label="Close this tip">✕</button></p>`
@@ -3399,8 +3441,8 @@ async function load(at = changes) {
     }
   } catch (e) {
     $("notices").innerHTML = e.status === 403
-      ? `<p class="notice bad">Problem: this page's key is missing or out of date (the desk was restarted). Open the address the desk printed, or ask Claude to \u201copen the job desk\u201d.</p>`
-      : `<p class="notice bad">Problem: the desk can't be reached (${esc(e.message)}). Is Claude Code (or job-apply-desk) still running?</p>`;
+      ? `<p class="notice bad">Problem: the desk was restarted, and this window's key is out of date. Close it and open the Job Desk again.</p>`
+      : `<p class="notice bad">Problem: the desk isn't answering (${esc(e.message)}). It may have been closed. Open the Job Desk again.</p>`;
   }
 }
 
@@ -3800,6 +3842,12 @@ document.addEventListener("click", (e) => {
   }
   if (a === "notes-copy") copyNotes();
   if (a === "prep") prepMe(Number(job));
+  if (a === "set-status") {  // (the menu closes on a choice; the refresh after it draws the row again)
+    menuOpen = "";
+    const d = t.closest("details.menu");
+    if (d) { d.open = false; d.querySelector("summary").focus(); }
+    act(() => api(`/api/job/${Number(job)}/status`, {status: t.dataset.status}));
+  }
   if (a === "follow-up") followUp(Number(job));
   if (a === "bank-all") { bankAll = true; renderBank(); }
   if (a === "notes-close") $("notes").close();
@@ -4046,12 +4094,14 @@ function closeFilter(inside) {
   d.querySelector("summary").focus();
 }
 // (on the way down, before the page's own handlers: one of them may draw again what was pressed, the Status buttons)
+// (an application's Change status menu, details.menu, closes the same ways)
+const DROPS = "details.f[open], details.menu[open]";
 document.addEventListener("click", (e) => {
-  for (const d of document.querySelectorAll("details.f[open]")) if (!d.contains(e.target)) d.open = false;
+  for (const d of document.querySelectorAll(DROPS)) if (!d.contains(e.target)) d.open = false;
 }, true);
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape" || document.querySelector("dialog[open]")) return;
-  const d = (document.activeElement && document.activeElement.closest("details.f[open]")) || document.querySelector("details.f[open]");
+  const d = (document.activeElement && document.activeElement.closest(DROPS)) || document.querySelector(DROPS);
   if (!d) return;
   e.preventDefault();
   d.open = false;

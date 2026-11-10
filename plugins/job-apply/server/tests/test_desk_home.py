@@ -559,9 +559,10 @@ def _question(n: int, answer: str | None) -> dict:
 
 def test_getting_started_ticks_each_line_by_its_rule_and_goes_for_good(srv, job_apply_home, monkeypatch):
     """C9's test 9. Getting started, at the top of Home: seven lines, each ticked, dimmed and without its button exactly
-    when its rule says, and "n of 7 done" beside the title. Its numbers are the Settings and Your answers pages'. The
-    setup window still opens by itself while the profile is incomplete. The card goes for good once lines 1, 2, 6 and 7
-    are done (even if one of them comes undone after), and "Hide this" puts it away across a reload."""
+    when its rule says, and "n of 7 done" beside the title. Its numbers are the Your answers page's, and the job
+    systems' passwords saved (the line is done with one of them; the inbox's password and the API key aren't counted).
+    The setup window still opens by itself while the profile is incomplete. The card goes for good once lines 1, 2, 6
+    and 7 are done (even if one of them comes undone after), and "Hide this" puts it away across a reload."""
     state = Desk.state
     over: dict = {}
 
@@ -635,12 +636,70 @@ def test_getting_started_ticks_each_line_by_its_rule_and_goes_for_good(srv, job_
                       "location": "Phoenix, AZ"}]
     seen = run(go())
     assert seen["nothing"] == {"shown": True, "count": "1 of 7 done",
-                               "lines": _lines([False, False, False, True, False, False, False], "1 of 4 saved",
+                               "lines": _lines([False, False, False, True, False, False, False], "0 of 2 saved",
                                                "1 of 3 answered")}, seen["nothing"]
     assert seen["first"] == ["start", "tile-needs"], seen["first"]
     assert seen["hidden"]["shown"] is False, seen["hidden"]
     assert seen["some"] == {"shown": True, "count": "5 of 7 done",
-                            "lines": _lines([True, True, True, False, True, True, False], "2 of 4 saved",
+                            "lines": _lines([True, True, True, False, True, True, False], "1 of 2 saved",
                                             "2 of 2 answered")}, seen["some"]
     assert seen["four"]["shown"] is False, seen["four"]
     assert seen["for good"]["shown"] is False, seen["for good"]
+
+
+# ------------------------------------------------------------------ C7 and "Changed in Version C": the page's words
+_ASK_JOBS = ': ask Claude to "add the start and end months of my jobs from my resume to my profile"'
+_ASK_BACKGROUND = ': ask Claude to "ask me the Job Desk\'s background questions"'
+
+
+@pytest.mark.parametrize("standalone", [True, False])
+def test_the_profile_notices_and_the_tailoring_banner_name_claude_only_inside_claude(srv, job_apply_home, monkeypatch,
+                                                                                    standalone):
+    """"Changed in Version C" on the page. The red notice for an unfinished profile says only what's missing, with
+    Finish your profile (data-act setup), on either desk. Its three places that say what to ask Claude for (the months
+    of the jobs, the background questions, and the U.S. service questions) say it inside Claude, and end before the
+    colon without it. The yellow tailoring banner says "In your chat with Claude, say “tailor my resumes”." inside
+    Claude, and is never shown without it."""
+    from job_apply import config
+
+    state = Desk.state
+    monkeypatch.setattr(Desk, "state", lambda self: {**state(self), "tailoring": 2})  # (two jobs waiting for a resume)
+    monkeypatch.setattr(config.Profile, "missing_required",
+                        lambda self: ["work_history dates: Example Fab", "background: patents"])
+    monkeypatch.setattr(config.Profile, "profile_gaps", lambda self: ["history: us_government_employee, us_military"])
+    desk, _ = _stopped_desk(srv, {})
+    desk.standalone = standalone
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await open_desk(page, desk, "home")
+                await page.wait_for_selector("#notices .notice.bad")
+                if await page.is_visible("#setup"):
+                    await page.click("[data-act=setup-close]")  # (it opens by itself: the profile lacks something)
+                seen = {"problem": " ".join((await page.inner_text("#notices .notice.bad")).split()),
+                        "button": await page.eval_on_selector_all(
+                            "#notices .notice.bad button", "(bs) => bs.map((b) => [b.innerText, b.dataset.act])"),
+                        "gaps": " ".join((await page.inner_text("#notices .notice.info > span")).split()),
+                        "banners": [" ".join(t.split())
+                                    for t in await page.locator("#notices .waiting").all_inner_texts()]}
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    jobs = "the start and end months of your jobs (Example Fab)"
+    background = ("your answers to the yes/no questions most employers ask (government, military or Defense work, "
+                  "relatives at the company, a non-compete, patents, another job or a board seat)")
+    service = "whether you've ever worked for the U.S. federal government or served in the U.S. military"
+    ask_jobs, ask_background = ("", "") if standalone else (_ASK_JOBS, _ASK_BACKGROUND)
+    assert seen["problem"] == (f"Problem: your profile still needs: {jobs}{ask_jobs} and {background}{ask_background}. "
+                               "Finish your profile"), seen
+    assert seen["button"] == [["Finish your profile", "setup"]], seen
+    assert seen["gaps"] == f"Fewer stops: your profile could also hold {service}{ask_background}.", seen
+    tailoring = ("2 jobs waiting for a tailored resume. In your chat with Claude, say “tailor my resumes”. Each job "
+                 "carries on as soon as its resume is ready.")
+    assert seen["banners"] == ([] if standalone else [tailoring]), seen

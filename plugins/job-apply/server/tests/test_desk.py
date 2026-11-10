@@ -2612,7 +2612,7 @@ def test_the_page_keeps_its_lists_steady(srv):
                 keyless = await browser.new_page()
                 await keyless.goto(f"http://127.0.0.1:{desk.port}/")
                 await keyless.wait_for_selector("#notices .notice")
-                assert "key is missing or out of date" in await keyless.inner_text("#notices")
+                assert "this window's key is out of date" in await keyless.inner_text("#notices")
                 await browser.close()
         finally:
             await desk.stop()
