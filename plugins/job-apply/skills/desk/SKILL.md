@@ -27,8 +27,8 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   `list_jobs` and `get_job` say `not_interested: true` with the reason, `open_application`
   warns, and `submit_application` presses nothing for it without `user_confirmed`: ask the
   user before applying to one.
-  It searches only when pressed. **Search by itself every 12 hours** (in Settings, under
-  Searching and applying; off unless the user turns it on) also searches when the openings are
+  It searches only when pressed. **Search by itself every 12 hours** (Settings, Job search;
+  off unless the user turns it on) also searches when the openings are
   over 12 hours old, but not while the queue is paused. While a search runs, the header
   says so (by itself, or pressed) with **Stop search** beside it: the search ends and the
   openings found before it stay.
@@ -42,8 +42,8 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   Workday's work and education blocks, and stops at each review page. Before they go, it says what will stop
   them: a job system with no saved password, no email app password for sites that email a
   code, common questions not answered yet, in a window whose default button is **See to these
-  first** (it takes the user to the card for the first one: Site passwords with that job system
-  picked, or Common questions; Enter never applies); **Apply anyway** goes ahead.
+  first** (it takes the user to the card for the first one: the Site passwords card under
+  Settings, Accounts and passwords with that job system picked, or Common questions; Enter never applies); **Apply anyway** goes ahead.
   A posting the site says has closed or been filled is skipped by itself (its card quotes
   the site; Undo puts it back). A saved draft's **Continue Application** is the way in
   when it's the page's only one and the draft is this job's. Its answers are checked
@@ -76,7 +76,9 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     job's folder and uploads that, only while it holds the entries as they are. Missing one, the card
     names the slot to fill ("add documents.transcripts to your profile, or attach it in the desk's
     browser window"): set it in profile.yaml once the user says where the file is (references only as
-    the user gives them, never made up), and they press Carry on;
+    the user gives them, never made up), and they press Carry on (the resume and the usual cover letter
+    they can also choose themselves under Settings, Resume and cover letters; the other three are the
+    file's only);
   - a dialog open over a form, which the user answers in the desk's browser window before pressing
     Carry on (the boxes behind it are filled after that). With `settings.accept_notices` (on
     unless the user turns it off; never in practice mode) the desk agrees for the user to an
@@ -85,7 +87,7 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     before the application, a privacy dialog's Ok, a required "I agree to the Privacy notice
     and Terms of use" box), and picks an application's attestation that its information is
     true and complete (or consent to the background check that comes with applying), noting
-    each in the job's log. Never a newsletter, job alerts or a talent community. A dialog that
+    each in the job's log (the user turns it off under Settings, Applying: **Agree to required notices**). Never a newsletter, job alerts or a talent community. A dialog that
     offers how to start the application's profile (Eightfold's "Create your profile with
     existing information": buttons to upload a resume and to enter the information) isn't a
     notice: its "Enter information" is pressed and the form filled from the profile (never the
@@ -97,16 +99,16 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     leaves the desk's tab where it was: the user reloads that tab after opening the link.
     The queue waits while the user works in that tab. After 5 minutes with nothing
     happening there, the other jobs go ahead, and the desk picks the job up again once
-    its tab is past the pause. With an email app password saved in **Site passwords**
-    (`email_password`, for the profile's email address), the desk reads the code or link
+    its tab is past the pause. With an email app password saved under **Settings, Email codes**
+    (`email_password`, for the profile's email address; **Test it now** there checks it), the desk reads the code or link
     from the inbox itself. It reads only mail from that job's site or its job system,
     sent after the wait began (or in the two minutes before), read-only (the inbox, and its
     Spam folder when the inbox has none), and never presses a button labelled Submit. Never
     ask for that password in the chat either: it goes into the desk page. Without one, with
-    `settings.email_codes` on and the Gmail connector here, you read it for the desk through
+    `settings.email_codes` on (**Let Claude read codes through Gmail**, Settings, Email codes) and the Gmail connector here, you read it for the desk through
     Gmail while this chat is open (see **Emailed codes through Gmail** below), and the job's
     card says "Claude is looking in your Gmail for the code".
-  - **Alert me** (in the header) turns on desktop notifications for jobs that come to
+  - **Alert me** (Settings, Phone alerts) turns on desktop notifications for jobs that come to
     need the user or are ready to submit, so the desk can be left in the background.
 - **Notes (N)** (in the header, once there are any) collects the notes the desk takes by
   itself whenever a job stops on something it most likely got wrong: stuck, a sign-in, a
@@ -120,7 +122,7 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   Claude, `report_problem(job_id, anonymous=True)`) makes it again with only the job system
   and where it stopped: no employer (by any name a page gives it, its parent group's too), job
   title, place, address or requisition number in the issue or the saved pages. Offer it when the user would rather not show which job they applied for.
-- **Site passwords** stores one password per job system: Workday, SuccessFactors, iCIMS,
+- **Settings, Accounts and passwords** (its Site passwords card) stores one password per job system: Workday, SuccessFactors, iCIMS,
   ApplicantStack, UKG Pro, Infor, Taleo (Kforce's; where Taleo asks for a user name, the desk
   uses the profile email as it) or NEOGOV (governmentjobs.com: one account for every public agency there). The page names, by each system, the employers on the
   user's own lists that use it (on the semiconductor list, Workday has 15 of them; on the
@@ -155,11 +157,11 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   before you sign in") isn't reset: with the email app password saved the desk presses the site's
   "Resend Account Verification" once and opens the new email's link, then signs in; without it the
   card names that button for the user.
-  `settings.manage_accounts: false` leaves all of this to the user (the desk fills
+  `settings.manage_accounts: false` (the user's **Make my accounts** switch, Settings, Applying) leaves all of this to the user (the desk fills
   in Create Account for them to finish); practice mode never creates an account. A password is only typed into its
   own system's addresses. The user types it into the desk page; never ask for it in the
   conversation.
-- **Submit** sends one application. **Submit for me** sends every application that
+- **Submit** sends one application. **Submit for me** (in the apply bar, and under Settings, Applying) sends every application that
   needs nothing, and stays off until the user turns it on. LinkedIn and Indeed are
   always submitted by the user.
 - **What went in** (a panel on each Ready card, and on a stopped job's card, closed until
@@ -169,11 +171,11 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   the answers there instead of reading every review page again. It never shows a password,
   an emailed code or a security answer, and it's on the desk page only (never in the job's
   log, a note or a problem report).
-- **Jobs at once** (1 to 5, in Settings, under Searching and applying; `settings.jobs_at_once` in profile.yaml,
+- **Jobs at once** (1 to 5, Settings, Applying; `settings.jobs_at_once` in profile.yaml,
   default 2) is how many applications the desk fills at the same time, each in its own tab.
   Never two at one employer's site or job-system tenant; one at a time signs in, makes an
   account, resets a password or waits on an emailed code (the inbox is one); unless **Don't wait for
-  me** is on (beside it: for a desk left to go through the list, each sign-in, or emailed code only
+  me** is on (under it: for a desk left to go through the list, each sign-in, or emailed code only
   the user can read, then waits on its card as after Later, and no other job at its site starts;
   a code the desk reads itself, from the inbox or through Claude's Gmail, still holds the queue
   while it's looked for, so it never goes to another job), while a sign-in
@@ -233,21 +235,22 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   job's median (waits for sites and the inbox included, and jobs filled at once overlap), the employers it stopped at
   most, and the latest lines. For "how did this week go?", call `desk_history()` (`days=` for another span); the desk
   needn't be open.
-- **Safety** (in the header) opens a read-only window listing each setting that decides what
+- **Safety** (**See everything the desk may and may not do**, under Settings, Applying) opens a read-only window listing each setting that decides what
   the desk does in the user's name, its value now and what that means for them, with where to
-  change it: practice mode (`submit_mode`), Submit for me, LinkedIn and Indeed (always the
+  change it (a link to its Settings panel): practice mode (`submit_mode`), Submit for me, LinkedIn and Indeed (always the
   user's Submit), `accept_notices`, `manage_accounts`, `accept_cookies`, `email_codes` and
   the email app password's limits, `email_tracking`, Jobs at once, Troubleshooting, bot
   checks (always the user's) and passwords. It's worked out from the same settings the desk
   acts on, so when the user asks "what will the desk do for me?", point them there.
 - **A newer version**: the desk looks at the plugin's published version when it starts and
-  every few hours, and says when a newer one is out, with the two update commands (then a
-  restart of the Claude app). Best done between runs. `JOB_APPLY_NO_UPDATE_CHECK=1` turns the look off.
+  every few hours, and says when a newer one is out: the user presses **Update now** under
+  Settings, Updates and about (or, in a copy inside Claude, runs the two update commands, then
+  restarts the Claude app). Best done between runs. `JOB_APPLY_NO_UPDATE_CHECK=1` turns the look off.
 - **Only where the desk goes all the way** shows only openings at employers where the
   plugin's live check took a test applicant to the review page (a chip marks them in
   the list either way). Bot checks, CAPTCHAs and steps it can't do yet are elsewhere.
   Each of the Openings head's switches that's on is said in a muted line under the head.
-- **Troubleshooting** (in Settings, under Searching and applying) is for getting the desk going at more employers: Find jobs
+- **Troubleshooting** (Settings, Applying, under For fixing the desk) is for getting the desk going at more employers: Find jobs
   searches every list's employers (the user's own lists, and the HR list too), only the
   openings where the desk doesn't go all the way yet show, whatever their fit, every one is
   tried, and nothing is submitted while it's on (the header says so; the desk still makes
@@ -259,7 +262,7 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   round that brings each up for the user), Questions and sign-ins, Stuck (the desk couldn't get past
   something: its Notes, or each card's Report a problem, are for Claude to fix), Ready and
   Done. A group picked hides the others, and nothing hidden is ticked or applied to.
-- **What and where** (the header's button, which reads "What and where:" and the titles and places searched now)
+- **What and where** (the header's button on Openings and Applications, which reads "What and where:" and the titles and places searched now; and Change under Settings, Job search)
   opens a window with the job titles Find jobs looks for (typed, or picked from its ideas
   for IT, equipment and HR work; the first four are searched), the places it looks in (a
   city and state each) and the plugin's employer lists it searches. Saving it finds jobs
@@ -268,7 +271,9 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   applications ask that the profile doesn't answer (`data/question_bank.yaml`): the four
   most asked (each entry's `seen`), with **Show all** for the rest. Answered once, each goes to `answers.yaml` and fills that question at every employer from then on;
   **Your answers** under it shows the ones given. Claude can ask them in chat too
-  (`common_questions`, as setup does).
+  (`common_questions`, as setup does). Below it on the same page (Your answers, in the side menu),
+  **Answers the desk remembers** lists each answer remembered from a job's card, with **Change**
+  and **Forget** (an ID shows as dots until **Show**).
 - **Applications** (its own page in the side menu) lists each job sent in, or filled
   and waiting on its review page, newest first, with where it stands in the tracker and
   when the employer last wrote ("Heard 2026-10-03: confirmation", with the email's
@@ -276,7 +281,7 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   **Waiting** (nothing heard yet), **Heard back** (a confirmation, an assessment or another
   email, and nothing further), **Interviews** (interviewing or an offer) and **Closed**
   (rejected or withdrawn); the group picked is kept in that browser.
-  - One applied to `settings.follow_up_days` days ago (10 unless the profile says) with
+  - One applied to `settings.follow_up_days` days ago (10 unless the profile says; **Remind me to follow up**, Settings, Job search) with
     no email logged, not even a confirmation, says the day its follow-up became due, with
     **Follow up**: like Prep me, it copies a request for the user to paste to you ("Draft a
     follow-up email for job 12, Technician at Example Fab (use track-responses)"). When it's
@@ -287,11 +292,11 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     me for my interview: job 12, Technician at Example Fab (use interview-prep)"). When
     it's pasted, run the interview-prep skill for that job.
   - The emails are the ones the track-responses skill logged, read through the Gmail
-    connector with `email_tracking` on: never with the desk's email app password.
-- **Tailor my resume for each job** holds each picked job, before its browser tab
+    connector with `email_tracking` on (**Let Claude look for replies in my email**, Settings, Job search): never with the desk's email app password.
+- **Tailor my resume for each job** (in the apply bar, and under Settings, Resume and cover letters) holds each picked job, before its browser tab
   opens, until Claude has written a resume for it (see Tailoring resumes). The page
   says how many are waiting. **Use my usual resume** sends one on without.
-- **Cover letter** (a switch in the apply bar: "Write a cover letter for each job") has the desk write each picked job's cover letter by
+- **Cover letter** (a switch in the apply bar, and **Write a cover letter for each job** under Settings, Resume and cover letters) has the desk write each picked job's cover letter by
   itself, in the background, through the user's own Claude Code sign-in (see Cover letters).
 
 ## The desk's wording
@@ -372,7 +377,8 @@ password. `open_job_desk()` returns `emailed_codes`: `email_codes` (the setting)
   you may read, through Gmail, the sign-up codes and links career sites email them for the
   desk's jobs (only those messages, never other mail). On a yes, write
   `settings.email_codes: true` in `~/.job-apply/profile.yaml` (keeping its comments), and
-  start the watch. On a no, leave it: they type the codes themselves.
+  start the watch (the user can turn it on or off themselves: **Let Claude read codes through
+  Gmail**, under Settings, Email codes). On a no, leave it: they type the codes themselves.
 - **No Gmail tools**, or an app password that works: nothing to do here.
 
 Each time the watch ends (and whatever it printed):
@@ -464,7 +470,8 @@ plan's limit or can't reach Claude, the desk says so once at the top of the page
 - **One letter for a job**, outside the switch: write it the same way and call
   `render_document("cover_letter", markdown, job_id)`; the desk uses it and never writes
   over it.
-- `settings.cover_letter_model` picks the model (empty: `claude-opus-5-5`, at medium effort).
+- `settings.cover_letter_model` picks the model (empty: `claude-opus-5-5`, at medium effort); the user
+  can set it under Settings, Resume and cover letters (**Which model writes the letters**).
 
 ## Bot checks
 

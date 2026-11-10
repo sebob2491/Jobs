@@ -1,6 +1,7 @@
 # Applicant profile used to fill job applications.
 # Lives at ~/.job-apply/profile.yaml. Run /job-apply:setup to have Claude fill it
-# in from your resume, or edit it by hand. Leave a value empty (~) and the form
+# in from your resume, or edit it by hand (the Job Desk's profile window and Settings
+# change it too). Leave a value empty (~) and the form
 # field is left for you to answer rather than guessed.
 
 personal:
@@ -188,13 +189,15 @@ settings:
   auto_submit_ats: []         # e.g. [workday, greenhouse, lever, eightfold, successfactors]
   browser_channel: chrome     # chrome, msedge, or chromium (Playwright's bundled browser)
   headless: false
-  # Email (needs the Gmail connector in Claude). Both are off until you turn them on.
+  # Email (needs the Gmail connector in Claude). Both are off until you turn them on (here, or
+  # on the desk: Settings, Email codes and Settings, Job search).
   # email_codes covers applying in the chat, and the Job Desk while its chat is open (without
   # an email app password saved on the desk: Claude reads the code, the desk puts it in).
   email_codes: false          # Claude may read sign-in / verification codes that career sites email you
   email_tracking: false       # Claude may scan your email for replies to your applications
   # Cookie banners: the desk declines them. One with no way to decline (TI's "Agree and
-  # Proceed") waits for you, unless you set this to true to let the desk accept it for you.
+  # Proceed") waits for you, unless you set this to true to let the desk accept it for you
+  # (or choose so under the desk's Cookie banners, Settings, Applying).
   accept_cookies: false
   # Accounts on job sites: the desk creates the account (ticking the site's terms, never a
   # newsletter) with the password you saved on the desk for that system, and, when a saved
@@ -202,8 +205,8 @@ settings:
   # email with your email app password) to the one you saved; for an account never verified it
   # presses the site's "Resend Account Verification" and opens the new email's link. A form's
   # security questions are asked on the desk's card (never remembered); picture codes stay yours.
-  # Never in practice mode. Set this to false to have the desk fill in Create Account and leave
-  # the rest to you.
+  # Never in practice mode. Set this to false (or turn off the desk's Make my accounts, Settings,
+  # Applying) to have the desk fill in Create Account and leave the rest to you.
   manage_accounts: true
   # Notices and attestations: the desk agrees for you to an employer's notice about AI screening
   # of your application (Eightfold's "Notice Related to … Use of the Eightfold AI Recruiting
@@ -212,15 +215,15 @@ settings:
   # legal waiver, or your employment's terms), and picks an application's attestation
   # that its information is true and complete
   # (or your consent to the background check that comes with applying), saying each in the job's
-  # log. Never in practice mode. Any other dialog over a form waits for you. Set this to false to
-  # answer them yourself.
+  # log. Never in practice mode. Any other dialog over a form waits for you. Set this to false (or
+  # turn off the desk's Agree to required notices, Settings, Applying) to answer them yourself.
   accept_notices: true
   # How many applications the Job Desk fills at the same time, each in its own tab of its browser
   # window (1 to 5). Never two at one employer's site; one at a time signs in, makes an account or
   # waits on an emailed code; and while a sign-in or code needs you, no other job starts and no
   # other tab comes to the front (unless the desk's "Don't wait for me" is on: then only while the
   # desk reads a code itself, from your inbox or through Claude's Gmail). 1 fills them one after another. The desk's "Jobs at once"
-  # buttons change it there.
+  # buttons (Settings, Applying) change it there.
   jobs_at_once: 2
   # The days an application you sent in waits with no reply (not even a "we received it" email)
   # before the desk's My applications marks it for a follow-up, with a Follow up button (1 to 90).
@@ -233,11 +236,12 @@ settings:
   # empty for the usual one (claude-opus-5-5), or another model's name, e.g. claude-sonnet-5-5 (lighter on
   # your plan's usage).
   cover_letter_model: ~
-  # Phone alerts: turned on from the Job Desk's Phone alerts card (it makes a private topic for the
+  # Phone alerts: turned on from the Job Desk's Phone alerts card, under Settings (it makes a private topic for the
   # free ntfy app and keeps it in secrets.yaml). The desk then pushes an alert to your phone when a
   # job needs you or is ready for your Submit, and a summary of the day, while the desk runs. They go
   # through ntfy's servers, so by default they say only counts and kinds ("A job needs you: a bot
-  # check"); set phone_alert_details to true to have them name the employer and the job too.
+  # check"); set phone_alert_details to true (or tick the card's Say which employer and job) to have
+  # them name the employer and the job too.
   # Never in practice mode (dry_run), which sends nothing.
   phone_alert_details: false
   phone_summary_at: "18:00"     # when the daily summary comes (this computer's clock), or off

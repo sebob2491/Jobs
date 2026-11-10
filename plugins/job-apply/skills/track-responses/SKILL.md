@@ -15,8 +15,9 @@ Gmail connector needs to be connected, and stop.
 Run `setup_status`. If `settings.email_tracking` is false, ask the user once
 whether you may search their email for replies to applications. Explain that you'll
 only read messages that mention companies in their tracker. If they agree, set
-`settings.email_tracking: true` in `~/.job-apply/profile.yaml`. If they decline,
-stop.
+`settings.email_tracking: true` in `~/.job-apply/profile.yaml` (they can also turn it on or
+off themselves on the Job Desk: **Let Claude look for replies in my email**, under Settings, Job
+search). If they decline, stop.
 
 ## Steps
 

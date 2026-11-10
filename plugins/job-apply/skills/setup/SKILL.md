@@ -109,7 +109,9 @@ soon, with the least answered that it needs:
 
 4. **The three consents, in one AskUserQuestion.** First tell the user what each one means,
    then ask all three in a single AskUserQuestion (one question each, its default shown as
-   the first choice and marked "(default)"), and write each as they say:
+   the first choice and marked "(default)"), and write each as they say. Tell them each is also a
+   switch on the desk, under Settings, Applying (**Cookie banners**, **Make my accounts**, **Agree to
+   required notices**), for changing it later themselves:
    - Cookie banners (default: off): the desk declines them, and one with no way to decline
      (TI's "Agree and Proceed") waits for them. Ask whether the desk may accept those for
      them (`settings.accept_cookies: true`); leave it off unless they say yes.
@@ -119,7 +121,7 @@ soon, with the least answered that it needs:
      newsletter; a form's security questions come up on the desk's card for them, never
      remembered; a picture code stays theirs) and, when a site refuses their saved password,
      asks that site for a password reset and sets the saved password as the new one (reading
-     the reset email needs the email app password on the desk; without it, they finish the
+     the reset email needs the email app password, saved under Settings, Email codes; without it, they finish the
      reset from the email). Ask whether that's all right, and write
      `settings.manage_accounts: true` or `false` as they say (`false`: the desk fills in
      Create Account for them to finish).
@@ -147,7 +149,7 @@ soon, with the least answered that it needs:
    `preferences.locations`, the titles in `preferences.titles` (ranking follows them) and the
    lists in `~/.job-apply/companies.yaml`, whose `companies:` takes employers of their own
    (the shape of the plugin's `templates/companies.example.yaml`). They can change all three
-   later with the desk's What and where button.
+   later with the desk's What and where button (or its Change under Settings, Job search).
 
 6. Write `~/.job-apply/profile.yaml` and keep its comments. Run `setup_status` again
    until `profile_complete` is true. Then show the user a short summary of their answers to
@@ -155,10 +157,10 @@ soon, with the least answered that it needs:
 
 7. **Open the Job Desk** (`open_job_desk`) and tell the user, briefly:
    - It stops at each application's review page for their own Submit ("Submit for me" on
-     the desk changes that); LinkedIn and Indeed applications are always theirs to submit.
+     the desk, in the apply bar or under Settings, Applying, changes that); LinkedIn and Indeed applications are always theirs to submit.
    - **Passwords (optional).** Company sites on Workday and SuccessFactors need an account
-     per company, as do SCREEN's, Nikon Precision's, Benchmark's and Daifuku's. The desk's
-     **Site passwords** card stores one password per job system, on their computer (in its
+     per company, as do SCREEN's, Nikon Precision's, Benchmark's and Daifuku's. The Site
+     passwords card under **Settings, Accounts and passwords** stores one password per job system, on their computer (in its
      password vault: Windows Credential Manager, the macOS Keychain or a Linux keyring); with
      one saved, the desk makes their accounts and signs them in. Otherwise the user creates
      `~/.job-apply/secrets.yaml` themselves, for example `workday_password: "..."`, and runs
@@ -167,7 +169,8 @@ soon, with the least answered that it needs:
      Chrome it uses Microsoft Edge (on every Windows computer). If no browser starts, have
      them install Google Chrome, or run the `playwright install chromium` command shown in
      `setup_status`'s `browser_note` and set `settings.browser_channel: chromium` in the
-     profile.
+     profile (or they press **Its own** under Settings, Updates and about, The browser the desk
+     fills forms in).
    - **LinkedIn and Indeed**, only when the user says they'll paste LinkedIn or Indeed job
      links: run `open_application(url="https://www.linkedin.com/login")` and ask them to sign
      in to LinkedIn, and to Indeed (`https://secure.indeed.com/auth`), in that window. The
@@ -244,8 +247,9 @@ soon, with the least answered that it needs:
      say (never a degree, certification or skill they don't state), written through their own
      Claude Code sign-in, so it uses their Claude plan and needs no key. The first one waits on
      its job's card for their **Use it**; after that they go in without asking. Ask whether
-     they'd like it; if so, they turn on **Cover letter** in the bar that shows on Openings once a job is ticked
-     (`settings.cover_letter_model` picks another model; leave it empty for the usual one). If
+     they'd like it; if so, they turn on **Cover letter** in the bar that shows on Openings once a job is ticked,
+     or **Write a cover letter for each job** under Settings, Resume and cover letters
+     (`settings.cover_letter_model`, or **Which model writes the letters** there, picks another model; leave it empty for the usual one). If
      the desk then says it can't find `claude` or it isn't signed in, they run `claude` in a
      terminal and sign in.
    - Jobs at once: tell them the Job Desk fills two applications at the same time, each in its
@@ -254,7 +258,7 @@ soon, with the least answered that it needs:
      in, makes an account or waits on an emailed code; and while a sign-in or code needs them,
      or they're in one of the desk's rounds, no new job starts and none comes to the front. Ask
      whether they'd like 1 (one after another), 2 or 3, and write it; the desk's **Jobs at
-     once** buttons change it later.
+     once** buttons (Settings, Applying) change it later.
    - Email, only if the Gmail connector is connected: may Claude read the
      verification codes and links career sites email them (`settings.email_codes`)? It
      covers applying with Claude in the chat, and the Job Desk too: without an email app
@@ -262,7 +266,9 @@ soon, with the least answered that it needs:
      chat is open, and the desk puts it in. May it check their email for replies to
      applications (`settings.email_tracking`)? Both default to off. Explain that Claude only
      searches for those specific messages (for a code, only that job's site's mail since it
-     began waiting) and never sends or deletes mail.
+     began waiting) and never sends or deletes mail. They can turn either on or off themselves
+     later: **Let Claude read codes through Gmail** (Settings, Email codes) and **Let Claude look
+     for replies in my email** (Settings, Job search).
 
    Write `~/.job-apply/profile.yaml` (keeping its comments), and show the user a short
    summary of their answers to confirm, with sensitive values (EEO choices) summarized
