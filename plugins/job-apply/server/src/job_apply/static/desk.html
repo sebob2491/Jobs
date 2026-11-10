@@ -23,6 +23,8 @@
   --good: #15803d; --good-bg: #dcfce7; --warn: #b45309; --warn-bg: #fef3c7; --bad: #b91c1c; --bad-bg: #fee2e2;
   --info: #1d4ed8; --info-bg: #dbeafe;
   --link: var(--accent);  /* (words that are a link: no color of their own, the accent that reads on the panel) */
+  /* (the apply bar, dark in both looks: the text's color behind light words here, a panel in the dark look) */
+  --bar-bg: var(--text); --bar-fg: var(--bg); --bar-strong: var(--panel); --bar-line: var(--text);
   --shadow: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.05);
   --shadow-lg: 0 14px 34px rgba(16,24,40,.22), 0 3px 8px rgba(16,24,40,.10);
   --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
@@ -36,6 +38,7 @@
     --on-accent: #ffffff;
     --good: #4ade80; --good-bg: #12301f; --warn: #fbbf24; --warn-bg: #33270b; --bad: #f87171; --bad-bg: #3a1616;
     --info: #60a5fa; --info-bg: #132a4a; --link: var(--accent-2);
+    --bar-bg: var(--panel); --bar-fg: var(--body); --bar-strong: var(--text); --bar-line: var(--control-line);
     --shadow: none; --shadow-lg: 0 14px 34px rgba(0,0,0,.55), 0 3px 8px rgba(0,0,0,.35);
   }
 }
@@ -47,6 +50,7 @@
   --on-accent: #ffffff;
   --good: #4ade80; --good-bg: #12301f; --warn: #fbbf24; --warn-bg: #33270b; --bad: #f87171; --bad-bg: #3a1616;
   --info: #60a5fa; --info-bg: #132a4a; --link: var(--accent-2);
+  --bar-bg: var(--panel); --bar-fg: var(--body); --bar-strong: var(--text); --bar-line: var(--control-line);
   --shadow: none; --shadow-lg: 0 14px 34px rgba(0,0,0,.55), 0 3px 8px rgba(0,0,0,.35);
 }
 * { box-sizing: border-box; }
@@ -315,19 +319,20 @@ details.f#more { position: static; }
 .addbar { display: flex; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line-2);
   border-bottom: 1px solid var(--line-2); }
 .addbar input { flex: 1; min-width: 0; }
-/* the apply bar: dark, floating over the foot of the page while an opening is ticked (the colors of the toast: the
-   text's color behind the page's), its hints in one small line along its top; the page gets 96px more room at its foot
+/* the apply bar: dark, floating over the foot of the page while an opening is ticked (--bar-bg), centred beside the
+   side menu at its own width, its hints in one small line along its top; the page gets 96px more room at its foot
    then, so the bar never covers the last row */
-.applybar { position: fixed; left: calc(50% + 122px); bottom: 24px; transform: translateX(-50%); z-index: 25;
+.applybar { position: fixed; left: 244px; right: 0; bottom: 24px; width: max-content; margin: 0 auto; z-index: 25;
   display: grid; gap: 6px; max-width: calc(100vw - 284px); padding: 10px 10px 10px 18px; border-radius: 14px;
-  background: var(--text); color: var(--bg); box-shadow: var(--shadow-lg); font-size: 13.5px; }
+  border: 1px solid var(--bar-line); background: var(--bar-bg); color: var(--bar-fg); box-shadow: var(--shadow-lg);
+  font-size: 13.5px; }
 body.applying[data-page="openings"] .content { padding-bottom: 120px; }
 /* (its width the row's: the hints wrap under it, never widen it) */
 .bar-hints { display: flex; flex-wrap: wrap; gap: 2px 14px; width: 0; min-width: 100%; margin: 0; font-size: 12px; }
 .bar-hints .hint { opacity: .75; }
 .bar-hints .hint:empty, .bar-hints:not(:has(.hint:not(:empty))) { display: none; }
 .bar-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; white-space: nowrap; }
-.applybar #apply-count { color: var(--panel); font-weight: 600; }
+.applybar #apply-count { color: var(--bar-strong); font-weight: 600; }
 .applybar .div { width: 1px; height: 20px; background: currentColor; opacity: .3; }
 .applybar label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
 .applybar .btn.ghost { color: inherit; }
@@ -391,7 +396,7 @@ ul.rows { list-style: none; margin: 0; padding: 0; }
 .c-acts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .c-acts button { height: 28px; padding: 0 10px; font-size: 13px; border-radius: 7px; }
 @media (max-width: 1100px) {
-  .apps-head, .row.app { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 190px auto; row-gap: 6px;
+  .apps-head, .row.app { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 190px 116px; row-gap: 6px;
     grid-template-areas: "job job state acts" "applied heard state acts"; }
   .apps-head { padding-top: 6px; padding-bottom: 6px; }
 }
@@ -595,7 +600,7 @@ body.stopped > :not(#stopped) { display: none; }
   #area-btn { max-width: 100%; }
   .content { padding: 16px; }
   .toast { left: calc(50% + 32px); max-width: calc(100vw - 96px); }
-  .applybar { left: calc(50% + 32px); max-width: calc(100vw - 96px); }
+  .applybar { left: 64px; max-width: calc(100vw - 96px); }
   body.applying[data-page="openings"] .content { padding-bottom: 112px; }
 }
 @media (max-width: 760px) {
