@@ -379,3 +379,46 @@ def test_a_picture_of_the_safety_window(srv, job_apply_home, monkeypatch, look, 
 
     run(go())
     assert path.stat().st_size > 2000
+
+
+# The update card (the design's F2), each drawn in Settings, under Updates and about; and Home with the blue notice of a
+# newer version out (the side menu's "update ready" with it)
+UPDATE_SHOTS = {
+    "newer": {"latest": "0.4.4", "newer": True, "kind": "installed"},
+    "under-way": {"latest": "0.4.4", "newer": True, "kind": "installed", "progress": "downloading"},
+    "failed": {"latest": "0.4.4", "newer": True, "kind": "plugin", "progress": "failed",
+               "error": "Claude couldn't update the plugin."},
+}
+
+
+@pytest.mark.parametrize("window", WINDOWS, ids=lambda w: f"{w[0]}x{w[1]}")
+@pytest.mark.parametrize("look", LOOKS)
+def test_a_picture_of_the_update_card_and_the_notice(srv, job_apply_home, monkeypatch, look, window):
+    """Updates and about with a newer version out, with an update under way, and with one that didn't go through; and
+    Home with the notice (the openings state, version 0.4.3), in each look and window size; saved as
+    update-<case>-<look>-<w>x<h>.png and update-home-<look>-<w>x<h>.png."""
+    folder = Path(SHOTS)
+    folder.mkdir(parents=True, exist_ok=True)
+    state = _state("state-openings.json")
+    state["version"] = "0.4.3"
+    desk = _canned(srv, monkeypatch, state)
+    size = f"{look}-{window[0]}x{window[1]}"
+    names = [*(f"update-{case}-{size}.png" for case in UPDATE_SHOTS), f"update-home-{size}.png"]
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": window[0], "height": window[1]}, color_scheme=look)
+                for (case, update), name in zip([*UPDATE_SHOTS.items(), ("home", UPDATE_SHOTS["newer"])], names):
+                    state["update"] = {**state["update"], "current": "0.4.3", **update}
+                    await page.goto("about:blank")
+                    await open_desk(page, desk, "home" if case == "home" else "settings/about")
+                    await page.wait_for_timeout(150)
+                    await page.screenshot(path=str(folder / name))
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert all((folder / name).stat().st_size > 2000 for name in names)
