@@ -107,18 +107,20 @@ button.me:hover { background: var(--hover); }
 
 .main { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); min-width: 0;
   min-height: 0; }
-/* the top bar: the page's name and What and where at the left, the rest at the right. 64px high; it grows by a row
-   when a search's words and buttons don't fit beside the rest */
-.top { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 12px; min-height: 64px;
-  padding: 14px 28px; background: var(--panel); border-bottom: 1px solid var(--line); }
-.top-l { display: flex; align-items: center; gap: 12px; min-width: 0; margin-right: auto; }
+/* the top bar: the page's name and What and where at the left, the rest at the right, on one line 64px high. Short
+   of room, What and where gives way first (cut short, down to a left column of 270px: its tooltip has it whole);
+   then the right-hand group takes a second line (a search's words and its two buttons) */
+.top { display: grid; grid-template-columns: minmax(min-content, 1fr) auto; align-items: center; gap: 8px 12px;
+  min-height: 64px; padding: 14px 28px; background: var(--panel); border-bottom: 1px solid var(--line); }
+body[data-page="openings"] .top, body[data-page="applications"] .top { grid-template-columns: minmax(270px, 1fr) auto; }
+.top-l { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.top-r { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 12px; min-width: 0; }
 .top h1 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; }
 .top .sub { color: var(--muted); font-size: 13px; }
 /* (each control's wrapper is shown by its pages, the control by its own rule: the wrapper takes no room itself) */
 .top [data-pages] { display: contents; }
 #searched:empty, #mode:empty { display: none; }
-/* (as wide as leaves the rest of the bar on one line, down to a window of about 1,100 px; its tooltip has it whole) */
-#area-btn { display: inline-block; line-height: 32px; max-width: clamp(190px, calc(100vw - 905px), 340px);
+#area-btn { display: inline-block; line-height: 32px; flex: 0 1 auto; min-width: 0; max-width: 340px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .content { padding: 22px 28px 24px; min-height: 0; overflow-y: auto; }
 .page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; align-content: start; }
@@ -236,6 +238,7 @@ input[type=checkbox]:disabled { opacity: .5; cursor: default; }
 .filters .group { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
 .filters .hint { color: var(--muted); }
 .filters input { width: 7em; height: 28px; font-size: 13px; }
+#company-add { width: 10.5em; }  /* (its placeholder whole) */
 .stops { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 18px 12px; }
 /* (each a choice to press: tinted when it's on) */
 .filters button, .stops button, .at-once button { height: 28px; padding: 0 11px; font-size: 13px; border-radius: 999px;
@@ -444,8 +447,9 @@ body.stopped > :not(#stopped) { display: none; }
   .nav .sep { margin: 10px 4px; }
   button.me { justify-content: center; padding: 6px 0; position: relative; }
   .me-words { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  .top { padding: 10px 16px; }
+  .top, body[data-page] .top { grid-template-columns: minmax(0, 1fr); padding: 10px 16px; }
   .top-l { flex-wrap: wrap; }
+  .top-r { justify-content: flex-start; }
   #area-btn { max-width: 100%; }
   .content { padding: 16px; }
   .toast { left: calc(50% + 32px); max-width: calc(100vw - 96px); }
@@ -527,11 +531,13 @@ body.stopped > :not(#stopped) { display: none; }
         <h1 id="page-title">Home</h1>
         <span data-pages="openings applications" hidden><button class="btn" id="area-btn" data-act="area" title="What and where Find jobs searches: the job titles, places and employer lists">What and where</button></span>
       </div>
+      <div class="top-r">
       <span data-pages="home openings applications"><span class="sub" id="searched"></span></span>
       <span id="mode"></span>
       <span data-pages="home working"><button class="btn" id="week-btn" data-act="week" title="What the desk did in the last 7 days: jobs filled and sent, where it stopped for you, and how long each job took">This week</button></span>
       <span data-pages="home openings applications"><button class="btn" id="stop-search" data-act="stop-search" title="The search ends; the openings found before it stay" hidden>Stop search</button></span>
       <span data-pages="home openings applications"><button class="btn" id="find" data-act="find">Find jobs</button></span>
+      </div>
     </div>
     <main class="content" id="content">
       <div id="notices"></div>
