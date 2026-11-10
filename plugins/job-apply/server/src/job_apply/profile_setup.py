@@ -545,16 +545,17 @@ def save_form(form: Any) -> dict[str, Any]:
     other line and comment kept, all or nothing. What was written (the places), and what the profile still needs."""
     config.ensure_home()
     path = config.profile_path()
-    prof = config.Profile.load(path)
-    writes = changes(form, prof)
-    if writes:
-        text = path.read_text(encoding="utf-8")
-        try:
-            for keys, value in writes:
-                text = config.set_yaml_value(text, keys, value)
-        except ValueError as e:
-            raise FormError(f"Your profile couldn't be changed here ({e}). Change it in {path} by hand.") from None
-        config.write_text_atomic(path, text)
+    with config.PROFILE_LOCK:  # (read, changed and written as one: a Settings switch saved meanwhile is kept too)
+        prof = config.Profile.load(path)
+        writes = changes(form, prof)
+        if writes:
+            text = path.read_text(encoding="utf-8")
+            try:
+                for keys, value in writes:
+                    text = config.set_yaml_value(text, keys, value)
+            except ValueError as e:
+                raise FormError(f"Your profile couldn't be changed here ({e}). Change it in {path} by hand.") from None
+            config.write_text_atomic(path, text)
     return {"saved": [".".join(keys) for keys, _ in writes],
             "missing": config.Profile.load(path).missing_required(), "version": profile_version()}
 

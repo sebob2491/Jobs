@@ -196,9 +196,15 @@ def test_many_settings_saved_at_once_are_all_kept(job_apply_home, monkeypatch):
         time.sleep(0.02)
         return out
 
+    from job_apply import search
+
+    personal = {**profile_setup.form_of(config.Profile.load())["personal"], "phone": "480-555-0199"}
     monkeypatch.setattr(config, "set_yaml_value", slow_change)
     saves = [(config.set_setting, (k, v)) for k, v in NEW_VALUES.items()]
     saves.append((profile_setup.save_cover_letter, ("letter.pdf", _b64(PDF))))
+    # (and the profile window's save, and What and where's, at the same moment)
+    saves.append((profile_setup.save_form, ({"personal": personal},)))
+    saves.append((lambda: search.set_search_area(places=["Tempe, AZ"], titles=["Equipment Technician"]), ()))
     threads = [threading.Thread(target=f, args=a) for f, a in saves]
     for t in threads:
         t.start()
@@ -207,6 +213,9 @@ def test_many_settings_saved_at_once_are_all_kept(job_apply_home, monkeypatch):
     after = _profile(job_apply_home)
     assert {k: after["settings"][k] for k in NEW_VALUES} == NEW_VALUES
     assert config.expand(after["documents"]["cover_letter"]) == job_apply_home / "cover_letter.pdf"
+    assert after["personal"]["phone"] == "480-555-0199"
+    assert (after["preferences"]["locations"], after["preferences"]["titles"]) == (["Tempe, AZ"],
+                                                                                  ["Equipment Technician"])
 
 
 def test_profile_settings_needs_the_key_and_a_profile(srv, job_apply_home):
