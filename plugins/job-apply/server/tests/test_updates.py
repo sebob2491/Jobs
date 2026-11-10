@@ -319,6 +319,18 @@ def test_a_file_whose_sha256_differs_is_deleted_and_nothing_starts(copy, loop, d
         assert state["error"] == "The download didn't arrive whole."
 
 
+@pytest.mark.parametrize("digest_line", [f"{DIGEST}  JobDeskSetup.exe trailing junk",
+                                         f"{DIGEST}  JobDeskSetup.exe\nmore",
+                                         f"{DIGEST}  JobDeskSetup.exe.part\n", f"{DIGEST}\n", f"{DIGEST}  other.exe\n",
+                                         f"{DIGEST} JobDeskSetup.exe\n"])
+def test_a_checksum_file_with_the_right_sha256_in_any_other_line_is_refused(copy, loop, digest_line):
+    """The checksum file is the workflow's one line exactly (the SHA-256, two spaces, JobDeskSetup.exe, a newline or
+    none): the right SHA-256 with anything after it, before another name, or alone, is no checksum of this file."""
+    check, steps, popen = _installed_update(copy, _site(digest_line=digest_line))
+    assert steps == [] and popen.calls == []
+    assert check.state(standalone=True)["error"] == "The download didn't arrive whole."
+
+
 def test_a_cut_off_download_is_deleted_and_says_so(copy, loop):
     check, steps, popen = _installed_update(copy, _site(installer=INSTALLER[:-10]))
     assert steps == [] and popen.calls == [] and not any(_folder().glob("JobDeskSetup*"))
@@ -359,6 +371,23 @@ def test_a_file_over_the_limit_is_refused_while_it_streams_and_from_its_header(c
 
     check, steps, popen = _installed_update(copy, httpx.MockTransport(header))
     assert steps == [] and popen.calls == [] and check.state(standalone=True)["progress"] == "failed"
+
+
+def test_a_file_said_to_be_over_the_limit_is_refused_before_a_byte_of_it_is_read(copy, loop):
+    """The installer's own Content-Length over MAX_DOWNLOAD refuses it before its body is read: here the body itself is
+    the right installer, whole and well under the limit, so only the header can refuse it."""
+    body = Chunks([INSTALLER[:500], INSTALLER[500:]])
+    site = _site()
+
+    def handler(request):
+        if str(request.url) == STORAGE + "JobDeskSetup.exe":
+            return httpx.Response(200, headers={"content-length": str(updates.MAX_DOWNLOAD + 1)}, stream=body)
+        return site.handler(request)
+
+    check, steps, popen = _installed_update(copy, httpx.MockTransport(handler))
+    assert body.read == 0 and steps == [] and popen.calls == [] and not any(_folder().glob("JobDeskSetup*"))
+    state = check.state(standalone=True)
+    assert (state["progress"], state["error"]) == ("failed", updates.NOT_DOWNLOADED)
 
 
 @pytest.mark.parametrize("where", ["http://objects.githubusercontent.com/JobDeskSetup.exe",

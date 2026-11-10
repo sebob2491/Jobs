@@ -3532,7 +3532,8 @@ function renderUpdate() {
     [title, said] = ["The update didn't go through", `${esc(up.error || "")} Nothing was changed.${canUpdate ? fillingSaid : ""}`];
     if (up.kind === "plugin") more = `<p class="s">You can also run these in a terminal:</p>`
       + `<p class="s">${(up.commands || []).map((c) => `<code>${esc(c)}</code>`).join("<br>")}</p>`;
-    buttons = canUpdate ? updateNow : checkNow;
+    // (What's new too: where the installer can be downloaded by hand, as a failure may say)
+    buttons = canUpdate ? whatsNew + updateNow : checkNow;
   } else if (!up.newer) {
     [title, said] = up.checked_at ? ["You have the newest version", `Version ${current}. Checked ${agoWords(up.checked_at)}.`]
       : [`Version ${current}`, "The desk couldn't look for a newer one. It needs the internet for that."];
@@ -3965,8 +3966,8 @@ function refresh() {
 // The desk gone while an update was under way (the brief's item 6): an installed copy's desk stops for its installer,
 // and opens again by itself. The page says so in place of "the desk isn't answering", closes its window where the
 // browser lets it (F2: installing). The desk the installer opens again has a key of its own and a window of its own,
-// so when a desk answers again and refuses this window's key, the page says the update is done and that this window
-// can be closed (and stops asking); a desk that answers any other way is this one again, and the page reloads. A desk
+// so when a desk answers again and refuses this window's key, the page says the desk opened again (updated, or the
+// version before after an update that didn't finish) and that this window can be closed (and stops asking); a desk that answers any other way is this one again, and the page reloads. A desk
 // that hasn't answered UPDATE_LONG seconds on says how to open it
 let updateDown = false, updateDownAt = 0;
 const UPDATE_LONG = 180;
@@ -3992,7 +3993,7 @@ async function load(at = changes) {
     if (updateDown || (e.status === undefined && up && UPDATING.includes(up.progress))) {
       if (e.status === 403) {  // (the updated desk, with its own key and window)
         stopped = true;
-        $("notices").innerHTML = `<p class="notice info">The Job Desk was updated, and it opened again in a window of its own. You can close this one.</p>`;
+        $("notices").innerHTML = `<p class="notice info">The Job Desk opened again in a window of its own. You can close this one.</p>`;
         window.close();
         return;
       }
