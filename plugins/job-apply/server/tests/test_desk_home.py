@@ -373,9 +373,9 @@ _STEPS = """() => [...document.querySelectorAll('#work > .task[data-run]')].map(
 def test_each_running_job_draws_the_step_it_has_reached(srv, job_apply_home):
     """C9's test 7. Working on: each running job with its title, its company, how long it has run (from its first
     log_at), four steps (Opened, Account, Form, Review), those before the one reached done and that one now, by C5's
-    table: Review when its need is one of the four Submits, Form when it has seen the form, Account when it has the inbox
-    or waits on a sign-in or an emailed code, else Opened. Its last four log lines and Report a problem. Under them, the
-    jobs waiting their turn in a <details> that lists each by its title and company."""
+    table: Review when its need is one of the four Submits, Form when it has seen the form, Account when it has the
+    inbox or waits on a sign-in or an emailed code, else Opened. Its last four log lines and Report a problem. Under
+    them, the jobs waiting their turn in a <details> that lists each by its title and company."""
     desk, jobs = _stopped_desk(srv, {
         "Example Opened": dict(status="running"),
         "Example Inbox": dict(status="running", inbox=True),
@@ -399,8 +399,8 @@ def test_each_running_job_draws_the_step_it_has_reached(srv, job_apply_home):
                 page = await browser.new_page()
                 await page.clock.set_fixed_time(now)
                 await open_desk(page, desk, "home")
-                await page.wait_for_function(
-                    "() => [...document.querySelectorAll('#work [data-since]')].filter((s) => s.innerText).length === 5")
+                await page.wait_for_function("""() => [...document.querySelectorAll('#work [data-since]')]
+                    .filter((s) => s.innerText).length === 5""")
                 seen = {"steps": await page.evaluate(_STEPS)}
                 waiting = page.locator("#work details")
                 seen["summary"] = await waiting.locator("summary").inner_text()
@@ -425,16 +425,18 @@ def test_each_running_job_draws_the_step_it_has_reached(srv, job_apply_home):
     assert seen["waiting"] == ["Technician · Example Next", "Technician · Example Last"], seen
 
 
-# The tiles, each as [its label, its number, the line under it, whether it asks for attention]; This week's bars, each as
-# [the day, how many, its bar's class]; its three numbers with their labels; its header's link; and Home's cards in order
+# The tiles, each as [its label, its number, the line under it, whether it asks for attention]; This week's bars, each
+# as [the day, how many, its bar's class]; its three numbers with their labels; its header's link; Home's cards in order
 _TILES = """() => ({
   tiles: [...document.querySelectorAll('#tiles .tile')].map((t) => [t.querySelector('.label').innerText,
     t.querySelector('.num').innerText, t.querySelector('.sub').innerText, t.classList.contains('attn')]),
   bars: [...document.querySelectorAll('#week-bars > div')].map((d) => [d.querySelector('span').innerText,
     Number(d.dataset.n), d.querySelector('i').className]),
   stats: [...document.querySelectorAll('#week-stats > div')].map((d) => d.innerText.replace(/\\s+/g, ' ')),
-  link: [document.querySelector('#thisweek-link').innerText, document.querySelector('#thisweek-link').getAttribute('href')],
-  order: [...document.querySelectorAll('[data-pages=home] .card')].map((c) => c.id || c.getAttribute('aria-labelledby'))})"""
+  link: [document.querySelector('#thisweek-link').innerText,
+    document.querySelector('#thisweek-link').getAttribute('href')],
+  order: [...document.querySelectorAll('[data-pages=home] .card')]
+    .map((c) => c.id || c.getAttribute('aria-labelledby'))})"""
 
 
 def _app(n: int, applied_at: str, group: str = "waiting", heard: str = "") -> dict:
@@ -457,10 +459,10 @@ _APPS = [_app(1, "2026-11-13T17:00:00+00:00"), _app(2, "2026-11-13T02:00:00+00:0
 
 def test_the_tiles_and_this_week_from_fixed_applications_and_a_fixed_clock(srv, job_apply_home, monkeypatch):
     """C9's test 8. The four tiles: Needs you (up to three kinds from its list, in its order; attn above 0), Working on
-    (the running jobs, and how many more wait, or Paused), Ready to submit (and what becomes of them), Sent this week (the
-    applications applied for in the last 7 days, and how many in all). This week: seven bars, a day each, ending today,
-    today's marked; under them sent, answers and interviews; and the link to What's working in its header. All from a
-    fixed set of applications, on a fixed clock (Friday the 13th of November 2026, 3 pm in Phoenix)."""
+    (the running jobs, and how many more wait, or Paused), Ready to submit (and what becomes of them), Sent this week
+    (the applications applied for in the last 7 days, and how many in all). This week: seven bars, a day each, ending
+    today, today's marked; under them sent, answers and interviews; and the link to What's working in its header. All
+    from a fixed set of applications, on a fixed clock (Friday the 13th of November 2026, 3 pm in Phoenix)."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
