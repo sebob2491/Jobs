@@ -110,7 +110,7 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     card says "Claude is looking in your Gmail for the code".
   - **Alert me** (Settings, Phone alerts) turns on desktop notifications for jobs that come to
     need the user or are ready to submit, so the desk can be left in the background.
-- **Notes (N)** (in the header, once there are any) collects the notes the desk takes by
+- **Notes (N)** (on the Help page, once there are any) collects the notes the desk takes by
   itself whenever a job stops on something it most likely got wrong: stuck, a sign-in, a
   Submit that didn't go through or showed no confirmation, or an answer that didn't go in
   (not bot checks, CAPTCHAs, emailed codes or questions the profile doesn't answer). The
@@ -187,11 +187,11 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   **Undo** (on its card under Done this visit, or by its row in the list) puts it back where it
   was, with the tracker's status from before: back in the queue (opened again from the start), or
   in the list unticked if the desk hadn't begun it. Undo sends nothing: the job stops at its review page.
-- **Pause queue** (in the header, while jobs are queued or running) lets the jobs under way finish their pass and
+- **Pause queue** (in the queue's card at the foot of the side menu, while jobs are queued or running) lets the jobs under way finish their pass and
   starts no other until **Carry on with the queue**. A Submit the user presses still goes, and jobs waiting on them are still
   watched. A paused queue stays paused after a restart. To stop the queue, never close the desk's browser window: that
   breaks the job in progress (it says so, and its **Carry on** opens the application again).
-- **Clear the queue** (in the header beside it, and on the notice of jobs back after a restart) asks first, then takes
+- **Clear the queue** (in the same card, and on the notice of jobs back after a restart) asks first, then takes
   out every job the desk hasn't begun (waiting its turn, or held for a tailored resume or a first cover letter's say),
   never skipped: back in the openings, to apply to again. A job begun keeps its card, one the user carried on with stays
   queued, and a Submit they pressed goes on. The pause that came with a restart ends with it; their own Pause queue
