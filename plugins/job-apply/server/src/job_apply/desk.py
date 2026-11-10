@@ -632,6 +632,7 @@ class Desk:
         one-time code for it (window_url), so the key never goes on a browser's command line."""
         if not self._allowed(request, api=True):
             return self._forbidden()
+        await request.body()  # (read before the answer, whatever an older second start sent: see window_address)
         return JSONResponse({"url": self.window_url()}, headers={"Cache-Control": "no-store"})
 
     async def seen_view(self, request: Request) -> Response:
@@ -2379,7 +2380,9 @@ def window_address(url: str) -> str | None:
     /api/window, or one that doesn't answer in time): main then opens `url` itself, in a tab."""
     parts = urlsplit(url)
     token = parse_qs(parts.query).get("t", [""])[0]
-    ask = urllib.request.Request(f"http://127.0.0.1:{parts.port}/api/window", data=b"{}", method="POST",
+    # (nothing is sent after the headers: an answer that came before what was sent had been read made Windows reset
+    # the connection now and then, and the second start then opened a tab: the Windows check of Nov 10)
+    ask = urllib.request.Request(f"http://127.0.0.1:{parts.port}/api/window", data=b"", method="POST",
                                  headers={"x-desk-token": token, "content-type": "application/json"})
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # (127.0.0.1 is never behind a proxy)
     try:

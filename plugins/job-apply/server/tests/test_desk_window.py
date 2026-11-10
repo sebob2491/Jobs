@@ -266,6 +266,64 @@ def test_a_second_start_opens_with_a_code_or_the_keyed_address_where_the_running
     assert keyed == (desk.url, "tab")
 
 
+def test_a_second_start_sends_nothing_after_its_request_and_the_desk_reads_what_an_older_one_sent(srv, monkeypatch):
+    """The Windows check of Nov 10: a second start now and then opened a tab, not the desk's window. Its request for a
+    window code sent "{}" after the headers, and the desk answered and closed before reading it: Windows then resets
+    the connection, and the answer may never arrive. So the second start sends nothing after its headers, and the desk
+    reads whatever an older second start sends before it answers."""
+    import http.server
+
+    sent: list[tuple[str | None, bytes]] = []
+
+    class Own(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):  # (http.server's own name for it)
+            length = self.headers.get("Content-Length")
+            sent.append((length, self.rfile.read(int(length or 0))))
+            body = ('{"url": "http://127.0.0.1:%d/?c=Ab-_9"}' % self.server.server_address[1]).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Own)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        assert desk_module.window_address(f"http://127.0.0.1:{port}/?t=a-key") == f"http://127.0.0.1:{port}/?c=Ab-_9"
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert sent == [("0", b"")], sent
+
+    # the desk's side: what was sent is read before the answer is made
+    from starlette.requests import Request
+
+    read: list[str] = []
+    body = Request.body
+
+    async def noted(self):
+        read.append(self.url.path)
+        return await body(self)
+
+    monkeypatch.setattr(Request, "body", noted)
+    desk = _idle_desk(srv)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with _client(desk) as c:
+                return await c.post("/api/window", headers={"x-desk-token": desk.token}, json={})
+        finally:
+            await desk.stop()
+
+    answer = run(go())
+    assert answer.status_code == 200 and read == ["/api/window"], (answer.status_code, read)
+
+
 @pytest.mark.parametrize("answer", [
     '{"url": "http://127.0.0.1:PORT/?c=abc&t=more"}', '{"url": "http://127.0.0.1:PORT/?c=abc#x"}',
     '{"url": "http://127.0.0.1:1/?c=abc"}', '{"url": "http://careers.example.com/?c=abc"}',
