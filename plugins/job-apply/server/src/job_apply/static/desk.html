@@ -247,6 +247,10 @@ input[type=checkbox]:disabled { opacity: .5; cursor: default; }
 .setrow .box { display: flex; align-items: center; gap: 8px; color: var(--body); font-size: 13px; }
 .setrow input[type=number] { width: 72px; }
 .setrow input[type=text] { width: 260px; max-width: 100%; }
+.setrow input[type=password] { width: 200px; max-width: 100%; }
+/* (a row's controls that are disabled together while it saves: the email's app password and its Save) */
+.setrow fieldset.box { margin: 0; padding: 0; border: 0; min-width: 0; }
+.setrow .acts { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .set-err { grid-column: 1 / -1; margin: -6px 0 0; color: var(--bad); font-size: 13px; }
 /* under a card's rows, a button of its own (the Safety window's) */
 .setfoot { padding: 13px 18px; border-top: 1px solid var(--line-2); }
@@ -718,7 +722,8 @@ body.stopped > :not(#stopped) { display: none; }
   .trow { grid-template-columns: 38px minmax(0, 1fr); }
   .trow .acts { grid-column: 2; flex-wrap: wrap; }
   .setrow { grid-template-columns: minmax(0, 1fr); gap: 10px; }
-  .setrow > .seg, .setrow > .switch { justify-self: start; }
+  .setrow > .seg, .setrow > .switch, .setrow > .btn { justify-self: start; }
+  .setrow > .acts { justify-content: flex-start; }
   .tbody { margin-left: 0; }
 }
 </style>
@@ -1148,6 +1153,33 @@ body.stopped > :not(#stopped) { display: none; }
           <div class="spanel" id="panel-email" data-panel="email" hidden>
             <div class="spanel-h"><h2 id="panel-email-h">Email codes</h2>
               <p>Many job sites email a code or a link when you sign in or make an account. The desk can read it and put it in for you.</p></div>
+            <!-- (D3: the email's app password, saved by the same /api/password call as the Site passwords card's, and
+                 never drawn back: the box is emptied once it's saved, and only "Saved" or "Not saved" comes from the
+                 state; Test it signs in and out again, /api/mail/test; Claude's Gmail only inside Claude) -->
+            <section class="card" aria-labelledby="panel-email-h">
+              <div class="setrow">
+                <div><p class="t" id="mail-pw-name">Your email's app password</p>
+                  <p class="s" id="mail-pw-said">A separate password your email provider gives to one program. With it, the desk reads only mail from the job's own site that arrived after the job began waiting, and marks nothing as read. Works with Gmail, Yahoo, iCloud and AOL addresses.</p>
+                  <p class="s"><a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">How to make one for Gmail</a></p></div>
+                <form id="mail-pw-form" autocomplete="off">
+                  <fieldset class="box" id="mail-pw-set">
+                    <span class="pill" id="mail-pw-state">Not saved</span>
+                    <input type="password" id="mail-pw" autocomplete="new-password" aria-labelledby="mail-pw-name" aria-describedby="mail-pw-said">
+                    <button class="btn" type="submit" id="mail-pw-save">Save</button>
+                  </fieldset>
+                </form>
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="mail-test-name">Test it</p>
+                  <p class="s" id="mail-test-said" aria-live="polite"></p></div>
+                <button class="btn" id="mail-test" data-act="mail-test" aria-describedby="mail-test-name mail-test-said" disabled>Test it now</button>
+              </div>
+              <div class="setrow" id="set-email-codes-row">
+                <div><p class="t" id="set-email-codes-name">Let Claude read codes through Gmail</p>
+                  <p class="s" id="set-email-codes-said">Without an app password, Claude reads the code through its Gmail connector while your chat is open, and the desk puts it in.</p></div>
+                <input type="checkbox" class="switch" id="set-email-codes" data-setting="email_codes" aria-labelledby="set-email-codes-name" aria-describedby="set-email-codes-said">
+              </div>
+            </section>
           </div>
           <div class="spanel" id="panel-phone" data-panel="phone" hidden>
             <div class="spanel-h"><h2 id="panel-phone-h">Phone alerts</h2></div>
@@ -1209,6 +1241,42 @@ body.stopped > :not(#stopped) { display: none; }
           </div>
           <div class="spanel" id="panel-documents" data-panel="documents" hidden>
             <div class="spanel-h"><h2 id="panel-documents-h">Resume and cover letters</h2></div>
+            <!-- (D3: the files' names from the state, never their paths; a file picked is sent as the profile window
+                 sends the resume (/api/profile/resume; the usual cover letter, /api/profile/document). Tailor and
+                 Write a cover letter are the twins of the apply bar's #tailor and #letters, drawn from the same state;
+                 Tailor only inside Claude) -->
+            <section class="card" aria-labelledby="panel-documents-h">
+              <div class="setrow">
+                <div><p class="t" id="set-resume-name">Your resume</p>
+                  <p class="s" id="set-resume-said">None yet.</p></div>
+                <div class="acts"><input type="file" id="set-resume-file" accept=".pdf,.docx" hidden>
+                  <button class="btn" id="set-resume" data-act="set-resume" aria-describedby="set-resume-name set-resume-said">Choose a file</button></div>
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="set-letter-name">Your usual cover letter</p>
+                  <p class="s" id="set-letter-said">Optional. It goes in where a site asks for one and no letter was written for the job.</p>
+                  <p class="s" id="set-letter-file" hidden></p></div>
+                <div class="acts"><input type="file" id="set-letter-pick" accept=".pdf,.docx" hidden>
+                  <button class="btn" id="set-letter" data-act="set-letter" aria-describedby="set-letter-name set-letter-file">Choose a file</button>
+                  <button class="btn" id="set-letter-remove" data-act="set-letter-remove" aria-describedby="set-letter-name set-letter-file" hidden>Remove</button></div>
+              </div>
+              <div class="setrow" id="set-tailor-row">
+                <div><p class="t" id="set-tailor-name">Tailor my resume for each job</p>
+                  <p class="s" id="set-tailor-said">Each job waits for Claude to write a resume for it.</p></div>
+                <input type="checkbox" class="switch" id="set-tailor" aria-labelledby="set-tailor-name" aria-describedby="set-tailor-said">
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="set-letters-name">Write a cover letter for each job</p>
+                  <p class="s" id="set-letters-said"></p></div>
+                <input type="checkbox" class="switch" id="set-letters" aria-labelledby="set-letters-name" aria-describedby="set-letters-said">
+              </div>
+              <details class="setmore"><summary id="letter-model-h">Which model writes the letters</summary>
+                <div class="setrow">
+                  <div><p class="s" id="letter-model-said">Leave this empty for the usual one.</p></div>
+                  <input type="text" id="set-letter-model" data-setting="cover_letter_model" autocomplete="off" spellcheck="false" aria-labelledby="letter-model-h" aria-describedby="letter-model-said">
+                </div>
+              </details>
+            </section>
           </div>
           <div class="spanel" id="panel-about" data-panel="about" hidden>
             <div class="spanel-h"><h2 id="panel-about-h">Updates and about</h2></div>
@@ -1948,8 +2016,9 @@ async function applyTicked(urls, auto) {
     + out.not_interested.join(", ") + ". Undo on it (under Not interested) brings it back.");
 }
 
-// See to these first: the card for the first thing said (the Common questions card, or Site passwords with that
-// job system picked), on its own page (Your answers, or Settings' Accounts and passwords), scrolled to
+// See to these first: the card for the first thing said (the Common questions card, the email's app password, or Site
+// passwords with that job system picked), on its own page (Your answers, or Settings' Email codes or Accounts and
+// passwords), scrolled to
 function seeToFirst(line) {
   if (/common question/i.test(line) && !$("bank-card").hidden) {
     bankAll = true;  // (every one unanswered, not only the most asked four: each stops a job)
@@ -1958,9 +2027,13 @@ function seeToFirst(line) {
     $("bank-card").scrollIntoView({block: "start"});
     return;
   }
+  if (/email app password/i.test(line)) {  // (the email's app password: on Settings' Email codes)
+    goTo("settings/email");
+    $("mail-pw").focus();
+    return;
+  }
   const pick = $("pw-site");
-  const system = /email app password/i.test(line) ? [...pick.options].find((o) => o.value === "email")
-    : [...pick.options].find((o) => line.startsWith(o.label.split(":")[0] + ":"));
+  const system = [...pick.options].find((o) => line.startsWith(o.label.split(":")[0] + ":"));
   if (system) pick.value = system.value;
   goTo("settings/passwords");  // (its card's page and panel)
   $("pw-form").closest("section").scrollIntoView({block: "start"});
@@ -2722,8 +2795,8 @@ const pwSaid = () => { const pws = Object.values(state.passwords || {}); return 
 const START_TIP = "checklist", OWN_PASSWORDS = new Set(["email", "anthropic"]);
 function startLines() {
   const p = state.profile || {}, area = state.area || {}, pws = state.passwords || {}, sr = state.search || {};
-  // (to the Settings panel that holds them: the passwords, the inbox's app password among them, are under Accounts
-  // and passwords)
+  // (to the Settings panel that holds them: the job systems' passwords are under Accounts and passwords, the inbox's
+  // app password under Email codes)
   const settings = {href: "#settings/passwords", button: "Open Settings"};
   const systems = Object.entries(pws).filter(([site]) => !OWN_PASSWORDS.has(site));
   return [
@@ -2736,7 +2809,7 @@ function startLines() {
       ...settings, done: systems.some(([, saved]) => saved)},
     {name: "Let the desk read emailed codes",
       said: "Optional. Many sites email a code when you sign in. With this, the desk enters it for you.",
-      ...settings, done: !!pws.email},
+      ...settings, href: "#settings/email", done: !!pws.email},
     {name: "Answer the common questions", said: `${bankSaid()}. Each answer is one stop fewer.`,
       href: "#answers", button: "Answer them", done: !(state.bank || []).some(unanswered)},
     {name: "Find jobs", said: "Search the employers on your lists.",
@@ -3715,6 +3788,33 @@ function renderSettingsRows() {
     twin.disabled = !!s.dry_run;
   }
   $("set-email-tracking-row").hidden = !!state.standalone;  // (only Claude reads the person's email: C7)
+  // Email codes: whether the app password is saved (never what it is: the box is never drawn from the state), Test it
+  // only with one saved, and Claude's Gmail only inside Claude
+  const mailSaved = !!(state.passwords || {}).email;
+  $("mail-pw-state").textContent = mailSaved ? "Saved" : "Not saved";
+  $("mail-pw-state").className = mailSaved ? "pill good" : "pill";
+  if (!$("mail-test").dataset.saving) $("mail-test").disabled = !mailSaved;
+  $("set-email-codes-row").hidden = !!state.standalone;
+  // Resume and cover letters: the files' names (never their paths), and the twins of the apply bar's Tailor my resume
+  // and Cover letter, from the same state as theirs
+  const docs = p.documents || {};
+  $("set-resume-said").textContent = docs.resume || "None yet.";
+  $("set-resume").textContent = docs.resume ? "Replace" : "Choose a file";
+  $("set-letter-file").textContent = docs.cover_letter || "";
+  $("set-letter-file").hidden = !docs.cover_letter;
+  $("set-letter-remove").hidden = !docs.cover_letter;
+  $("set-tailor-row").hidden = !!state.standalone;  // (only Claude writes a tailored resume: C7)
+  const byKey = state.letters_by === "your Anthropic API key";  // (letters.BY_KEY: what would write the letters)
+  $("set-letters-said").textContent = byKey
+    ? "Written through Anthropic's API with your key, about 10 to 20 cents a letter. The first one waits for your OK."
+    : !state.standalone ? "Written through your own Claude sign-in. The first one waits for your OK."
+    : "This needs an Anthropic API key. Save one under Accounts and passwords.";
+  for (const [id, key, off] of [["set-tailor", "tailor_resumes", false], ["set-letters", "cover_letters", !byKey && !!state.standalone]]) {
+    const el = $(id);
+    if (el.dataset.saving) continue;
+    if (document.activeElement !== el) el.checked = !!s[key];
+    el.disabled = off;
+  }
   document.querySelectorAll("[data-look]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.look === lookNow())));
   $("profile-h").textContent = String(p.name || "").trim() || "Your profile";
   const missing = p.missing || [];
@@ -4088,6 +4188,10 @@ document.addEventListener("click", (e) => {
   if (a === "area-avoid-add") { areaAdd("avoid_titles", $("area-avoid-new").value); $("area-avoid-new").value = ""; }
   if (a === "pause" || a === "resume") act(() => api(`/api/queue/${a}`, {}));
   if (a === "open-home") saveRow(t, () => postEmpty("/api/open/home"));  // (the desk's own folder, and only it)
+  if (a === "mail-test") mailTest(t);
+  if (a === "set-resume") $("set-resume-file").click();  // (the file picked: documentPicked)
+  if (a === "set-letter") $("set-letter-pick").click();
+  if (a === "set-letter-remove") saveRow(t, () => api("/api/profile/document", {kind: "cover_letter", remove: true}));
   if (a === "quit" && confirm("Quit the Job Desk? Jobs it is working on stop where they are. The queue is kept for next time.")) {
     act(async () => { await api("/api/quit", {}); stopPage(); });
   }
@@ -4303,6 +4407,49 @@ $("pw-form").addEventListener("submit", (e) => {
   act(async () => { await api("/api/password", {name, value}); box.value = ""; });
 });
 
+// Email codes: the email's app password, saved by the same call as the Site passwords card's (/api/password, to the
+// password vault). What's typed goes to that call alone: never into the page's state, never drawn back, and the box is
+// emptied once it's saved. The box and Save are held while it saves (their fieldset: saveRow)
+$("mail-pw-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const box = $("mail-pw");
+  saveRow($("mail-pw-set"), async () => {
+    if (!box.value.trim()) throw new Error("Type the app password first.");
+    await api("/api/password", {name: "email_password", value: box.value});
+    box.value = "";
+    $("mail-test-said").textContent = "";  // (a test of the password before says nothing of this one)
+  });
+});
+// Test it: a sign-in to the inbox with the saved app password and out again (/api/mail/test), and what came of it in
+// the row's sentence; a refusal (none saved) under the row, as any row's
+function mailTest(btn) {
+  const said = $("mail-test-said");
+  said.textContent = "";
+  saveRow(btn, async () => {
+    const out = await api("/api/mail/test", {});
+    said.textContent = out.ok ? "It works. The desk signed in to your inbox and read nothing."
+      : `It didn't work: ${out.why}.`;
+  });
+}
+// Resume and cover letters: a file picked for the resume (/api/profile/resume, as the profile window sends it) or the
+// usual cover letter (/api/profile/document), its bytes in base64; what the desk refuses said under the row
+function documentPicked(input) {
+  const file = input.files[0];
+  input.value = "";  // (the same file picked again is a change too)
+  if (!file) return;
+  const resume = input.id === "set-resume-file";
+  saveRow($(resume ? "set-resume" : "set-letter"), async () => {
+    const data = await new Promise((done, failed) => {
+      const reader = new FileReader();
+      reader.onload = () => done(String(reader.result).split(",")[1] || "");
+      reader.onerror = () => failed(new Error("That file couldn't be read."));
+      reader.readAsDataURL(file);
+    });
+    await (resume ? api("/api/profile/resume", {name: file.name, data})
+      : api("/api/profile/document", {kind: "cover_letter", name: file.name, data}));
+  });
+}
+
 // a company typed into the Company box (Enter, or leaving it) or picked from its suggestions: chosen, once
 function addCompany(box) {
   const said = box.value.split(/\s+/).filter(Boolean).join(" ");
@@ -4339,8 +4486,17 @@ document.addEventListener("change", (e) => {
     // (a whole number as one; anything else as typed, for the desk to say what it takes)
     saveSetting(t, /^\d+$/.test(said) ? Number(said) : said, () => { t.value = was == null ? "" : String(was); });
   }
-  if (t.id === "tailor") act(() => api("/api/settings", {tailor_resumes: t.checked}));
-  if (t.id === "letters") act(() => api("/api/settings", {cover_letters: t.checked}));
+  // Tailor my resume and Cover letter, the apply bar's or their twins in Settings (Resume and cover letters): both show
+  // a press at once
+  const twins = {tailor: "set-tailor", letters: "set-letters", "set-tailor": "tailor", "set-letters": "letters"};
+  if (twins[t.id]) {
+    const on = t.checked, twin = $(twins[t.id]);
+    const send = () => api("/api/settings", {[/tailor/.test(t.id) ? "tailor_resumes" : "cover_letters"]: on});
+    twin.checked = on;
+    if (t.id.startsWith("set-")) saveRow(t, send, () => { t.checked = twin.checked = !on; });
+    else act(send);
+  }
+  if (t.id === "set-resume-file" || t.id === "set-letter-pick") documentPicked(t);
   // (the desk's own switches on the Settings page, saved by the same rule as the profile's: saveRow)
   if (t.id === "auto-search" || t.id === "dont-wait") {
     const on = t.checked;

@@ -3,6 +3,9 @@ panel with an address of its own (#settings/<panel>), so a message elsewhere can
 the real page in a browser. Made-up values only: the repo is public."""
 
 import asyncio
+import io
+import json
+import zipfile
 
 import pytest
 import yaml
@@ -518,3 +521,347 @@ def test_submit_for_me_in_settings_and_in_the_apply_bar_always_agree_and_setting
     assert seen["off"] == [[False, False], False], seen
     assert seen["on now"] == [True, True], seen
     assert seen["on there"] == [[True, True], True, 3], seen
+
+
+# ---------------------------------------------------------------- Email codes, Resume and cover letters (package 15)
+
+APP_PASSWORD = "wxyz abcd efgh ijkl"  # (a made-up app password, as Gmail shows one)
+LETTER_PDF = b"%PDF-1.4\n% a made-up cover letter\n"
+DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def _docx() -> bytes:
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as z:
+        z.writestr(zipfile.ZipInfo("word/document.xml", (2026, 1, 1, 0, 0, 0)), "<w:document/>")
+    return out.getvalue()
+
+
+async def _pick(page, button: str, name: str, data: bytes, mime: str) -> None:
+    """A file picked with a row's button (the system's file window, answered with this file), and its save over."""
+    async with page.expect_file_chooser() as chooser:
+        await page.click(button)
+    await (await chooser.value).set_files({"name": name, "mimeType": mime, "buffer": data})
+    await page.wait_for_function(_SAVED)
+    await page.wait_for_timeout(300)  # (and the state after it drawn)
+
+
+_WRITERS = {
+    "key": "Written through Anthropic's API with your key, about 10 to 20 cents a letter. The first one waits for your "
+           "OK.",
+    "claude": "Written through your own Claude sign-in. The first one waits for your OK.",
+    "neither": "This needs an Anthropic API key. Save one under Accounts and passwords.",
+}
+
+
+@pytest.mark.parametrize("writer, standalone", [("key", False), ("key", True), ("claude", False), ("neither", True)])
+def test_the_cover_letter_rows_sentence_says_what_would_write_the_letters(srv, monkeypatch, writer, standalone):
+    """The design's D7, test 6. Write a cover letter for each job says what would write the letters: an Anthropic API
+    key saved (inside Claude or not), the person's Claude sign-in (no key, inside Claude), or that it needs a key (no
+    key, a desk run on its own), its switch disabled then. The key is never on the page."""
+    from job_apply import config
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    if writer == "key":
+        config.save_site_password(config.API_KEY_NAME, "sk-ant-not-a-real-key")
+    desk = _idle_desk(srv)
+    desk.standalone = standalone
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                await open_desk(page, desk, "settings/documents")
+                seen = await page.evaluate("""() => [document.getElementById('set-letters-said').textContent,
+                    document.getElementById('set-letters').disabled,
+                    document.documentElement.outerHTML.includes('sk-ant')]""")
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    assert run(go()) == [_WRITERS[writer], writer == "neither", False]
+
+
+@pytest.mark.parametrize("standalone", [True, False])
+def test_email_codes_and_documents_rows_only_with_claude_are_absent_on_a_desk_run_on_its_own(srv, standalone):
+    """The design's D7, test 5, for Email codes and Resume and cover letters: "Let Claude read codes through Gmail" and
+    "Tailor my resume for each job" show only when the desk runs inside Claude (state.standalone false)."""
+    desk = _idle_desk(srv)
+    desk.standalone = standalone
+    rows = """(panel) => [...document.querySelectorAll(`#panel-${panel} .setrow`)]
+        .filter((r) => r.getClientRects().length && r.querySelector('.t'))
+        .map((r) => r.querySelector('.t').textContent)"""
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                await open_desk(page, desk, "settings/email")
+                shown = {"email": await page.evaluate(rows, "email")}
+                await press_menu(page, "settings/documents")
+                shown["documents"] = await page.evaluate(rows, "documents")
+                await browser.close()
+                return shown
+        finally:
+            await desk.stop()
+
+    shown = run(go())
+    email = ["Your email's app password", "Test it"]
+    documents = ["Your resume", "Your usual cover letter", "Write a cover letter for each job"]
+    if standalone:
+        assert shown == {"email": email, "documents": documents}, shown
+    else:
+        assert shown == {"email": [*email, "Let Claude read codes through Gmail"],
+                         "documents": [*documents[:2], "Tailor my resume for each job", documents[2]]}, shown
+
+
+# What the rows of Email codes and Resume and cover letters show: each switch on or off, the letters' model's box, and
+# the sentence in red under a row where one shows, by its control's id; and the apply bar's twins
+_MY_ROWS = """() => {
+  const $ = (id) => document.getElementById(id);
+  const err = (el) => { const e = el.closest('.setrow').querySelector('.set-err');
+    return e && !e.hidden ? e.textContent : null; };
+  const ids = ['set-email-codes', 'set-tailor', 'set-letters', 'set-letter-model'];
+  return {
+    shown: Object.fromEntries(ids.map((id) => [id, $(id).type === 'checkbox' ? $(id).checked : $(id).value])),
+    errors: Object.fromEntries(ids.map((id) => [id, err($(id))]).filter(([, e]) => e)),
+    twins: [$('tailor').checked, $('letters').checked],
+  };
+}"""
+
+
+def test_email_codes_and_documents_switches_show_the_state_save_on_a_press_and_go_back_after_a_refused_save(
+        srv, job_apply_home, monkeypatch):
+    """The design's D7, test 3, for Email codes and Resume and cover letters: Let Claude read codes through Gmail
+    (email_codes), Tailor my resume and Write a cover letter (the desk's own, the twins of the apply bar's) and the
+    letters' model (cover_letter_model, saved when its box is left) show the state, save at once (held while saving),
+    and after a refused save are back where they were with the desk's sentence under the row; nothing changes then."""
+    from job_apply import desk as desk_module
+
+    _with_settings(job_apply_home, email_codes=True, cover_letter_model="")
+    desk = _idle_desk(srv)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                await open_desk(page, desk, "settings/email")
+                seen = {"first": await page.evaluate(_MY_ROWS)}
+                held = []
+
+                async def look(route):
+                    held.append(await page.evaluate("() => document.getElementById('set-letters').disabled"))
+                    await route.continue_()
+                await page.route("**/api/settings", look)
+                await _press(page, "settings/documents", "#set-letters")
+                await page.unroute("**/api/settings", look)
+                seen["held"] = held
+                await _press(page, "settings/email", "#set-email-codes")
+                await _press(page, "settings/documents", "#set-tailor")
+                await page.click("#letter-model-h")  # (Which model writes the letters, opened)
+                await _type(page, "settings/documents", "#set-letter-model", "claude-opus-5-5")
+                await page.wait_for_timeout(1700)  # (a refresh: the same)
+                seen["saved"] = await page.evaluate(_MY_ROWS)
+                seen["written"] = _written(job_apply_home)
+                seen["desk"] = [desk.applier.tailoring_on(), desk.applier.letters]
+                # refused: the profile's (the check made to refuse), and the desk's own (its route made to refuse)
+                monkeypatch.setattr(desk_module, "profile_setting_problem", lambda key, value: "The desk said no.")
+                await _type(page, "settings/documents", "#set-letter-model", "claude-sonnet-5")
+                await _press(page, "settings/email", "#set-email-codes")
+                await page.route("**/api/settings", lambda route: route.fulfill(
+                    status=400, content_type="application/json", body='{"error": "That stays as it is."}'))
+                await _press(page, "settings/documents", "#set-tailor")
+                await _press(page, "settings/documents", "#set-letters")
+                await page.unroute("**/api/settings")
+                await page.wait_for_timeout(1700)  # (a refresh: still as they were)
+                seen["refused"] = await page.evaluate(_MY_ROWS)
+                seen["unchanged"] = _written(job_apply_home)
+                seen["desk again"] = [desk.applier.tailoring_on(), desk.applier.letters]
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    assert seen["first"] == {"shown": {"set-email-codes": True, "set-tailor": False, "set-letters": False,
+                                       "set-letter-model": ""}, "errors": {}, "twins": [False, False]}, seen["first"]
+    assert seen["held"] == [True], seen["held"]
+    saved = {"set-email-codes": False, "set-tailor": True, "set-letters": True, "set-letter-model": "claude-opus-5-5"}
+    assert seen["saved"] == {"shown": saved, "errors": {}, "twins": [True, True]}, seen["saved"]
+    assert seen["written"] == {**PROFILE["settings"], "email_codes": False,
+                               "cover_letter_model": "claude-opus-5-5"}, seen["written"]
+    assert seen["desk"] == [True, True], seen["desk"]
+    no = "The desk said no."
+    assert seen["refused"] == {"shown": saved, "errors": {
+        "set-letter-model": no, "set-email-codes": no, "set-tailor": "That stays as it is.",
+        "set-letters": "That stays as it is."}, "twins": [True, True]}, seen["refused"]
+    assert seen["unchanged"] == seen["written"], seen["unchanged"]
+    assert seen["desk again"] == [True, True], seen["desk again"]
+
+
+def test_the_email_app_password_saves_shows_saved_with_the_box_empty_and_is_nowhere_in_the_page(srv, monkeypatch):
+    """Email codes' app password: Save with nothing typed says so under the row; typed and saved (the Site passwords
+    card's own call, /api/password), the row says Saved and the box is empty, and the password is in no part of the
+    page's state, its words, its boxes or its console afterwards. Test it now is disabled with none saved; pressed, it
+    says each of its two results in the design's words (the sign-in made to answer through the test's desk)."""
+    from job_apply import config, mailbox
+
+    answers = iter([None, mailbox.SIGN_IN_SAID["refused"]])
+    tried = []
+
+    def sign_in(address, password, wait=mailbox.SIGN_IN_TEST_WAIT):
+        tried.append(password == APP_PASSWORD)
+        return next(answers)
+    monkeypatch.setattr(mailbox, "try_sign_in", sign_in)
+    desk = _idle_desk(srv)
+    shown = """() => ({state: document.getElementById('mail-pw-state').textContent,
+      box: document.getElementById('mail-pw').value, test: document.getElementById('mail-test').disabled,
+      said: document.getElementById('mail-test-said').textContent,
+      err: [...document.querySelectorAll('#panel-email .set-err')].filter((e) => !e.hidden)
+        .map((e) => e.textContent)})"""
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                logged = []
+                page.on("console", lambda m: logged.append(m.text))
+                await open_desk(page, desk, "settings/email")
+                seen = {"first": await page.evaluate(shown)}
+                await page.click("#mail-pw-save")
+                await page.wait_for_function(_SAVED)
+                seen["empty"] = await page.evaluate(shown)
+                await page.fill("#mail-pw", APP_PASSWORD)
+                await page.keyboard.press("Enter")  # (Save, by the keyboard)
+                await page.wait_for_function("() => document.getElementById('mail-pw-state').textContent === 'Saved'")
+                seen["saved"] = await page.evaluate(shown)
+                seen["kept"] = config.get_secret("email_password")
+                seen["anywhere"] = await page.evaluate("""(pw) => [JSON.stringify(state).includes(pw),
+                    document.documentElement.outerHTML.includes(pw), document.body.innerText.includes(pw),
+                    [...document.querySelectorAll('input')].some((i) => i.value.includes(pw))]""", APP_PASSWORD)
+                await page.click("#mail-test")
+                await page.wait_for_function("() => document.getElementById('mail-test-said').textContent")
+                seen["works"] = await page.evaluate(shown)
+                await page.click("#mail-test")
+                await page.wait_for_function("() => document.getElementById('mail-test-said').textContent"
+                                             ".startsWith('It didn')")
+                seen["refused"] = await page.evaluate(shown)
+                seen["logged"] = any(APP_PASSWORD in line for line in logged)
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    assert seen["first"] == {"state": "Not saved", "box": "", "test": True, "said": "", "err": []}, seen["first"]
+    assert seen["empty"] == {**seen["first"], "err": ["Type the app password first."]}, seen["empty"]
+    assert seen["saved"] == {"state": "Saved", "box": "", "test": False, "said": "", "err": []}, seen["saved"]
+    assert seen["kept"] == APP_PASSWORD
+    assert seen["anywhere"] == [False, False, False, False], seen["anywhere"]
+    assert seen["works"]["said"] == "It works. The desk signed in to your inbox and read nothing.", seen["works"]
+    assert seen["refused"]["said"] == "It didn't work: your email provider refused the password.", seen["refused"]
+    assert tried == [True, True] and not seen["logged"], (tried, seen["logged"])
+    assert APP_PASSWORD not in json.dumps(desk.state())
+
+
+def test_the_usual_cover_letter_and_the_resume_are_picked_named_and_removed_on_the_page(srv, job_apply_home):
+    """Resume and cover letters: the usual cover letter picked (a PDF, then a Word file) shows its file's name and
+    Remove, and Remove takes it away (the file stays); a file the desk refuses says the desk's sentence under the row,
+    and nothing changes; Your resume names the resume, and Replace replaces it."""
+    desk = _idle_desk(srv)
+    shown = """() => { const $ = (id) => document.getElementById(id);
+      return {resume: $('set-resume-said').textContent, button: $('set-resume').textContent,
+        letter: $('set-letter-file').hidden ? null : $('set-letter-file').textContent,
+        remove: !$('set-letter-remove').hidden,
+        err: [...document.querySelectorAll('#panel-documents .set-err')].filter((e) => !e.hidden)
+          .map((e) => e.textContent)}; }"""
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                await open_desk(page, desk, "settings/documents")
+                seen = {"first": await page.evaluate(shown)}
+                await _pick(page, "#set-letter", "My letter.pdf", LETTER_PDF, "application/pdf")
+                seen["pdf"] = await page.evaluate(shown)
+                await _pick(page, "#set-letter", "My letter.docx", _docx(), DOCX_TYPE)
+                seen["docx"] = await page.evaluate(shown)
+                await _pick(page, "#set-letter", "letter.txt", b"Dear hiring manager", "text/plain")
+                seen["refused"] = await page.evaluate(shown)
+                seen["kept"] = _profile_documents(job_apply_home)
+                await page.click("#set-letter-remove")
+                await page.wait_for_function(_SAVED)
+                await page.wait_for_function("() => document.getElementById('set-letter-remove').hidden")
+                seen["removed"] = await page.evaluate(shown)
+                await _pick(page, "#set-resume", "My resume.docx", _docx(), DOCX_TYPE)
+                seen["resume"] = await page.evaluate(shown)
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    assert seen["first"] == {"resume": "resume.pdf", "button": "Replace", "letter": None, "remove": False,
+                             "err": []}, seen["first"]
+    assert seen["pdf"] == {**seen["first"], "letter": "cover_letter.pdf", "remove": True}, seen["pdf"]
+    assert seen["docx"] == {**seen["first"], "letter": "cover_letter.docx", "remove": True}, seen["docx"]
+    refused = "Pick your cover letter as a PDF or a Word (.docx) file"  # (the desk's sentence, as it says it)
+    assert seen["refused"] == {**seen["docx"], "err": [refused]}, seen["refused"]
+    assert seen["kept"]["cover_letter"].endswith("cover_letter.docx"), seen["kept"]
+    assert seen["removed"] == seen["first"], seen["removed"]  # (a save of the row that goes through: its sentence gone)
+    assert seen["resume"] == {**seen["first"], "resume": "resume.docx"}, seen["resume"]
+    documents = _profile_documents(job_apply_home)
+    assert documents["cover_letter"] == "" and documents["resume"].endswith("resume.docx"), documents
+    assert (job_apply_home / "cover_letter.docx").read_bytes() == _docx()  # (removed from the profile, the file kept)
+
+
+def _profile_documents(home) -> dict:
+    return yaml.safe_load((home / "profile.yaml").read_text(encoding="utf-8"))["documents"]
+
+
+def test_tailor_and_cover_letter_in_settings_and_in_the_apply_bar_always_agree(srv):
+    """Settings' Tailor my resume (#set-tailor) and Write a cover letter (#set-letters) are the twins of the apply bar's
+    #tailor and #letters: both drawn from the same state, and a press on either shows on the other at once."""
+    from test_desk_openings import _opening
+
+    desk = _idle_desk(srv)
+    desk.listings = [_opening(1, "Example Fab", "Field Service Engineer")]
+    both = "() => ['set-tailor', 'tailor', 'set-letters', 'letters'].map((id) => document.getElementById(id).checked)"
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1440, "height": 900})
+                await open_desk(page, desk, "settings/documents")
+                seen = {"first": await page.evaluate(both)}
+                await _press(page, "settings/documents", "#set-tailor")
+                await _press(page, "settings/documents", "#set-letters")
+                seen["on"] = [await page.evaluate(both), desk.applier.tailoring_on(), desk.applier.letters]
+                await press_menu(page, "openings")
+                await page.check("[data-pick='https://careers.example.com/1']")
+                await page.wait_for_selector(".applybar", state="visible")
+                await page.click("#letters")
+                seen["off now"] = await page.evaluate(both)
+                await page.wait_for_timeout(1700)  # (a refresh: the same)
+                seen["off"] = [await page.evaluate(both), desk.applier.letters]
+                await page.click("#tailor")
+                await page.wait_for_timeout(1700)
+                seen["tailor off"] = [await page.evaluate(both), desk.applier.tailoring_on()]
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    assert seen["first"] == [False, False, False, False], seen
+    assert seen["on"] == [[True, True, True, True], True, True], seen
+    assert seen["off now"] == [True, True, False, False], seen
+    assert seen["off"] == [[True, True, False, False], False], seen
+    assert seen["tailor off"] == [[False, False, False, False], False], seen
