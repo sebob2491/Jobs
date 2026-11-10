@@ -133,9 +133,6 @@ body[data-page="openings"] .top, body[data-page="applications"] .top { grid-temp
 /* Home: two columns, what waits for the person at the left */
 .cols { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 18px; align-items: start; }
 .stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
-/* (nothing in any of its cards: the one card that says so, not a lone card in the right-hand column) */
-.cols.lone { grid-template-columns: minmax(0, 820px); }
-.cols.lone > .stack:first-child { display: none; }
 /* the line a page shows in place of its one card, while that card has nothing to show */
 .page-none { margin: 0; padding: 28px 18px; border: 1px dashed var(--control-line); border-radius: 14px;
   text-align: center; color: var(--muted); }
@@ -437,6 +434,7 @@ button.score:hover { box-shadow: 0 0 0 2px var(--control-line); }
 .chip.stop { background: var(--bad-bg); color: var(--bad); }
 .pill.chip { padding: 2px 9px; }  /* (the New pill: chip.new is the class the page has always marked a new one by) */
 .empty { padding: 28px 18px; text-align: center; color: var(--muted); }
+.empty p { margin: 0 0 6px; }
 
 /* a job's card, under Needs you, Working on, or Ready and done */
 .task { padding: 13px 18px; border-top: 1px solid var(--line-2); }
@@ -450,6 +448,22 @@ button.score:hover { box-shadow: 0 0 0 2px var(--control-line); }
 .task .actions button { height: 30px; padding: 0 11px; font-size: 13px; border-radius: 7px; }
 .task .actions button.link { height: auto; padding: 0; margin: 0 2px; }
 .task.hands { background: var(--warn-bg); }
+/* a job's card under Needs you, Ready to submit or Done this visit: its row (an icon in a tinted square, its heading
+   and one line of its sentence, how long it has waited, one button, the chevron), then its body, shown while open */
+.trow { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 14px; align-items: center; }
+.trow h3 { margin: 0; }
+.task .trow .tline { margin: 1px 0 0; color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.task.open .trow .tline { display: none; }  /* (the body says it whole) */
+.trow .acts { display: flex; align-items: center; gap: 6px; }
+.trow .wait { color: var(--muted); font-size: 12px; margin-right: 6px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.trow .acts .btn { white-space: nowrap; }
+.trow [data-open] .ico { transition: transform .12s ease-out; }
+.trow [data-open][aria-expanded=true] .ico { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .trow [data-open] .ico { transition: none; } }
+.tbody { margin: 8px 0 0 52px; }
+.tbody > p:first-child { margin-top: 0; }
+.red { background: var(--bad-bg); color: var(--bad); }
 /* the first cover letter, on its card for the person's say: drawn as text */
 .task .letter-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow: auto; font-size: 13px;
   background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin: 6px 0 8px; }
@@ -608,6 +622,9 @@ body.stopped > :not(#stopped) { display: none; }
   .item { grid-template-columns: 38px minmax(0, 1fr); }
   .item .acts { grid-column: 2; flex-wrap: wrap; }
   .item .acts .btn { white-space: normal; height: auto; min-height: 34px; padding-top: 5px; padding-bottom: 5px; }
+  .trow { grid-template-columns: 38px minmax(0, 1fr); }
+  .trow .acts { grid-column: 2; flex-wrap: wrap; }
+  .tbody { margin-left: 0; }
 }
 </style>
 </head>
@@ -698,25 +715,22 @@ body.stopped > :not(#stopped) { display: none; }
           <div class="stack">
             <section class="card" aria-labelledby="needs-h">
               <div class="card-head"><h2 id="needs-h">Needs you</h2><span class="pill" id="needs-count"
-                title="Every job stopped for you. Among the openings the bar over the list shows, they're its Bot checks and Questions and sign-ins, the stopped ones among its Stuck, and the ones among its Ready that wait on a Submit or a check of yours">0</span></div>
+                title="The jobs stopped for you on anything but a Submit (a question, a sign-in, an emailed code, a bot check, something stuck), and the ones that didn't finish">0</span></div>
               <div id="needs"></div>
             </section>
             <section class="card" aria-labelledby="done-h">
-              <div class="card-head"><h2 id="done-h">Ready and done</h2><span class="pill info" id="done-count" title="Filled to the review page: press Submit on each" hidden></span></div>
+              <div class="card-head"><h2 id="done-h">Ready to submit</h2><span class="pill info" id="done-count" title="Filled to the review page: each waits on your Submit, or your check" hidden></span></div>
               <div id="done"></div>
-              <div class="counts" id="counts"></div>
+            </section>
+            <section class="card" aria-labelledby="finished-h">
+              <div class="card-head"><h2 id="finished-h">Done this visit</h2></div>
+              <div id="finished"></div>
             </section>
           </div>
           <div class="stack">
             <section class="card" aria-labelledby="work-h">
               <div class="card-head"><h2 id="work-h">Working on</h2></div>
               <div id="work"></div>
-            </section>
-            <!-- while nothing needs the person, nothing's being filled and nothing's done this visit: one card for all three -->
-            <section class="card" aria-labelledby="idle-h" id="idle-card" hidden>
-              <div class="card-head"><h2 id="idle-h">Nothing needs you</h2></div>
-              <p class="small" style="margin: 12px 18px 0">The desk is idle. Tick openings and press Apply, and what it's working on and what needs you show up here.</p>
-              <div class="counts" id="idle-counts"></div>
             </section>
           </div>
         </div>
@@ -1996,9 +2010,11 @@ document.addEventListener("change", (e) => {
   if (e.target.dataset?.remember !== undefined && e.target.closest?.("[data-optional-id]")) e.target.dataset.touched = "1";
 });
 
-function jobButtons(r, which) {
-  const b = (act, text, cls = "", tip = "") => `<button class="${cls}" data-job="${r.job_id}" data-job-act="${act}"${tip
-    ? ` title="${esc(tip)}"` : ""}>${text}</button>`;
+// A job's buttons, in their order: each one in `which` its card has (with Cover letter and Report a problem after them
+// unless `row`: the one button in the row of a card under Home's lists, drawn as a small button)
+function jobButtons(r, which, row = false) {
+  const b = (act, text, cls = "", tip = "") => `<button class="${row ? `btn sm${act === "submit" ? " soft" : ""}` : cls}" data-job="${
+    r.job_id}" data-job-act="${act}"${tip ? ` title="${esc(tip)}"` : ""}>${text}</button>`;
   const out = [];
   // (first, where its tab says it went in: a try after the site's error called off for that)
   if (which.includes("applied_first")) out.push(b("applied", "I submitted it myself", "primary"));
@@ -2022,6 +2038,7 @@ function jobButtons(r, which) {
   // sent on the site itself, whatever the card waited on (issue #112, note 31): it counts as applied
   if (which.includes("already")) out.push(b("applied", "I submitted it myself", "link"));
   if (which.includes("unskip")) out.push(b("unskip", "Undo", "primary"));
+  if (row) return out.join("");
   // the cover letter the desk wrote for it, opened from its folder
   if (r.letter) out.push(b("letter", "Cover letter", "link", `The cover letter Claude wrote for this job (${r.letter})`));
   out.push(b("report", "Report a problem", "link"));
@@ -2108,52 +2125,152 @@ function allRuns() {
 
 const GMAIL_FOR = {code: "the code", link: "the link", reset: "the password reset email"};
 
+// Home's three lists (C2), as the Status filter groups them (stopOf): Needs you, the jobs stopped for the person on
+// anything but a Submit (the ones holding the queue first, then the longest waiting), then the ones that didn't finish;
+// Ready to submit, the ready ones, then the ones stopped on a Submit of some kind (SEND_NEEDS); Done this visit, the
+// ones sent or skipped. The first two together are what waits on the person: the page's title and Home's number
+function homeLists(runs = allRuns()) {
+  const waited = (a, b) => (b.blocking ? 1 : 0) - (a.blocking ? 1 : 0) || (a.paused_at || 0) - (b.paused_at || 0);
+  return {
+    needs: [...runs.filter((r) => r.status === "needs_you" && !SEND_NEEDS.has(r.need)).sort(waited),
+      ...runs.filter((r) => r.status === "failed")],
+    done: [...runs.filter((r) => r.status === "ready"), ...runs.filter((r) => r.status === "needs_you" && SEND_NEEDS.has(r.need))],
+    finished: runs.filter((r) => r.status === "submitted" || r.status === "skipped"),
+  };
+}
+const waitingOnYou = () => { const l = homeLists(); return l.needs.length + l.done.length; };
+
+// A job's card (C3): its row, always shown, and its body, everything the card held before less the row's button. The
+// row's icon and button follow what it waits on. Its HTML never says whether it's open (applyOpen does, after each
+// draw) and never holds a running clock (tickClocks writes the wait into its data-since)
+const ROW_ICON = {questions: ["i-ask", "indigo"], sign_in: ["i-key", "amber"], email_code: ["i-mail", "amber"],
+  bot_check: ["i-shield", "gray"], tailor: ["i-file", "gray"], cover_letter: ["i-pen", "indigo"],
+  maybe_duplicate: ["i-alert", "amber"]};
+function taskCard(r, list) {
+  const [said, cls] = r.status === "needs_you" ? needPill(r) : RUN[r.status] || [r.status, ""];
+  // (its emailed code or link, asked of Claude in the chat: read through the Gmail connector, typed in by the desk)
+  // (or why Claude no longer looks: a code it can't tell from another job's, or its looks for this wait used up)
+  const gmail = r.status !== "needs_you" ? "" : r.gmail ? `<p class="small" data-gmail="${esc(r.gmail)}">Claude is looking in your Gmail for ${GMAIL_FOR[r.gmail] || "the email"}. You can still enter it yourself: whichever comes first goes in.</p>`
+    : r.gmail_note ? `<p class="small" data-gmail="spent">${esc(r.gmail_note)}</p>` : "";
+  const qs = r.status === "needs_you" ? r.questions || [] : [];
+  const repeated = new Set(qs.map((q) => q.label).filter((l, i, all) => all.indexOf(l) !== i));
+  const form = qs.length ? `<form data-answer="${r.job_id}">${qs.map((q, i) => question(r.job_id, q, i, repeated.has(q.label), r.need === "questions" ? r.company : "")).join("")}</form>` : "";
+  let which, before = form;
+  if (r.status === "ready") which = ["show", "submit", "skip", "already"];
+  else if (r.status === "failed") which = ["show", "resume", "skip", "already"];
+  else if (r.status === "skipped") which = ["unskip"];
+  else if (r.status !== "needs_you") which = [];  // submitted: Report only
+  // questions (with Carry on, for answers typed into the page itself), or a missing file plus questions
+  // (and Later on a sign-in holding the queue: an account form's security questions, put on its card)
+  // left by a restart of the desk, with no tab to show: Carry on fills it again up to its review page (never sending
+  // it); one whose Submit may have gone in says so, with I submitted it myself first, and one begun has it last
+  else if (r.left_at_restart) which = r.need === "check_submit" ? ["applied", "resume", "skip"] : ["resume", "skip", "already"];
+  else if (form || r.need === "questions") which = ["fill", "show", "resume",
+    ...(r.blocking && r.need === "sign_in" ? ["later"] : []), "skip", "already"];
+  // a sign-in holding the queue keeps Carry on beside Later: its card may ask for Carry on after a
+  // password reset by hand (the desk then presses its sign-in once more)
+  else if (["sign_in", "bot_check", "email_code"].includes(r.need))
+    which = ["show", ...(r.blocking ? (r.need === "sign_in" ? ["resume", "later"] : ["later"]) : ["resume"]), "skip", "already"];
+  // (or the site's own Submit, pressed after ticking it: "I submitted it myself")
+  else if (r.need === "captcha") which = ["show", "submit", "applied", "skip"];
+  else if (r.need === "your_submit" || r.need === "check_submit") which = ["show", "applied", "skip"];
+  else if (r.need === "submit_failed") which = ["show", "submit", "applied", "skip"];
+  else if (r.need === "tailor") which = ["usual_resume", "skip"];
+  // the first cover letter written, for the person's say: its text (drawn as text), then Use it or Turn them off
+  else if (r.need === "cover_letter") {
+    before = `<div class="letter-text">${esc(r.letter_text || "")}</div>`;
+    which = ["letter_ok", "letters_off", "skip"];
+  }
+  // may be a job begun or applied to on another site: nothing opened until the person says
+  else if (r.need === "maybe_duplicate") which = ["apply_anyway", "skip"];
+  // (stopped by the site's own error, tried again by itself at the time its words say: Try now beside Carry on; that
+  // try called off as its tab says it went in: I submitted it myself first)
+  else if (r.seen_sent) which = ["applied_first", "show", "resume", "skip"];
+  else which = ["show", "resume", ...(r.retry_at ? ["retry"] : []), "skip", "already"];
+  // the row's icon in its tint, and its one button: one of the job's own (act), or one that opens the card (open)
+  const has = (a) => which.includes(a);
+  let icon, tint, act = "", open = "", focus = false;
+  if (list === "finished") [icon, tint, act] = r.status === "skipped" ? ["i-x", "gray", "unskip"] : ["i-checkc", "green", ""];
+  else if (r.status === "failed") [icon, tint, act] = ["i-alert", "red", "resume"];
+  // (in Ready to submit: Submit where the card has it, else Show me; a card with neither, left by a restart with no
+  // tab to show, its first button)
+  else if (list === "done") [icon, tint, act] = ["i-checkc", "green", has("submit") ? "submit" : has("show") ? "show" : which[0]];
+  else if (form || r.need === "questions") [icon, tint, open, focus] = ["i-ask", "indigo", "Answer", true];
+  else if (r.need === "restarted" || r.left_at_restart) [icon, tint, act] = ["i-refresh", "gray", "resume"];
+  else if (["sign_in", "email_code", "bot_check"].includes(r.need)) [icon, tint, act] = [...ROW_ICON[r.need], "show"];
+  else if (r.need === "tailor") [icon, tint, act] = [...ROW_ICON.tailor, "usual_resume"];
+  else if (r.need === "cover_letter") [icon, tint, open] = [...ROW_ICON.cover_letter, "Read it"];
+  else if (r.need === "maybe_duplicate") [icon, tint, open] = [...ROW_ICON.maybe_duplicate, "Decide"];
+  // (a try called off as its tab says it went in: I submitted it myself, its card's first button)
+  else if (r.seen_sent) [icon, tint, act] = ["i-alert", "red", "applied_first"];
+  else if (has("show")) [icon, tint, act] = ["i-alert", "red", "show"];
+  else [icon, tint, open] = ["i-alert", "red", "Details"];
+  if (act && !has(act)) act = "";
+  const id = r.job_id;
+  const button = act ? jobButtons(r, [act], true)
+    : open ? `<button class="btn sm" data-open-row="${id}"${focus ? ` data-focus="1"` : ""}>${esc(open)}</button>` : "";
+  const since = list !== "finished" && r.paused_at > 0
+    ? `<span class="wait" data-since="${Math.round(r.paused_at)}" title="How long it has waited for you"></span>` : "";
+  const row = `<div class="trow"><span class="itico ${tint}"><svg class="ico" aria-hidden="true"><use href="#${icon}"/></svg></span>
+    <div><h3>${esc(r.title)} <span class="small">· ${esc(r.company)}</span> <span class="pill ${cls}">${esc(said)}</span></h3>
+    <p class="tline">${esc(r.reason)}</p></div>
+    <div class="acts">${since}${button}<button class="btn sm ghost icon" data-open="${id}" aria-label="Open or close this card"><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></button></div></div>`;
+  const body = `<div class="tbody" data-body="${id}"><p>${esc(r.reason)}</p>${gmail}${wentPanel(r)}${before}${
+    jobButtons(r, which.filter((a) => a !== act))}</div>`;
+  const key = list === "needs" ? `${id}:${r.need}:${qs.map((q) => q.label).join("|")}` : `${list[0]}${id}${r.status}`;
+  return {key, html: `<div class="task ${r.blocking ? "hands" : ""}" data-code="${esc(r.code || "")}" data-task="${id}">${row}${body}</div>`};
+}
+
+// Open or closed (C3): with three or fewer jobs in a list every card starts open; with more they start closed, except
+// one holding the queue. A card the person opened or closed (or typed in) stays so: cardOpen, by job
+const cardOpen = new Map();
+function applyOpen() {
+  for (const list of ["needs", "done", "finished"]) {
+    const tasks = [...$(list).children].filter((t) => t.dataset.task);
+    for (const t of tasks) {
+      const id = t.dataset.task;
+      const open = cardOpen.has(id) ? cardOpen.get(id) : tasks.length <= 3 || t.classList.contains("hands");
+      const body = t.querySelector("[data-body]"), chev = t.querySelector("[data-open]");
+      if (body.hidden === open) body.hidden = !open;
+      t.classList.toggle("open", open);
+      if (chev.getAttribute("aria-expanded") !== String(open)) chev.setAttribute("aria-expanded", String(open));
+    }
+  }
+}
+document.addEventListener("click", (e) => {
+  const chev = e.target.closest?.("[data-open]"), row = e.target.closest?.("[data-open-row]");
+  if (!chev && !row) return;
+  const task = (chev || row).closest(".task");
+  cardOpen.set(task.dataset.task, row ? true : !task.classList.contains("open"));
+  applyOpen();
+  if (row && row.dataset.focus) task.querySelector("[data-body] [data-q]")?.focus();
+});
+document.addEventListener("focusin", (e) => {  // (a card typed in stays open, whatever comes into its list)
+  const body = e.target.closest?.("[data-body]");
+  if (body && !body.hidden) cardOpen.set(body.dataset.body, true);
+});
+
+// How long each job has waited, written into its [data-since] after each draw: "just now" under a minute, then
+// "12 min", then "1 h 5 min" (a day or more: "2 days")
+function waitSaid(seconds) {
+  const m = Math.floor(seconds / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
+  return m < 1 ? "just now" : h < 1 ? `${m} min` : d < 1 ? `${h} h${m % 60 ? ` ${m % 60} min` : ""}` : `${d} day${d === 1 ? "" : "s"}`;
+}
+function tickClocks() {
+  const now = Date.now() / 1000;
+  for (const el of document.querySelectorAll("[data-since]")) {
+    const said = waitSaid(Math.max(0, now - Number(el.dataset.since)));
+    if (el.textContent !== said) el.textContent = said;
+  }
+}
+
 function renderSide() {
   const runs = allRuns();
-  const needs = runs.filter((r) => r.status === "needs_you").sort((a, b) => b.blocking - a.blocking);
+  const {needs, done, finished} = homeLists(runs);
   $("needs-count").textContent = needs.length;
   $("needs-count").className = "pill " + (needs.length ? "warn" : "");
-  const needEntries = needs.map((r) => {
-    const [said, cls] = needPill(r);
-    const mark = ` <span class="pill ${cls}">${esc(said)}</span>`;
-    // (its emailed code or link, asked of Claude in the chat: read through the Gmail connector, typed in by the desk)
-    // (or why Claude no longer looks: a code it can't tell from another job's, or its looks for this wait used up)
-    const gmail = r.gmail ? `<p class="small" data-gmail="${esc(r.gmail)}">Claude is looking in your Gmail for ${GMAIL_FOR[r.gmail] || "the email"}. You can still enter it yourself: whichever comes first goes in.</p>`
-      : r.gmail_note ? `<p class="small" data-gmail="spent">${esc(r.gmail_note)}</p>` : "";
-    const head = `<h3>${esc(r.title)} <span class="small">· ${esc(r.company)}</span>${mark}</h3><p>${esc(r.reason)}</p>${gmail}`;
-    let body;
-    const qs = r.questions || [];
-    const repeated = new Set(qs.map((q) => q.label).filter((l, i, all) => all.indexOf(l) !== i));
-    const form = qs.length ? `<form data-answer="${r.job_id}">${qs.map((q, i) => question(r.job_id, q, i, repeated.has(q.label), r.need === "questions" ? r.company : "")).join("")}</form>` : "";
-    // questions (with Carry on, for answers typed into the page itself), or a missing file plus questions
-    // (and Later on a sign-in holding the queue: an account form's security questions, put on its card)
-    // left by a restart of the desk, with no tab to show: Carry on fills it again up to its review page (never sending
-    // it); one whose Submit may have gone in says so, with I submitted it myself first, and one begun has it last
-    if (r.left_at_restart) body = jobButtons(r, r.need === "check_submit" ? ["applied", "resume", "skip"] : ["resume", "skip", "already"]);
-    else if (form || r.need === "questions") body = form + jobButtons(r, ["fill", "show", "resume",
-      ...(r.blocking && r.need === "sign_in" ? ["later"] : []), "skip", "already"]);
-    // a sign-in holding the queue keeps Carry on beside Later: its card may ask for Carry on after a
-    // password reset by hand (the desk then presses its sign-in once more)
-    else if (["sign_in", "bot_check", "email_code"].includes(r.need))
-      body = jobButtons(r, ["show", ...(r.blocking ? (r.need === "sign_in" ? ["resume", "later"] : ["later"]) : ["resume"]), "skip", "already"]);
-    // (or the site's own Submit, pressed after ticking it: "I submitted it myself")
-    else if (r.need === "captcha") body = jobButtons(r, ["show", "submit", "applied", "skip"]);
-    else if (r.need === "your_submit" || r.need === "check_submit") body = jobButtons(r, ["show", "applied", "skip"]);
-    else if (r.need === "submit_failed") body = jobButtons(r, ["show", "submit", "applied", "skip"]);
-    else if (r.need === "tailor") body = jobButtons(r, ["usual_resume", "skip"]);
-    // the first cover letter written, for the person's say: its text (drawn as text), then Use it or Turn them off
-    else if (r.need === "cover_letter") body = `<div class="letter-text">${esc(r.letter_text || "")}</div>`
-      + jobButtons(r, ["letter_ok", "letters_off", "skip"]);
-    // may be a job begun or applied to on another site: nothing opened until the person says
-    else if (r.need === "maybe_duplicate") body = jobButtons(r, ["apply_anyway", "skip"]);
-    // (stopped by the site's own error, tried again by itself at the time its words say: Try now beside Carry on; that
-    // try called off as its tab says it went in: I submitted it myself first)
-    else if (r.seen_sent) body = jobButtons(r, ["applied_first", "show", "resume", "skip"]);
-    else body = jobButtons(r, ["show", "resume", ...(r.retry_at ? ["retry"] : []), "skip", "already"]);
-    const key = `${r.job_id}:${r.need}:${(r.questions || []).map((q) => q.label).join("|")}`;
-    return {key, html: `<div class="task ${r.blocking ? "hands" : ""}" data-code="${esc(r.code || "")}">${head}${wentPanel(r)}${body}</div>`};
-  });
-  if (!needEntries.length) needEntries.push({key: "none", html: `<div class="empty">Nothing right now.</div>`});
+  const needEntries = needs.map((r) => taskCard(r, "needs"));
+  if (!needEntries.length) needEntries.push({key: "none", html: `<p class="empty" id="idle-card">Nothing needs you right now.</p>`});
   patch($("needs"), needEntries);
 
   const working = runs.filter((r) => r.status === "running");
@@ -2162,35 +2279,18 @@ function renderSide() {
     <ul class="log">${logLines(r, 4)}</ul>${jobButtons(r, [])}</div>`}));
   if (state.paused) workEntries.push({key: "p", html: `<div class="task small">Paused: ${queued} waiting. Press Carry on with the queue.</div>`});
   else if (queued) workEntries.push({key: "q", html: `<div class="task small">${queued} more queued.</div>`});
-  if (!workEntries.length) workEntries.push({key: "idle", html: `<div class="empty">Idle.</div>`});
+  if (!workEntries.length) workEntries.push({key: "idle", html: `<div class="empty"><p>Nothing is being filled. Tick openings and press Apply.</p><a href="#openings">Go to Openings</a></div>`});
   patch($("work"), workEntries);
 
-  // the ones with a Submit to press first, then the ones that didn't finish (Carry on), then the ones sent or skipped
-  const DONE_ORDER = {ready: 0, failed: 1, submitted: 2, skipped: 2};
-  const done = runs.filter((r) => r.status in DONE_ORDER).sort((a, b) => DONE_ORDER[a.status] - DONE_ORDER[b.status]);
-  const ready = done.filter((r) => r.status === "ready").length;
-  $("done-count").hidden = !ready;
-  $("done-count").textContent = `${ready} to submit`;
-  const doneEntries = done.map((r) => {
-    const buttons = r.status === "ready" ? jobButtons(r, ["show", "submit", "skip", "already"])
-      : r.status === "failed" ? jobButtons(r, ["show", "resume", "skip", "already"])
-      : r.status === "skipped" ? jobButtons(r, ["unskip"]) : jobButtons(r, []);  // submitted: Report only
-    const [text, cls] = RUN[r.status];
-    return {key: "d" + r.job_id + r.status, html: `<div class="task"><h3>${esc(r.title)} <span class="small">· ${esc(r.company)}</span>
-      <span class="pill ${cls}">${esc(text)}</span></h3><p>${esc(r.reason)}</p>${wentPanel(r)}${buttons}</div>`};
-  });
-  if (!doneEntries.length) doneEntries.push({key: "none", html: `<div class="empty">Nothing yet.</div>`});
-  patch($("done"), doneEntries);
+  $("done-count").hidden = !done.length;
+  $("done-count").textContent = `${done.length} to submit`;
+  $("done-h").closest("section").hidden = !done.length;
+  patch($("done"), done.map((r) => taskCard(r, "done")));
+  $("finished-h").closest("section").hidden = !finished.length;
+  patch($("finished"), finished.map((r) => taskCard(r, "finished")));
   wentFill(runs);
-  const c = state.counts || {};
-  const counts = ["applied", "ready_to_submit", "interviewing", "offer"].filter((k) => c[k])
-    .map((k) => `<span class="pill ${STATUS[k][1]}">${esc(STATUS[k][0])}: ${c[k]}</span>`).join("") || `<span class="small">No applications tracked yet.</span>`;
-  if ($("counts").dataset.html !== counts) { $("counts").innerHTML = counts; $("idle-counts").innerHTML = counts; $("counts").dataset.html = counts; }
-  // nothing in any of the three: one short card instead of three saying "nothing"
-  const idle = !needs.length && !working.length && !queued && !done.length && !state.paused;
-  $("idle-card").hidden = !idle;
-  for (const id of ["needs-h", "work-h", "done-h"]) $(id).closest("section").hidden = idle;
-  $("home-cols").classList.toggle("lone", idle);  // (that card across the page, not alone in the right-hand column)
+  applyOpen();
+  tickClocks();
 }
 
 // What's working (state.outcomes: outcomes.summary): the person's own applications' outcomes, overall and by group
@@ -2408,7 +2508,7 @@ function renderHeader() {
   if (s.troubleshoot) notes.push({cls: "notice info", html: `<strong>Troubleshooting is on: no application is submitted.</strong>
     <span>Find jobs searches every list's employers, and only the openings where the desk doesn't go all the way yet show. The desk still makes accounts and fills each step, which the sites keep. Turn it off to apply for real.</span>
     ${TROUBLESHOOT_OFF}`});
-  const needing = allRuns().filter((r) => r.status === "needs_you").length;
+  const needing = waitingOnYou();
   document.title = needing ? `(${needing}) Needs you · Job Desk` : "Job Desk";
   // the jobs back in the queue after a restart of the desk wait for the person's Carry on with the queue; and why the queue isn't
   // kept here, if it isn't (another desk keeps it, or the folder allows no lock)
@@ -2606,7 +2706,7 @@ function renderNotes() {
 function renderMenu() {
   const runs = allRuns(), bank = state.bank || [];
   const numbers = {
-    home: runs.filter((r) => r.status === "needs_you").length,
+    home: waitingOnYou(),
     openings: (state.listings || []).filter((r) => (r.added || (r.fit && r.fit.recommended)) && !r.not_interested
       && stopOf(r) === "new").length,
     applications: (state.applications || []).length,
