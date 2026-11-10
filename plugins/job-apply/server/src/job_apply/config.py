@@ -744,6 +744,9 @@ API_KEY_NAME = "anthropic_api_key"
 # never in the desk's state, a log or a problem report. ntfy's own rule for a topic's name, at least 16 long here
 NTFY_TOPIC_NAME = "ntfy_topic"
 NTFY_TOPIC = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
+# What the desk page's Forget takes out (forget_password): each job system's password, the email app password and the
+# Anthropic API key. Never the phone alerts' topic, which its own card turns off (forget_secret), nor any other name
+FORGETTABLE = (*DESK_PASSWORDS, "email_password", API_KEY_NAME)
 
 
 # Held across a save, a forget and the start's move of secrets.yaml into the vault
@@ -808,14 +811,49 @@ def _save_secret(name: str, value: str) -> None:
     path.chmod(0o600)
 
 
+def make_site_password(name: str, replace: bool = False) -> bool:
+    """A password of the desk's own making (passwords.make) saved for the job system `name` (one of DESK_PASSWORDS, by
+    its exact name: never the email app password, the API key, the phone alerts' topic or any other), as a typed one
+    is saved (save_site_password: the vault, the file and their lock). Without `replace`, only where none is saved,
+    wherever get_secret reads one (the environment's too), as the vault has it now and not as it was last read: looked
+    for and saved under the one lock, so a password saved meanwhile is never written over. Whether one was made. It is
+    never returned or logged: whatever needs it afterwards asks get_secret, as for a typed one."""
+    from . import passwords, vault
+
+    if not isinstance(name, str) or name not in DESK_PASSWORDS:
+        raise ValueError(f"not a job system's password: {name!r}")
+    with _SECRETS_LOCK:
+        if not replace:
+            vault.get(name, fresh=True)  # (another program's save since the vault was last read: read again)
+            if get_secret(name):
+                return False
+        save_site_password(name, passwords.make())
+    return True
+
+
 def forget_secret(name: str) -> bool:
     """The secret `name` forgotten (the phone alerts topic, turned off or replaced on the desk): taken out of the
     computer's password vault and its list of names, and its entry out of secrets.yaml, the rest of the file,
     comments included, as written. Whether there was one. A ValueError when the vault won't let it go."""
-    from . import vault
-
     if name != NTFY_TOPIC_NAME:
         raise ValueError(f"not a secret the desk forgets: {name!r}")
+    return _forget(name)
+
+
+def forget_password(name: str) -> bool:
+    """A saved password forgotten on the desk's page (its Forget): a job system's, the email app password or the
+    Anthropic API key (FORGETTABLE, by its exact name), taken out as forget_secret takes the phone alerts' topic out,
+    under the same lock and all or nothing. Whether there was one. A ValueError for any other name (the topic's too:
+    its own card turns it off), or when the vault won't let it go."""
+    if not isinstance(name, str) or name not in FORGETTABLE:
+        raise ValueError(f"not a password the desk forgets: {name!r}")
+    return _forget(name)
+
+
+def _forget(name: str) -> bool:
+    """forget_secret's and forget_password's work, for a name each has checked."""
+    from . import vault
+
     with _SECRETS_LOCK:
         there = vault.get(name, fresh=True) is not None
         try:

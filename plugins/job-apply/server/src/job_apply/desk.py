@@ -28,8 +28,8 @@ import time
 import urllib.request
 import webbrowser
 from collections import Counter
-from collections.abc import Callable
-from datetime import datetime
+from collections.abc import Awaitable, Callable
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -81,6 +81,10 @@ MARKED_STATUSES = ("applied", "interviewing", "offer", "rejected", "withdrawn")
 # and so the only ones a job's status is changed from there: one filled but never sent isn't the menu's
 NOT_SENT_YET = ("That job hasn't been sent yet. If you sent it on the site yourself, press I submitted it myself on "
                 "its card on Home.")
+# What the password routes say of a name that is never shown, and of a password set in the environment
+# (JOB_APPLY_SECRET_<NAME>), which the desk neither replaces nor forgets
+NEVER_SHOWN = "That one is never shown."
+FROM_ENVIRONMENT = "This one comes from your computer's own settings, not from the desk."
 
 
 def _recommendations_path() -> Path:
@@ -248,6 +252,12 @@ class Desk:
         # summary last went is kept in desk.json
         self.phone = phone.PhoneAlerts(self.applier, self.srv.tracker, saved=self._save_settings_quietly)
         self._phone_task: asyncio.Task | None = None
+        # The day the desk made each job system's password that is of its own making (/api/password/make), by the
+        # password's name ("workday_password": "2026-11-10"), kept in desk.json: a day, never a password. One typed over
+        # it, or forgotten, loses its day
+        self.made_passwords: dict[str, str] = {}
+        # (a password is made, typed or forgotten one at a time, each with its day)
+        self._passwords_turn = asyncio.Lock()
         self._load()
 
     @property
@@ -279,6 +289,7 @@ class Desk:
         try:
             saved = json.loads(_settings_path().read_text(encoding="utf-8"))
             self.last_seen, self.seen_since = _seconds(saved.get("last_seen")), _seconds(saved.get("seen_since"))
+            self.made_passwords = _made_days(saved.get("made_passwords"))
             self.applier.auto_submit = saved.get("auto_submit") is True
             self.applier.tailor = saved.get("tailor_resumes") is True
             self.applier.letters = saved.get("cover_letters") is True
@@ -324,6 +335,7 @@ class Desk:
                                                 "jobs_at_once": self.applier.jobs_at_once,
                                                 "jobs_at_once_profile": self._at_once_profile,
                                                 "phone_summary_day": self.phone.summary_day,
+                                                "made_passwords": self.made_passwords,
                                                 "last_seen": self.last_seen, "seen_since": self.seen_since}))
 
     def _save_settings_quietly(self) -> None:
@@ -403,6 +415,9 @@ class Desk:
             r("/api/queue/{action}", self.queue_view, methods=["POST"]),
             r("/api/settings", self.settings_view, methods=["POST"]),
             r("/api/password", self.password_view, methods=["POST"]),
+            r("/api/password/make", self.password_make_view, methods=["POST"]),
+            r("/api/password/show", self.password_show_view, methods=["POST"]),
+            r("/api/password/forget", self.password_forget_view, methods=["POST"]),
             r("/api/phone/{action}", self.phone_view, methods=["POST"]),
             r("/api/add", self.add_view, methods=["POST"]),
             r("/api/bank", self.bank_view, methods=["POST"]),
@@ -1251,7 +1266,9 @@ class Desk:
 
     async def password_view(self, request: Request) -> Response:
         """A career-site password typed into the page goes straight to the computer's password vault (secrets.yaml
-        where there's none: config.save_site_password). It is never sent back, logged, or shown to Claude."""
+        where there's none: config.save_site_password). It is never logged, put in the page's state or handed to Claude
+        by a tool; only a job system's is ever sent back, for the page's Show or Copy (password_show_view), behind the
+        page's key."""
         if not self._allowed(request, api=True):
             return self._forbidden()
         try:
@@ -1265,8 +1282,12 @@ class Desk:
                 # the environment's wins (config.get_secret): saved here, it would never be used
                 raise ValueError(f"This password is set in your environment ({env}), which comes before one saved "
                                  "here. Change it there, or remove it there and save it here.")
-            # (off the event loop: the vault's call can wait VAULT_WAIT seconds)
-            await asyncio.to_thread(config.save_site_password, name, str(body.get("value") or ""))
+            async with self._passwords_turn:
+                # (off the event loop: the vault's call can wait VAULT_WAIT seconds)
+                await asyncio.to_thread(config.save_site_password, name, str(body.get("value") or ""))
+                # (typed over one the desk made, it's no longer of the desk's making: its day goes)
+                if self.made_passwords.pop(name, None) is not None:
+                    self._save_settings_quietly()
         except ValueError as e:
             return self._bad(e)
         if name == "email_password":
@@ -1280,6 +1301,103 @@ class Desk:
             self.applier.letters_problem = None
             self.applier._letters_next()
         return JSONResponse({"saved": True})
+
+    # ------------------------------------------------------------- passwords made, shown and forgotten
+    async def _password_route(self, request: Request,
+                              act: Callable[[dict[str, Any]], Awaitable[Response]]) -> Response:
+        """One of the three routes below, answered: behind the page's key as every route is, and never kept by a browser
+        or a proxy (Cache-Control: no-store on every answer, a refusal's and a failure's too). No password is logged:
+        a failure nobody foresaw is answered and logged by its kind alone, never in its own words."""
+        try:
+            if not self._allowed(request, api=True):
+                answer = self._forbidden()
+            else:
+                answer = await act(await self._body(request))
+        except (ValueError, OSError) as e:  # (config's and the vault's own words, which never hold a password)
+            answer = self._bad(e)
+        except Exception as e:
+            logging.getLogger(__name__).warning("%s failed (%s)", request.url.path, type(e).__name__)
+            answer = JSONResponse({"error": f"The desk couldn't do that just now ({type(e).__name__})."},
+                                  status_code=500)
+        answer.headers["Cache-Control"] = "no-store"
+        return answer
+
+    async def password_make_view(self, request: Request) -> Response:
+        """Make my passwords ({}: one for each job system that has none saved; the saved ones are left alone), Make one
+        ({name}: for that job system, while it has none) and Make a new one ({name, replace: true}: for that job
+        system, saved or not). Each is made and saved by config.make_site_password, as a typed one is saved, and never
+        passes through here: the answer names the ones made ({"made": [...]}, never a password), and desk.json keeps
+        the day each was made (made_passwords). Only a job system's (DESK_PASSWORDS, by its exact name): never the
+        email app password, the Anthropic API key or the phone alerts' topic. One set in the environment is left
+        alone, and Make a new one says so (409)."""
+        return await self._password_route(request, self._make_passwords)
+
+    async def _make_passwords(self, body: dict[str, Any]) -> Response:
+        name, replace = body.get("name"), body.get("replace") is True  # (not "false", which bool() calls true)
+        if name is None:
+            if replace:  # (never a new one for every job system at once)
+                raise ValueError("Making a new one needs its job system's name.")
+            names = list(DESK_PASSWORDS)
+        elif isinstance(name, str) and name in DESK_PASSWORDS:
+            if replace and _from_environment(name):
+                return JSONResponse({"error": FROM_ENVIRONMENT}, status_code=409)
+            names = [name]
+        else:
+            raise ValueError("The desk makes a password for a job system only.")
+        made: list[str] = []
+        async with self._passwords_turn:
+            try:
+                for each in names:
+                    # (off the event loop: the vault's call can wait VAULT_WAIT seconds)
+                    if await asyncio.to_thread(config.make_site_password, each, replace):
+                        made.append(each)
+                        self.made_passwords[each] = _today()
+            finally:
+                if made:  # (those made before a save that failed keep their day too)
+                    self._save_settings_quietly()
+        return JSONResponse({"made": made})
+
+    async def password_show_view(self, request: Request) -> Response:
+        """Show and Copy: a job system's saved password, the one the desk would type (config.get_secret), given to the
+        page that asked ({"value": ...}) and nowhere else: never its state, a log or a report. Only a job system's, by
+        its exact name (DESK_PASSWORDS): never the email app password, the Anthropic API key, the phone alerts' topic,
+        a password under a name of the person's own, or a name spelled another way (get_secret reads the environment's
+        by the name in capitals)."""
+        return await self._password_route(request, self._show_password)
+
+    async def _show_password(self, body: dict[str, Any]) -> Response:
+        name = body.get("name")
+        if not isinstance(name, str) or name not in DESK_PASSWORDS:
+            return JSONResponse({"error": NEVER_SHOWN}, status_code=400)
+        # (off the event loop, as a save is; one that can't be read just now is none the desk could type either)
+        value = await asyncio.to_thread(_secret, name)
+        if not value:
+            return JSONResponse({"error": f"No password is saved for {DESK_PASSWORDS[name]}."}, status_code=404)
+        return JSONResponse({"value": value})
+
+    async def password_forget_view(self, request: Request) -> Response:
+        """Forget: a saved password taken out of the password vault and secrets.yaml (config.forget_password: a job
+        system's, the email app password or the Anthropic API key, by its exact name; all or nothing), and its day out
+        of made_passwords. One set in the environment isn't the desk's to forget (409), and the phone alerts' topic
+        keeps its own card's Turn off."""
+        return await self._password_route(request, self._forget_password)
+
+    async def _forget_password(self, body: dict[str, Any]) -> Response:
+        name = body.get("name")
+        if isinstance(name, str) and re.sub(r"[^a-z0-9]", "_", name.strip().lower()) == config.NTFY_TOPIC_NAME:
+            raise ValueError("Phone alerts are turned off on the Phone alerts card, not forgotten here.")
+        if not isinstance(name, str) or name not in config.FORGETTABLE:
+            raise ValueError("That isn't a password the desk keeps.")
+        if _from_environment(name):
+            return JSONResponse({"error": FROM_ENVIRONMENT}, status_code=409)
+        async with self._passwords_turn:
+            await asyncio.to_thread(config.forget_password, name)  # (off the event loop, as a save is)
+            if self.made_passwords.pop(name, None) is not None:
+                self._save_settings_quietly()
+        if name == "email_password":
+            # (the page's note about the app password turned down goes with it, as it does when a new one is saved)
+            self.applier.mail_problem = self.applier._mail_refused = None
+        return JSONResponse({"forgotten": True})
 
     async def phone_view(self, request: Request) -> Response:
         """The Phone alerts card: `make` a new topic (saved as a password is, in the password vault or secrets.yaml,
@@ -1856,6 +1974,8 @@ class Desk:
                 job = t.get(jid, with_description=False) or {}
                 others.append({"job_id": jid, "title": job.get("title") or run["title"], "company": job.get("company"),
                                "url": job.get("url"), "status": job.get("status"), "run": run})
+        # which of the page's secrets are saved (each job system's password, the email app password, the API key)
+        kept = _saved([f"{ats}_password" for ats in SITE_PASSWORDS] + ["email_password", config.API_KEY_NAME])
         return {
             "profile": {"name": prof.full_name, "missing": prof.missing_required(), "gaps": prof.profile_gaps(),
                         "titles": prof.get("preferences.titles") or [], "path": str(config.profile_path()),
@@ -1898,8 +2018,11 @@ class Desk:
             "letters_by": letters.written_by(),
             # saved or not, never the value
             "passwords": {name.removesuffix("_password").removesuffix("_api_key"): saved for name, saved in
-                          _saved([f"{ats}_password" for ats in SITE_PASSWORDS]
-                                 + ["email_password", config.API_KEY_NAME]).items()},
+                          kept.items()},
+            # the day the desk made each job system's password that is of its own making and still saved (desk.json's
+            # made_passwords): names and days, never the value
+            "passwords_made": {name: self.made_passwords[name] for name in DESK_PASSWORDS
+                               if name in self.made_passwords and kept[name]},
             # phone alerts on or off, and their settings: never the topic (phone.py)
             "phone": self.phone.public(settings, phone.topic() is not None),
             "password_systems": password_systems(),
@@ -2593,6 +2716,32 @@ def _saved(names: list[str]) -> dict[str, bool]:
 
     return {n: f"JOB_APPLY_SECRET_{re.sub(r'[^A-Z0-9]', '_', n.upper())}" in env or data.get(n) is not None
             or in_vault(n) for n in names}
+
+
+def _from_environment(name: str) -> bool:
+    """Is this secret set in the environment (JOB_APPLY_SECRET_<NAME>)? That one comes before any saved on the desk
+    (config.get_secret), so the desk neither replaces it nor forgets it."""
+    return bool(os.environ.get("JOB_APPLY_SECRET_" + re.sub(r"[^A-Z0-9]", "_", name.upper())))
+
+
+def _today() -> str:
+    """Today, as desk.json keeps the day a password was made ("2026-11-10"): the person's own day."""
+    return date.today().isoformat()
+
+
+def _made_days(said: Any) -> dict[str, str]:
+    """desk.json's made_passwords as the desk keeps it: the day it made each job system's password, by the password's
+    name, in the page's order. Whatever else a file changed by hand holds there is left out: only a job system's name
+    with a day ever goes on to the page's state."""
+    days: dict[str, str] = {}
+    for name in DESK_PASSWORDS:
+        day = said.get(name) if isinstance(said, dict) else None
+        try:
+            if isinstance(day, str) and len(day) == 10:
+                days[name] = date.fromisoformat(day).isoformat()
+        except ValueError:
+            pass
+    return days
 
 
 TROUBLESHOOT_TITLES = ["human resources", "recruiter"]  # troubleshooting's HR jobs, beside the profile's titles
