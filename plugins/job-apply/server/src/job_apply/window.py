@@ -65,6 +65,14 @@ def find_browser() -> str | None:
     return next((str(place) for place in places if os.path.isfile(place)), None)
 
 
+def detached() -> dict[str, Any]:
+    """Popen's options for a program started on its own, never waited for: it outlasts the desk, and nothing of the
+    desk's reaches it (its console, its Ctrl+C)."""
+    if _system() == "windows":
+        return {"creationflags": DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
 def open_window(url: str, mode: str) -> str:
     """Open the desk's page at `url` and say how: "app", in a window of its own (its address ending `&w=app`, which
     tells the page so), or "tab", in a tab of the person's usual browser, as before: when `mode`
@@ -73,13 +81,11 @@ def open_window(url: str, mode: str) -> str:
     if browser is not None:
         # on its own, never waited for: the window outlasts the desk, and nothing of the desk's reaches it (its
         # console, its Ctrl+C, what it prints)
-        detached: dict[str, Any] = ({"creationflags": DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP}
-                                    if _system() == "windows" else {"start_new_session": True})
         try:
             # these two arguments and no other, ever (the module's rule, above)
             subprocess.Popen([browser, f"--app={url}&w=app", f"--window-size={WINDOW_SIZE}"],
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                             **detached)
+                             **detached())
             return "app"
         except OSError:
             pass  # (found, but it won't start: a tab instead)

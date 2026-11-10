@@ -2951,7 +2951,7 @@ function renderHeader() {
     these yourself, add <code>manage_accounts: false</code> under <code>settings:</code> in <code>${esc(p.path)}</code>;
     <code>manage_accounts: true</code> keeps them and hides this note.`});
   const up = state.update;
-  if (up) notes.push({cls: "notice info", html: `job-apply ${esc(up.latest)} is out (you have ${esc(up.current)}). Between runs, `
+  if (up && up.newer) notes.push({cls: "notice info", html: `job-apply ${esc(up.latest)} is out (you have ${esc(up.current)}). Between runs, `
     + `in a terminal (PowerShell on Windows) run ${up.commands.map((c) => `<code>${esc(c)}</code>`).join(", then ")}, then `
     + `restart the Claude app.`});
   // problems: red, each said "Problem: ..." (yellow is only for what waits for you now)

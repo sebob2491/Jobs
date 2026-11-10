@@ -28,6 +28,7 @@ import time
 import urllib.request
 import webbrowser
 from collections import Counter
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -417,6 +418,8 @@ class Desk:
             r("/api/open", self.open_view, methods=["POST"]),
             r("/api/quit", self.quit_view, methods=["POST"]),
             r("/api/window", self.window_view, methods=["POST"]),
+            r("/api/update/check", self.update_check_view, methods=["POST"]),
+            r("/api/update/start", self.update_start_view, methods=["POST"]),
         ])
 
     async def start(self, port: int = DEFAULT_PORT, open_browser: bool = True) -> str:
@@ -449,6 +452,7 @@ class Desk:
             if not self._watch_file_atexit:  # (the MCP server ends with Claude Code, never stopping the desk)
                 self._watch_file_atexit = True
                 atexit.register(self._remove_watch_file)
+        self.updates.note_updated()  # (an update this desk's Update button started, said once: _state's restored)
         if self._update_task is None or self._update_task.done():
             self._update_task = asyncio.get_running_loop().create_task(self._watch_updates())
         if self._phone_task is None or self._phone_task.done():
@@ -463,7 +467,7 @@ class Desk:
         """Look for a newer published version now and then (UpdateCheck keeps to its own pace)."""
         while True:
             with contextlib.suppress(Exception):
-                await self.updates.refresh()
+                await self.updates.refresh(standalone=self.standalone)
             await asyncio.sleep(600)
 
     async def _watch_phone(self) -> None:
@@ -656,6 +660,39 @@ class Desk:
             return self._forbidden()
         await request.body()  # (read before the answer, whatever an older second start sent: see window_address)
         return JSONResponse({"url": self.window_url()}, headers={"Cache-Control": "no-store"})
+
+    async def update_check_view(self, request: Request) -> Response:
+        """The page's Check now: a look for a newer version now (never more than once a minute: UpdateCheck), and the
+        state's `update`. Nothing is read from what the page sends."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        await self.updates.refresh(standalone=self.standalone, now=True)
+        return JSONResponse(self.updates.state(self.standalone))
+
+    async def update_start_view(self, request: Request) -> Response:
+        """The page's Update now: the update for this copy's kind (updates.py), unless there's nothing newer, it's a
+        copy the desk can't update, one is already under way, or a job is being filled (409, with why). Nothing is read
+        from what the page sends: where the update comes from is the installed plugin.json's alone."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        why = self.updates.why_not(self.standalone, self._filling())
+        if why is not None:
+            return JSONResponse({"error": why}, status_code=409)
+        self.updates.start(self.standalone, filling=self._filling, pause=self._pause_for_update,
+                           quit=self.quitting.set)
+        return JSONResponse({"started": True})
+
+    def _filling(self) -> bool:
+        """Is a job being filled now (its pass under way, or its step holding the browser)?"""
+        a = self.applier
+        return a.current is not None or any(run.status == "running" for run in a.runs.values())
+
+    def _pause_for_update(self) -> Callable[[], None]:
+        """The queue paused for an update, as the Pause queue button pauses it (queue_view); what undoes it, should
+        the installer not start (nothing, when it was paused already)."""
+        was = self.applier.paused
+        self.applier.pause_queue()
+        return (lambda: None) if was else self.applier.resume_queue
 
     async def seen_view(self, request: Request) -> Response:
         """The page loaded, or came to the front: the person looked at the openings (saw)."""
@@ -1652,6 +1689,14 @@ class Desk:
             # (the review of Oct 18)
             return self._state(prof, profile_problem, _NoJobs(), _first_line(e))
 
+    def _restored(self) -> str | None:
+        """The notice about jobs back in the queue after a restart, with a line before it when the restart was an
+        update this desk's Update button installed (said in that desk alone, which noted it as it started)."""
+        said = self.applier.restored_notice()
+        if said and self.updates.updated_to:
+            return f"The Job Desk was updated to {self.updates.updated_to}. {said}"
+        return said
+
     def _state(self, prof: config.Profile, profile_problem: str | None, t: Any,
                tracker_problem: str | None) -> dict[str, Any]:
         settings = prof.settings
@@ -1843,7 +1888,7 @@ class Desk:
             "version": config.plugin_version(),
             # run on its own, not inside Claude's plugin: the page may offer Quit the Job Desk (/api/quit)
             "standalone": self.standalone,
-            "update": self.updates.notice(),
+            "update": self.updates.state(self.standalone),
             "answers_problem": config.answers_problem(),
             "search": self.search,
             # the person's last look at the openings, and the one before this visit (New is what came after that)
@@ -1860,7 +1905,7 @@ class Desk:
             "paused": self.applier.paused,  # (Pause queue: nothing new starts until Resume queue)
             # the jobs back in the queue after a restart, waiting for Resume queue; and why the queue isn't kept here,
             # if it isn't (another desk keeps it, or the folder allows no lock)
-            "restored": self.applier.restored_notice(),
+            "restored": self._restored(),
             "clearable": len(self.applier.clearable()),  # (the jobs never begun, for Clear the queue)
             "queue_note": self.applier.queue_note(),
             # (a queue this folder can't keep is a problem, said in red; one another desk keeps is only so)
