@@ -181,6 +181,8 @@ def test_applications_chooses_my_applications_and_recommended_leads_back_to_open
                 await open_desk(page, desk, "applications")
                 await page.wait_for_selector("#rows li.row.app")
                 seen = {"applications": await page.evaluate(read)}
+                # (an application's row is .row.app: a row of the list, not the page's frame, which is .app too)
+                seen["row"] = await page.evaluate("document.querySelector('#rows li.row.app').offsetHeight")
                 await page.click("[data-filter=recommended]")
                 await page.wait_for_function("location.hash === '#openings'")
                 await page.wait_for_selector("#rows [data-pick]")
@@ -214,6 +216,7 @@ def test_applications_chooses_my_applications_and_recommended_leads_back_to_open
     assert seen["all"] == {**recommended, "pressed": ["all"], "rows": ["Field Service Engineer", "Accountant"]}, seen
     assert seen["mine"] == mine and seen["later"] == mine and seen["back"] == mine, seen
     assert seen["menu"] == recommended, seen["menu"]
+    assert 40 < seen["row"] < 120, seen["row"]
 
 
 def _numbers_desk(srv) -> tuple[Desk, dict[str, int]]:

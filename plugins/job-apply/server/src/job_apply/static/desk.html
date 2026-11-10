@@ -22,6 +22,7 @@
   --on-accent: #ffffff;
   --good: #15803d; --good-bg: #dcfce7; --warn: #b45309; --warn-bg: #fef3c7; --bad: #b91c1c; --bad-bg: #fee2e2;
   --info: #1d4ed8; --info-bg: #dbeafe;
+  --link: var(--accent);  /* (words that are a link: no color of their own, the accent that reads on the panel) */
   --shadow: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.05);
   --shadow-lg: 0 14px 34px rgba(16,24,40,.22), 0 3px 8px rgba(16,24,40,.10);
   --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
@@ -34,7 +35,7 @@
     --accent: #6366f1; --accent-2: #a5b4fc; --accent-bg: #20254a; --accent-line: #38407a; --row-sel: #1b1f3a;
     --on-accent: #ffffff;
     --good: #4ade80; --good-bg: #12301f; --warn: #fbbf24; --warn-bg: #33270b; --bad: #f87171; --bad-bg: #3a1616;
-    --info: #60a5fa; --info-bg: #132a4a;
+    --info: #60a5fa; --info-bg: #132a4a; --link: var(--accent-2);
     --shadow: none; --shadow-lg: 0 14px 34px rgba(0,0,0,.55), 0 3px 8px rgba(0,0,0,.35);
   }
 }
@@ -45,14 +46,14 @@
   --accent: #6366f1; --accent-2: #a5b4fc; --accent-bg: #20254a; --accent-line: #38407a; --row-sel: #1b1f3a;
   --on-accent: #ffffff;
   --good: #4ade80; --good-bg: #12301f; --warn: #fbbf24; --warn-bg: #33270b; --bad: #f87171; --bad-bg: #3a1616;
-  --info: #60a5fa; --info-bg: #132a4a;
+  --info: #60a5fa; --info-bg: #132a4a; --link: var(--accent-2);
   --shadow: none; --shadow-lg: 0 14px 34px rgba(0,0,0,.55), 0 3px 8px rgba(0,0,0,.35);
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; }
 body { background: var(--bg); color: var(--text); font: 14px/1.45 var(--font); -webkit-font-smoothing: antialiased; }
-a { color: var(--accent); }
+a { color: var(--link); }
 code { font-size: 12.5px; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ico { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round;
@@ -62,8 +63,9 @@ code { font-size: 12.5px; }
 .nowrap { white-space: nowrap; }
 .small { font-size: 13px; color: var(--muted); }
 
-/* the frame: the side menu stays put, the top bar is one for all pages, and the page under it scrolls */
-.app { display: grid; grid-template-columns: 244px minmax(0, 1fr); height: 100vh; }
+/* the frame: the side menu stays put, the top bar is one for all pages, and the page under it scrolls
+   (body > .app: an application's row in the list is .row.app, and is no frame) */
+body > .app { display: grid; grid-template-columns: 244px minmax(0, 1fr); height: 100vh; }
 .side { background: var(--side); border-right: 1px solid var(--line); display: flex; flex-direction: column;
   padding: 16px 12px 12px; min-height: 0; overflow-y: auto; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 2px 8px 16px; }
@@ -88,9 +90,9 @@ code { font-size: 12.5px; }
 .queue .bar { height: 4px; border-radius: 99px; background: var(--chip); overflow: hidden; }
 .queue .bar i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 99px; }
 /* (full width, and its words wrap: "Carry on with the queue (4 waiting)" is wider than the menu) */
-.queue .btn { width: 100%; height: auto; min-height: 30px; padding: 5px 10px; margin-top: 10px; white-space: normal;
+.queue .btn.sm { width: 100%; height: auto; min-height: 30px; padding: 5px 10px; margin-top: 10px; white-space: normal;
   line-height: 1.25; text-align: center; }
-.queue .btn + .btn { margin-top: 4px; }
+.queue .btn.sm + .btn.sm { margin-top: 4px; }
 /* the person: one button, for their profile */
 button.me { display: flex; align-items: center; justify-content: flex-start; gap: 10px; width: 100%; height: auto;
   margin-top: 6px; padding: 8px; border: 0; border-radius: 8px; background: none; box-shadow: none; color: var(--text);
@@ -115,8 +117,8 @@ button.me:hover { background: var(--hover); }
 /* (each control's wrapper is shown by its pages, the control by its own rule: the wrapper takes no room itself) */
 .top [data-pages] { display: contents; }
 #searched:empty, #mode:empty { display: none; }
-/* (as wide as leaves the rest of the bar on one line, down to a window of about 1,050 px; its tooltip has it whole) */
-#area-btn { display: inline-block; line-height: 32px; max-width: clamp(150px, calc(100vw - 940px), 340px);
+/* (as wide as leaves the rest of the bar on one line, down to a window of about 1,100 px; its tooltip has it whole) */
+#area-btn { display: inline-block; line-height: 32px; max-width: clamp(190px, calc(100vw - 905px), 340px);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .content { padding: 22px 28px 24px; min-height: 0; overflow-y: auto; }
 .page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; align-content: start; }
@@ -153,7 +155,7 @@ button.primary:hover, .btn.primary:hover, a.button.primary:hover { background: v
 a.button:not([href]) { opacity: .5; cursor: default; }
 /* a button that reads as a link, in a line of words or beside a card's buttons */
 button.link { display: inline; height: auto; padding: 0; border: 0; border-radius: 4px; background: none;
-  box-shadow: none; color: var(--accent); font-size: inherit; white-space: normal; text-align: left; }
+  box-shadow: none; color: var(--link); font-size: inherit; white-space: normal; text-align: left; }
 button.link:hover { background: none; text-decoration: underline; }
 /* pills: the state of one thing. A count: a number beside a title or a menu item */
 .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 2px 9px;
@@ -298,6 +300,7 @@ button.score.s2:hover { background: var(--warn-bg); }
 .task:last-child { border-radius: 0 0 13px 13px; }
 .task h3 { font-size: 14px; font-weight: 600; margin: 0 0 4px; }
 .task h3 .small { font-weight: 400; }
+.task h3 .spin { margin-right: 3px; }
 .task p { margin: 4px 0 8px; font-size: 14px; overflow-wrap: anywhere; }
 .task .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .task .actions button { height: 30px; padding: 0 11px; font-size: 13px; border-radius: 7px; }
@@ -318,7 +321,7 @@ button.score.s2:hover { background: var(--warn-bg); }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
 details { padding: 10px 18px; border-top: 1px solid var(--line-2); font-size: 13px; color: var(--muted); }
-details summary { cursor: pointer; color: var(--accent); font-weight: 500; }
+details summary { cursor: pointer; color: var(--link); font-weight: 500; }
 details summary:hover { text-decoration: underline; }
 /* a card's "What went in": what the desk put into the application, to check at a glance */
 details.went { padding: 2px 0 8px; border-top: 0; }
@@ -412,6 +415,7 @@ label.consent input { margin-top: 3px; }
   border-radius: 10px; background: var(--warn-bg); border: 1px solid var(--warn);
   border-color: color-mix(in srgb, var(--warn) 55%, transparent); }
 .waiting strong { color: var(--warn); }
+.waiting > span { flex: 1 1 380px; min-width: 0; }
 .waiting button { height: 30px; padding: 0 11px; font-size: 13px; border-radius: 7px; }
 .waiting button.link { height: auto; padding: 0; }
 /* a word that something happened (Prep me copied): at the foot of the window, gone after a few seconds */
@@ -429,7 +433,7 @@ body.stopped > :not(#stopped) { display: none; }
 /* narrow windows. Under 1,024 px the side menu is 64 px of icons: each link's name is its tooltip, and the queue's
    card and the person's name are out of sight (the name still there for a screen reader) */
 @media (max-width: 1023.98px) {
-  .app { grid-template-columns: 64px minmax(0, 1fr); }
+  body > .app { grid-template-columns: 64px minmax(0, 1fr); }
   .side { padding: 14px 10px 10px; align-items: center; }
   .brand { padding: 2px 0 14px; }
   .brand b, .nav a .label, .queue { display: none; }

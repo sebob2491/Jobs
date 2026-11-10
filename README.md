@@ -58,7 +58,7 @@ match.
 On Windows, download **[JobDeskSetup.exe](https://github.com/sebob2491/Jobs/releases/latest/download/JobDeskSetup.exe)**
 and double-click it. It installs the Job Desk for you alone (no administrator needed), with
 everything it runs on, and puts a **Job Desk** shortcut in the Start menu (and, if you like, on
-the desktop) that opens the Job Desk page in your browser. It doesn't need Claude Code; to use
+the desktop) that opens the Job Desk in a window of its own. It doesn't need Claude Code; to use
 the chat features too, tick "Also set up Claude Code" as it installs. The installer isn't signed
 yet, so Windows may say it protected your PC: click **More info**, then **Run anyway**.
 Uninstalling it (Settings, Apps) leaves your `~/.job-apply` folder (your profile, resume and
@@ -544,6 +544,7 @@ Settings in `profile.yaml`:
 | `phone_alert_details` | `false` | [Phone alerts](#phone-alerts) name the employer and the job too (they pass through ntfy's servers). The desk's **Say which employer and job** changes it. |
 | `phone_summary_at` | `"18:00"` | When the phone alerts' summary of the day comes, by this computer's clock (`off`: none). The desk's card changes it. |
 | `phone_alerts_server` | ntfy.sh | Your own ntfy server's https address, for phone alerts (http only for `localhost`; no name or password in it). |
+| `desk_window` | `app` | How the Job Desk opens: `app`, in a window of its own (in Edge or Chrome, whichever it finds; without either, in a tab), or `tab`, in a tab of your usual browser. |
 | `browser_channel` | `chrome` | The browser the desk drives: `chrome`, `msedge`, or `chromium` (Playwright's bundled browser). `headless: true` hides its window. |
 
 ## What's inside
