@@ -161,7 +161,9 @@ def test_a_shown_password_lives_only_in_its_box_and_is_let_go_every_way(srv, job
             return await page.evaluate(_LEFT, made)
 
         async def gone(page) -> dict:
-            await page.wait_for_function("() => !document.querySelector('[data-pw-box]')")
+            # (at once, or nearly: never as late as the 30 seconds, whose own timer would clear it whatever the page
+            # did; the review of the panel)
+            await page.wait_for_function("() => !document.querySelector('[data-pw-box]')", timeout=3000)
             return await page.evaluate(_LEFT, made)
 
         try:
@@ -185,6 +187,9 @@ def test_a_shown_password_lives_only_in_its_box_and_is_let_go_every_way(srv, job
                 seen["at_29"] = await page.evaluate(_LEFT, made)
                 await page.clock.fast_forward(1500)
                 seen["at_30"] = await gone(page)
+                # (the keyboard on the row's Show, never dropped to the page)
+                seen["focus_30"] = await page.evaluate("(document.activeElement.dataset || {}).pwAct || "
+                                                       "document.activeElement.tagName")
 
                 await show(page)
                 await press_menu(page, "settings/email")
@@ -219,6 +224,7 @@ def test_a_shown_password_lives_only_in_its_box_and_is_let_go_every_way(srv, job
     assert seen["while"]["buttons"] == ["Copy", "More", "Hide"], seen["while"]
     assert seen["after_hide"]["buttons"] == ["Show", "Copy", "More"], seen["after_hide"]
     assert seen["at_29"] == IN_THE_BOX, seen["at_29"]
+    assert seen["focus_30"] == "show", seen["focus_30"]
     for way in ("hide", "at_30", "left_panel", "left_settings", "page_hidden", "drawn_again"):
         assert seen[way] == NOWHERE, (way, seen[way])
 
@@ -515,3 +521,221 @@ def test_the_tip_and_the_line_before_applying_say_make_one_in_settings(srv, job_
                                 "https://acme.wd1.myworkdayjobs.com/External/job/Phoenix-AZ/Technician_R2"])
         assert lines[0] == ("Workday: no password saved, so 2 of these jobs stop at the sign-in for you. Make one in "
                             "Settings, under Accounts and passwords, and the desk signs in itself."), lines
+
+
+# ------------------------------------------------------------------ the review of the panel
+def _held(page, holds: dict[str, float]):
+    """Show's answers held back: the n-th asked (from 1), or the one for a name, by `holds` (seconds)."""
+    import asyncio
+    import json as _json
+
+    asked = {"n": 0}
+
+    async def answer(route):
+        asked["n"] += 1
+        name = _json.loads(route.request.post_data or "{}").get("name", "")
+        wait = holds.get(str(asked["n"]), holds.get(name, 0))
+        if wait:
+            await asyncio.sleep(wait)
+        await route.continue_()
+
+    return page.route("**/api/password/show", answer)
+
+
+@needs_browser
+def test_a_second_show_while_the_first_is_asked_never_brings_the_password_back_after_hide(srv, job_apply_home):
+    """Show pressed twice before its answer, the second's answer held back: after the first answer the person presses
+    Hide, and 3 seconds on the password is nowhere (the second answer never fills the box again)."""
+    desk = _desk(srv)
+
+    async def go():
+        made = await _make(desk, "workday_password")
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                await _held(page, {"2": 1.5})
+                await open_desk(page, desk, "settings/passwords")
+                await page.evaluate("() => { const b = document.querySelector('[data-pw=workday] [data-pw-act=show]');"
+                                    " b.click(); b.click(); }")
+                await page.wait_for_selector("[data-pw-box]")
+                await page.click("[data-pw=workday] [data-pw-act=hide]")
+                await page.wait_for_timeout(3000)
+                left = await page.evaluate(_LEFT, made)
+                await browser.close()
+                return left
+        finally:
+            await desk.stop()
+
+    assert run(go()) == NOWHERE
+
+
+@needs_browser
+def test_each_show_lasts_its_own_30_seconds(srv, job_apply_home):
+    """A Show answered after another one asked before it (Workday's, then SuccessFactors') is the one shown, for its
+    own 30 seconds: the earlier Show's timer never hides it early. And a Show after a Hide lasts its own 30 seconds."""
+    desk = _desk(srv)
+
+    async def go():
+        await _make(desk, "workday_password")
+        sf = await _make(desk, "successfactors_password")
+        await desk.start(port=0, open_browser=False)
+        seen: dict = {}
+        shown = "(pw) => { const b = document.querySelector('[data-pw-box]'); return !!b && b.value === pw; }"
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                await page.clock.install()
+                await _held(page, {"workday_password": 1.0, "successfactors_password": 2.5})
+                await open_desk(page, desk, "settings/passwords")
+                await page.evaluate("() => { for (const s of ['workday', 'successfactors']) document.querySelector("
+                                    "`[data-pw=${s}] [data-pw-act=show]`).click(); }")
+                await page.wait_for_function(shown, arg=sf)
+                await page.clock.fast_forward(29000)
+                seen["at_29"] = await page.evaluate(shown, sf)
+                await page.clock.fast_forward(1500)
+                seen["at_30"] = await page.evaluate("() => !!document.querySelector('[data-pw-box]')")
+                await page.unroute("**/api/password/show")
+                await page.click("[data-pw=successfactors] [data-pw-act=show]")
+                await page.wait_for_function(shown, arg=sf)
+                await page.clock.fast_forward(20000)
+                await page.click("[data-pw=successfactors] [data-pw-act=hide]")
+                await page.click("[data-pw=successfactors] [data-pw-act=show]")
+                await page.wait_for_function(shown, arg=sf)
+                await page.clock.fast_forward(15000)
+                seen["again_15"] = await page.evaluate(shown, sf)
+                await page.clock.fast_forward(16000)
+                seen["again_31"] = await page.evaluate("() => !!document.querySelector('[data-pw-box]')")
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    assert run(go()) == {"at_29": True, "at_30": False, "again_15": True, "again_31": False}
+
+
+@needs_browser
+def test_copy_answered_after_the_panel_is_left_puts_nothing_on_the_clipboard(srv, job_apply_home):
+    """Copy's answer held back while the person leaves the panel: nothing is put on the clipboard."""
+    desk = _desk(srv)
+
+    async def go():
+        made = await _make(desk, "workday_password")
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1280, "height": 900},
+                                              permissions=["clipboard-read", "clipboard-write"])
+                await _held(page, {"1": 1.5})
+                await open_desk(page, desk, "settings/passwords")
+                await page.evaluate("() => navigator.clipboard.writeText('made-up-before')")
+                await page.click("[data-pw=workday] [data-pw-act=copy]")
+                await press_menu(page, "settings/email")
+                await page.wait_for_timeout(3000)
+                seen = {"clipboard": await page.evaluate("() => navigator.clipboard.readText()"),
+                        "toast": await page.inner_text("#toast"), "left": await page.evaluate(_LEFT, made)}
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    assert run(go()) == {"clipboard": "made-up-before", "toast": "", "left": NOWHERE}
+
+
+@needs_browser
+def test_the_desk_stopping_lets_a_shown_password_go(srv, job_apply_home):
+    """Quit the Job Desk gone through (stopPage): a password shown is let go with the rest of the page."""
+    desk = _desk(srv)
+
+    async def go():
+        made = await _make(desk, "workday_password")
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                await open_desk(page, desk, "settings/passwords")
+                await page.click("[data-pw=workday] [data-pw-act=show]")
+                await page.wait_for_selector("[data-pw-box]")
+                await page.evaluate("() => stopPage()")
+                left = await page.evaluate(_LEFT, made)
+                await browser.close()
+                return left
+        finally:
+            await desk.stop()
+
+    assert run(go()) == NOWHERE
+
+
+@needs_browser
+def test_leaving_the_panel_closes_the_form_and_lets_what_was_typed_go(srv, job_apply_home):
+    """A password typed in a row's form, not saved: leaving the panel (or Settings) empties the box and closes the form,
+    and coming back finds it closed."""
+    desk = _desk(srv)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        seen: dict = {}
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                await open_desk(page, desk, "settings/passwords")
+                for leave in ("settings/email", "home"):
+                    await page.click("[data-pw=icims] [data-pw-act=type]")
+                    await page.keyboard.type("made-up-half-typed")
+                    await press_menu(page, leave)
+                    seen[leave] = await page.evaluate("""() => ({typed: document.getElementById('pw').value,
+                        inRow: !!document.getElementById('pw-form').closest('[data-pw]')})""")
+                    await press_menu(page, "settings/passwords")
+                    seen[leave]["open"] = await page.is_visible("#pw")
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    closed = {"typed": "", "inRow": False, "open": False}
+    assert run(go()) == {"settings/email": closed, "home": closed}
+
+
+@needs_browser
+def test_the_keyboard_stays_in_the_row_after_make_a_new_one_forget_and_make_one(srv, job_apply_home):
+    """A row drawn again after Make a new one keeps the keyboard on its More button; after Forget (no More any more) on
+    the row's first button; after Make one on its Show. Never the page itself. Each More names its job system."""
+    desk = _desk(srv)
+    focused = "() => [document.activeElement.closest('[data-pw]')?.dataset.pw, " \
+              "document.activeElement.dataset.pwAct || document.activeElement.getAttribute('aria-label')]"
+
+    async def go():
+        await _make(desk, "workday_password")
+        await desk.start(port=0, open_browser=False)
+        seen: dict = {}
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                page.on("dialog", lambda d: d.accept())
+                await open_desk(page, desk, "settings/passwords")
+                seen["named"] = await page.eval_on_selector(
+                    "[data-pw=workday] summary",
+                    "(s) => document.getElementById(s.getAttribute('aria-describedby')).textContent")
+                await page.click("[data-pw=workday] summary")
+                await page.click("[data-pw=workday] [data-pw-act=new]")
+                await page.wait_for_function("() => !document.querySelector('[data-pw=workday] button[disabled]')")
+                await page.wait_for_timeout(2000)
+                seen["new"] = await page.evaluate(focused)
+                await page.click("[data-pw=workday] summary")
+                await page.click("[data-pw=workday] [data-pw-act=forget]")
+                await page.wait_for_function("() => document.querySelector('[data-pw=workday] .pill').innerText"
+                                             " === 'None yet'")
+                await page.wait_for_timeout(1000)
+                seen["forget"] = await page.evaluate(focused)
+                await page.click("[data-pw=workday] [data-pw-act=make]")
+                await page.wait_for_function("() => document.querySelector('[data-pw=workday] .pill').innerText"
+                                             ".startsWith('Made')")
+                await page.wait_for_timeout(1000)
+                seen["make"] = await page.evaluate(focused)
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    assert run(go()) == {"named": "Workday", "new": ["workday", "More"], "forget": ["workday", "make"],
+                         "make": ["workday", "show"]}

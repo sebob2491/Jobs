@@ -1215,13 +1215,14 @@ body.stopped > :not(#stopped) { display: none; }
               </div>
               <details class="setmore"><summary>How this works</summary>
                 <div class="setmore-b">
-                <p>Each employer has its own account on its job site. Save one password for a job system and the
-                  desk creates your account at each of that system's employers (agreeing to its terms for you) and signs you in,
-                  on that system's own sites only; when a site turns the password down, it resets that account's password to this
-                  one through the site's "Forgot password" email (unless Make my accounts is off in Settings).
-                  It stays on this computer, in its password vault (Windows Credential Manager, the macOS Keychain or your
-                  desktop's keyring), or in a file only you can read where it has none.
-                  Use passwords you don't use anywhere else.</p>
+                <p>Each employer has its own account on its job site. The desk keeps one password for each job
+                  system, made by the desk or typed by you, and types it only on that job system's own sites. With it, the desk
+                  creates your account at each of that system's employers (agreeing to its terms for you) and signs you in; when
+                  a site turns the password down, it resets that account's password to this one through the site's "Forgot
+                  password" email (unless Make my accounts is off in Settings).
+                  Each password stays on this computer, in its password vault (Windows Credential Manager, the macOS Keychain
+                  or your desktop's keyring), or in a file only you can read where it has none.
+                  A password the desk makes is used nowhere else. If you type your own, use one you use nowhere else.</p>
                 <p>An Anthropic API key (make one in the Claude Console,
                   <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>,
                   and add some credit under Billing): with Write a cover letter for each job on, Claude writes each letter
@@ -3131,7 +3132,7 @@ function pwRow(o, showing) {
   const btn = (act, words, cls = "") => `<button class="btn sm${cls}" data-pw-act="${act}" data-pw-site="${esc(site)}"${of}${busy}>${words}</button>`;
   let acts;
   if (saved) {
-    const menu = `<details class="menu" data-menu="pw-${esc(site)}"><summary class="btn icon sm" aria-label="More" title="More"><svg class="ico" aria-hidden="true"><use href="#i-more"/></svg></summary>
+    const menu = `<details class="menu" data-menu="pw-${esc(site)}"><summary class="btn icon sm" data-menu-button="pw-${esc(site)}" aria-label="More"${of} title="More"><svg class="ico" aria-hidden="true"><use href="#i-more"/></svg></summary>
       <div class="menu-panel" role="group" aria-label="More">${btn("type", "Type my own")}${btn("new", "Make a new one")}${btn("forget", "Forget")}</div></details>`;
     acts = (own ? (showing ? "" : btn("show", "Show")) + btn("copy", "Copy") : "") + menu;
   } else {
@@ -3146,14 +3147,36 @@ function pwRow(o, showing) {
     ${pwFormFor === site ? `<div class="pw-slot" role="cell"></div>` : ""}
     ${err ? `<p class="set-err" role="alert">${esc(err)}</p>` : ""}</div>`;
 }
+// Each Show (and Copy) is numbered: a hide, and every Show after it, moves the number on, so an answer that comes for an
+// older one is let go unshown (a second Show, or the panel left, while it was asked), and each Show's 30 seconds are its own
+let pwSeq = 0;
+let pwAsking = "";  // the Show being asked, as "site seq" (a second press there while it is the latest asks nothing more)
 // The shown password let go: the box emptied and the row drawn as it was (`draw` false: by renderPasswords itself)
 function hidePw(draw = true) {
+  pwSeq += 1;
+  pwAsking = "";
   if (!pwShown) return;
   clearTimeout(pwShown.timer);
   if (pwShown.box) pwShown.box.value = "";
   pwShown = null;
   if (draw && state) renderPasswords();
 }
+// The row's form closed, what was typed in it let go (Close; the panel left; the desk stopping)
+function closePwForm() {
+  pwFormFor = "";
+  $("pw").value = "";
+  $("pw-form-home").append($("pw-form"));
+}
+// The keyboard put back in a row drawn again, where it would otherwise drop to the page: on `prefer` (a button's
+// data-pw-act, or "menu" for its More button) where the row has it, else on its first button
+function pwFocusRow(site, prefer) {
+  const row = $("pw-rows").querySelector(`[data-pw="${CSS.escape(site)}"]`);
+  if (!row) return;
+  const to = (prefer === "menu" ? row.querySelector("summary") : row.querySelector(`[data-pw-act="${prefer}"]`))
+    || row.querySelector(".c-acts button, .c-acts summary");
+  if (to) to.focus();
+}
+const pwFocusLost = () => !document.activeElement || document.activeElement === document.body;
 function renderPasswords() {
   if (!state) return;
   const s = state.settings || {}, own = !!state.standalone, systems = state.password_systems || [];
@@ -3220,7 +3243,8 @@ function openPwForm(site) {
   $("pw").focus();
 }
 // A row's button answered: the row's problem (the route's own sentence) said under it, the row otherwise as it was
-async function pwSend(site, send) {
+// (and the keyboard back in the row, on `prefer` where it has it, when the row drawn again took it away)
+async function pwSend(site, send, prefer = "") {
   pwErr.delete(site);
   pwBusy = site;
   changes += 1;  // (a state asked before this is out of date when it comes: load)
@@ -3232,6 +3256,7 @@ async function pwSend(site, send) {
   busy = false;
   renderPasswords();
   await refresh();
+  if (prefer && pwFocusLost()) pwFocusRow(site, prefer);
   return ok;
 }
 // Make my passwords (the panel's and Getting started's): one for each job system that has none
@@ -3240,28 +3265,40 @@ function makeAllPw() {
   return act(() => api("/api/password/make", {}));
 }
 // Show: asked of the desk, put in the row's box, and let go of here at once
+// (an answer still wanted: its Show or Copy the latest, on the panel, the page in sight, the desk not stopping)
+const pwStillWanted = (seq) => seq === pwSeq && !stopped && document.body.dataset.panel === "passwords"
+  && document.visibilityState === "visible";
 async function showPw(site) {
+  if (pwAsking === `${site} ${pwSeq}`) return;  // (pressed again while it's asked: the one answer is enough)
   hidePw();
+  const seq = ++pwSeq;
+  pwAsking = `${site} ${seq}`;
   pwErr.delete(site);
   let value = "";
   try { value = String((await api("/api/password/show", {name: pwKey(site)})).value || ""); } catch (e) {
-    pwErr.set(site, e.message || "It couldn't be shown.");
-    renderPasswords();
+    if (seq === pwSeq) { pwAsking = ""; pwErr.set(site, e.message || "It couldn't be shown."); renderPasswords(); }
     return;
   }
-  // (the panel left, or the page hidden, while it was asked: never shown)
-  if (document.body.dataset.panel !== "passwords" || document.visibilityState !== "visible") { value = ""; return; }
-  pwShown = {name: site, base: null, html: "", box: null, timer: 0};
+  // (another Show, Hide, the panel left or the page hidden while it was asked: let go, never shown)
+  if (!pwStillWanted(seq)) { value = ""; return; }
+  pwAsking = "";
+  pwShown = {name: site, base: null, html: "", box: null, timer: 0, seq};
   renderPasswords();
   const box = $("pw-rows").querySelector(`[data-pw="${CSS.escape(site)}"] [data-pw-box]`);
-  if (!pwShown || !box) { value = ""; hidePw(); return; }
+  if (!pwShown || pwShown.seq !== seq || !box) { value = ""; hidePw(); return; }
   box.value = value;
   value = "";
   pwShown.box = box;
-  pwShown.timer = setTimeout(() => hidePw(), PW_SHOWN_FOR);
+  // (its own 30 seconds: a timer of an earlier Show never hides this one)
+  pwShown.timer = setTimeout(() => {
+    if (!pwShown || pwShown.seq !== seq) return;
+    hidePw();
+    if (pwFocusLost()) pwFocusRow(site, "show");
+  }, PW_SHOWN_FOR);
   box.focus();
 }
-// Copy: asked of the desk and put on the clipboard; never drawn on the page
+// Copy: asked of the desk and put on the clipboard; never drawn on the page, and never copied once the person has left
+// the panel or hidden the page, or pressed Show or Copy again, while it was asked
 async function copyPw(site) {
   pwErr.delete(site);
   if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
@@ -3269,14 +3306,15 @@ async function copyPw(site) {
     renderPasswords();
     return;
   }
+  const seq = ++pwSeq;
   let value = "";
   try {
     value = String((await api("/api/password/show", {name: pwKey(site)})).value || "");
   } catch (e) {
-    pwErr.set(site, e.message || "It couldn't be copied.");
-    renderPasswords();
+    if (seq === pwSeq) { pwErr.set(site, e.message || "It couldn't be copied."); renderPasswords(); }
     return;
   }
+  if (!pwStillWanted(seq)) { value = ""; return; }
   try { await navigator.clipboard.writeText(value); toast("Copied."); } catch (e) { pwErr.set(site, PW_NO_CLIPBOARD); }
   value = "";
   renderPasswords();
@@ -3294,10 +3332,10 @@ $("pw-rows").addEventListener("click", (e) => {
   if (act === "show") showPw(site);
   else if (act === "hide") { hidePw(); $("pw-rows").querySelector(`[data-pw="${CSS.escape(site)}"] [data-pw-act=show]`)?.focus(); }
   else if (act === "copy") copyPw(site);
-  else if (act === "make") pwSend(site, () => api("/api/password/make", {name: pwKey(site)}));
+  else if (act === "make") pwSend(site, () => api("/api/password/make", {name: pwKey(site)}), "show");
   else if (act === "type") openPwForm(site);
-  else if (act === "new") { if (confirm(PW_ASK_NEW(name))) pwSend(site, () => api("/api/password/make", {name: pwKey(site), replace: true})); }
-  else if (act === "forget") { if (confirm(PW_ASK_FORGET(name))) pwSend(site, () => api("/api/password/forget", {name: pwKey(site)})); }
+  else if (act === "new") { if (confirm(PW_ASK_NEW(name))) pwSend(site, () => api("/api/password/make", {name: pwKey(site), replace: true}), "menu"); }
+  else if (act === "forget") { if (confirm(PW_ASK_FORGET(name))) pwSend(site, () => api("/api/password/forget", {name: pwKey(site)}), "menu"); }
 });
 // (the page hidden: a shown password let go)
 document.addEventListener("visibilitychange", () => { if (document.visibilityState !== "visible") hidePw(); });
@@ -4122,7 +4160,8 @@ function route() {
     if (a.getAttribute("href") === "#" + page) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   }
   if (moved) $("content").scrollTop = 0;  // (a page starts at its top, not where the last one was left)
-  if (panel !== "passwords") hidePw();  // (Accounts and passwords left: a password shown there let go)
+  // (Accounts and passwords left: a password shown there let go, and the form closed with what was typed in it)
+  if (panel !== "passwords") { hidePw(false); closePwForm(); }
   // (Your answers' remembered answers: asked of the desk each time the page opens; left, an ID shown is dots again and
   // a change not saved is let go)
   if (moved && page === "answers") loadRemembered();
@@ -4186,6 +4225,8 @@ let loadingAt = -1;  // the changes the refresh under way was asked after
 // say so, and closes its window where the browser lets a page close its own (else the words stay, and say to close it)
 function stopPage() {
   stopped = true;
+  hidePw(false);  // (a password shown on Accounts and passwords let go)
+  closePwForm();
   document.title = "Job Desk";
   document.body.classList.add("stopped");
   $("stopped").hidden = false;
@@ -4737,8 +4778,7 @@ document.addEventListener("click", (e) => {
   if (a === "pw-key-forget" && confirm(PW_ASK_FORGET_KEY)) pwSend("anthropic", () => api("/api/password/forget", {name: "anthropic_api_key"}));
   if (a === "pw-form-close") {
     const was = pwFormFor;
-    pwFormFor = "";
-    $("pw").value = "";
+    closePwForm();
     renderPasswords();
     (was === "anthropic" ? $("pw-key").querySelector("[data-act=pw-key-save]")
       : $("pw-rows").querySelector(`[data-pw="${CSS.escape(was)}"] [data-pw-act=type], [data-pw="${CSS.escape(was)}"] summary`))?.focus();

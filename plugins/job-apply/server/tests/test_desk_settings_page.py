@@ -1006,8 +1006,9 @@ def test_the_passwords_and_email_codes_words_name_claude_only_where_claude_is(sr
     assert ("Passwords are shown only when the Job Desk is opened on its own, not inside Claude." in card) \
         is not standalone, card
     assert "(unless Make my accounts is off in Settings)" in card, card
-    assert ("desktop's keyring), or in a file only you can read where it has none. Use passwords you don't use "
-            "anywhere else.") in card, card
+    # (How this works fits a password the desk makes and one typed: the review of the panel)
+    assert ("desktop's keyring), or in a file only you can read where it has none. A password the desk makes is used "
+            "nowhere else. If you type your own, use one you use nowhere else.") in card, card
     assert card.endswith("(about 10 to 20 cents a letter, written and checked)."), card
     assert "Your email: with an app password" not in card, card
     assert "manage_accounts" not in card and "secrets.yaml" not in card, card
