@@ -1161,7 +1161,7 @@ def search_profile_text(places: list[str] | None = None, titles: list[str] | Non
     it can't be."""
     path = profile_path()
     if not path.exists():
-        raise ValueError("Set up your profile first (ask Claude to set up job-apply)")
+        raise ValueError("Set up your profile first.")
     text = path.read_text(encoding="utf-8")
     if places is not None:
         text = set_yaml_value(text, ("preferences", "locations"), places)

@@ -44,9 +44,11 @@ LETTER_RETRY = 600.0  # seconds after what stops every letter before the desk tr
 LETTERS_REFUSED_MOST = 4  # letters refused for what they claim, in a row, before the desk stops writing them
 POSTING_LEAST = 200  # characters of a posting's text under which it's read again from its address first
 
-LETTER_SAYS = ("This is the first cover letter the desk wrote for you (with your Claude login), and this job waits for "
-               "your say. If it's right, press Use it: from then on each job's letter goes in without asking. To "
-               "change how they're written, tell Claude in the chat what to change, or press Turn cover letters off.")
+# the first letter's stop, on a desk run on its own (no Claude beside it: Applier.standalone), and on one inside Claude
+LETTER_SAYS_ALONE = ("This is the first cover letter the desk wrote for you, and this job waits for your say. If it's "
+                     "right, press Use it: from then on each job's letter goes in without asking. If it isn't, press "
+                     "Turn cover letters off.")
+LETTER_SAYS = LETTER_SAYS_ALONE + " Or tell Claude in the chat what to change."
 
 
 def has_letter(job: dict[str, Any]) -> bool:
@@ -74,6 +76,7 @@ class LettersMixin:
         tasks: deque[tuple[str, int]]
         pressed: set[int]
         _wake: asyncio.Event
+        standalone: bool
         letters: bool
         letters_approved: bool
         letters_problem: str | None
@@ -409,7 +412,10 @@ class LettersMixin:
             self._drop_draft(run.job_id)
             return False
         run.letter_text = text
-        self._pause(run, "cover_letter", LETTER_SAYS, code="cover_letter")
+        said = LETTER_SAYS
+        if self.standalone:  # (no Claude to tell)
+            said = LETTER_SAYS_ALONE
+        self._pause(run, "cover_letter", said, code="cover_letter")
         return True
 
     async def _letter_ready(self, run: Run, data: dict[str, Any]) -> float:

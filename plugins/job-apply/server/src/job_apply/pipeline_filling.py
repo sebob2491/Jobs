@@ -36,6 +36,7 @@ class FillingMixin:
 
     if TYPE_CHECKING:  # (the applier's own)
         srv: Any
+        standalone: bool
 
         def _log(self, run: Run, text: str) -> None: ...
 
@@ -513,24 +514,16 @@ class FillingMixin:
         site, said = pipeline._site(run, data), []
         if missing["work"]:
             said.append(f"{site} asks about your past jobs, and your profile doesn't have this for them: "
-                        f"{listed(missing['work'])}. Add it to those jobs under work_history in profile.yaml (dates "
-                        "as start: 2021-03 and end: 2023-06, or end: present), or ask Claude: \u201cadd the start and "
-                        "end months of my jobs from my resume to my profile\u201d.")
+                        f"{listed(missing['work'])}. Add it in your profile (Settings, Your profile), then press "
+                        "Carry on."
+                        + ("" if self.standalone else " Or ask Claude: \u201cadd the start and end months of my jobs "
+                           "from my resume to my profile\u201d."))
         if missing["education"]:
-            # what each missing box takes: a Degree box isn't dates, and coursework is never a degree
-            asked = " ".join(w for boxes in missing["education"].values() for w in boxes).lower()
-            how = []
-            if re.search(r"degree|qualification|diploma", asked):
-                how.append("degree: the one you earned there, or Some college (no degree) where you took classes "
-                           "without finishing one")
-            if re.search(r"major|field|study|discipline|concentration", asked):
-                how.append("major: your field of study")
-            if re.search(r"from|to\b|start|end|date|year|month|graduat", asked) or not how:
-                how.append("years as start: 2016 and end: 2018")
             said.append(f"{site} asks about your schools, and your profile doesn't have this for them: "
-                        f"{listed(missing['education'])}. Add it to those schools under education_history in "
-                        f"profile.yaml ({'; '.join(how)}), or ask Claude to add it from your resume (only what it "
-                        "says: never a degree you didn't finish).")
+                        f"{listed(missing['education'])}. Add it in your profile (Settings, Your profile), then press "
+                        "Carry on."
+                        + ("" if self.standalone else " Or ask Claude to add it from your resume (only what it says: "
+                           "never a degree you didn't finish)."))
         if said:
             said.append("Then press Carry on: the desk fills them in from your profile on every application after "
                         "that. Or type them into the page in the desk's browser window and press Carry on.")
