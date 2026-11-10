@@ -1362,18 +1362,44 @@ def remembered_answers() -> list[dict[str, Any]]:
     for the Your answers page: each with its id, question, answer (None for one left empty), the employer it's kept
     for ("" for every one), and whether it's an ID (autofill.remembered_ids: the page hides it until Show). A file
     that doesn't parse is a ValueError."""
-    from .autofill import remembered_ids  # (autofill reads this module)
-
     entries, at = _remembered(_answers_file())
     out = []
     for i in at:
         a = entries[i]
         answer = a.get("answer")
+        private = _private(a)
         out.append({"id": answer_id(a), "question": str(a.get("question") or a.get("match")),
-                    "answer": answer if answer is None or isinstance(answer, (str, list)) else str(answer),
-                    "at": str(a.get("at") or "").strip(),
-                    "private": bool(remembered_ids(Profile({"answers": [a]})))})
+                    # (an ID's value never in the list: private_answer gives it, when the person presses Show)
+                    "answer": None if private else
+                    answer if answer is None or isinstance(answer, (str, list)) else str(answer),
+                    "empty": _left_empty(answer), "at": str(a.get("at") or "").strip(), "private": private})
     return out
+
+
+def _private(entry: dict[str, Any]) -> bool:
+    """Whether a remembered answer is an ID (autofill.remembered_ids, as the scrubbers take them out)."""
+    from .autofill import remembered_ids  # (autofill reads this module)
+
+    return bool(remembered_ids(Profile({"answers": [entry]})))
+
+
+def _left_empty(answer: Any) -> bool:
+    return answer is None or (isinstance(answer, (str, list)) and not (answer.strip() if isinstance(answer, str)
+                                                                      else answer))
+
+
+def private_answer(entry_id: Any) -> str:
+    """The value of the remembered answer with this id, an ID's (the Your answers page's Show): a LookupError for an
+    id that names none; a ValueError for one that isn't private (the page has it already) or was left empty. Its
+    value is never in what either says."""
+    with ANSWERS_LOCK:
+        _, entries, i = _named_answer(entry_id)
+    entry = entries[i]
+    if _left_empty(entry.get("answer")):
+        raise ValueError("That answer was left empty.")
+    if not _private(entry):
+        raise ValueError("That answer isn't hidden: it's on the page already.")
+    return str(entry.get("answer"))
 
 
 def _named_answer(entry_id: Any) -> tuple[dict[str, Any], list[Any], int]:

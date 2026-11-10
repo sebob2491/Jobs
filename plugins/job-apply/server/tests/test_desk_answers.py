@@ -48,13 +48,18 @@ def test_answers_lists_the_remembered_ones_newest_first_ids_marked_and_none_in_t
                                                                    ("GET", "/api/state", None)])
     assert status == 200 and state_status == 200
     assert listed["answers"] == [
-        {"id": _id(ENTRIES[0]), "question": "Employee ID", "answer": "WW123456", "at": "Example Fab", "private": True},
+        {"id": _id(ENTRIES[0]), "question": "Employee ID", "answer": None, "empty": False, "at": "Example Fab",
+         "private": True},
         {"id": _id(ENTRIES[1]), "question": "Are you willing to work weekends?", "answer": "Yes, every other weekend",
-         "at": "", "private": False},
-        {"id": _id(ENTRIES[2]), "question": "Middle name", "answer": None, "at": "Example Litho", "private": False},
-        {"id": _id(ENTRIES[4]), "question": "Employee ID", "answer": "EX-778899", "at": "Example Litho",
+         "empty": False, "at": "", "private": False},
+        {"id": _id(ENTRIES[2]), "question": "Middle name", "answer": None, "empty": True, "at": "Example Litho",
+         "private": False},
+        {"id": _id(ENTRIES[4]), "question": "Employee ID", "answer": None, "empty": False, "at": "Example Litho",
          "private": True},
     ]
+    # (an ID's value never in the list, wherever it might be: the page asks for it with Show)
+    whole = json.dumps(listed)
+    assert "WW123456" not in whole and "EX-778899" not in whole
     shown = json.dumps(state)
     for kept in ("WW123456", "EX-778899", "Yes, every other weekend", "Are you willing to work weekends"):
         assert kept not in shown, kept
@@ -87,8 +92,56 @@ def test_change_replaces_that_entrys_answer_and_no_other(srv, job_apply_home):
     kept = _kept(job_apply_home)
     assert kept == [*ENTRIES[:4], {**ENTRIES[4], "answer": "EX-000111"}]  # (where it was: the list keeps its order)
     assert (job_apply_home / "answers.yaml").read_text(encoding="utf-8").startswith(HEADER)
-    assert said[3][1]["answers"][-1] == {"id": _id(ENTRIES[4]), "question": "Employee ID", "answer": "EX-000111",
-                                         "at": "Example Litho", "private": True}
+    assert said[3][1]["answers"][-1] == {"id": _id(ENTRIES[4]), "question": "Employee ID", "answer": None,
+                                         "empty": False, "at": "Example Litho", "private": True}
+    assert "EX-000111" not in json.dumps(said[3][1])
+
+
+def test_show_gives_that_ids_value_alone_and_refuses_the_rest(srv, job_apply_home, caplog):
+    """/api/answers/show: the one private entry's value, uncached; another private entry's value never with it; a 404
+    for an id that names none, a 400 for an entry that isn't private (the page has it) or was left empty; 403 without
+    the key; no value in an error or a log line; and /api/state holds none of it."""
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    _write(job_apply_home)
+    said = _calls(_desk(srv), [
+        ("POST", "/api/answers/show", {"id": _id(ENTRIES[0])}),
+        ("POST", "/api/answers/show", {"id": _id(ENTRIES[4])}),
+        ("POST", "/api/answers/show", {"id": _id(ENTRIES[1])}),
+        ("POST", "/api/answers/show", {"id": _id(ENTRIES[2])}),
+        ("POST", "/api/answers/show", {"id": "no such question\n"}),
+        ("POST", "/api/answers/show", {"id": f"{ENTRIES[3]['match']}\n"}),
+        ("GET", "/api/state", None)])
+    assert said[0] == (200, {"answer": "WW123456"}) and said[1] == (200, {"answer": "EX-778899"})
+    assert said[2] == (400, {"error": "That answer isn't hidden: it's on the page already."})
+    assert said[3] == (400, {"error": "That answer was left empty."})
+    assert [s for s, _ in said[4:6]] == [404, 404]
+    errors = json.dumps(said[2:6]) + json.dumps(said[6][1]) + "\n".join(r.getMessage() for r in caplog.records)
+    for value in ("WW123456", "EX-778899", "Yes, every other weekend"):
+        assert value not in errors, value
+    assert [s for s, _ in _calls(_desk(srv), [("POST", "/api/answers/show", {"id": _id(ENTRIES[0])})],
+                                 token=False)] == [403]
+
+
+def test_show_is_never_cached(srv, job_apply_home):
+    from conftest import run
+    from test_desk import _client
+
+    _write(job_apply_home)
+    desk = _desk(srv)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with _client(desk) as c:
+                return await c.post("/api/answers/show", headers={"x-desk-token": desk.token},
+                                    json={"id": _id(ENTRIES[0])})
+        finally:
+            await desk.stop()
+
+    got = run(go())
+    assert got.status_code == 200 and got.headers["cache-control"] == "no-store"
 
 
 def test_forget_removes_that_entry_and_no_other(srv, job_apply_home):

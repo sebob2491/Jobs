@@ -1146,7 +1146,8 @@ class Desk:
 
     async def answers_view(self, request: Request) -> Response:
         """The Your answers page's Answers the desk remembers (config.remembered_answers), newest first. Asked by the
-        page alone, never part of /api/state: an ID among them goes to the page only when it opens that page."""
+        page alone, never part of /api/state; an ID's value isn't in it (its answer
+        is null: /api/answers/show)."""
         if not self._allowed(request, api=True):
             return self._forbidden()
         try:
@@ -1157,14 +1158,18 @@ class Desk:
 
     async def answers_change_view(self, request: Request) -> Response:
         """A remembered answer `change`d ({id, answer}) or `forget`ten ({id}): that one entry of answers.yaml and no
-        other. An id that names none is a 404."""
+        other; or an ID's value `show`n ({id}: the page's Show, the one place it leaves the desk). An id that names
+        none is a 404."""
         if not self._allowed(request, api=True):
             return self._forbidden()
         action = request.path_params["action"]
-        if action not in ("change", "forget"):
+        if action not in ("change", "forget", "show"):
             return JSONResponse({"error": f"unknown action {action!r}"}, status_code=404)
         try:
             body = await self._body(request)
+            if action == "show":  # (an ID's value, only when the person presses Show: never in the list)
+                said = await asyncio.to_thread(config.private_answer, body.get("id"))
+                return JSONResponse({"answer": said}, headers={"Cache-Control": "no-store"})
             if action == "change":
                 await asyncio.to_thread(config.change_answer, body.get("id"), body.get("answer"))
             else:
