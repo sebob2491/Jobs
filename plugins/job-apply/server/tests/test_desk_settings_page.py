@@ -1005,7 +1005,11 @@ def test_the_passwords_and_email_codes_words_name_claude_only_where_claude_is(sr
     card = " ".join(seen["card"].split())
     assert ("Passwords are shown only when the Job Desk is opened on its own, not inside Claude." in card) \
         is not standalone, card
-    assert "(unless Make my accounts is off in Settings)" in card, card
+    # (the review of the panel: signing in always, an account and a reset only with Make my accounts on)
+    assert ("With it, the desk signs you in at each of that job system's employers. Unless Make my accounts is off in "
+            "Settings, it also creates your account there (agreeing to the site's terms for you), and when a site "
+            "turns the password down, it resets that account's password to this one through the site's "
+            "\"Forgot password\" email.") in card, card
     # (How this works fits a password the desk makes and one typed: the review of the panel)
     assert ("desktop's keyring), or in a file only you can read where it has none. A password the desk makes is used "
             "nowhere else. If you type your own, use one you use nowhere else.") in card, card

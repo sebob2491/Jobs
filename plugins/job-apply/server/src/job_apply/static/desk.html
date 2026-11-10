@@ -1217,9 +1217,9 @@ body.stopped > :not(#stopped) { display: none; }
                 <div class="setmore-b">
                 <p>Each employer has its own account on its job site. The desk keeps one password for each job
                   system, made by the desk or typed by you, and types it only on that job system's own sites. With it, the desk
-                  creates your account at each of that system's employers (agreeing to its terms for you) and signs you in; when
-                  a site turns the password down, it resets that account's password to this one through the site's "Forgot
-                  password" email (unless Make my accounts is off in Settings).
+                  signs you in at each of that job system's employers. Unless Make my accounts is off in Settings, it also
+                  creates your account there (agreeing to the site's terms for you), and when a site turns the password down,
+                  it resets that account's password to this one through the site's "Forgot password" email.
                   Each password stays on this computer, in its password vault (Windows Credential Manager, the macOS Keychain
                   or your desktop's keyring), or in a file only you can read where it has none.
                   A password the desk makes is used nowhere else. If you type your own, use one you use nowhere else.</p>
@@ -3265,20 +3265,31 @@ function makeAllPw() {
   return act(() => api("/api/password/make", {}));
 }
 // Show: asked of the desk, put in the row's box, and let go of here at once
-// (an answer still wanted: its Show or Copy the latest, on the panel, the page in sight, the desk not stopping)
-const pwStillWanted = (seq) => seq === pwSeq && !stopped && document.body.dataset.panel === "passwords"
-  && document.visibilityState === "visible";
+// (an answer still wanted: its Show the latest, on the panel, the page in sight, the desk not stopping)
+const pwOnPanel = () => !stopped && document.body.dataset.panel === "passwords" && document.visibilityState === "visible";
+const pwStillWanted = (seq) => seq === pwSeq && pwOnPanel();
+const PW_ASK_FOR = 15000;  // ms: a Show the desk hasn't answered by then is given up, and its row hears presses again
 async function showPw(site) {
   if (pwAsking === `${site} ${pwSeq}`) return;  // (pressed again while it's asked: the one answer is enough)
   hidePw();
   const seq = ++pwSeq;
   pwAsking = `${site} ${seq}`;
   pwErr.delete(site);
+  // (no answer in PW_ASK_FOR: said in the row, and that request's answer let go if it ever comes)
+  const giveUp = setTimeout(() => {
+    if (pwAsking !== `${site} ${seq}`) return;
+    pwAsking = "";
+    pwSeq += 1;
+    pwErr.set(site, "It couldn't be shown.");
+    renderPasswords();
+  }, PW_ASK_FOR);
   let value = "";
   try { value = String((await api("/api/password/show", {name: pwKey(site)})).value || ""); } catch (e) {
+    clearTimeout(giveUp);
     if (seq === pwSeq) { pwAsking = ""; pwErr.set(site, e.message || "It couldn't be shown."); renderPasswords(); }
     return;
   }
+  clearTimeout(giveUp);
   // (another Show, Hide, the panel left or the page hidden while it was asked: let go, never shown)
   if (!pwStillWanted(seq)) { value = ""; return; }
   pwAsking = "";
@@ -3297,8 +3308,10 @@ async function showPw(site) {
   }, PW_SHOWN_FOR);
   box.focus();
 }
-// Copy: asked of the desk and put on the clipboard; never drawn on the page, and never copied once the person has left
-// the panel or hidden the page, or pressed Show or Copy again, while it was asked
+// Copy: asked of the desk and put on the clipboard; never drawn on the page. Its own number, which only a newer Copy and
+// the ways out move on (the panel or Settings left, the page hidden, the desk stopping: pwLetGo): a Show, a Hide or the
+// 30 seconds meanwhile never drop it
+let pwCopySeq = 0;
 async function copyPw(site) {
   pwErr.delete(site);
   if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
@@ -3306,18 +3319,25 @@ async function copyPw(site) {
     renderPasswords();
     return;
   }
-  const seq = ++pwSeq;
+  const seq = ++pwCopySeq;
   let value = "";
   try {
     value = String((await api("/api/password/show", {name: pwKey(site)})).value || "");
   } catch (e) {
-    if (seq === pwSeq) { pwErr.set(site, e.message || "It couldn't be copied."); renderPasswords(); }
+    if (seq === pwCopySeq) { pwErr.set(site, e.message || "It couldn't be copied."); renderPasswords(); }
     return;
   }
-  if (!pwStillWanted(seq)) { value = ""; return; }
+  if (seq !== pwCopySeq || !pwOnPanel()) { value = ""; return; }
   try { await navigator.clipboard.writeText(value); toast("Copied."); } catch (e) { pwErr.set(site, PW_NO_CLIPBOARD); }
   value = "";
   renderPasswords();
+}
+// The ways out of the panel (Settings or the panel left, the desk stopping): a shown password let go, a Copy being
+// asked never copied, and the form closed with what was typed in it
+function pwLetGo() {
+  hidePw(false);
+  pwCopySeq += 1;
+  closePwForm();
 }
 $("pw-rows").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-pw-act]");
@@ -3337,8 +3357,8 @@ $("pw-rows").addEventListener("click", (e) => {
   else if (act === "new") { if (confirm(PW_ASK_NEW(name))) pwSend(site, () => api("/api/password/make", {name: pwKey(site), replace: true}), "menu"); }
   else if (act === "forget") { if (confirm(PW_ASK_FORGET(name))) pwSend(site, () => api("/api/password/forget", {name: pwKey(site)}), "menu"); }
 });
-// (the page hidden: a shown password let go)
-document.addEventListener("visibilitychange", () => { if (document.visibilityState !== "visible") hidePw(); });
+// (the page hidden: a shown password let go, and a Copy being asked never copied)
+document.addEventListener("visibilitychange", () => { if (document.visibilityState !== "visible") { hidePw(); pwCopySeq += 1; } });
 
 // a problem the desk says in a sentence of its own ("The desk couldn't read your email: ..."): "Problem: the desk ..."
 const problemSaid = (html) => "Problem: " + String(html).replace(/^(The|Your|A|This) /, (w) => w.toLowerCase());
@@ -4161,7 +4181,7 @@ function route() {
   }
   if (moved) $("content").scrollTop = 0;  // (a page starts at its top, not where the last one was left)
   // (Accounts and passwords left: a password shown there let go, and the form closed with what was typed in it)
-  if (panel !== "passwords") { hidePw(false); closePwForm(); }
+  if (panel !== "passwords") pwLetGo();
   // (Your answers' remembered answers: asked of the desk each time the page opens; left, an ID shown is dots again and
   // a change not saved is let go)
   if (moved && page === "answers") loadRemembered();
@@ -4225,8 +4245,7 @@ let loadingAt = -1;  // the changes the refresh under way was asked after
 // say so, and closes its window where the browser lets a page close its own (else the words stay, and say to close it)
 function stopPage() {
   stopped = true;
-  hidePw(false);  // (a password shown on Accounts and passwords let go)
-  closePwForm();
+  pwLetGo();  // (a password shown on Accounts and passwords let go, and the form closed)
   document.title = "Job Desk";
   document.body.classList.add("stopped");
   $("stopped").hidden = false;
@@ -4272,6 +4291,7 @@ async function load(at = changes) {
     if (updateDown || (e.status === undefined && up && UPDATING.includes(up.progress))) {
       if (e.status === 403) {  // (the updated desk, with its own key and window)
         stopped = true;
+        pwLetGo();  // (as stopPage does)
         $("notices").innerHTML = `<p class="notice info">The Job Desk opened again in a window of its own. You can close this one.</p>`;
         window.close();
         return;

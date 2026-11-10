@@ -739,3 +739,150 @@ def test_the_keyboard_stays_in_the_row_after_make_a_new_one_forget_and_make_one(
 
     assert run(go()) == {"named": "Workday", "new": ["workday", "More"], "forget": ["workday", "make"],
                          "make": ["workday", "show"]}
+
+
+# ------------------------------------------------------------------ the confirming read of the panel
+@needs_browser
+def test_a_shows_answer_that_comes_after_another_rows_show_is_never_put_in_a_box(srv, job_apply_home):
+    """Workday's Show held back, SuccessFactors' Show pressed meanwhile and answered: Workday's answer, come later, is
+    let go. It is never in a box, not even for a moment, nor anywhere else on the page."""
+    desk = _desk(srv)
+
+    async def go():
+        wd = await _make(desk, "workday_password")
+        sf = await _make(desk, "successfactors_password")
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                await _held(page, {"workday_password": 2.0})
+                await open_desk(page, desk, "settings/passwords")
+                # (every box looked at as the page changes: a value put in one for a moment is seen)
+                await page.evaluate("""(pw) => { window.__seen = false;
+                    const look = () => { if ([...document.querySelectorAll('input')].some((b) => b.value === pw))
+                      window.__seen = true; };
+                    new MutationObserver(look).observe(document.body, {subtree: true, childList: true});
+                    setInterval(look, 20); }""", wd)
+                await page.click("[data-pw=workday] [data-pw-act=show]")
+                await page.click("[data-pw=successfactors] [data-pw-act=show]")
+                await page.wait_for_function("(pw) => [...document.querySelectorAll('[data-pw-box]')]"
+                                             ".some((b) => b.value === pw)", arg=sf)
+                await page.wait_for_timeout(3500)  # (Workday's answer come and gone)
+                seen = {"seen": await page.evaluate("window.__seen"), "left": await page.evaluate(_LEFT, wd),
+                        "sf_shown": await page.evaluate("(pw) => document.querySelector('[data-pw-box]')?.value === pw",
+                                                        sf)}
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    assert run(go()) == {"seen": False, "left": NOWHERE, "sf_shown": True}
+
+
+@needs_browser
+def test_copy_asked_before_hide_still_copies(srv, job_apply_home):
+    """Show, then Copy with its answer held back, then Hide: the Copy the person asked for still goes on the clipboard
+    and says "Copied." (only a newer Copy and the ways out of the panel drop it)."""
+    desk = _desk(srv)
+
+    async def go():
+        made = await _make(desk, "workday_password")
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1280, "height": 900},
+                                              permissions=["clipboard-read", "clipboard-write"])
+                await _held(page, {"2": 1.5})
+                await open_desk(page, desk, "settings/passwords")
+                await page.evaluate("() => navigator.clipboard.writeText('made-up-before')")
+                await page.click("[data-pw=workday] [data-pw-act=show]")
+                await page.wait_for_selector("[data-pw-box]")
+                await page.click("[data-pw=workday] [data-pw-act=copy]")
+                await page.click("[data-pw=workday] [data-pw-act=hide]")
+                await page.wait_for_function("() => document.getElementById('toast').textContent === 'Copied.'",
+                                             timeout=5000)
+                seen = {"clipboard": await page.evaluate("() => navigator.clipboard.readText()") == made,
+                        "left": await page.evaluate(_LEFT, made)}
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    assert run(go()) == {"clipboard": True, "left": NOWHERE}
+
+
+@needs_browser
+def test_a_show_never_answered_is_given_up_after_15_seconds_and_the_row_hears_again(srv, job_apply_home):
+    """A Show whose request never answers: 15 seconds on (the clock faked) its row says "It couldn't be shown.", and a
+    press of Show asks again."""
+    import asyncio
+    import contextlib
+
+    desk = _desk(srv)
+
+    async def go():
+        await _make(desk, "workday_password")
+        await desk.start(port=0, open_browser=False)
+        asked = {"n": 0}
+
+        async def never(route):
+            asked["n"] += 1
+            if asked["n"] == 1:
+                await asyncio.sleep(25)
+                with contextlib.suppress(Exception):
+                    await route.abort()
+                return
+            await route.continue_()
+
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                await page.clock.install()
+                await page.route("**/api/password/show", never)
+                await open_desk(page, desk, "settings/passwords")
+                await page.click("[data-pw=workday] [data-pw-act=show]")
+                await page.wait_for_timeout(500)
+                await page.clock.fast_forward(14000)
+                seen = {"at_14": (await _row(page, "workday"))["error"]}
+                await page.clock.fast_forward(1500)
+                await page.wait_for_selector("[data-pw=workday] .set-err", timeout=3000)
+                seen["at_15"] = (await _row(page, "workday"))["error"]
+                await page.click("[data-pw=workday] [data-pw-act=show]")
+                await page.wait_for_selector("[data-pw-box]", timeout=5000)
+                seen["asked"] = asked["n"]
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    assert run(go()) == {"at_14": "", "at_15": "It couldn't be shown.", "asked": 2}
+
+
+@needs_browser
+def test_the_desk_come_back_with_a_key_of_its_own_lets_the_panel_go(srv, job_apply_home):
+    """The page's other way of stopping (load(): after an update the desk answers with a key of its own, and the page
+    says it opened again in a window of its own): a shown password, and what was typed in the form, let go."""
+    desk = _desk(srv)
+
+    async def go():
+        made = await _make(desk, "workday_password")
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                await open_desk(page, desk, "settings/passwords")
+                await page.click("[data-pw=icims] [data-pw-act=type]")
+                await page.keyboard.type("made-up-half-typed")
+                await page.click("[data-pw=workday] [data-pw-act=show]")
+                await page.wait_for_selector("[data-pw-box]")
+                await page.route("**/api/state", lambda r: r.fulfill(status=403, body="{}",
+                                                                     content_type="application/json"))
+                await page.evaluate("() => { updateDown = true; }")
+                await page.wait_for_selector("text=opened again in a window of its own", timeout=5000)
+                seen = {"left": await page.evaluate(_LEFT, made), "typed": await page.input_value("#pw")}
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    assert run(go()) == {"left": NOWHERE, "typed": ""}
