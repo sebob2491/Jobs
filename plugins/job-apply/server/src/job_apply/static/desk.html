@@ -465,6 +465,11 @@ button.score:hover { box-shadow: 0 0 0 2px var(--control-line); }
 .tbody > p:first-child { margin-top: 0; }
 .red { background: var(--bad-bg); color: var(--bad); }
 .task.hands .itico.amber { background: var(--panel); }  /* (on the card's own yellow) */
+/* Going through them (C4): the header's words and buttons, and the job the pass is on, marked at its left edge */
+.pass { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.pass .said { color: var(--muted); font-size: 13px; font-weight: 600; white-space: nowrap; }
+.pass .btn .ico { width: 16px; height: 16px; }
+.task.now { box-shadow: inset 3px 0 0 var(--accent); }
 /* the first cover letter, on its card for the person's say: drawn as text */
 .task .letter-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow: auto; font-size: 13px;
   background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin: 6px 0 8px; }
@@ -716,11 +721,11 @@ body.stopped > :not(#stopped) { display: none; }
           <div class="stack">
             <section class="card" aria-labelledby="needs-h">
               <div class="card-head"><h2 id="needs-h">Needs you</h2><span class="pill" id="needs-count"
-                title="The jobs stopped for you on anything but a Submit (a question, a sign-in, an emailed code, a bot check, something stuck), and the ones that didn't finish">0</span></div>
+                title="The jobs stopped for you on anything but a Submit (a question, a sign-in, an emailed code, a bot check, something stuck), and the ones that didn't finish">0</span><span class="grow"></span><span class="pass" id="needs-pass"></span></div>
               <div id="needs"></div>
             </section>
             <section class="card" aria-labelledby="done-h">
-              <div class="card-head"><h2 id="done-h">Ready to submit</h2><span class="pill info" id="done-count" title="Filled to the review page: each waits on your Submit, or your check" hidden></span></div>
+              <div class="card-head"><h2 id="done-h">Ready to submit</h2><span class="pill info" id="done-count" title="Filled to the review page: each waits on your Submit, or your check" hidden></span><span class="grow"></span><span class="pass" id="done-pass"></span></div>
               <div id="done"></div>
             </section>
             <section class="card" aria-labelledby="finished-h">
@@ -2230,10 +2235,14 @@ function applyOpen() {
     const tasks = [...$(list).children].filter((t) => t.dataset.task);
     for (const t of tasks) {
       const id = t.dataset.task;
-      const open = cardOpen.has(id) ? cardOpen.get(id) : tasks.length <= 3 || t.classList.contains("hands");
+      // (during a pass through Needs you: the job it's on open, and one that comes into the list closed)
+      const now = list === "needs" && passOn && String(passOn.at) === id;
+      const open = cardOpen.has(id) ? cardOpen.get(id) : list === "needs" && passOn ? now
+        : tasks.length <= 3 || t.classList.contains("hands");
       const body = t.querySelector("[data-body]"), chev = t.querySelector("[data-open]");
       if (body.hidden === open) body.hidden = !open;
       t.classList.toggle("open", open);
+      t.classList.toggle("now", now);
       if (chev.getAttribute("aria-expanded") !== String(open)) chev.setAttribute("aria-expanded", String(open));
     }
   }
@@ -2289,8 +2298,11 @@ function renderSide() {
   patch($("done"), done.map((r) => taskCard(r, "done")));
   $("finished-h").closest("section").hidden = !finished.length;
   patch($("finished"), finished.map((r) => taskCard(r, "finished")));
+  const arrived = passStep(needs);
+  renderPass(needs, done);
   wentFill(runs);
   applyOpen();
+  if (arrived) passArrive(arrived);
   tickClocks();
 }
 
@@ -2617,6 +2629,61 @@ function reviewStep() {
   if (!next) { endReview(); return; }
   reviewShown = next.job_id;
   api(`/api/job/${next.job_id}/round`, {}).catch(() => { reviewPassed.add(next.job_id); reviewStep(); renderHeader(); });
+}
+
+// Going through them (C4): one job of Needs you at a time, the first that isn't a bot check and wasn't passed over with
+// Next. Its card is open (and marked now), the others closed; once it leaves the list the next one is current at the
+// next refresh. The bot checks come last, in the existing bot round. It lives in the page only: a reload ends it
+// (passOn: false, or {at: the job it's on}; passPassed: the jobs left for later)
+let passOn = false;
+const passPassed = new Set();
+const isBotCheck = (r) => r.status === "needs_you" && r.need === "bot_check";
+// the Solve them button's code, also run by the pass at its end (a review round given way to: its hold is replaced by
+// the bot round's, never ended after it)
+function startBotRound() {
+  reviewRound = false; reviewShown = null; reviewPassed.clear(); botRound = true; botShown = null; botPassed.clear();
+  botStep(); renderHeader();
+}
+function endPass() { passOn = false; passPassed.clear(); }
+// the job the pass moves to, when it moves (else null); with none left, the pass ends: in the bot round when bot checks
+// wait, else with a word on what's left for later
+function passStep(needs) {
+  if (!passOn) return null;
+  const now = needs.find((r) => !isBotCheck(r) && !passPassed.has(r.job_id));
+  if (!now) {
+    const later = needs.filter((r) => passPassed.has(r.job_id)).length;
+    endPass();
+    if (botChecks().length) startBotRound();
+    else toast(later ? `Done for now. ${later} left for later.` : "That is everything that needed you.");
+    return null;
+  }
+  if (passOn.at === now.job_id) return null;
+  passOn.at = now.job_id;
+  for (const r of needs) cardOpen.set(String(r.job_id), r === now);  // (its card open, the others closed)
+  return now;
+}
+// arriving at a job: its card in view, the cursor in its first box, and a sign-in's or emailed code's tab brought up
+// in the desk's browser window, once (a tab that's closed: its card says what to do)
+function passArrive(r) {
+  const card = $("needs").querySelector(`.task[data-task="${r.job_id}"]`);
+  if (!card) return;
+  card.scrollIntoView({block: "nearest"});
+  card.querySelector("[data-body] [data-q]")?.focus();
+  if (r.status === "needs_you" && (r.need === "sign_in" || r.need === "email_code")) {
+    api(`/api/job/${r.job_id}/show`, {}).catch((e) => { if (e.status !== 409) toast(e.message); });
+  }
+}
+// the headers: Needs you's Go through them (two or more), or the pass's words with Next and Stop; Ready to submit's
+// Review them, the existing review round (two or more, while it isn't on)
+function renderPass(needs, done) {
+  const left = needs.filter((r) => !passPassed.has(r.job_id)).length;
+  const html = passOn ? `<span class="said" id="pass-said">Going through them · ${left} left</span>
+      <button class="btn sm" data-act="pass-next" title="Leave this one for later">Next</button>
+      <button class="btn sm" data-act="pass-stop">Stop</button>`
+    : needs.length >= 2 ? `<button class="btn primary sm" data-act="pass-start">Go through them<svg class="ico" aria-hidden="true"><use href="#i-arrow"/></svg></button>` : "";
+  if ($("needs-pass").dataset.html !== html) { $("needs-pass").innerHTML = html; $("needs-pass").dataset.html = html; }
+  const review = done.length >= 2 && !reviewRound ? `<button class="btn sm" data-act="review-round">Review them</button>` : "";
+  if ($("done-pass").dataset.html !== review) { $("done-pass").innerHTML = review; $("done-pass").dataset.html = review; }
 }
 
 // Desktop alerts, so the desk can work in the background: one when a job needs you (a
@@ -3505,11 +3572,13 @@ document.addEventListener("click", (e) => {
       act(() => api("/api/queue/clear", {}));
     }
   }
-  // (a review round given way to: its hold is replaced by the bot round's, never ended after it)
-  if (a === "bot-round") { reviewRound = false; reviewShown = null; reviewPassed.clear(); botRound = true; botShown = null; botPassed.clear(); botStep(); renderHeader(); }
+  if (a === "bot-round") startBotRound();
+  if (a === "pass-start") { passOn = {at: null}; passPassed.clear(); renderSide(); }
+  if (a === "pass-next" && passOn && passOn.at !== null) { passPassed.add(passOn.at); renderSide(); }
+  if (a === "pass-stop") { endPass(); renderSide(); }
   if (a === "bot-next" && botShown !== null) { botPassed.add(botShown); botStep(); renderHeader(); }
   if (a === "bot-stop") { endRound(); renderHeader(); }
-  if (a === "review-round") { botRound = false; reviewRound = true; reviewShown = null; reviewPassed.clear(); reviewStep(); renderHeader(); }
+  if (a === "review-round") { botRound = false; reviewRound = true; reviewShown = null; reviewPassed.clear(); reviewStep(); renderHeader(); renderSide(); }
   if (a === "review-next" && reviewShown !== null) { reviewPassed.add(reviewShown); reviewStep(); renderHeader(); }
   if (a === "review-stop") { endReview(); renderHeader(); }
   // their press, on the application the banner named, still waiting as it showed it: never another one

@@ -230,3 +230,127 @@ def test_the_wait_is_written_by_the_clock_and_the_card_stays_the_same(srv, job_a
     assert first == {"Example Hour": "1 h 5 min", "Example Twelve": "12 min", "Example Now": "just now"}, first
     assert later == {"Example Hour": "1 h 6 min", "Example Twelve": "13 min", "Example Now": "1 min"}, later
     assert before == after  # (the same cards, their HTML strings unchanged)
+
+
+# The pass's header (its words, or its button's), the card it's on, and each Needs you card's open state, by employer
+_PASS = f"""() => ({{header: document.querySelector('#needs-pass').innerText.replace(/\\s+/g, ' ').trim(),
+  now: [...document.querySelectorAll('#needs > .task.now')].map({_WHO}),
+  open: Object.fromEntries([...document.querySelectorAll('#needs > .task')].map((t) =>
+    [({_WHO})(t), !t.querySelector('[data-body]').hidden]))}})"""
+# Whether the card the pass is on is the given employer's
+_NOW_IS = "(who) => document.querySelector('#needs > .task.now h3 .small')?.innerText.includes(who)"
+
+
+def test_going_through_them_one_job_at_a_time(srv, job_apply_home):
+    """C9's test 5. "Go through them" starts on the first job in Needs you that isn't a bot check: its card open and
+    marked now, the others closed, the cursor in its first box. Stop ends the pass. Answering moves on by itself (the
+    desk carries on with the job: it leaves the list); a sign-in brings its tab up once; Next leaves one for later; and
+    with only bot checks left the pass hands over to the existing bot round."""
+    box = {"id": "y", "kind": "text", "label": "Years in a cleanroom", "required": True}
+    desk, jobs = _stopped_desk(srv, {"Example Bot": dict(status="needs_you", need="bot_check"),
+                                     "Example Questions": dict(status="needs_you", need="questions", questions=[box]),
+                                     "Example Sign In": dict(status="needs_you", need="sign_in"),
+                                     "Example Stuck": dict(status="needs_you", need="stuck")})
+    shown: list[int] = []
+
+    async def focus(job_id):
+        shown.append(job_id)
+        return True
+    desk.applier.focus = focus
+    rounds: list[int] = []
+    desk.applier.start_round = rounds.append
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await open_desk(page, desk, "home")
+                start = page.locator("#needs-pass [data-act=pass-start]")
+                await start.wait_for()
+                seen = {"button": [await start.inner_text(), await start.get_attribute("class"),
+                                   await start.locator("use").get_attribute("href")]}
+                await start.click()
+                await page.wait_for_function("() => document.querySelector('#needs > .task.now')")
+                seen["started"] = await page.evaluate(_PASS)
+                seen["cursor"] = await page.evaluate("() => document.activeElement.dataset.q || ''")
+                seen["next tip"] = await page.get_attribute("#needs-pass [data-act=pass-next]", "title")
+                await page.click("#needs-pass [data-act=pass-stop]")
+                await page.locator("#needs-pass [data-act=pass-start]").wait_for()
+                seen["stopped"] = (await page.evaluate(_PASS))["now"]
+                await page.click("#needs-pass [data-act=pass-start]")
+                await page.wait_for_function("() => document.querySelector('#needs > .task.now')")
+                seen["again"] = (await page.evaluate(_PASS))["now"]
+                run_q = desk.applier.runs[jobs["Example Questions"]]
+                run_q.status, run_q.need = "running", ""  # answered: the desk carries on with it
+                await page.wait_for_function(_NOW_IS, arg="Sign In")
+                await page.wait_for_timeout(3200)  # (two refreshes: still one show)
+                seen["sign in"] = await page.evaluate(_PASS)
+                seen["shown"] = list(shown)
+                await page.click("#needs-pass [data-act=pass-next]")
+                await page.wait_for_function(_NOW_IS, arg="Stuck")
+                seen["stuck"] = await page.evaluate(_PASS)
+                await page.click("#needs-pass [data-act=pass-next]")  # (only the bot check left: the bot round)
+                await page.wait_for_selector("#notices [data-act=bot-next]")
+                for _ in range(40):
+                    if rounds:
+                        break
+                    await page.wait_for_timeout(100)
+                seen["handed"] = await page.evaluate(_PASS)
+                seen["rounds"], seen["shown at end"] = list(rounds), list(shown)
+                seen["toast"] = await page.inner_text("#toast")
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    bot, signin = jobs["Example Bot"], jobs["Example Sign In"]
+    assert seen["button"] == ["Go through them", "btn primary sm", "#i-arrow"], seen
+    assert seen["started"] == {"header": "Going through them · 4 left Next Stop", "now": ["Example Questions"],
+                               "open": {"Example Bot": False, "Example Questions": True, "Example Sign In": False,
+                                        "Example Stuck": False}}, seen
+    assert seen["cursor"] == "Years in a cleanroom", seen
+    assert seen["next tip"] == "Leave this one for later", seen
+    assert seen["stopped"] == [] and seen["again"] == ["Example Questions"], seen
+    assert seen["sign in"] == {"header": "Going through them · 3 left Next Stop", "now": ["Example Sign In"],
+                               "open": {"Example Bot": False, "Example Sign In": True, "Example Stuck": False}}, seen
+    assert seen["shown"] == [signin], seen
+    assert seen["stuck"] == {"header": "Going through them · 2 left Next Stop", "now": ["Example Stuck"],
+                             "open": {"Example Bot": False, "Example Sign In": False, "Example Stuck": True}}, seen
+    assert seen["handed"]["now"] == [] and seen["handed"]["header"] == "Go through them", seen
+    assert seen["rounds"] == [bot] and seen["shown at end"] == [signin, bot], seen
+    assert seen["toast"] == "", seen  # (no closing word: the bot round goes on)
+
+
+def test_the_pass_ends_with_a_word_on_what_is_left(srv, job_apply_home):
+    """C9's test 6. With nothing left the pass says "That is everything that needed you."; with jobs passed over with
+    Next, "Done for now. 2 left for later." """
+    shapes = {"Example A": dict(status="needs_you", need="stuck"), "Example B": dict(status="needs_you", need="tailor")}
+    every, every_jobs = _stopped_desk(srv, shapes)
+    later, _ = _stopped_desk(srv, shapes)
+
+    async def go(desk, jobs=None):
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await open_desk(page, desk, "home")
+                await page.click("#needs-pass [data-act=pass-start]")
+                await page.wait_for_function("() => document.querySelector('#needs > .task.now')")
+                if jobs:  # the desk carries on with both
+                    for job_id in jobs.values():
+                        desk.applier.runs[job_id].status, desk.applier.runs[job_id].need = "running", ""
+                else:  # both left for later
+                    await page.click("#needs-pass [data-act=pass-next]")
+                    await page.wait_for_function(_NOW_IS, arg="Example B")
+                    await page.click("#needs-pass [data-act=pass-next]")
+                await page.wait_for_function("() => document.querySelector('#toast').innerText")
+                said = [await page.inner_text("#toast"), await page.inner_text("#needs-pass")]
+                await browser.close()
+                return said
+        finally:
+            await desk.stop()
+
+    assert run(go(every, every_jobs)) == ["That is everything that needed you.", ""]
+    assert run(go(later)) == ["Done for now. 2 left for later.", "Go through them"]
