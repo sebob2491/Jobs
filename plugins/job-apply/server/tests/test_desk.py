@@ -2340,7 +2340,7 @@ def test_a_posting_that_wont_sponsor_a_visa_says_so_only_to_a_person_who_needs_s
                 needs_sponsorship(True)
                 assert await shown() == {"Visa Technician": 1, "Needs Technician": 1, "Plain Technician": 0}
                 said = chips("Visa Technician").locator(".chip", has_text="won't sponsor a work visa")
-                assert "requires_sponsorship" in await said.get_attribute("title")
+                assert (await said.get_attribute("title")).endswith("and your profile says you need sponsorship.")
                 await browser.close()
         finally:
             await desk.stop()
@@ -5980,7 +5980,8 @@ def test_a_problem_is_red_a_tip_is_blue_and_a_wait_is_yellow(srv, job_apply_home
     # yellow is never a notice's: only a wait's
     assert all(bg != colors["--warn-bg"] for cls, _, bg in notices if cls != "waiting"), notices
     assert "Search failed" not in header and "SearchError" not in header, header
-    assert no_key[0] == "notice bad" and no_key[1].startswith("Problem: this page's key is missing"), no_key
+    assert no_key[0] == "notice bad" and no_key[1].startswith(
+        "Problem: the desk was restarted, and this window's key is out of date."), no_key
 
 
 def test_a_job_ready_to_submit_is_listed_first(srv, job_apply_home):
