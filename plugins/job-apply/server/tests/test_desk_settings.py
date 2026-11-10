@@ -186,6 +186,29 @@ def test_an_alert_server_pasted_with_a_slash_or_spaces_is_saved_as_config_reads_
         "phone_alerts_server"] == saved
 
 
+def test_many_settings_saved_at_once_are_all_kept(job_apply_home, monkeypatch):
+    """Two of the page's switches pressed at once: config.set_setting reads, changes and writes profile.yaml under its
+    lock, so neither change is lost (a slow change widens the window), nor the cover letter's line saved beside them."""
+    change = config.set_yaml_value
+
+    def slow_change(*args, **kwargs):
+        out = change(*args, **kwargs)
+        time.sleep(0.02)
+        return out
+
+    monkeypatch.setattr(config, "set_yaml_value", slow_change)
+    saves = [(config.set_setting, (k, v)) for k, v in NEW_VALUES.items()]
+    saves.append((profile_setup.save_cover_letter, ("letter.pdf", _b64(PDF))))
+    threads = [threading.Thread(target=f, args=a) for f, a in saves]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    after = _profile(job_apply_home)
+    assert {k: after["settings"][k] for k in NEW_VALUES} == NEW_VALUES
+    assert config.expand(after["documents"]["cover_letter"]) == job_apply_home / "cover_letter.pdf"
+
+
 def test_profile_settings_needs_the_key_and_a_profile(srv, job_apply_home):
     """D7 test 2: without the page's key, 403; with no profile yet, 400 "Set up your profile first.", and none is
     made. A body that isn't an object is a 400."""

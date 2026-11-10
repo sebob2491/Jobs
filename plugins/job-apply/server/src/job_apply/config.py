@@ -837,14 +837,21 @@ def set_setting(key: str, value: Any) -> None:
     if key not in KNOWN_SETTINGS:
         raise ValueError(f"not a setting: {key!r}")
     path = profile_path()
-    if not path.exists():
-        raise ValueError("Set up your profile first")
-    try:
-        text = set_yaml_value(path.read_text(encoding="utf-8"), ("settings", key), value)
-    except ValueError as e:
-        raise ValueError(f"Your profile's settings couldn't be changed here ({e}): set {key} under settings: in "
-                         f"{path} yourself") from None
-    write_text_atomic(path, text)
+    with PROFILE_LOCK:  # (read, changed and written as one: two saves at once both kept)
+        if not path.exists():
+            raise ValueError("Set up your profile first")
+        try:
+            text = set_yaml_value(path.read_text(encoding="utf-8"), ("settings", key), value)
+        except ValueError as e:
+            raise ValueError(f"Your profile's settings couldn't be changed here ({e}): set {key} under settings: in "
+                             f"{path} yourself") from None
+        write_text_atomic(path, text)
+
+
+# The desk's own changes to profile.yaml (set_setting, the documents' lines) and to answers.yaml: each read, changed and
+# written whole under its file's lock, so two at once (two of the page's switches, two threads) never lose one
+PROFILE_LOCK = threading.RLock()
+ANSWERS_LOCK = threading.RLock()
 
 
 def _secret_lines(path: Path) -> list[str]:
@@ -1277,13 +1284,14 @@ def save_bank_answer(bank_id: str, answer: Any) -> None:
         answer = answer.strip()
     if entry.get("kind") == "choice" and answer not in (None, "") and answer not in (entry.get("choices") or []):
         raise ValueError(f"{answer!r} isn't one of that question's choices")
-    data = _answers_file()
-    old = data.get("answers")
-    entries = [a for a in (old if isinstance(old, list) else [])
-               if not (isinstance(a, dict) and a.get("bank") == bank_id)]
-    if answer not in (None, ""):
-        entries.insert(0, {"match": entry["match"], "answer": answer, "bank": bank_id})
-    _write_answers(data, entries)
+    with ANSWERS_LOCK:  # (read, changed and written as one)
+        data = _answers_file()
+        old = data.get("answers")
+        entries = [a for a in (old if isinstance(old, list) else [])
+                   if not (isinstance(a, dict) and a.get("bank") == bank_id)]
+        if answer not in (None, ""):
+            entries.insert(0, {"match": entry["match"], "answer": answer, "bank": bank_id})
+        _write_answers(data, entries)
 
 
 def _write_answers(data: dict[str, Any], entries: list[Any]) -> None:
@@ -1292,11 +1300,10 @@ def _write_answers(data: dict[str, Any], entries: list[Any]) -> None:
               "# applications (one with `at:` only at that employer's, as an employee ID there; one\n"
               "# with no answer is a question left empty there, never asked there again);\n"
               "# edit or delete entries freely. profile.yaml's own answers come after these.\n")
-    path = answers_path()
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(header + yaml.safe_dump({**data, "answers": entries}, sort_keys=False, allow_unicode=True),
-                   encoding="utf-8")
-    os.replace(tmp, path)  # all or nothing: a crash mid-write can't leave half a file
+    # (all or nothing, through a temporary file of its own: a crash mid-write can't leave half a file, and two writers
+    # never share one)
+    write_text_atomic(answers_path(), header + yaml.safe_dump({**data, "answers": entries}, sort_keys=False,
+                                                              allow_unicode=True))
 
 
 def save_answer(label: str, answer: Any, source: str = "", at: str = "") -> dict[str, Any]:
@@ -1310,28 +1317,29 @@ def save_answer(label: str, answer: Any, source: str = "", at: str = "") -> dict
     match = question_pattern(label)
     if not match:
         raise ValueError("A question needs a label to be remembered")
-    data = _answers_file()
-    old = data.get("answers")
+    with ANSWERS_LOCK:  # (read, changed and written as one)
+        data = _answers_file()
+        old = data.get("answers")
 
-    def same_scope(a: dict[str, Any]) -> bool:  # kept for every employer, as this one is, or for the same one
-        kept_at = str(a.get("at") or "").strip()
-        return not kept_at if not at.strip() else same_employer_as(kept_at, at)
-    # (the same question answered again replaces its answer, by its pattern or by its words: a pattern written before
-    # question_pattern took markers between words is the same question; one kept for an employer alone, only at that
-    # employer: another's ID stays)
-    entries = [a for a in (old if isinstance(old, list) else [])
-               if not (isinstance(a, dict) and (a.get("match") == match or a.get("question") == label.strip())
-                       and same_scope(a))]
-    entry: dict[str, Any] = {"match": match, "answer": answer, "question": label.strip()}
-    core = question_core(label)
-    if core != " ".join(label_sentences(label)):  # the question in a longer label: asked in other wording around it
-        entry["core"] = core
-    if source:
-        entry["from"] = source
-    if at.strip():
-        entry["at"] = at.strip()
-    entries.insert(0, entry)
-    _write_answers(data, entries)
+        def same_scope(a: dict[str, Any]) -> bool:  # kept for every employer, as this one is, or for the same one
+            kept_at = str(a.get("at") or "").strip()
+            return not kept_at if not at.strip() else same_employer_as(kept_at, at)
+        # (the same question answered again replaces its answer, by its pattern or by its words: a pattern written
+        # before question_pattern took markers between words is the same question; one kept for an employer alone,
+        # only at that employer: another's ID stays)
+        entries = [a for a in (old if isinstance(old, list) else [])
+                   if not (isinstance(a, dict) and (a.get("match") == match or a.get("question") == label.strip())
+                           and same_scope(a))]
+        entry: dict[str, Any] = {"match": match, "answer": answer, "question": label.strip()}
+        core = question_core(label)
+        if core != " ".join(label_sentences(label)):  # the question in a longer label: asked in other wording around it
+            entry["core"] = core
+        if source:
+            entry["from"] = source
+        if at.strip():
+            entry["at"] = at.strip()
+        entries.insert(0, entry)
+        _write_answers(data, entries)
     return entry
 
 
@@ -1380,20 +1388,75 @@ def _named_answer(entry_id: Any) -> tuple[dict[str, Any], list[Any], int]:
 
 
 def change_answer(entry_id: Any, answer: Any) -> dict[str, Any]:
-    """The remembered answer with this id given a new answer, for the same question and the same employer, and kept
-    as the newest (as save_answer keeps one given again). Only that entry changes: every other stays as written."""
+    """The remembered answer with this id given a new answer, for the same question and the same employer, where it
+    is in the file. Only that entry's answer changes: every other line, comments too, stays as written
+    (_edit_answers)."""
     if not isinstance(answer, str) or not answer.strip():
         raise ValueError("Type an answer, or press Forget.")
-    data, entries, i = _named_answer(entry_id)
-    entry = {**entries.pop(i), "answer": answer.strip()}
-    entries.insert(0, entry)
-    _write_answers(data, entries)
+    with ANSWERS_LOCK:
+        data, entries, i = _named_answer(entry_id)
+        entry = {**entries[i], "answer": answer.strip()}
+        _edit_answers(data, entries, i, entry)
     return entry
 
 
 def forget_answer(entry_id: Any) -> None:
     """The remembered answer with this id taken out of answers.yaml (the question is asked again the next time a site
-    asks it). Every other entry stays as written."""
-    data, entries, i = _named_answer(entry_id)
-    del entries[i]
-    _write_answers(data, entries)
+    asks it). Every other line, comments too, stays as written (_edit_answers)."""
+    with ANSWERS_LOCK:
+        data, entries, i = _named_answer(entry_id)
+        _edit_answers(data, entries, i, None)
+
+
+def _edit_answers(data: dict[str, Any], entries: list[Any], i: int, entry: dict[str, Any] | None) -> None:
+    """answers.yaml with its i-th entry's answer changed to `entry`'s (or, with None, that entry gone), edited in the
+    file's own text (_answers_text_edit) so the person's comments and layout stay; written only once the new text reads
+    as the old one with that change alone. Where it can't be edited so, the file is written anew as before
+    (_write_answers: the desk's header, its entries as data)."""
+    want = [*entries[:i], *([entry] if entry is not None else []), *entries[i + 1:]]
+    path = answers_path()
+    try:
+        text = path.read_text(encoding="utf-8")
+        edited = _answers_text_edit(text, i, None if entry is None else entry["answer"])
+        if edited is not None and (yaml.safe_load(edited) or {}) == {**data, "answers": want}:
+            write_text_atomic(path, edited)
+            return
+    except (OSError, ValueError, yaml.YAMLError):
+        pass
+    _write_answers(data, want)
+
+
+def _answers_text_edit(text: str, i: int, answer: str | None) -> str | None:
+    """`text` (answers.yaml) with the i-th entry of its answers: list cut out (answer None: from the line its "- "
+    begins to its last value's line, those alone) or its answer's value replaced (written as a quoted string), found
+    by the nodes' marks; None where the file isn't laid out so (a flow list, an entry sharing a line, no answer key)."""
+    root = yaml.compose(text)
+    if not isinstance(root, yaml.MappingNode):
+        return None
+    seq = next((v for k, v in root.value if isinstance(k, yaml.ScalarNode) and k.value == "answers"), None)
+    if not isinstance(seq, yaml.SequenceNode) or seq.flow_style or not 0 <= i < len(seq.value):
+        return None
+    item = seq.value[i]
+    if not isinstance(item, yaml.MappingNode) or item.flow_style or not item.value:
+        return None
+    if answer is not None:
+        value = next((v for k, v in item.value if isinstance(k, yaml.ScalarNode) and k.value == "answer"), None)
+        if not isinstance(value, yaml.ScalarNode):
+            return None
+        start, end = value.start_mark.index, value.end_mark.index
+        span = text[start:end]
+        # (a block scalar's | or > takes its line's end with it: kept, so the next key stays on its own line)
+        tail = span[len(span.rstrip("\n")):] if value.style in ("|", ">") else ""
+        return text[:start] + (" " if not span else "") + json.dumps(answer, ensure_ascii=False) + tail + text[end:]
+    lines = text.splitlines(keepends=True)
+    first = item.start_mark.line
+    if item.start_mark.column == 0 or lines[first][:item.start_mark.column].strip() != "-":
+        return None  # (its "- " isn't alone before it on its first line)
+    last_mark = item.value[-1][1].end_mark
+    last = last_mark.line if last_mark.column > 0 else last_mark.line - 1
+    if last < first:
+        return None
+    nxt = seq.value[i + 1].start_mark.line if i + 1 < len(seq.value) else None
+    if nxt is not None and nxt <= last:
+        return None  # (the next entry begins on a line of this one's)
+    return "".join(lines[:first] + lines[last + 1:])

@@ -596,13 +596,14 @@ def save_cover_letter(name: Any, data: Any) -> Path:
 def forget_cover_letter() -> None:
     """documents.cover_letter emptied: no usual cover letter. Its file stays where it is."""
     path = config.profile_path()
-    if not path.exists():
-        raise ValueError("Set up your profile first.")
-    try:
-        text = config.set_yaml_value(path.read_text(encoding="utf-8"), ("documents", "cover_letter"), "")
-    except ValueError as e:
-        raise ValueError(f"Your profile couldn't be changed here ({e}). Change it in {path} by hand.") from None
-    config.write_text_atomic(path, text)
+    with config.PROFILE_LOCK:
+        if not path.exists():
+            raise ValueError("Set up your profile first.")
+        try:
+            text = config.set_yaml_value(path.read_text(encoding="utf-8"), ("documents", "cover_letter"), "")
+        except ValueError as e:
+            raise ValueError(f"Your profile couldn't be changed here ({e}). Change it in {path} by hand.") from None
+        config.write_text_atomic(path, text)
 
 
 def _save_document(slot: str, what: str, name: Any, data: Any) -> Path:
@@ -632,13 +633,14 @@ def _save_document(slot: str, what: str, name: Any, data: Any) -> Path:
     config.ensure_home()
     target = config.home() / f"{slot}{suffix}"
     path = config.profile_path()
-    try:
-        text = config.set_yaml_value(path.read_text(encoding="utf-8"), ("documents", slot),
-                                     _profile_path_of(target))
-    except ValueError as e:  # (worked out before anything is written)
-        raise ValueError(f"Your profile couldn't be changed here ({e}). Change it in {path} by hand.") from None
-    _write_bytes_atomic(target, raw)
-    config.write_text_atomic(path, text)
+    with config.PROFILE_LOCK:  # (read, changed and written as one, as a setting is: config.set_setting)
+        try:
+            text = config.set_yaml_value(path.read_text(encoding="utf-8"), ("documents", slot),
+                                         _profile_path_of(target))
+        except ValueError as e:  # (worked out before anything is written)
+            raise ValueError(f"Your profile couldn't be changed here ({e}). Change it in {path} by hand.") from None
+        _write_bytes_atomic(target, raw)
+        config.write_text_atomic(path, text)
     return target
 
 
