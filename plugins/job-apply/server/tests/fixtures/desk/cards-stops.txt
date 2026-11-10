@@ -159,6 +159,23 @@ Working on
 Nothing is being filled. Tick openings and press Apply.
 Go to Openings
 
+## thisweek-h
+This week
+What's working
+<day>
+<day>
+<day>
+<day>
+<day>
+<day>
+<day>
+0
+sent
+0
+answers
+0
+interviews
+
 ## list-h
 Openings
 Recommended

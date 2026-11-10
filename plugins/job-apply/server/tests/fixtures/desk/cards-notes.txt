@@ -27,6 +27,23 @@ Report a problem
 Working on
 Paused: 1 waiting. Press Carry on with the queue.
 
+## thisweek-h
+This week
+What's working
+<day>
+<day>
+<day>
+<day>
+<day>
+<day>
+<day>
+0
+sent
+0
+answers
+0
+interviews
+
 ## list-h
 Openings
 Recommended

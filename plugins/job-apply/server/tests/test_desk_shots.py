@@ -150,8 +150,11 @@ def test_a_picture_of_home_with_many_jobs(srv, job_apply_home, monkeypatch, card
                 if cards == "pass":
                     await page.click("#needs-pass [data-act=pass-start]")
                     await page.wait_for_selector("#needs > .task.now")
-                # (the lists at the window's top: the notices over them fill most of it)
-                await page.evaluate("() => document.getElementById('home-cols').scrollIntoView()")
+                # (the tiles and the lists at the window's top, the page's own top padding above them as when it isn't
+                # scrolled: the notices over them fill most of it)
+                await page.evaluate("""() => { const content = document.getElementById('content');
+                  content.scrollTop += document.getElementById('tiles').getBoundingClientRect().top
+                    - content.getBoundingClientRect().top - parseFloat(getComputedStyle(content).paddingTop); }""")
                 await page.wait_for_timeout(150)
                 await page.screenshot(path=str(path))
                 await browser.close()

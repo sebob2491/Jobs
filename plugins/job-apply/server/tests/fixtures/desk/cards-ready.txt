@@ -47,12 +47,37 @@ Report a problem
 
 ## work-h
 Working on
-Process Technician · Example Running
+Process Technician
+Example Running
+3 min
+Opened
+Account
+Form
+Review
 HH:MMopened the posting
 HH:MMclicked “Apply”
 HH:MMfilled 4 field(s) on “My Information”
 Report a problem
-2 more queued.
+2 more waiting their turn
+Technician · Example Queued
+Technician · Example Queued Too
+
+## thisweek-h
+This week
+What's working
+<day>
+<day>
+<day>
+<day>
+<day>
+<day>
+<day>
+0
+sent
+0
+answers
+0
+interviews
 
 ## list-h
 Openings

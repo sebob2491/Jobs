@@ -1360,7 +1360,7 @@ def test_the_working_on_card_shows_every_job_under_way_and_the_jobs_at_once_butt
                     run_.log.append(f"opened https://careers.employer{n}.example/job/{n}")
                 desk.applier.tasks.append(("apply", ids[2]))
                 await press_menu(page, "home")
-                await page.wait_for_selector("#work :text('1 more queued.')")
+                await page.wait_for_selector("#work :text('1 more waiting their turn')")
                 work = await page.locator("#work").inner_text()
                 assert "Technician 0" in work and "Technician 1" in work and "Technician 2" not in work, work
                 await press_menu(page, "settings")

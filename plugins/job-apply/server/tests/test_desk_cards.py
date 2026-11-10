@@ -46,9 +46,11 @@ CASES = {
     "notes": {"state": "state-notes.json", "golden": "cards-notes.txt", "storage": {"desk-stop-filter": "stuck"}},
 }
 
-# what changes from one run or computer to another: times of day, dates, and "5 min ago"
+# what changes from one run or computer to another: times of day, dates, "5 min ago", and This week's day names (a
+# bar's, on a line of its own: the 7 days end today)
 _MASKS = [(re.compile(r"\b\d{4}-\d{2}-\d{2}\b"), "YYYY-MM-DD"), (re.compile(r"(?<!\d)\d{1,2}:\d{2}(?!\d)"), "HH:MM"),
-          (re.compile(r"\b(just now|\d+ (min|h|days) ago)\b"), "<ago>")]
+          (re.compile(r"\b(just now|\d+ (min|h|days) ago)\b"), "<ago>"),
+          (re.compile(r"^(Sun|Mon|Tue|Wed|Thu|Fri|Sat)$"), "<day>")]
 
 _READ_CARDS = """() => [...document.querySelectorAll('section.card')].map((card) => [
   card.getAttribute('aria-labelledby'), card.getClientRects().length ? card.innerText : null])"""
@@ -91,6 +93,12 @@ def _cards(srv, monkeypatch, state: dict, storage: dict | None = None, press: li
     latest = max((r["paused_at"] for r in stopped), default=0)
     for r in stopped:
         r["paused_at"] = now - 12 * 60 - 30 - (latest - r["paused_at"])
+    # (and a running job's row says how long it has run, from its first log line's time (C5): its log is drawn as begun
+    # 3 and a half minutes before `now`, its lines as far apart as in the fixture, so it says "3 min" still)
+    for r in [row["run"] for row in [*state.get("listings", []), *state.get("others", [])] if row.get("run")]:
+        began = next((t for t in r.get("log_at") or [] if t), 0)
+        if began:
+            r["log_at"] = [t and now - 3 * 60 - 30 + (t - began) for t in r["log_at"]]
     monkeypatch.setattr(Desk, "state", lambda self: copy.deepcopy(state))
     desk = Desk(srv)
     desk.applier.start = lambda: None  # (nothing is worked: the page shows only the canned state)
@@ -172,9 +180,9 @@ def test_the_desks_cards_say_what_they_said(srv, job_apply_home, monkeypatch, ca
     how = CASES[case]
     seen = _cards(srv, monkeypatch, _state(how["state"]), how.get("storage"), how.get("press", []),
                   how.get("list", "openings"))
-    # (every card: Home's four, the Openings card, the Applications card (Version B's B6), Your answers' and What's
+    # (every card: Home's five (Version C's This week among them), the Openings card, the Applications card (Version B's B6), Your answers' and What's
     # working's, Settings' seven (Version B's Searching and applying among them), Help's two)
-    assert seen.count("\n## ") + 1 == 17, seen
+    assert seen.count("\n## ") + 1 == 18, seen
     _compare(how["golden"], seen)
 
 

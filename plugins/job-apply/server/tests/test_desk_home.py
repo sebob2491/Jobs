@@ -1,11 +1,14 @@
 """Home's three lists and a job's card as a row that opens (the design's Version C: C2 and C3; its C9 tests 1 to 4).
 Each test opens the real page in a browser. Made-up employers only: the repo is public."""
 
+import copy
 import time
 
 import pytest
 from conftest import browser_available, open_desk, person_browser, run
 from test_desk import _stopped_desk
+
+from job_apply.desk import Desk
 
 pytestmark = pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")
 
@@ -354,3 +357,168 @@ def test_the_pass_ends_with_a_word_on_what_is_left(srv, job_apply_home):
 
     assert run(go(every, every_jobs)) == ["That is everything that needed you.", ""]
     assert run(go(later)) == ["Done for now. 2 left for later.", "Go through them"]
+
+
+# Each running job in Working on: its employer, its steps (each bar's class), its step labels, the label marked on, how
+# long it has run, how many log lines, and its Report a problem
+_STEPS = """() => [...document.querySelectorAll('#work > .task[data-run]')].map((t) => [
+  t.querySelector('.head span').innerText,
+  [...t.querySelectorAll('.steps i')].map((i) => i.className),
+  [...t.querySelectorAll('.steplabels span')].map((s) => s.innerText),
+  [...t.querySelectorAll('.steplabels .on')].map((s) => s.innerText),
+  t.querySelector('.head [data-since]')?.innerText || '',
+  t.querySelectorAll('.log li').length, t.querySelector('[data-job-act=report]')?.innerText || ''])"""
+
+
+def test_each_running_job_draws_the_step_it_has_reached(srv, job_apply_home):
+    """C9's test 7. Working on: each running job with its title, its company, how long it has run (from its first
+    log_at), four steps (Opened, Account, Form, Review), those before the one reached done and that one now, by C5's
+    table: Review when its need is one of the four Submits, Form when it has seen the form, Account when it has the inbox
+    or waits on a sign-in or an emailed code, else Opened. Its last four log lines and Report a problem. Under them, the
+    jobs waiting their turn in a <details> that lists each by its title and company."""
+    desk, jobs = _stopped_desk(srv, {
+        "Example Opened": dict(status="running"),
+        "Example Inbox": dict(status="running", inbox=True),
+        "Example Code": dict(status="running", need="email_code"),
+        "Example Form": dict(status="running", seen_form=True, inbox=True),
+        "Example Review": dict(status="running", seen_form=True, need="check_submit"),
+        "Example Next": dict(status="queued"),
+        "Example Last": dict(status="queued"),
+    })
+    now = time.time()
+    for job_id in jobs.values():
+        r = desk.applier.runs[job_id]
+        if r.status == "running":  # (five lines, the last four shown; the first logged without a time, then 2 min ago)
+            r.log = [f"line {n}" for n in range(5)]
+            r.log_at = [0.0, now - 125, now - 100, now - 60, now - 30]
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page()
+                await page.clock.set_fixed_time(now)
+                await open_desk(page, desk, "home")
+                await page.wait_for_function(
+                    "() => [...document.querySelectorAll('#work [data-since]')].filter((s) => s.innerText).length === 5")
+                seen = {"steps": await page.evaluate(_STEPS)}
+                waiting = page.locator("#work details")
+                seen["summary"] = await waiting.locator("summary").inner_text()
+                seen["closed"] = await page.inner_text("#work")
+                await waiting.locator("summary").click()
+                seen["waiting"] = await waiting.locator("li").all_inner_texts()
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    labels = ["Opened", "Account", "Form", "Review"]
+
+    def drawn(company, reached):
+        return [company, ["done"] * reached + ["now"] + [""] * (3 - reached), labels, [labels[reached]], "2 min", 4,
+                "Report a problem"]
+    assert seen["steps"] == [drawn("Example Opened", 0), drawn("Example Inbox", 1), drawn("Example Code", 1),
+                             drawn("Example Form", 2), drawn("Example Review", 3)], seen
+    assert seen["summary"] == "2 more waiting their turn", seen
+    assert "Example Next" not in seen["closed"], seen  # (listed only once it's opened)
+    assert seen["waiting"] == ["Technician · Example Next", "Technician · Example Last"], seen
+
+
+# The tiles, each as [its label, its number, the line under it, whether it asks for attention]; This week's bars, each as
+# [the day, how many, its bar's class]; its three numbers with their labels; its header's link; and Home's cards in order
+_TILES = """() => ({
+  tiles: [...document.querySelectorAll('#tiles .tile')].map((t) => [t.querySelector('.label').innerText,
+    t.querySelector('.num').innerText, t.querySelector('.sub').innerText, t.classList.contains('attn')]),
+  bars: [...document.querySelectorAll('#week-bars > div')].map((d) => [d.querySelector('span').innerText,
+    Number(d.dataset.n), d.querySelector('i').className]),
+  stats: [...document.querySelectorAll('#week-stats > div')].map((d) => d.innerText.replace(/\\s+/g, ' ')),
+  link: [document.querySelector('#thisweek-link').innerText, document.querySelector('#thisweek-link').getAttribute('href')],
+  order: [...document.querySelectorAll('[data-pages=home] .card')].map((c) => c.id || c.getAttribute('aria-labelledby'))})"""
+
+
+def _app(n: int, applied_at: str, group: str = "waiting", heard: str = "") -> dict:
+    return {"id": 900 + n, "title": "Technician", "company": f"Example Sent {n}", "url": f"https://example.com/s{n}",
+            "status": "interviewing" if group == "interviews" else "applied", "applied_at": applied_at,
+            "updated_at": applied_at, "group": group, "emails": 1 if heard else 0, "follow_up_due": None,
+            "last_heard": {"category": "interview", "received_at": heard, "day": "", "summary": ""} if heard else None}
+
+
+# Seven applications: four applied for in the 7 days ending Friday the 13th in Phoenix (Saturday the 7th, Tuesday, late
+# Thursday there, which is Friday in UTC, and Friday); one the day before those 7 that heard back in them (an email's
+# Date header) and one that heard back in them (ISO); one heard back before them; one long before. Two at the
+# interview stage
+_APPS = [_app(1, "2026-11-13T17:00:00+00:00"), _app(2, "2026-11-13T02:00:00+00:00"),
+         _app(3, "2026-11-10T16:00:00+00:00", heard="2026-11-12T18:00:00+00:00"), _app(4, "2026-11-07T20:00:00+00:00"),
+         _app(5, "2026-11-06T20:00:00+00:00", "interviews", heard="Wed, 11 Nov 2026 09:30:00 -0700"),
+         _app(6, "2026-10-20T16:00:00+00:00", "interviews", heard="2026-11-01T16:00:00+00:00"),
+         _app(7, "2026-10-01T16:00:00+00:00")]
+
+
+def test_the_tiles_and_this_week_from_fixed_applications_and_a_fixed_clock(srv, job_apply_home, monkeypatch):
+    """C9's test 8. The four tiles: Needs you (up to three kinds from its list, in its order; attn above 0), Working on
+    (the running jobs, and how many more wait, or Paused), Ready to submit (and what becomes of them), Sent this week (the
+    applications applied for in the last 7 days, and how many in all). This week: seven bars, a day each, ending today,
+    today's marked; under them sent, answers and interviews; and the link to What's working in its header. All from a
+    fixed set of applications, on a fixed clock (Friday the 13th of November 2026, 3 pm in Phoenix)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    friday = datetime(2026, 11, 13, 15, 0, tzinfo=ZoneInfo("America/Phoenix")).timestamp()
+    state = Desk.state
+    monkeypatch.setattr(Desk, "state", lambda self: {**state(self), "applications": copy.deepcopy(_APPS)})
+    busy, _ = _stopped_desk(srv, {
+        "Example Questions": dict(status="needs_you", need="questions"),
+        "Example Sign In": dict(status="needs_you", need="sign_in"),
+        "Example Questions Too": dict(status="needs_you", need="questions"),
+        "Example Bot": dict(status="needs_you", need="bot_check"),
+        "Example Stuck": dict(status="needs_you", need="stuck"),
+        "Example Running": dict(status="running"), "Example Running Too": dict(status="running"),
+        "Example Queued": dict(status="queued"), "Example Queued Too": dict(status="queued"),
+        "Example Queued Three": dict(status="queued"),
+        "Example Ready": dict(status="ready"), "Example Captcha": dict(status="needs_you", need="captcha")})
+    quiet, _ = _stopped_desk(srv, {})
+    paused, _ = _stopped_desk(srv, {
+        "Example Tailor": dict(status="needs_you", need="tailor"),
+        "Example Code": dict(status="needs_you", need="email_code"),
+        "Example Failed": dict(status="failed"),
+        "Example Waiting": dict(status="queued"), "Example Ready": dict(status="ready")})
+    paused.applier.paused = True
+    paused.applier.auto_submit = True
+
+    async def look(desk):
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(timezone_id="America/Phoenix")
+                await page.clock.set_fixed_time(friday)
+                await open_desk(page, desk, "home")
+                await page.wait_for_selector("#plugin-version:not(:empty)")
+                await page.wait_for_selector("#week-bars > div")
+                seen = await page.evaluate(_TILES)
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    week = {"bars": [["Sat", 1, ""], ["Sun", 0, "none"], ["Mon", 0, "none"], ["Tue", 1, ""], ["Wed", 0, "none"],
+                     ["Thu", 1, ""], ["Fri", 1, "today"]],
+            "stats": ["4 sent", "2 answers", "2 interviews"], "link": ["What's working", "#working"]}
+    quiet_seen = run(look(quiet))  # (first: a desk stopped keeps its queue, and the next one started picks it up)
+    busy_seen = run(look(busy))
+    assert busy_seen == {"tiles": [["Needs you", "5", "Questions, a sign-in, a bot check", True],
+                                   ["Working on", "2", "3 more waiting", False],
+                                   ["Ready to submit", "2", "Filled in, waiting for your OK", False],
+                                   ["Sent this week", "4", "7 sent in all", False]],
+                         **week, "order": ["tile-needs", "tile-work", "tile-ready", "tile-sent", "needs-h", "done-h",
+                                           "finished-h", "work-h", "thisweek-h"]}, busy_seen
+    assert quiet_seen["tiles"] == [["Needs you", "0", "Nothing right now", False],
+                                   ["Working on", "0", "Nothing waiting", False],
+                                   ["Ready to submit", "0", "Nothing yet", False],
+                                   ["Sent this week", "4", "7 sent in all", False]], quiet_seen
+    assert {k: quiet_seen[k] for k in week} == week, quiet_seen
+    paused_seen = run(look(paused))
+    assert paused_seen["tiles"] == [["Needs you", "3", "Something to decide, an emailed code, something stuck", True],
+                                    ["Working on", "0", "Paused", False],
+                                    ["Ready to submit", "1", "The desk submits these for you", False],
+                                    ["Sent this week", "4", "7 sent in all", False]], paused_seen
