@@ -95,6 +95,36 @@ def test_a_picture_of_each_settings_panel(srv, job_apply_home, monkeypatch, look
     assert all((folder / name).stat().st_size > 2000 for name in names)
 
 
+@pytest.mark.parametrize("look", LOOKS)
+def test_a_picture_of_applying_in_the_look_chosen_in_settings(srv, job_apply_home, monkeypatch, look):
+    """Settings' Applying panel (the openings state) in the look chosen by Look (the design's D3), on a computer set to
+    the other look, in a window of 1440 by 900; saved as settings-applying-chosen-<look>.png."""
+    folder = Path(SHOTS)
+    folder.mkdir(parents=True, exist_ok=True)
+    desk = _canned(srv, monkeypatch, _state("state-openings.json"))
+    path = folder / f"settings-applying-chosen-{look}.png"
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                other = "light" if look == "dark" else "dark"
+                page = await browser.new_page(viewport={"width": 1440, "height": 900}, color_scheme=other)
+                await open_desk(page, desk, "settings/about")
+                await page.click(f"[data-look={look}]")
+                await open_desk(page, desk, "settings/applying")
+                await page.wait_for_timeout(150)
+                await page.screenshot(path=str(path))
+                theme = await page.evaluate("() => document.documentElement.dataset.theme")
+                await browser.close()
+                return theme
+        finally:
+            await desk.stop()
+
+    assert run(go()) == look
+    assert path.stat().st_size > 2000
+
+
 @pytest.mark.parametrize("dropdown", ["pay", "more", "add"])
 @pytest.mark.parametrize("look", LOOKS)
 def test_a_picture_of_the_openings_with_a_drop_down_open(srv, job_apply_home, monkeypatch, look, dropdown):
