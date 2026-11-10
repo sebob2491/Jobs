@@ -216,6 +216,12 @@ input[type=checkbox]:disabled { opacity: .5; cursor: default; }
 .item .s { margin: 1px 0 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .item .acts { display: flex; align-items: center; gap: 6px; }
 .item > .logo { width: 38px; height: 38px; }
+/* a setting's row: its name and one sentence at the left, its control at the right */
+.setrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: center; padding: 13px 18px;
+  border-top: 1px solid var(--line-2); }
+.card-h + .setrow { border-top: 0; }
+.setrow .t { margin: 0; font-size: 14px; font-weight: 600; }
+.setrow .s { margin: 1px 0 0; color: var(--muted); font-size: 13px; }
 #alerts[aria-pressed="true"] { background: var(--accent-bg); border-color: var(--accent-line); color: var(--accent-2);
   font-weight: 600; }
 
@@ -225,22 +231,70 @@ input[type=checkbox]:disabled { opacity: .5; cursor: default; }
   background: none; box-shadow: none; color: var(--muted); font-size: 14px; }
 .tabs button:hover { background: none; color: var(--text); }
 .tabs button[aria-pressed="true"] { color: var(--text); font-weight: 600; border-bottom-color: var(--accent); }
-#mine-count:empty { display: none; }
-.links { display: inline-flex; gap: 12px; }
-.handled-switch { font-size: 13px; display: flex; align-items: center; gap: 6px; color: var(--body); }
-/* the Openings head's More (Troubleshooting, Search by itself), and a muted line for each switch that's on */
-.card-head details.more { padding: 0; border-top: 0; color: var(--text); }
-.more-body { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 6px; }
-.switch-hint { flex-basis: 100%; font-size: 13px; color: var(--muted); }
+.tabs .count { margin-left: 7px; }
+.count:empty { display: none; }
+.links { display: inline-flex; align-items: center; gap: 12px; }
+/* out of sight, still read by a screen reader (and in the card's words) */
+.vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* the Openings head: the tabs at the left, Select recommended and Add job links at the right */
+.list-head { padding-top: 6px; padding-bottom: 0; min-height: 52px; position: relative; }
+.list-head .tabs { margin: 0; align-self: flex-end; }
+.list-head .tabs button { height: 44px; }
+/* a switch: the native checkbox, drawn as a track with its knob at the right when it's on */
+input[type=checkbox].switch { width: 34px; height: 20px; border: 0; border-radius: 99px; background: var(--control-line);
+  position: relative; vertical-align: middle; margin: 0; }
+input[type=checkbox].switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  border-radius: 50%; background: var(--on-accent); box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+input[type=checkbox].switch:checked { background: var(--accent); background-image: none; }
+input[type=checkbox].switch:checked::after { left: 16px; }
+@media (prefers-reduced-motion: no-preference) { input[type=checkbox].switch::after { transition: left .12s ease-out; } }
+.sw-label { margin-left: auto; display: flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 500;
+  color: var(--body); white-space: nowrap; cursor: pointer; }
+/* a muted line for each switch that's on, and what to do with the group picked, under the filters */
+.switch-hint { padding: 0 18px 12px; font-size: 13px; color: var(--muted); }
 .switch-hint p { margin: 0; }
-/* the openings' sort and filters (pay, posted), under the tabs */
-.filters { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; padding: 12px 18px; font-size: 13px;
-  color: var(--body); }
-.filters .group { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
-.filters .hint { color: var(--muted); }
-.filters input { width: 7em; height: 28px; font-size: 13px; }
+.switch-hint button { height: 26px; padding: 0 9px; font-size: 12.5px; border-radius: 7px; margin-left: 4px; }
+/* the openings' filters: one row of drop-downs under the tabs, each a <details> whose summary says what's chosen and
+   whose panel holds the controls; the switch at the row's right end */
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px 18px; font-size: 13px;
+  color: var(--body); position: relative; }
+details.f { padding: 0; border: 0; position: relative; color: var(--body); font-size: 13px; }
+details.f > summary { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px 0 11px;
+  border: 1px solid var(--control-line); border-radius: 8px; background: var(--panel); color: var(--body);
+  font-weight: 500; white-space: nowrap; list-style: none; cursor: pointer; user-select: none; }
+details.f > summary::-webkit-details-marker { display: none; }
+details.f > summary:hover { text-decoration: none; background: var(--hover); }
+details.f > summary .ico { width: 15px; height: 15px; color: var(--muted); }
+details.f.on > summary { border-color: var(--accent-line); background: var(--accent-bg); color: var(--accent-2); }
+details.f.on > summary .ico { color: var(--accent); }
+details.f > summary .count { background: var(--accent); color: var(--on-accent); }
+@media (prefers-reduced-motion: no-preference) {
+  details.f > summary { transition: background-color .12s ease-out, border-color .12s ease-out, color .12s ease-out; }
+}
+.f-panel { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; min-width: 240px;
+  max-width: min(560px, calc(100vw - 48px)); padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px;
+  background: var(--panel); box-shadow: var(--shadow-lg); color: var(--body); white-space: normal; }
+/* (More filters' panel under the row's left end, so its width fits the window; Add job links' under its right end) */
+details.f#more { position: static; }
+#more > .f-panel { left: 18px; top: calc(100% - 4px); width: min(560px, calc(100% - 36px)); }
+.f-end > .f-panel { left: auto; right: 0; width: min(520px, calc(100vw - 48px)); }
+.f-panel .group { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.f-note { margin: 10px 0 0; color: var(--muted); font-size: 12.5px; max-width: 360px; }
+.f-h { margin: 12px 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.f-group:first-child .f-h { margin-top: 0; }
+.f-panel .hint { color: var(--muted); }
+.f-panel input[type=text] { width: 7em; height: 28px; font-size: 13px; }
 #company-add { width: 10.5em; }  /* (its placeholder whole) */
+/* the top bar's search box, on Openings */
+.search { display: flex; align-items: center; gap: 8px; width: 270px; height: 34px; padding: 0 11px;
+  border: 1px solid var(--control-line); border-radius: 8px; background: var(--panel); color: var(--muted); }
+.search .ico { width: 16px; height: 16px; }
+.search:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.search input[type=search] { flex: 1; min-width: 0; height: 32px; padding: 0; border: 0; background: none;
+  outline: none; }
 .stops { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 18px 12px; }
+.f-panel .stops { padding: 0; }
+.f-panel .addbar { padding: 0; border: 0; }
 /* (each a choice to press: tinted when it's on) */
 .filters button, .stops button, .at-once button { height: 28px; padding: 0 11px; font-size: 13px; border-radius: 999px;
   box-shadow: none; }
@@ -543,6 +597,8 @@ body.stopped > :not(#stopped) { display: none; }
       <span id="mode"></span>
       <span data-pages="home working"><button class="btn" id="week-btn" data-act="week" title="What the desk did in the last 7 days: jobs filled and sent, where it stopped for you, and how long each job took">This week</button></span>
       <span data-pages="home openings applications"><button class="btn" id="stop-search" data-act="stop-search" title="The search ends; the openings found before it stay" hidden>Stop search</button></span>
+      <!-- the search box: hides the openings whose title and company don't hold every word typed (kept in memory only) -->
+      <span data-pages="openings" hidden><label class="search"><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg><input type="search" id="q" placeholder="Search a title or company" aria-label="Search a title or company" autocomplete="off"></label></span>
       <span data-pages="home openings applications"><button class="btn" id="find" data-act="find">Find jobs</button></span>
       </div>
     </div>
@@ -577,56 +633,78 @@ body.stopped > :not(#stopped) { display: none; }
           </div>
         </div>
       </div>
-      <!-- Openings and Applications: one card for both, its My applications tab chosen on Applications (route) -->
+      <!-- Openings and Applications: one card for both, listing the applications on Applications (route) -->
       <div class="page" data-pages="openings applications" hidden>
         <section class="card" aria-labelledby="list-h">
-          <div class="card-head">
-            <h2 id="list-h">Openings</h2>
+          <div class="card-head list-head">
+            <h2 id="list-h" class="vh">Openings</h2>
+            <!-- each tab with its number: the rows left after the filters and the search box, with Status at Any -->
             <div class="tabs" role="group" aria-label="Which openings">
-              <button data-filter="recommended" aria-pressed="true">Recommended</button>
-              <button data-filter="all" aria-pressed="false">All</button>
-              <button data-filter="mine" aria-pressed="false"><span>My applications <span id="mine-count"></span></span></button>
+              <button data-filter="recommended" aria-pressed="true">Recommended<span class="count" id="tab-recommended"></span></button>
+              <button data-filter="all" aria-pressed="false">All<span class="count" id="tab-all"></span></button>
+              <button data-filter="unwanted" aria-pressed="false" hidden>Not interested<span class="count" id="tab-unwanted"></span></button>
             </div>
-            <label class="openings-only handled-switch" title="Only the employers where, in the plugin's live check, the desk took a test applicant all the way to the application's review page. Bot checks, CAPTCHAs and steps it can't do yet are elsewhere."><input type="checkbox" id="handled-only"> Only where the desk goes all the way</label>
             <span class="spacer"></span>
             <span class="openings-only links"><button class="link" data-act="select-recommended">Select recommended</button>
             <button class="link" data-act="select-none">Clear</button></span>
-            <!-- the switches seldom changed, out of the way; each one on is said in a line under the head (switch-hint) -->
-            <details class="openings-only more" id="more"><summary>More</summary><div class="more-body">
-            <label class="handled-switch" title="To get the desk going at more employers: Find jobs searches every list's employers (yours, and HR jobs too), and only the openings where the desk doesn't go all the way yet show, whatever their fit. Nothing is sent while it's on."><input type="checkbox" id="troubleshoot"> Troubleshooting</label>
-            <label class="handled-switch" title="Off: the desk searches only when you press Find jobs. On: it also searches by itself when the openings are over 12 hours old (on opening, or on a page left open), but not while the queue is paused. The header says when a search is running, with Stop search beside it."><input type="checkbox" id="auto-search"> Search by itself every 12 hours</label>
-            </div></details>
-            <div class="switch-hint" id="switch-hint" hidden></div>
+            <details class="f f-end openings-only" id="add-drop"><summary><span class="f-said">Add job links</span><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></summary>
+              <div class="f-panel">
+                <form class="addbar" id="add-form">
+                  <input type="text" id="add-links" placeholder="Paste job links: LinkedIn, Indeed or a company site" aria-label="Job links to add" autocomplete="off">
+                  <button type="submit" id="add-btn">Add</button>
+                </form>
+              </div></details>
           </div>
+          <!-- the filters: each a drop-down (details.f) whose summary says what's chosen (renderFilterLabels), its panel
+               holding the controls. A panel is never drawn again whole: its buttons are marked pressed in place, so an
+               open one stays open through the refresh -->
           <div class="filters openings-only" id="filters">
-            <span class="group" role="group" aria-label="Sort the openings">Sort
-              <button data-sort="fit" aria-pressed="true" title="Best fit for your profile first">Fit</button><button data-sort="pay" aria-pressed="false" title="Best paid first (over a year), openings whose pay isn't listed last">Pay</button><button data-sort="newest" aria-pressed="false" title="Most recently posted first, openings without a date last">Newest</button></span>
-            <label class="group" title="Hides an opening whose posting gives its pay on its pay line (or in its own data) and the most it pays is below this (hourly pay counted as 2,080 hours a year). One that doesn't list its pay, or whose pay is only read from its text (≈), always stays.">Pay at least $<input type="text" id="min-pay" inputmode="numeric" placeholder="any" aria-label="Pay at least, dollars a year" autocomplete="off">/yr</label>
-            <span class="group" role="group" aria-label="Posted within" title="Hides an opening posted longer ago. One whose site gives no date always stays.">Posted
-              <button data-posted="" aria-pressed="true">Any</button><button data-posted="7" aria-pressed="false">7 days</button><button data-posted="14" aria-pressed="false">14 days</button><button data-posted="30" aria-pressed="false">30 days</button></span>
+            <details class="f" data-f="sort"><summary><svg class="ico" aria-hidden="true"><use href="#i-sort"/></svg><span class="f-said">Best fit</span><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></summary>
+              <div class="f-panel"><span class="group" role="group" aria-label="Sort the openings">
+                <button data-sort="fit" aria-pressed="true" title="Best fit for your profile first">Best fit</button><button data-sort="pay" aria-pressed="false" title="Best paid first (over a year), openings whose pay isn't listed last">Best paid</button><button data-sort="newest" aria-pressed="false" title="Most recently posted first, openings without a date last">Newest</button></span></div></details>
+            <details class="f" data-f="pay"><summary><span class="f-said">Pay: any</span><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></summary>
+              <div class="f-panel"><label class="group">Pay at least $<input type="text" id="min-pay" inputmode="numeric" placeholder="any" aria-label="Pay at least, dollars a year" autocomplete="off">a year</label>
+                <p class="f-note">Hides a job only when its posting lists its pay and the most it pays is below this. A job that doesn't list its pay always stays.</p></div></details>
+            <details class="f" data-f="posted"><summary><span class="f-said">Posted: any time</span><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></summary>
+              <div class="f-panel"><span class="group" role="group" aria-label="Posted within">
+                <button data-posted="" aria-pressed="true">Any time</button><button data-posted="7" aria-pressed="false">Last 7 days</button><button data-posted="14" aria-pressed="false">Last 14 days</button><button data-posted="30" aria-pressed="false">Last 30 days</button></span>
+                <p class="f-note">A job whose site gives no date always stays.</p></div></details>
             <!-- miles from the person's home town (desk.json's within_miles; places.py): its title says from where, or why it's off -->
-            <span class="group" role="group" aria-label="Within miles of home" id="within-group">Within
-              <button data-within="" aria-pressed="true">Any</button><button data-within="10" aria-pressed="false">10 mi</button><button data-within="25" aria-pressed="false">25 mi</button><button data-within="50" aria-pressed="false">50 mi</button><button data-within="100" aria-pressed="false">100 mi</button>
-              <span class="hint" id="within-why" hidden>needs your home town</span></span>
-            <span class="group" role="group" aria-label="Workplace" title="Shows only the jobs done the ways pressed, and every job that doesn't say. One whose posting only mentions it in its text (likely remote) always stays.">Workplace
-              <button data-chip="workplace" data-value="remote" aria-pressed="false" title="Remote jobs, and every job that doesn't say where it's done">Remote</button><button data-chip="workplace" data-value="hybrid" aria-pressed="false" title="Hybrid jobs, and every job that doesn't say where it's done">Hybrid</button><button data-chip="workplace" data-value="onsite" aria-pressed="false" title="On-site jobs, and every job that doesn't say where it's done">On-site</button></span>
-            <span class="group" role="group" aria-label="Employment type" title="Shows only the jobs of the types pressed, and every job whose job system doesn't say its type. A job system may say a job's hours (full or part time), its kind (contract, temporary, internship, per diem), or both: only what it says is judged, so a full-time internship stays when Internship is pressed.">Type
+            <details class="f" data-f="within"><summary><span class="f-said">Within: any distance</span><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></summary>
+              <div class="f-panel"><span class="group" role="group" aria-label="Within miles of home" id="within-group">
+                <button data-within="" aria-pressed="true">Any distance</button><button data-within="10" aria-pressed="false">10 miles</button><button data-within="25" aria-pressed="false">25 miles</button><button data-within="50" aria-pressed="false">50 miles</button><button data-within="100" aria-pressed="false">100 miles</button>
+                <span class="hint" id="within-why" hidden>needs your home town</span></span></div></details>
+            <details class="f" data-f="workplace"><summary><span class="f-said">Workplace</span><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></summary>
+              <div class="f-panel"><span class="group" role="group" aria-label="Workplace">
+                <button data-chip="workplace" data-value="remote" aria-pressed="false" title="Remote jobs, and every job that doesn't say where it's done">Remote</button><button data-chip="workplace" data-value="hybrid" aria-pressed="false" title="Hybrid jobs, and every job that doesn't say where it's done">Hybrid</button><button data-chip="workplace" data-value="onsite" aria-pressed="false" title="On-site jobs, and every job that doesn't say where it's done">On-site</button></span>
+                <p class="f-note">A job that doesn't say where it is done always stays.</p></div></details>
+            <details class="f" data-f="more" id="more"><summary><svg class="ico" aria-hidden="true"><use href="#i-sliders"/></svg><span class="f-said">More filters</span><span class="count" id="more-count"></span></summary>
+              <div class="f-panel">
+              <div class="f-group" id="status-group" hidden><h3 class="f-h">Status</h3>
+                <div class="stops" id="stops" role="group" aria-label="Show the jobs by where they stand" hidden></div></div>
+              <div class="f-group"><h3 class="f-h">Type</h3>
+              <span class="group" role="group" aria-label="Employment type" title="Shows only the jobs of the types pressed, and every job whose job system doesn't say its type. A job system may say a job's hours (full or part time), its kind (contract, temporary, internship, per diem), or both: only what it says is judged, so a full-time internship stays when Internship is pressed.">
               <button data-chip="job_types" data-value="full_time" aria-pressed="false" title="Full-time jobs, and every job that doesn't say its type">Full-time</button><button data-chip="job_types" data-value="part_time" aria-pressed="false" title="Part-time jobs, and every job that doesn't say its type">Part-time</button><button data-chip="job_types" data-value="contract" aria-pressed="false" title="Contract jobs, and every job that doesn't say its type">Contract</button><button data-chip="job_types" data-value="temporary" aria-pressed="false" title="Temporary and seasonal jobs, and every job that doesn't say its type">Temporary</button><button data-chip="job_types" data-value="internship" aria-pressed="false" title="Internships and co-ops, and every job that doesn't say its type">Internship</button><button data-chip="job_types" data-value="per_diem" aria-pressed="false" title="Per diem (PRN) jobs, and every job that doesn't say its type">Per diem</button></span>
-            <span class="group" role="group" aria-label="Requirements" title="Each pressed one hides a job whose posting or title says it doesn't fit. A job that doesn't say, or whose posting isn't read yet, always stays.">Requirements
+              </div>
+              <div class="f-group"><h3 class="f-h">Requirements</h3>
+              <span class="group" role="group" aria-label="Requirements" title="Each pressed one hides a job whose posting or title says it doesn't fit. A job that doesn't say, or whose posting isn't read yet, always stays.">
               <button data-chip="requirements" data-value="no_clearance" aria-pressed="false" title="Hides a job whose posting has a line labelled with the clearance it asks and its level (Clearance Type: Secret), held now or to be obtained. One that only says it in its text (may need a security clearance), or isn't read yet, always stays.">No clearance needed</button><button data-chip="requirements" data-value="degree" aria-pressed="false" id="degree-chip" title="Hides a job whose posting has a line labelled with the education it requires (Minimum Education: Bachelor's Degree), with no way around it. One that only says it in its text, or isn't read yet, always stays.">No degree required</button><button data-chip="requirements" data-value="day_shift" aria-pressed="false" title="Hides a job whose posting's Shift or Schedule line says nights, evenings, swing, rotating, or a 2nd or 3rd shift. One that only mentions a shift in its text, or doesn't say, always stays.">Day shift</button><button data-chip="requirements" data-value="travel_25" aria-pressed="false" title="Hides a job whose posting says it travels more than 25% of the time. One that doesn't say, or isn't read yet, always stays.">Travel ≤ 25%</button><button data-chip="requirements" data-value="entry_level" aria-pressed="false" title="Hides a job whose title says senior, lead, staff, principal, manager, supervisor or director, or level II and up. One whose title doesn't say always stays.">Entry level</button><button data-chip="requirements" data-value="not_senior" aria-pressed="false" title="Hides a job whose title says senior, lead, staff, principal, manager, supervisor or director, or level III and up. One whose title doesn't say always stays.">Not senior</button></span>
-            <!-- the job systems of the openings listed (desk.system_of), drawn by renderSystems -->
-            <span class="group" role="group" aria-label="Job system" id="system-chips" title="Shows only the jobs applied for on the job systems pressed: the site you apply on, such as Workday or an employer's own site." hidden></span>
-            <!-- the companies chosen (desk.json's companies), drawn by renderCompanies; the box suggests the employers listed -->
-            <span class="group" role="group" aria-label="Company" id="company-group" title="Shows only the openings of the companies chosen. Type any part of a company's name, or pick one, and press Enter; press a company again to let go of it.">Company
+              </div>
+              <!-- the job systems of the openings listed (desk.system_of), drawn by renderSystems -->
+              <div class="f-group" id="system-group" hidden><h3 class="f-h">Job system</h3>
+              <span class="group" role="group" aria-label="Job system" id="system-chips" title="Shows only the jobs applied for on the job systems pressed: the site you apply on, such as Workday or an employer's own site." hidden></span></div>
+              <!-- the companies chosen (desk.json's companies), drawn by renderCompanies; the box suggests the employers listed -->
+              <div class="f-group"><h3 class="f-h">Company</h3>
+              <span class="group" role="group" aria-label="Company" id="company-group" title="Shows only the openings of the companies chosen. Type any part of a company's name, or pick one, and press Enter; press a company again to let go of it.">
               <span id="company-chips"></span><input type="text" id="company-add" list="company-names" placeholder="type a company" aria-label="Show only this company's openings" autocomplete="off"><datalist id="company-names"></datalist></span>
+              </div>
+              </div></details>
+            <label class="sw-label" title="Only the employers where, in the plugin's live check, the desk took a test applicant all the way to the application's review page. Bot checks, CAPTCHAs and steps it can't do yet are elsewhere."><input type="checkbox" class="switch" id="handled-only">Only where the desk goes all the way</label>
           </div>
-          <div class="stops openings-only" id="stops" role="group" aria-label="Show the jobs by where they stand" hidden></div>
+          <!-- a line for each switch that's on (renderSwitchHint), and what to do with the Status picked (renderStops) -->
+          <div class="switch-hint" id="switch-hint" hidden></div>
           <div class="stop-hint openings-only" id="stop-hint" hidden></div>
           <div class="stops" id="app-groups" role="group" aria-label="Show my applications by where they stand" hidden></div>
-          <form class="addbar openings-only" id="add-form">
-            <input type="text" id="add-links" placeholder="Paste job links: LinkedIn, Indeed or a company site" aria-label="Job links to add" autocomplete="off">
-            <button type="submit" id="add-btn">Add</button>
-          </form>
           <div class="applybar openings-only">
             <button class="primary" id="apply" data-act="apply" disabled>Apply to selected</button>
             <span class="hint" id="apply-hint"></span>
@@ -679,6 +757,21 @@ body.stopped > :not(#stopped) { display: none; }
             <div><h2 class="t" id="safety-card-h">Safety</h2>
               <p class="s">What the desk may do for you and what it never does, as it is set now.</p></div>
             <div class="acts"><button class="btn" id="safety-btn" data-act="safety" title="What the desk does in your name, and what it never does: each setting as it is now, and where to change it">See your safety settings</button></div>
+          </div>
+        </section>
+        <!-- how the desk searches and applies: each row a name and a sentence, its control at the right (the switches
+             that were under the Openings card's More) -->
+        <section class="card" aria-labelledby="searching-h">
+          <div class="card-h"><h2 id="searching-h">Searching and applying</h2></div>
+          <div class="setrow">
+            <div><p class="t" id="auto-search-name">Search by itself every 12 hours</p>
+              <p class="s" id="auto-search-said">The desk searches again when the openings are over 12 hours old. Never while the queue is paused.</p></div>
+            <input type="checkbox" class="switch" id="auto-search" aria-labelledby="auto-search-name" aria-describedby="auto-search-said">
+          </div>
+          <div class="setrow">
+            <div><p class="t" id="troubleshoot-name">Troubleshooting</p>
+              <p class="s" id="troubleshoot-said">For getting the desk going at more employers. It searches every list and shows only the openings where the desk doesn't go all the way yet. Nothing is submitted while it is on.</p></div>
+            <input type="checkbox" class="switch" id="troubleshoot" aria-labelledby="troubleshoot-name" aria-describedby="troubleshoot-said">
           </div>
         </section>
         <section class="card" aria-labelledby="pw-h">
@@ -1223,8 +1316,8 @@ const NEED_PILL = {
 const needPill = (r) => stopMark(r) ? [stopMark(r), "warn"]
   : [NEED_PILL[r.need] || "Waiting for you", STUCK_NEEDS.has(r.need) ? "bad" : "warn"];
 
-// The bar's groups, in its order: where each opening stands; and two more, New (first saved since your last visit, of
-// any of the others) and Not interested (the ones you hid: in no other group, Any's either)
+// The Status groups (under More filters), in their order: where each opening stands; and one more, New (first saved
+// since your last visit, of any of the others). The ones marked Not interested are in none: they have their own tab
 const STOPS = [
   ["any", "Any", "Every opening in the list"],
   ["fresh", "New", "First saved since your last visit, and not taken up yet"],
@@ -1232,10 +1325,9 @@ const STOPS = [
   ["working", "Working", "Being filled now, or waiting in the queue"],
   ["bot", "Bot checks", "Stopped at a bot check: yours to solve (the desk never does)"],
   ["you", "Questions and sign-ins", "Stopped for you: a question, a sign-in, an emailed code"],
-  ["stuck", "Stuck", "The desk couldn't get past something: these are the ones to tell Claude about"],
+  ["stuck", "Stuck", "The desk couldn't get past something. Each one's card has Report a problem."],
   ["ready", "Ready", "Filled to the review page"],
   ["done", "Done", "Submitted, applied, skipped or closed"],
-  ["unwanted", "Not interested", "The openings you said you're not interested in: never applied to. Undo by one brings it back"],
 ];
 const NI_WORDS = {title: "Title", company: "Company", location: "Location", pay: "Pay", other: "Other"};
 const STUCK_NEEDS = new Set(["stuck", "submit_failed"]);
@@ -1252,7 +1344,7 @@ function stopOf(row) {
   }
   return "done";  // submitted, skipped
 }
-const inStop = (r) => stopFilter === "unwanted" ? !!r.not_interested : !r.not_interested
+const inStop = (r) => !r.not_interested
   && (stopFilter === "any" || (stopFilter === "fresh" ? isNew(r) : stopOf(r) === stopFilter));
 
 function statusPill(row) {
@@ -1271,15 +1363,17 @@ const SENT = new Set(["ready_to_submit", "applied", "interviewing", "offer", "re
 
 const shownDay = (t) => String(t || "").slice(0, 10);
 
-// The bar over the list: each group with how many it holds (shown once any job has been tried), and under it what
-// to do with the group picked: bot checks are solved in one round, the stuck ones go to Claude in the Notes
+// The Status group, under More filters: each group with how many it holds (shown once any job has been tried), and
+// under the filters what to do with the group picked: bot checks are solved in one round, the stuck ones go in the Notes
 function renderStops(all) {
+  if (!STOPS.some(([key]) => key === stopFilter)) stopFilter = "any";  // (one kept from before that's gone: Any)
   const rows = all.filter((r) => !r.not_interested);
-  const count = {any: rows.length, fresh: rows.filter(isNew).length, unwanted: all.length - rows.length};
+  const count = {any: rows.length, fresh: rows.filter(isNew).length};
   for (const r of rows) count[stopOf(r)] = (count[stopOf(r)] || 0) + 1;
   const bar = $("stops"), hint = $("stop-hint");
   const tried = rows.some((r) => stopOf(r) !== "new");
-  bar.hidden = !tried && !count.fresh && !count.unwanted && stopFilter === "any";
+  bar.hidden = !tried && !count.fresh && stopFilter === "any";
+  $("status-group").hidden = bar.hidden;
   const buttons = bar.hidden ? "" : STOPS.filter(([key]) => key === "any" || key === stopFilter || count[key])
     .map(([key, label, tip]) => `<button data-stop="${key}" aria-pressed="${key === stopFilter}" title="${esc(tip)}">${esc(label)}
       ${count[key] || 0}</button>`).join("");
@@ -1289,7 +1383,7 @@ function renderStops(all) {
     ? `<span>${checks} to solve: the round brings each one up in the desk's browser window, and each job carries on by itself after.</span>
        ${botRound ? "" : `<button class="primary" data-act="bot-round">Solve them</button>`}`
     : stopFilter === "stuck" && count.stuck
-    ? `<span>The desk couldn't get past these. ${state.notes ? "It took a note on each: Notes files them together for Claude to fix." : "Each one's card has Report a problem, for Claude to fix."}</span>
+    ? `<span>The desk couldn't get past these. ${state.notes ? "It took a note on each. Notes, on the Help page, files them together." : "Each one's card has Report a problem."}</span>
        ${state.notes ? `<button data-act="notes">Notes</button>` : ""}`
     : "";
   hint.hidden = !html;
@@ -1520,31 +1614,70 @@ function sorted(rows) {
   return by ? rows.map((r, i) => [by(r), i, r]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((x) => x[2]) : rows;
 }
 
-// Under the Openings head, a line for each switch that's on, saying what it does now (their tooltips aren't seen on a
-// phone, and two of them sit under More)
+// Under the filters, a line for each switch that's on, saying what it does now (their tooltips aren't seen on a phone,
+// and two of them are on the Settings page): Troubleshooting's with a button that turns it off
+const TROUBLESHOOT_OFF = `<button data-act="troubleshoot-off">Turn it off</button>`;
 function renderSwitchHint(mine, rows) {
   const s = state.settings || {};
   // (the employers among the openings the list shows now)
   const employers = new Set(rows.filter((r) => r.handled).map((r) => String(r.company || "").trim().toLowerCase())).size;
-  // Troubleshooting on: More stays open, so the box that turns it off is always in sight
-  if (s.troubleshoot && !$("more").open) $("more").open = true;
   const lines = [
-    s.handled_only ? `Only where the desk goes all the way: showing ${employers ? `the ${employers} employer${employers === 1 ? "" : "s"}` : "the employers"} where the plugin's live check reached the review page; bot checks and steps the desk can't do yet are elsewhere.` : "",
-    s.troubleshoot ? "Troubleshooting: nothing is submitted; Find jobs searches every list; only the employers where the desk doesn't go all the way yet are shown." : "",
-    s.auto_search ? "Search by itself: the desk searches again when the openings are over 12 hours old (not while the queue is paused)." : "",
+    s.handled_only ? esc(`Only where the desk goes all the way: showing ${employers ? `the ${employers} employer${employers === 1 ? "" : "s"}` : "the employers"} where the plugin's live check reached the review page; bot checks and steps the desk can't do yet are elsewhere.`) : "",
+    s.troubleshoot ? esc("Troubleshooting: nothing is submitted; Find jobs searches every list; only the employers where the desk doesn't go all the way yet are shown.") + " " + TROUBLESHOOT_OFF : "",
+    s.auto_search ? esc("Search by itself: the desk searches again when the openings are over 12 hours old (not while the queue is paused).") : "",
   ].filter(Boolean);
   const hint = $("switch-hint");
   hint.hidden = mine || !lines.length;
-  const html = lines.map((line) => `<p>${esc(line)}</p>`).join("");
-  if (hint.dataset.html !== html) { hint.innerHTML = html; hint.dataset.html = html; }
+  const html = lines.map((line) => `<p>${line}</p>`).join("");
+  if (hint.dataset.html !== html) { hint.innerHTML = html; hint.dataset.html = html; }  // (focus kept)
+}
+
+// Each filter drop-down's summary says what's chosen in it, and the drop-down is marked (on) when that isn't its
+// default; More filters' number counts what's set in it: a Status other than Any, and each button pressed or company
+// chosen in its other four groups. Run wherever renderRows is (it runs it)
+const SORT_SAID = {fit: "Best fit", pay: "Best paid", newest: "Newest"};
+function renderFilterLabels() {
+  const s = state.settings || {};
+  const say = (f, words, on) => {
+    const d = document.querySelector(`#filters details[data-f="${f}"]`), el = d.querySelector(".f-said");
+    if (el.textContent !== words) el.textContent = words;
+    d.classList.toggle("on", !!on);
+  };
+  const named = (selector) => { const b = document.querySelector(selector); return b ? b.textContent.trim().toLowerCase() : ""; };
+  const sort = SORT_SAID[sortBy] ? sortBy : "fit";
+  say("sort", SORT_SAID[sort], sort !== "fit");
+  say("pay", s.min_pay ? `Pay: $${Number(s.min_pay).toLocaleString("en-US")}+` : "Pay: any", s.min_pay);
+  say("posted", s.posted_within ? `Posted: ${named(`[data-posted="${Number(s.posted_within)}"]`) || `last ${s.posted_within} days`}`
+    : "Posted: any time", s.posted_within);
+  say("within", s.within_miles ? `Within ${s.within_miles} miles` : "Within: any distance", s.within_miles);
+  const places = [...document.querySelectorAll("[data-chip=workplace]")].filter((b) => (s.workplace || []).includes(b.dataset.value))
+    .map((b) => b.textContent.trim().toLowerCase());
+  say("workplace", places.length ? `Workplace: ${places.join(", ")}` : "Workplace", places.length);
+  const more = (stopFilter !== "any" ? 1 : 0)
+    + ["job_types", "requirements", "systems", "companies"].reduce((n, name) => n + (s[name] || []).length, 0);
+  say("more", "More filters", more);
+  const count = $("more-count"), n = more ? String(more) : "";
+  if (count.textContent !== n) count.textContent = n;
+}
+
+// The tabs' numbers: the rows each would list after the filters and the search box, with Status at Any; Not
+// interested's, every one marked so that the search box leaves (the filters don't apply to it), hidden at none
+function renderTabs(counts) {
+  for (const [key, n] of Object.entries(counts)) {
+    const el = $("tab-" + key), said = n ? String(n) : "";
+    if (el.textContent !== said) el.textContent = said;
+  }
+  document.querySelector("[data-filter=unwanted]").hidden = !counts.unwanted && filter !== "unwanted";
+  document.querySelectorAll("[data-filter]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.filter === filter)));
 }
 
 function renderRows() {
   if (!state) return;
+  // (Applications: the same card, with the applications in its list; the Openings page's own parts hidden)
   const mine = filter === "mine";
   document.querySelectorAll(".openings-only").forEach((el) => { el.hidden = mine; });
+  renderFilterLabels();
   if (mine) renderSwitchHint(true, []);
-  $("mine-count").textContent = (state.applications || []).length ? `(${state.applications.length})` : "";
   if (mine) { renderApps(); return; }
   $("app-groups").hidden = true;
   renderSystems();
@@ -1552,11 +1685,17 @@ function renderRows() {
   // links the person added (here, or through Claude) always show: they picked those themselves
   const onlyHandled = !!(state.settings && state.settings.handled_only);
   const troubleshooting = !!(state.settings && state.settings.troubleshoot);
-  // (troubleshooting: every opening tried, whatever its fit; and the ones hidden as Not interested, for their group)
-  const listed = (state.listings || []).filter((r) => filter === "all" || troubleshooting || r.added || (r.fit && r.fit.recommended) || r.run
-    || r.not_interested);
-  renderStops(listed.filter(shown));
-  const rows = sorted(listed.filter(shown).filter(inStop));
+  // Recommended and All leave out the ones marked Not interested: those are the Not interested tab's, which the
+  // filters and Status don't touch (the search box does). (troubleshooting: every opening tried, whatever its fit)
+  const all = state.listings || [];
+  const recommended = all.filter((r) => !r.not_interested && (troubleshooting || r.added || (r.fit && r.fit.recommended) || r.run));
+  const everyOne = all.filter((r) => !r.not_interested);
+  const unwanted = all.filter((r) => r.not_interested && typed(r));
+  if (filter === "unwanted" && !all.some((r) => r.not_interested)) filter = "recommended";  // (none left: back)
+  renderTabs({recommended: recommended.filter(shown).length, all: everyOne.filter(shown).length, unwanted: unwanted.length});
+  const listed = filter === "unwanted" ? unwanted : filter === "all" ? everyOne : recommended;
+  renderStops((filter === "unwanted" ? recommended : listed).filter(shown));
+  const rows = filter === "unwanted" ? unwanted : sorted(listed.filter(shown).filter(inStop));
   renderSwitchHint(false, rows);
   const entries = rows.map((r) => {
     const fit = r.fit || {score: 0, reasons: [], concerns: []};
@@ -1607,7 +1746,9 @@ function renderRows() {
       <div class="state">${statusPill(r)}${undo}${ni}</div></li>`};
   });
   if (!entries.length) {
-    const msg = stopFilter !== "any" && listed.some(shown) ? "None here right now. Press Any to see them all."
+    const msg = query.trim() && (filter === "unwanted" ? all.some((r) => r.not_interested)
+        : listed.filter(filtered).filter(inStop).length) ? "Nothing matches what you typed. Empty the search box to see the rest."
+      : stopFilter !== "any" && listed.some(shown) ? "None here right now. Press Any to see them all."
       : state.search.status === "running" ? "Searching employers' career sites…"
       : onlyHandled && listed.length ? "Nothing here from the employers where the desk goes all the way. Turn off that switch to see the rest."
       : (state.settings.min_pay || state.settings.posted_within) && !state.settings.within_miles && !chipsOn() && !companiesOn() && listed.length
@@ -2107,7 +2248,8 @@ function renderHeader() {
        <span>Go through them one by one: each review page comes up in the desk's browser window to check${toSend.some((r) => r.need !== "check_submit") ? " before you send it" : ""}.</span>
        <button class="primary" data-act="review-round">Review them</button>`});
   if (s.troubleshoot) notes.push({cls: "notice info", html: `<strong>Troubleshooting is on: no application is submitted.</strong>
-    <span>Find jobs searches every list's employers, and only the openings where the desk doesn't go all the way yet show. The desk still makes accounts and fills each step, which the sites keep. Turn it off (under Openings, More) to apply for real.</span>`});
+    <span>Find jobs searches every list's employers, and only the openings where the desk doesn't go all the way yet show. The desk still makes accounts and fills each step, which the sites keep. Turn it off to apply for real.</span>
+    ${TROUBLESHOOT_OFF}`});
   const needing = allRuns().filter((r) => r.status === "needs_you").length;
   document.title = needing ? `(${needing}) Needs you · Job Desk` : "Job Desk";
   // the jobs back in the queue after a restart of the desk wait for the person's Carry on with the queue; and why the queue isn't
@@ -2646,7 +2788,8 @@ $("setup-form").addEventListener("submit", (e) => {
 // The pages of the side menu, by the address's "#name", each with its heading in the top bar. route shows the page
 // named (Home for none, or a name that isn't one): everything with data-pages shows on the pages it lists, and the
 // menu's link for the page is marked as the current one. Openings and Applications share the Openings card: on
-// Applications its My applications tab is chosen, and going to Openings while that tab is chosen chooses Recommended
+// Applications it lists the applications (filter "mine": no tab of its own now), and going to Openings from there
+// chooses Recommended; a tab pressed on Applications leads to Openings
 const PAGES = {home: "Home", openings: "Openings", applications: "Applications", answers: "Your answers",
                working: "What's working", settings: "Settings", help: "Help"};
 function route() {
@@ -2763,8 +2906,16 @@ function selectable(url) {
 // already had to do with (a link they added, a job under way or tracked); "Troubleshooting", the other employers'
 // openings, and the same. Nothing hidden is ever applied to
 // The filter row's "Pay at least" and "Posted" hide only an opening that says it's below or older: one whose pay isn't
-// listed, or whose site gives no date, always stays (as does what the person already had to do with)
-function shown(r) {
+// listed, or whose site gives no date, always stays (as does what the person already had to do with). And the top
+// bar's search box hides each one whose title and company together don't hold every word typed, whatever the case
+const shown = (r) => typed(r) && filtered(r);
+let query = "";  // what's typed in the search box (kept in memory only: a reload empties it)
+function typed(r) {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const said = `${r.title || ""} ${r.company || ""}`.toLowerCase();
+  return words.every((w) => said.includes(w));
+}
+function filtered(r) {
   const s = state.settings || {};
   return (s.handled_only ? kept(r) : s.troubleshoot ? keptElse(r) : true)
     && (theirs(r) || (paysEnough(r, s.min_pay) && postedWithin(r, s.posted_within) && withinMiles(r, s.within_miles)
@@ -2838,9 +2989,10 @@ function renderSystems() {
   const drawn = JSON.stringify(keys.map((k) => [k, names[k] || k]));
   if (drawn !== systemsDrawn && !box.contains(document.activeElement)) {
     systemsDrawn = drawn;
-    box.innerHTML = "System" + keys.map((k) => `<button data-chip="systems" data-value="${esc(k)}" aria-pressed="false">${esc(names[k] || k)}</button>`).join("");
+    box.innerHTML = keys.map((k) => `<button data-chip="systems" data-value="${esc(k)}" aria-pressed="false">${esc(names[k] || k)}</button>`).join("");
   }
   box.hidden = keys.length < 2 && !pressed.length && !box.contains(document.activeElement);
+  $("system-group").hidden = box.hidden;  // (its heading, Job system, with it)
   box.querySelectorAll("[data-chip]").forEach((b) => {
     const n = counts.get(b.dataset.value) || 0, name = names[b.dataset.value] || b.dataset.value;
     b.title = `${n} opening${n === 1 ? "" : "s"} listed on ${name}`;
@@ -2986,6 +3138,7 @@ document.addEventListener("click", (e) => {
     sortBy = t.dataset.sort;
     try { localStorage.setItem(SORT_KEY, sortBy); } catch (err) {}
     document.querySelectorAll("[data-sort]").forEach((b) => b.setAttribute("aria-pressed", String(b === t)));
+    closeFilter(t);
     renderRows();
     return;
   }
@@ -2993,6 +3146,7 @@ document.addEventListener("click", (e) => {
     if (!state) return;
     const days = t.dataset.posted ? Number(t.dataset.posted) : null;
     document.querySelectorAll("[data-posted]").forEach((b) => b.setAttribute("aria-pressed", String(b === t)));
+    closeFilter(t);
     state.settings.posted_within = days;  // (shown at once; kept in desk.json)
     renderRows();
     act(() => api("/api/settings", {posted_within: days}));
@@ -3002,6 +3156,7 @@ document.addEventListener("click", (e) => {
     if (!state) return;
     const most = t.dataset.within ? Number(t.dataset.within) : null;
     document.querySelectorAll("[data-within]").forEach((b) => b.setAttribute("aria-pressed", String(b === t)));
+    closeFilter(t);
     state.settings.within_miles = most;  // (shown at once; kept in desk.json)
     renderRows();
     act(() => api("/api/settings", {within_miles: most}));
@@ -3026,10 +3181,9 @@ document.addEventListener("click", (e) => {
     renderRows();
     return;
   }
-  if (t.dataset.filter) {
-    // (the address follows the tab: My applications is the Applications page, the other two the Openings page)
+  if (t.dataset.filter) {  // a tab: Recommended, All or Not interested, on the Openings page
     filter = t.dataset.filter;
-    goTo(filter === "mine" ? "applications" : "openings");
+    goTo("openings");
     return;
   }
   const a = t.dataset.act, job = t.dataset.job, jobAct = t.dataset.jobAct;
@@ -3160,6 +3314,11 @@ document.addEventListener("click", (e) => {
     renderRows();
   }
   if (a === "select-none") { selected.clear(); renderRows(); }
+  if (a === "troubleshoot-off") {  // (the hint's and the notice's button: as the switch on the Settings page, turned off)
+    selected.clear();
+    $("troubleshoot").checked = false;
+    act(() => api("/api/settings", {troubleshoot: false}));
+  }
   if (a === "apply") {
     const urls = [...selected].filter(selectable);
     // (one Apply at a time: a second quick press would ask the pre-flight twice and open its window over itself)
@@ -3346,6 +3505,30 @@ $("phone-summary").addEventListener("keydown", (e) => { if (e.key === "Enter") e
 
 // the link opens GitHub in a new tab; without one (a report being made) it does nothing
 $("report-open").addEventListener("click", (e) => { if (e.currentTarget.href) $("report").close(); });
+
+// The filter drop-downs (details.f): one open at a time. A click outside an open one closes it; Escape closes it and puts
+// the focus back on its summary; a choice in Sort, Posted or Within closes it (closeFilter), the others stay open for
+// another press
+function closeFilter(inside) {
+  const d = inside.closest("details.f");
+  if (!d || !d.open) return;
+  d.open = false;
+  d.querySelector("summary").focus();
+}
+// (on the way down, before the page's own handlers: one of them may draw again what was pressed, the Status buttons)
+document.addEventListener("click", (e) => {
+  for (const d of document.querySelectorAll("details.f[open]")) if (!d.contains(e.target)) d.open = false;
+}, true);
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || document.querySelector("dialog[open]")) return;
+  const d = (document.activeElement && document.activeElement.closest("details.f[open]")) || document.querySelector("details.f[open]");
+  if (!d) return;
+  e.preventDefault();
+  d.open = false;
+  d.querySelector("summary").focus();
+});
+// the search box: the rows it leaves drawn as it's typed in
+$("q").addEventListener("input", (e) => { query = e.target.value; renderRows(); });
 
 route();  // (before the first state: the page the address names)
 (async function poll() {

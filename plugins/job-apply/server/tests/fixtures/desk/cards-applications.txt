@@ -16,8 +16,11 @@ Interviewing: 1
 ## list-h
 Openings
 Recommended
+3
 All
-My applications (2)
+4
+Not interested
+1
 All 2
 Waiting 1, 1 to follow up
 Heard back 0
@@ -76,6 +79,13 @@ Edit your profile
 Safety
 What the desk may do for you and what it never does, as it is set now.
 See your safety settings
+
+## searching-h
+Searching and applying
+Search by itself every 12 hours
+The desk searches again when the openings are over 12 hours old. Never while the queue is paused.
+Troubleshooting
+For getting the desk going at more employers. It searches every list and shows only the openings where the desk doesn't go all the way yet. Nothing is submitted while it is on.
 
 ## pw-h
 Site passwords

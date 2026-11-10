@@ -59,36 +59,46 @@ Report a problem
 ## list-h
 Openings
 Recommended
+7
 All
-My applications (1)
-Only where the desk goes all the way
+7
 Select recommended
 Clear
-More
-Troubleshooting
-Search by itself every 12 hours
-Sort
-Fit
-Pay
+Add job links
+Add
+Best fit
+Best fit
+Best paid
 Newest
+Pay: any
 Pay at least $
-/yr
-Posted
-Any
-7 days
-14 days
-30 days
-Within
-Any
-10 mi
-25 mi
-50 mi
-100 mi
+a year
+Hides a job only when its posting lists its pay and the most it pays is below this. A job that doesn't list its pay always stays.
+Posted: any time
+Any time
+Last 7 days
+Last 14 days
+Last 30 days
+A job whose site gives no date always stays.
+Within: any distance
+Any distance
+10 miles
+25 miles
+50 miles
+100 miles
 needs your home town
 Workplace
 Remote
 Hybrid
 On-site
+A job that doesn't say where it is done always stays.
+More filters
+Status
+Any 7
+Working 3
+Stuck 1
+Ready 1
+Done 2
 Type
 Full-time
 Part-time
@@ -104,12 +114,7 @@ Travel ≤ 25%
 Entry level
 Not senior
 Company
-Any 7
-Working 3
-Stuck 1
-Ready 1
-Done 2
-Add
+Only where the desk goes all the way
 Apply to selected
 Tick the jobs to apply to.
 Submit for me when nothing needs me
@@ -193,6 +198,13 @@ Edit your profile
 Safety
 What the desk may do for you and what it never does, as it is set now.
 See your safety settings
+
+## searching-h
+Searching and applying
+Search by itself every 12 hours
+The desk searches again when the openings are over 12 hours old. Never while the queue is paused.
+Troubleshooting
+For getting the desk going at more employers. It searches every list and shows only the openings where the desk doesn't go all the way yet. Nothing is submitted while it is on.
 
 ## pw-h
 Site passwords

@@ -415,6 +415,16 @@ async def open_desk(page, desk, at: str = "home") -> None:
     await page.wait_for_selector("#plugin-version:not(:empty)", state="attached")
 
 
+async def open_filter(page, name: str) -> None:
+    """One of the Openings page's drop-downs (the design's Version B, B3) opened, as a person would, by pressing its
+    summary (left as it is when it's open already): a filter by its data-f (sort, pay, posted, within, workplace or
+    more, More filters), or "add" for Add job links. A choice in Sort, Posted or Within closes its drop-down, so a test
+    that presses two opens it again first."""
+    where = "#add-drop" if name == "add" else f"#filters details[data-f={name}]"
+    if not await page.eval_on_selector(where, "(d) => d.open"):
+        await page.click(f"{where} > summary")
+
+
 async def press_menu(page, at: str) -> None:
     """The side menu's link for the page `at` pressed, as a person would, and that page shown."""
     await page.click(f".nav a[href='#{at}']")

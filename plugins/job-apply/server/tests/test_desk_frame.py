@@ -26,7 +26,7 @@ PAGES = {"home": "Home", "openings": "Openings", "applications": "Applications",
 # and nothing sent in yet: Home's three cards (not the idle one), no What's working card
 CARDS = {"home": ["needs-h", "done-h", "work-h"], "openings": ["list-h"], "applications": ["list-h"],
          "answers": ["bank-h"], "working": [],
-         "settings": ["profile-h", "safety-card-h", "pw-h", "phone-h", "alerts-h", "program-h"],
+         "settings": ["profile-h", "safety-card-h", "searching-h", "pw-h", "phone-h", "alerts-h", "program-h"],
          "help": ["how-h", "notes-card-h"]}
 # And the top bar's controls it shows while a search runs (Stop search shows only then, on the pages that have it)
 SEARCH = ["searched", "stop-search", "find"]
@@ -155,9 +155,9 @@ def test_a_search_that_isnt_running_shows_no_stop_search_on_any_page(srv):
 
 def test_applications_chooses_my_applications_and_recommended_leads_back_to_openings(srv):
     """The design's A8, test 7. Openings and Applications share the Openings card, and its tab and the address stay
-    in step: #applications chooses My applications; pressing Recommended (or All) leads back to #openings; pressing
-    My applications leads to #applications; and the menu's Openings link, while My applications is chosen, chooses
-    Recommended."""
+    in step: #applications chooses My applications; pressing Recommended (or All) leads back to #openings; the menu's
+    Applications link (Version B's My applications, no longer a tab) leads to #applications; and the menu's Openings
+    link, while My applications is chosen, chooses Recommended."""
     desk = _idle_desk(srv)
     desk.listings = [{"company": "Example Fab", "title": "Field Service Engineer", "location": "Phoenix, AZ",
                       "url": "https://careers.example.com/fab/1", "fit": _fit(80)},
@@ -190,7 +190,7 @@ def test_applications_chooses_my_applications_and_recommended_leads_back_to_open
                 await page.click("[data-filter=all]")
                 await page.wait_for_selector("#rows li.row >> nth=1")
                 seen["all"] = await page.evaluate(read)
-                await page.click("[data-filter=mine]")
+                await page.click('.nav a[href="#applications"]')  # (My applications is the Applications page)
                 await page.wait_for_function("location.hash === '#applications'")
                 seen["mine"] = await page.evaluate(read)
                 await page.wait_for_timeout(1700)  # (a refresh: the tab and the address stay as they are)
@@ -207,7 +207,8 @@ def test_applications_chooses_my_applications_and_recommended_leads_back_to_open
             await desk.stop()
 
     seen = run(go())
-    mine = {"hash": "#applications", "title": "Applications", "pressed": ["mine"], "rows": ["Process Technician"],
+    # (Version B: no My applications tab, so no tab is pressed on Applications)
+    mine = {"hash": "#applications", "title": "Applications", "pressed": [], "rows": ["Process Technician"],
             "apply": False}
     recommended = {"hash": "#openings", "title": "Openings", "pressed": ["recommended"],
                    "rows": ["Field Service Engineer"], "apply": True}
@@ -270,11 +271,13 @@ def test_the_menus_numbers_match_the_cards(srv, job_apply_home):
                 numbers = await page.evaluate(_NUMBERS)
                 cards = {"home": await page.inner_text("#needs-count")}
                 await _at(page, "openings")
+                await page.click("#more > summary")  # (Status is under More filters)
                 cards["openings bar"] = " ".join((await page.inner_text("[data-stop=new]")).split())
                 await page.click("[data-stop=new]")
                 await page.wait_for_selector("[data-stop=new][aria-pressed=true]")
                 cards["openings"] = await page.locator("#rows li.row").count()
-                cards["applications"] = await page.inner_text("#mine-count")
+                await _at(page, "applications")  # (My applications is the Applications page)
+                cards["applications"] = " ".join((await page.inner_text("[data-app-group=all]")).split())
                 await _at(page, "answers")
                 cards["answers"] = await page.inner_text("#bank-count")
                 await _at(page, "help")
@@ -291,7 +294,7 @@ def test_the_menus_numbers_match_the_cards(srv, job_apply_home):
                        "help": [str(want["help"]), "count"]}, numbers
     answered, total = (int(n) for n in cards["answers"].removesuffix(" answered").split(" of "))
     assert cards == {"home": str(want["home"]), "openings bar": f"Not started {want['openings']}",
-                     "openings": want["openings"], "applications": f"({want['applications']})",
+                     "openings": want["openings"], "applications": f"All {want['applications']}",
                      "answers": f"{total - want['answers']} of {total} answered",
                      "help": f"Notes ({want['help']})"}, cards
     assert answered == total - want["answers"]

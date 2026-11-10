@@ -10,7 +10,7 @@ from pathlib import Path
 import httpx
 import pytest
 import yaml
-from conftest import browser_available, fixture_url, open_desk, person_browser, press_menu, run
+from conftest import browser_available, fixture_url, open_desk, open_filter, person_browser, press_menu, run
 
 import job_apply.pipeline as pipeline
 from job_apply import autofill, config, mailbox
@@ -198,6 +198,7 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
                 assert ("apply", other["id"]) in desk.applier.tasks
 
                 await press_menu(page, "openings")
+                await open_filter(page, "add")  # (Add job links, a drop-down)
                 await page.fill("#add-links", fixture_url("jsonld_posting.html"))
                 await page.click("#add-btn")
                 # listed, picked for Apply, and the box emptied (waited for: the page's own
@@ -592,8 +593,9 @@ def test_the_desk_searches_by_itself_only_with_its_switch_on_and_a_search_can_be
                 assert not await page.is_checked("#auto-search") and await page.is_hidden("#stop-search")
                 # turned on while the queue is paused: still nothing
                 desk.applier.paused = True
-                await page.click("#more summary")  # (under the Openings head's More)
+                await press_menu(page, "settings")  # (Searching and applying, on the Settings page)
                 await page.check("#auto-search")
+                await press_menu(page, "openings")
                 await asyncio.sleep(3.5)
                 assert desk.auto_search is True and not searched
                 # the queue resumed: the page searches by itself, and says so, with Stop search beside it
@@ -1511,12 +1513,16 @@ def test_the_openings_sort_by_pay_or_date_and_the_filters_hide_only_what_says_it
                 # (the second review) a pay read from the text, not its pay line, never fails "Pay at least"
                 assert await page.evaluate("[paysEnough({pay: {sure: false, top: 40000}}, 60000),"
                                            " paysEnough({pay: {sure: true, top: 40000}}, 60000)]") == [True, False]
+                await open_filter(page, "sort")
                 await page.click("[data-sort='pay']")
                 assert await order(page) == ["Onto", "Ebara", "Lam"]
+                await open_filter(page, "sort")
                 await page.click("[data-sort='newest']")
                 assert await order(page) == ["Lam", "Onto", "Ebara"]
+                await open_filter(page, "sort")
                 await page.click("[data-sort='pay']")
                 # (the review) a figure the desk refuses isn't applied on the page either: nothing hidden
+                await open_filter(page, "pay")
                 await page.fill("#min-pay", "20000000")
                 await page.press("#min-pay", "Enter")
                 await page.wait_for_selector("#toast:has-text('more than any job pays')")
@@ -1532,9 +1538,11 @@ def test_the_openings_sort_by_pay_or_date_and_the_filters_hide_only_what_says_it
                 await page.press("#min-pay", "Enter")
                 await page.wait_for_selector("text=Ebara Technologies Technician")
                 # Posted within 14 days: Onto's 20 days go, Ebara's unknown date stays
+                await open_filter(page, "posted")
                 await page.click("[data-posted='14']")
                 await page.wait_for_selector("text=Onto Innovation Technician", state="detached")
                 assert await order(page) == ["Ebara", "Lam"]
+                await open_filter(page, "pay")
                 await page.fill("#min-pay", "60000")
                 await page.press("#min-pay", "Enter")
                 await page.wait_for_selector("text=Ebara Technologies Technician", state="detached")
@@ -1589,6 +1597,7 @@ async def _shown_titles(page) -> list[str]:
 async def _chip(page, name: str, value: str, titles: list[str]) -> None:
     """Press (or let go) one of the filter row's chips, its choice saved (the desk's answer to /api/settings), and wait
     for the page to show the openings it leaves: `titles`, in order."""
+    await open_filter(page, "workplace" if name == "workplace" else "more")
     async with page.expect_response("**/api/settings"):
         await page.click(f"[data-chip='{name}'][data-value='{value}']")
     try:
@@ -1648,6 +1657,7 @@ def test_the_requirement_chips_hide_only_a_job_that_says_it_fails_them(srv, job_
                 await open_desk(page, desk, "openings")
                 await page.wait_for_selector("text=Later Technician")
                 assert await _shown_titles(page) == every
+                await open_filter(page, "more")  # (Requirements, under More filters)
                 assert await page.inner_text("#degree-chip") == "My degree is enough"  # (the profile's Bachelor's)
                 assert "a Bachelor's" in await page.get_attribute("#degree-chip", "title")
                 maybe = page.locator("li.row", has_text="Maybe Technician").locator(".chips")
@@ -1681,6 +1691,7 @@ def test_the_requirement_chips_hide_only_a_job_that_says_it_fails_them(srv, job_
 
                 monkeypatch.setattr(desk_module, "applicant_degree", lambda prof: None)
                 await page.reload()
+                await open_filter(page, "more")  # (Requirements, under More filters)
                 await page.wait_for_selector("#degree-chip:has-text('No degree required')")
                 await _chip(page, "requirements", "degree",
                             but("Cleared Technician", "Later Technician", "Senior Technician", "Technician II",
@@ -1765,6 +1776,7 @@ def test_the_workplace_chips_hide_only_a_job_that_surely_says_its_done_another_w
 async def _within(page, miles: str, titles: list[str]) -> None:
     """Press one of the filter row's Within choices ("" for Any), its choice saved, and wait for the page to show the
     openings it leaves: `titles`, in order."""
+    await open_filter(page, "within")
     async with page.expect_response("**/api/settings"):
         await page.click(f"[data-within='{miles}']")
     try:
@@ -1834,6 +1846,7 @@ def test_within_miles_hides_only_a_job_surely_farther_from_home(srv, job_apply_h
                 assert await meta("Remote Technician").locator(".miles").count() == 0  # (remote: no distance)
                 assert await meta("Unsaid Technician").locator(".miles").count() == 0
                 assert "Chandler, AZ" in await page.get_attribute("#within-group", "title")
+                await open_filter(page, "within")
                 assert await page.is_hidden("#within-why")
                 await _within(page, "100", but("Hybrid Technician"))
                 await _within(page, "25", but("Tucson Technician", "Hybrid Technician"))
@@ -1884,6 +1897,7 @@ def test_within_miles_is_off_and_the_window_says_why_without_a_home_town(srv, jo
                 await page.wait_for_selector("text=Tucson Technician")
                 # (a profile without its city: Set up your profile opens by itself, and the person closes it)
                 await page.click("#setup [data-act='setup-close']")
+                await open_filter(page, "within")
                 assert await page.is_disabled("[data-within='25']")
                 assert "your profile doesn't say it" in await page.get_attribute("#within-group", "title")
                 # (the review, L3) the 10 miles kept from before shows, hiding nothing, and Any lets it go, so it
@@ -1894,6 +1908,7 @@ def test_within_miles_is_off_and_the_window_says_why_without_a_home_town(srv, jo
                 async with page.expect_response("**/api/settings"):
                     await page.click("[data-within='']")
                 assert desk.within_miles is None
+                await open_filter(page, "within")  # (a choice closed it)
                 await page.wait_for_function("document.querySelector('#within-why').innerText === 'needs your home "
                                              "town'")
                 await page.click("#area-btn")
@@ -2047,6 +2062,7 @@ def test_a_state_asked_before_a_chip_is_pressed_never_puts_the_old_chips_back(sr
                 async with page.expect_request("**/api/state") as asked:
                     pass
                 await asked.value
+                await open_filter(page, "workplace")
                 async with page.expect_response("**/api/settings"):
                     await page.click("[data-chip='workplace'][data-value='remote']")
                 assert await (await asked.value).response() is not None
@@ -2125,6 +2141,7 @@ def test_the_company_box_shows_only_the_openings_of_the_companies_chosen(srv, jo
     every = ["Process Technician", "Equipment Technician", "Field Service Engineer", "Maintenance Technician"]
 
     async def choose(page, typed, titles):
+        await open_filter(page, "more")  # (Company, under More filters)
         async with page.expect_response("**/api/settings"):
             await page.fill("#company-add", typed)
             await page.press("#company-add", "Enter")
@@ -2162,6 +2179,7 @@ def test_the_company_box_shows_only_the_openings_of_the_companies_chosen(srv, jo
                 await page.reload()
                 await page.wait_for_selector("text=Equipment Technician")
                 assert await _shown_titles(page) == ["Equipment Technician"]
+                await open_filter(page, "more")  # (Company, under More filters)
                 async with page.expect_response("**/api/settings"):
                     await page.click("[data-company='Microchip Technology']")
                 await page.wait_for_function("document.querySelectorAll('li.row a.title').length === 4")
@@ -2213,6 +2231,7 @@ def test_the_system_chips_show_only_the_jobs_on_the_systems_pressed(srv, job_app
                 page = await browser.new_page()
                 await open_desk(page, desk, "openings")
                 await page.wait_for_selector("text=Unnamed Technician")
+                await open_filter(page, "more")  # (Job system, under More filters)
                 assert await page.is_visible("#system-chips")
                 chips = await page.locator("[data-chip='systems']").all_inner_texts()
                 assert chips == ["Employer's own site", "Oracle", "Workday"], chips  # (by name: a steady row)
@@ -2363,8 +2382,9 @@ def test_troubleshooting_searches_every_list_shows_where_the_desk_stops_and_send
                 await page.check("#handled-only")
                 await page.wait_for_selector("text=HR Generalist", state="detached")
                 listed = list(desk.listings)
-                await page.click("#more summary")  # (under the Openings head's More)
+                await press_menu(page, "settings")  # (Searching and applying, on the Settings page)
                 await page.check("#troubleshoot")
+                await press_menu(page, "openings")
                 # the other way's openings are cleared; Find jobs searches again, troubleshooting's way
                 await page.click("#find")
                 for _ in range(100):
@@ -3297,8 +3317,8 @@ def test_the_page_lists_my_applications_folds_an_idle_side_and_closes_a_tip(srv,
                 assert await page.locator("#needs").is_hidden() and await page.locator("#work").is_hidden()
                 await press_menu(page, "openings")
                 assert "location not given" not in await page.inner_text("#rows")
-                assert "(2)" in await page.inner_text("[data-filter=mine]")
-                await page.click("[data-filter=mine]")
+                assert await page.inner_text("#nav-applications") == "2"  # (the menu's number for Applications)
+                await press_menu(page, "applications")
                 rows = await page.inner_text("#rows")
                 assert "Intel" in rows and "Applied" in rows and "Rejected" in rows and "KLA" not in rows, rows
                 assert await page.locator("#apply").is_hidden()
@@ -3928,6 +3948,7 @@ def test_the_openings_bar_shows_where_each_job_stands_and_troubleshooting_ticks_
             async with person_browser() as browser:
                 page = await browser.new_page()
                 await open_desk(page, desk, "openings")
+                await open_filter(page, "more")  # (Status, under More filters)
                 await page.wait_for_selector("#stops:not([hidden]) [data-stop='bot']")
                 bar = {await b.get_attribute("data-stop"): " ".join((await b.inner_text()).split())
                        for b in await page.locator("#stops button").all()}
@@ -3946,6 +3967,7 @@ def test_the_openings_bar_shows_where_each_job_stands_and_troubleshooting_ticks_
                 # a group picked: Select recommended ticks nothing it hides (none of the stuck one's is new)
                 await page.click("[data-act='select-recommended']")
                 assert await page.is_disabled("#apply")
+                await open_filter(page, "more")
                 await page.click("[data-stop='new']")
                 await page.wait_for_selector("#rows >> text=Technician new1")
                 await page.click("[data-act='select-recommended']")
@@ -3959,6 +3981,7 @@ def test_the_openings_bar_shows_where_each_job_stands_and_troubleshooting_ticks_
                 ticked = await page.eval_on_selector_all("[data-pick]:checked", "bs => bs.map((b) => b.dataset.pick)")
                 assert sorted(ticked) == ["https://example.com/new1", "https://example.com/new3"], ticked
                 # the page's refresh leaves the bar as it is: the focus stays on it
+                await open_filter(page, "more")
                 await page.focus("[data-stop='new']")
                 await asyncio.sleep(2)
                 assert await page.evaluate("document.activeElement.dataset.stop") == "new"
@@ -4893,9 +4916,9 @@ def test_my_applications_on_the_page_are_grouped_marked_for_follow_up_and_copy_a
                 page.on("request",
                         lambda r: sent.append(r.url) if not r.url.startswith(desk.url.split("?")[0]) else None)
                 await open_desk(page, desk, "openings")
-                await page.wait_for_function("document.getElementById('mine-count').textContent === '(10)'")
+                await page.wait_for_function("document.getElementById('nav-applications').textContent === '10'")
                 seen = {"hidden_on_openings": await page.locator("#app-groups").is_hidden()}
-                await page.click("[data-filter=mine]")
+                await press_menu(page, "applications")
                 await page.wait_for_selector("#app-groups:not([hidden]) button")
                 seen["bar"] = " ".join((await page.inner_text("#app-groups")).split())
                 await page.click("[data-app-group=interviews]")
@@ -4928,8 +4951,8 @@ def test_my_applications_on_the_page_are_grouped_marked_for_follow_up_and_copy_a
                 seen["copied_follow_up"] = await page.evaluate("navigator.clipboard.readText()")
                 seen["toast_follow_up"] = await page.inner_text("#toast")
                 await page.reload()
-                await page.wait_for_function("document.getElementById('mine-count').textContent === '(10)'")
-                await page.click("[data-filter=mine]")
+                await page.wait_for_function("document.getElementById('nav-applications').textContent === '10'")
+                await press_menu(page, "applications")
                 await page.wait_for_selector("#app-groups:not([hidden]) button")
                 seen["kept"] = await page.get_attribute("[data-app-group=waiting]", "aria-pressed")
                 seen["kept_rows"] = await page.inner_text("#rows")
@@ -5312,6 +5335,7 @@ def test_the_page_marks_new_openings_hides_one_not_wanted_with_undo_and_shows_sa
                 await page.wait_for_selector("text=Field Service Engineer")
                 seen = {"new": sorted(await page.locator("li.row", has=page.locator(".chip.new")).locator(".title")
                                       .all_inner_texts())}
+                await open_filter(page, "more")  # (Status, under More filters)
                 seen["bar"] = " ".join((await page.inner_text("#stops")).split())
                 await page.click("[data-stop=fresh]")
                 await page.wait_for_selector("[data-stop=fresh][aria-pressed=true]")
@@ -5335,8 +5359,8 @@ def test_the_page_marks_new_openings_hides_one_not_wanted_with_undo_and_shows_sa
                 await tech_row.locator(".score:text('66')").wait_for()
                 seen["concern"] = await tech_row.locator(".chip.minus").inner_text()
                 assert srv.tracker().not_interested()[fse]["reason"] == "company"
-                # its group, with Undo by its row
-                await page.click("[data-stop=unwanted]")
+                # its tab, with Undo by its row
+                await page.click("[data-filter=unwanted]")
                 hidden = page.locator("li.row", has_text="Field Service Engineer")
                 await hidden.wait_for()
                 seen["hidden_chip"] = await hidden.locator(".chip.stop").inner_text()
@@ -5344,6 +5368,7 @@ def test_the_page_marks_new_openings_hides_one_not_wanted_with_undo_and_shows_sa
                 seen["sizes"].append(await page.evaluate("() => [document.documentElement.scrollWidth, "
                                                          "document.documentElement.clientWidth]"))
                 await hidden.locator(f"[data-ni-undo='{fse}']").click()
+                await open_filter(page, "more")
                 await page.click("[data-stop=any]")
                 await page.locator("li.row", has_text="Field Service Engineer").wait_for()
                 await tech_row.locator(".score:text('76')").wait_for()
@@ -5493,10 +5518,10 @@ def test_undo_on_an_employers_row_hidden_by_its_indeed_jobs_mark_brings_it_back(
                 said: list[str] = []
                 page.on("dialog", lambda d: (said.append(d.message), asyncio.ensure_future(d.dismiss())))
                 await open_desk(page, desk, "openings")
-                await page.click("[data-stop=unwanted]")
+                await page.click("[data-filter=unwanted]")
                 row = page.locator("li.row", has_text="Equipment Technician")
                 await row.locator(f"[data-ni-undo='{INTEL_JOB}']").click()
-                await page.click("[data-stop=any]")
+                await page.click("[data-filter=recommended]")  # (back from the Not interested tab)
                 await page.locator("li.row", has_text="Equipment Technician").locator("[data-ni]").wait_for()
                 seen["marked"] = srv.tracker().marked_not_interested(job_id=saved["id"])
                 seen["said"] = said
@@ -5849,10 +5874,12 @@ def test_the_needs_you_count_is_the_bars_groups_added_up(srv, job_apply_home):
             async with person_browser() as browser:
                 page = await browser.new_page()
                 await open_desk(page, desk, "openings")
+                await open_filter(page, "more")  # (Status, under More filters)
                 await page.wait_for_selector("#stops:not([hidden]) [data-stop='you']")
                 await press_menu(page, "home")
                 card = int(await page.inner_text("#needs-count"))
                 await press_menu(page, "openings")
+                await open_filter(page, "more")  # (Status, under More filters)
                 bar = {await b.get_attribute("data-stop"): " ".join((await b.inner_text()).split())
                        for b in await page.locator("#stops button").all()}
                 rows = await page.eval_on_selector_all("#rows .row", """rs => rs.map((r) => [
@@ -6190,19 +6217,26 @@ def test_each_switch_that_is_on_is_said_under_the_openings_head(srv, job_apply_h
                 seen["handled"] = await said("Only where")
                 await page.uncheck("#handled-only")
                 seen["handled_off"] = await gone()
-                await page.click("#more summary")
+                await press_menu(page, "settings")  # (Searching and applying, on the Settings page)
                 await page.check("#auto-search")
+                await press_menu(page, "openings")
                 seen["auto"] = await said("Search by itself:")
-                await page.click("[data-filter=mine]")  # (said with the openings only)
+                await press_menu(page, "applications")  # (said with the openings only)
                 seen["mine"] = await gone()
                 await page.click("[data-filter=recommended]")
                 await said("Search by itself:")
+                await press_menu(page, "settings")
                 await page.uncheck("#auto-search")
+                await press_menu(page, "openings")
                 seen["auto_off"] = await gone()
                 # (last: turned on or off, Troubleshooting clears the openings for Find jobs to search again)
+                await press_menu(page, "settings")
                 await page.check("#troubleshoot")
+                await press_menu(page, "openings")
                 seen["troubleshoot"] = await said("Troubleshooting:")
+                await press_menu(page, "settings")
                 await page.uncheck("#troubleshoot")
+                await press_menu(page, "openings")
                 seen["troubleshoot_off"] = await gone()
                 await browser.close()
                 return seen
@@ -6215,7 +6249,7 @@ def test_each_switch_that_is_on_is_said_under_the_openings_head(srv, job_apply_h
                                "check reached the review page; bot checks and steps the desk can't do yet are "
                                "elsewhere."), seen["handled"]
     assert seen["troubleshoot"] == ("Troubleshooting: nothing is submitted; Find jobs searches every list; only the "
-                                    "employers where the desk doesn't go all the way yet are shown."), seen
+                                    "employers where the desk doesn't go all the way yet are shown. Turn it off"), seen
     assert seen["auto"] == ("Search by itself: the desk searches again when the openings are over 12 hours old (not "
                             "while the queue is paused)."), seen["auto"]
     assert seen["handled_off"] == seen["troubleshoot_off"] == seen["auto_off"] == seen["mine"] == "", seen
@@ -6423,9 +6457,11 @@ def test_two_quick_presses_of_apply_ask_the_preflight_once(srv, job_apply_home):
     assert len(tasks) == 1, tasks
 
 
-def test_more_stays_open_while_troubleshooting_is_on(srv, job_apply_home, monkeypatch):
-    """The review of U4: Troubleshooting under a closed More could be on with the box that turns it off out of sight.
-    While it's on, More is open (closed again, it opens on the page's next refresh); with it off, More starts closed."""
+def test_turn_it_off_in_the_hint_turns_troubleshooting_off(srv, job_apply_home, monkeypatch):
+    """The review of U4: Troubleshooting could be on with the box that turns it off out of sight. While it's on, its
+    line under the Openings filters ends with Turn it off (the design's B3), there through the page's refreshes, and
+    pressing it turns troubleshooting off; with it off, the line and its button are gone and More filters starts
+    closed."""
     async def no_search(query, companies=None, location=None, limit_per_company=10):
         return {"results": [], "errors": {}, "browser_only": []}  # (never the real sites)
 
@@ -6442,24 +6478,26 @@ def test_more_stays_open_while_troubleshooting_is_on(srv, job_apply_home, monkey
             async with person_browser() as browser:
                 page = await browser.new_page()
                 await open_desk(page, desk, "openings")
-                await page.wait_for_selector("#troubleshoot:visible")
-                seen["open"] = await page.eval_on_selector("#more", "d => d.open")
-                await page.click("#more summary")  # (closed by the person)
-                await page.wait_for_selector("#troubleshoot:visible")  # (open again with the next refresh)
+                await page.wait_for_selector("#switch-hint [data-act=troubleshoot-off]:visible")
+                await page.wait_for_timeout(1700)  # (a refresh: still there)
+                seen["open"] = await page.is_visible("#switch-hint [data-act=troubleshoot-off]")
+                seen["said"] = await page.inner_text("#switch-hint [data-act=troubleshoot-off]")
                 seen["checked"] = await page.is_checked("#troubleshoot")
-                await page.uncheck("#troubleshoot")
+                await page.click("#switch-hint [data-act=troubleshoot-off]")
                 await page.wait_for_function("() => !document.getElementById('troubleshoot').checked")
                 await _until(lambda: not desk.troubleshoot)
+                await page.wait_for_selector("#switch-hint [data-act=troubleshoot-off]", state="detached")
                 await page.reload()
                 await page.wait_for_selector("#plugin-version:not(:empty)")
                 seen["off_open"] = await page.eval_on_selector("#more", "d => d.open")
+                seen["off_button"] = await page.locator("[data-act=troubleshoot-off]").count()
                 await browser.close()
                 return seen
         finally:
             await desk.stop()
 
     seen = run(go())
-    assert seen == {"open": True, "checked": True, "off_open": False}, seen
+    assert seen == {"open": True, "said": "Turn it off", "checked": True, "off_open": False, "off_button": 0}, seen
 
 
 # ----------------------------------------- emailed codes through Claude's Gmail (settings.email_codes)

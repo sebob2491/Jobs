@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 
 import pytest
-from conftest import browser_available, open_desk, person_browser, run
+from conftest import browser_available, open_desk, open_filter, person_browser, run
 from test_desk_frame import DESK_FIXTURES, PAGES, _canned, _state
 
 SHOTS = os.environ.get("JOB_APPLY_SHOTS", "")
@@ -61,3 +61,30 @@ def test_a_picture_of_each_page(srv, job_apply_home, monkeypatch, case, look, wi
     assert dark == (look == "dark")
     assert [path.name for path in written] == [shot_name(case, name, look, window) for name in PAGES]
     assert all(path.stat().st_size > 2000 for path in written), [(path.name, path.stat().st_size) for path in written]
+
+
+@pytest.mark.parametrize("dropdown", ["pay", "more", "add"])
+@pytest.mark.parametrize("look", LOOKS)
+def test_a_picture_of_the_openings_with_a_drop_down_open(srv, job_apply_home, monkeypatch, look, dropdown):
+    """The Openings page (the openings state) with one of its drop-downs open (the design's B3): Pay, More filters, or
+    Add job links, in each look, in a window of 1440 by 900; saved as openings-openings-<drop-down>-<look>.png."""
+    folder = Path(SHOTS)
+    folder.mkdir(parents=True, exist_ok=True)
+    desk = _canned(srv, monkeypatch, _state("state-openings.json"))
+    path = folder / f"openings-openings-{dropdown}-{look}.png"
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1440, "height": 900}, color_scheme=look)
+                await open_desk(page, desk, "openings")
+                await open_filter(page, dropdown)
+                await page.wait_for_timeout(150)
+                await page.screenshot(path=str(path))
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert path.stat().st_size > 2000

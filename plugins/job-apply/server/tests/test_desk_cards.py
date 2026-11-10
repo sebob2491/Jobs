@@ -39,9 +39,8 @@ CASES = {
     # date, a new one, one where the desk goes all the way, one also on Indeed, one not recommended, one Not interested;
     # the common questions (one answered) and a saved password
     "openings": {"state": "state-openings.json", "golden": "cards-openings.txt"},
-    # the same openings' My applications: one due a follow-up, one at the interview stage
-    "applications": {"state": "state-openings.json", "golden": "cards-applications.txt", "list": "applications",
-                     "press": ["[data-filter=mine]"]},
+    # the same openings' My applications (the Applications page): one due a follow-up, one at the interview stage
+    "applications": {"state": "state-openings.json", "golden": "cards-applications.txt", "list": "applications"},
     # the bar's Stuck group picked: its hint offers the Notes; the queue paused with one waiting
     "notes": {"state": "state-notes.json", "golden": "cards-notes.txt", "storage": {"desk-stop-filter": "stuck"}},
 }
@@ -156,8 +155,9 @@ def test_the_desks_cards_say_what_they_said(srv, job_apply_home, monkeypatch, ca
     how = CASES[case]
     seen = _cards(srv, monkeypatch, _state(how["state"]), how.get("storage"), how.get("press", []),
                   how.get("list", "openings"))
-    # (every card: Home's four, the Openings card, Your answers' and What's working's, Settings' six, Help's two)
-    assert seen.count("\n## ") + 1 == 15, seen
+    # (every card: Home's four, the Openings card, Your answers' and What's working's, Settings' seven (Version B's
+    # Searching and applying among them), Help's two)
+    assert seen.count("\n## ") + 1 == 16, seen
     _compare(how["golden"], seen)
 
 
