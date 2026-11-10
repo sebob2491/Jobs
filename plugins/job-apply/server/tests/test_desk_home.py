@@ -463,10 +463,11 @@ def test_the_tiles_and_this_week_from_fixed_applications_and_a_fixed_clock(srv, 
     (the applications applied for in the last 7 days, and how many in all). This week: seven bars, a day each, ending
     today, today's marked; under them sent, answers and interviews; and the link to What's working in its header. All
     from a fixed set of applications, on a fixed clock (Friday the 13th of November 2026, 3 pm in Phoenix)."""
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
+    from datetime import datetime, timedelta, timezone
 
-    friday = datetime(2026, 11, 13, 15, 0, tzinfo=ZoneInfo("America/Phoenix")).timestamp()
+    # (Phoenix keeps one time all year, 7 hours behind UTC: said so here, since Windows has no list of time zones for
+    # Python to look "America/Phoenix" up in; the browser below has its own)
+    friday = datetime(2026, 11, 13, 15, 0, tzinfo=timezone(timedelta(hours=-7))).timestamp()
     state = Desk.state
     monkeypatch.setattr(Desk, "state", lambda self: {**state(self), "applications": copy.deepcopy(_APPS)})
     busy, _ = _stopped_desk(srv, {
