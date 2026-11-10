@@ -185,6 +185,8 @@ input[type=checkbox] { appearance: none; -webkit-appearance: none; width: 17px; 
   background: var(--panel) center / 11px 11px no-repeat; cursor: pointer; }
 input[type=checkbox]:checked { border-color: var(--accent); background-color: var(--accent);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12.5 4.5 4.5L19 7'/%3E%3C/svg%3E"); }
+input[type=checkbox]:indeterminate:not(.switch) { border-color: var(--accent); background-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.4' stroke-linecap='round'%3E%3Cpath d='M6 12h12'/%3E%3C/svg%3E"); }
 input[type=checkbox]:disabled { opacity: .5; cursor: default; }
 @media (prefers-reduced-motion: no-preference) {
   button, .btn, a.button, .nav a, input, select { transition: background-color .12s ease-out, border-color .12s ease-out,
@@ -314,42 +316,77 @@ details.f#more { position: static; }
 .at-once { display: inline-flex; align-items: center; gap: 4px; color: var(--body); }
 .at-once button { padding: 0 10px; }
 ul.rows { list-style: none; margin: 0; padding: 0; }
-.row { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 12px; padding: 13px 18px;
-  border-top: 1px solid var(--line-2); align-items: start; }
+/* the openings' table: the header row and each opening on one column template (CSS grid on the list's own rows, so
+   patch() and the tests keep the elements they know); a cell per column, each in its named area */
+.rows-head, .row { display: grid; align-items: center; column-gap: 12px;
+  grid-template-columns: 46px 62px minmax(0, 1fr) 150px 104px 168px 170px;
+  grid-template-areas: "pick fit job pay posted sys state"; padding: 0 18px 0 4px; }
+.rows-head { position: sticky; top: 0; z-index: 2; min-height: 40px; background: var(--side);
+  border-top: 1px solid var(--line-2); border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 600;
+  color: var(--muted); }
+.row { min-height: 60px; padding-top: 10px; padding-bottom: 10px; border-top: 1px solid var(--line-2); }
 .row:first-child { border-top: 0; }
-@media (max-width: 600px) { .row { grid-template-columns: auto auto minmax(0, 1fr); } .row > div:last-child { grid-column: 3; } }
+.rows-head > :nth-child(1), .row > .c-pick { grid-area: pick; justify-self: center; display: flex; }
+.rows-head > :nth-child(2), .row > .c-fit { grid-area: fit; }
+.rows-head > :nth-child(3), .row > .c-job { grid-area: job; min-width: 0; }
+.rows-head > :nth-child(4), .row > .c-pay { grid-area: pay; }
+.rows-head > :nth-child(5), .row > .c-posted { grid-area: posted; }
+.rows-head > :nth-child(6), .row > .c-sys { grid-area: sys; min-width: 0; }
+.rows-head > :nth-child(7), .row > .state { grid-area: state; }
+.row > .c-pay, .row > .c-posted { font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.row .dim { color: var(--muted); }
+.c-sys b { display: block; font-weight: 500; font-size: 13.5px; overflow-wrap: anywhere; }
+.c-sys .chip.handled { display: flex; align-items: center; gap: 4px; padding: 0; border-radius: 0; background: none;
+  color: var(--good); font-size: 12px; font-weight: 500; }
+.c-sys .chip.handled .ico { width: 13px; height: 13px; stroke-width: 2.4; }
+/* at 1100px and below: two lines, Pay, Posted and Applies on under the Job cell (the header the same) */
+@media (max-width: 1100px) {
+  .rows-head, .row { grid-template-columns: 46px 62px repeat(3, minmax(0, 1fr)) 150px; row-gap: 6px;
+    grid-template-areas: "pick fit job job job state" ". . pay posted sys sys"; }
+  .rows-head { padding-top: 6px; padding-bottom: 6px; }
+}
+/* a phone's width: the Status under the Job cell too, and Applies on under Pay and Posted */
+@media (max-width: 600px) {
+  .rows-head, .row { grid-template-columns: 34px 46px minmax(0, 1fr) minmax(0, 1fr); column-gap: 10px; padding-right: 12px;
+    grid-template-areas: "pick fit job job" ". . state state" ". . pay posted" ". . sys sys"; }
+}
 .row.done { opacity: .6; }
-.row.app, .row.app:first-child { grid-template-columns: minmax(0, 1fr) auto; }
-@media (max-width: 600px) { .row.app > div:last-child { grid-column: auto; } }
-.row input[type=checkbox] { margin-top: 5px; }
+.row.sel { background: var(--row-sel); }
+/* an application's row (the Applications page, until it has its own list): its words, and its buttons at the right */
+.row.app, .row.app:first-child { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: none; gap: 12px;
+  padding: 13px 18px; align-items: start; min-height: 0; }
+.row.app > * { grid-area: auto; }
 .row .state { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.row .state .ni { margin-left: auto; color: var(--muted); }
+.row .state .ni:hover { color: var(--text); }
 .row.app .state button { height: 28px; padding: 0 10px; font-size: 13px; }
 .state button.link { font-size: 13px; }
-.score { display: inline-block; min-width: 38px; text-align: center; font-weight: 700; font-size: 13px; line-height: 20px;
-  padding: 3px 0; border-radius: 8px; background: var(--chip); color: var(--body); font-variant-numeric: tabular-nums; }
-/* a score that can show how it adds up: pressed, its parts come up under the opening's tags */
-button.score { height: auto; border: 0; box-shadow: none; }
-button.score:hover { box-shadow: 0 0 0 1px var(--muted); }
-.score.s4 { background: var(--good-bg); color: var(--good); }
-.score.s3 { background: var(--info-bg); color: var(--info); }
-.score.s2 { background: var(--warn-bg); color: var(--warn); }
-.score.s1 { color: var(--muted); }
-button.score.s4:hover { background: var(--good-bg); }
-button.score.s3:hover { background: var(--info-bg); }
-button.score.s2:hover { background: var(--warn-bg); }
+/* the Fit ring: filled to the score, the number inside, its color the score's band */
+.score { --p: 0; --c: var(--muted); width: 38px; height: 38px; padding: 0; border: 0; border-radius: 50%;
+  display: grid; place-items: center; background: conic-gradient(var(--c) calc(var(--p) * 1%), var(--line) 0);
+  box-shadow: none; color: var(--text); }
+.score b { width: 30px; height: 30px; border-radius: 50%; background: var(--panel); display: grid; place-items: center;
+  font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.row.sel .score b { background: var(--row-sel); }
+/* a score that can show why and how it adds up: pressed, its reasons and parts come up under the Job cell */
+button.score, button.score:hover { height: 38px; background: conic-gradient(var(--c) calc(var(--p) * 1%), var(--line) 0); }
+button.score:hover { box-shadow: 0 0 0 2px var(--control-line); }
+.score.s4 { --c: var(--good); }
+.score.s3 { --c: var(--info); }
+.score.s2 { --c: var(--warn); }
+.score.s1 { --c: var(--muted); }
 .parts { font-size: 13px; color: var(--muted); margin-top: 6px; overflow-wrap: anywhere; }
 /* (the words wrap, so a long one, an employer's name, never widens the page; only the number stays whole) */
 .parts .n { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .title { font-weight: 600; color: var(--text); text-decoration: none; overflow-wrap: anywhere; }
 .title:hover { text-decoration: underline; }
 .meta { color: var(--muted); font-size: 13px; margin-top: 2px; }
-.chips { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 6px; }
+.chips, .reasons { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 6px; }
 .chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--chip); color: var(--muted); }
 .chip.plus { background: var(--good-bg); color: var(--good); }
 .chip.minus { background: var(--warn-bg); color: var(--warn); }
 .chip.stop { background: var(--bad-bg); color: var(--bad); }
-.chip.new { background: var(--info-bg); color: var(--info); font-weight: 600; }
-.chip.handled { background: var(--good-bg); color: var(--good); font-weight: 600; }
+.pill.chip { padding: 2px 9px; }  /* (the New pill: chip.new is the class the page has always marked a new one by) */
 .empty { padding: 28px 18px; text-align: center; color: var(--muted); }
 
 /* a job's card, under Needs you, Working on, or Ready and done */
@@ -719,7 +756,16 @@ body.stopped > :not(#stopped) { display: none; }
             <label title="Claude writes each one through your own Claude Code sign-in (your Claude plan; no key needed), from your resume, your profile and the job's posting, using only what they say. The first one waits for your OK on its card."><input type="checkbox" id="letters"> Write a cover letter for each job</label>
             <span class="hint" id="letters-hint"></span>
           </div>
-          <ul class="rows" id="rows"></ul>
+          <!-- the openings' table: a header row that stays at the top while the list scrolls, then the list (CSS grid on
+               its rows, renderRows); #pick-all ticks what Select recommended would, or clears -->
+          <div class="rows-table" role="table" aria-label="Openings">
+            <div class="rows-head openings-only" role="row">
+              <div role="columnheader"><input type="checkbox" id="pick-all" aria-label="Select the recommended openings shown"></div>
+              <div role="columnheader">Fit</div><div role="columnheader">Job</div><div role="columnheader">Pay</div>
+              <div role="columnheader">Posted</div><div role="columnheader">Applies on</div><div role="columnheader">Status</div>
+            </div>
+            <ul class="rows" id="rows" role="rowgroup"></ul>
+          </div>
           <div id="skipped-sites" class="openings-only"></div>
         </section>
       </div>
@@ -1274,7 +1320,14 @@ function patch(container, entries) {
     if (drawn.has(key)) continue;  // drawn once: a second copy would never be removed
     drawn.add(key);
     let el = existing.get(key);
-    if (el && el.dataset.html !== html) { el.remove(); el = null; }
+    let refocus = "";  // (a control focused in an entry drawn again: the same control in the new one gets the focus)
+    if (el && el.dataset.html !== html) {
+      const f = document.activeElement;
+      const name = f && f !== el && el.contains(f) ? f.getAttributeNames().find((n) => n.startsWith("data-")) : "";
+      if (name) refocus = `[${name}="${CSS.escape(f.getAttribute(name))}"]`;
+      el.remove();
+      el = null;
+    }
     if (!el) {
       const t = document.createElement("template");
       t.innerHTML = html.trim();
@@ -1285,6 +1338,7 @@ function patch(container, entries) {
     existing.delete(key);
     const ref = prev ? prev.nextSibling : container.firstChild;
     if (el !== ref) container.insertBefore(el, ref);
+    if (refocus) { const again = el.querySelector(refocus); if (again) again.focus(); }
     prev = el;
   }
   for (const el of existing.values()) el.remove();
@@ -1581,14 +1635,14 @@ async function forClaude(text) {
   else prompt("Couldn't copy it. Copy this, and paste it to Claude:", text);
 }
 
-// An opening's pay on its meta line ("$26–$28/hr (≈$54k–$58k/yr)", where it came from in the tooltip), or that it isn't
-// listed; and when it was posted, or that its site doesn't say
+// An opening's pay, in its Pay cell ("$26–$28/hr (≈$54k–$58k/yr)", where it came from in the tooltip), or that it isn't
+// listed (dimmed); and when it was posted, in its Posted cell, or that its site doesn't say (dimmed)
 const payText = (r) => r.pay && r.pay.shown
-  ? `<span class="nowrap pay" title="${esc(r.pay.from)}">${esc(r.pay.shown)}</span>`
-  : `<span class="nowrap pay none" title="The posting doesn't list its pay, or it hasn't been read yet">pay not listed</span>`;
+  ? `<span class="pay" title="${esc(r.pay.from)}">${esc(r.pay.shown)}</span>`
+  : `<span class="nowrap pay none dim" title="The posting doesn't list its pay, or it hasn't been read yet">Not listed</span>`;
 const postedText = (r) => !r.posted
-  ? `<span class="nowrap" title="This employer's site gives no posting date">date unknown</span>`
-  : `<span class="nowrap"${r.ats === "greenhouse" ? ` title="Greenhouse gives the day the posting was last updated, not the day it was posted"` : ""}>${esc(shownDate(r.posted))}</span>`;
+  ? `<span class="when dim" title="This employer's site gives no posting date">No date</span>`
+  : `<span class="when"${r.ats === "greenhouse" ? ` title="Greenhouse gives the day the posting was last updated, not the day it was posted"` : ""}>${esc(shownDate(r.posted))}</span>`;
 // Where it's done (Remote, Hybrid, On-site; "likely remote" when only its text says), where that came from in the
 // tooltip; nothing when it doesn't say
 const workplaceText = (r) => r.workplace && r.workplace.shown
@@ -1701,11 +1755,9 @@ function renderRows() {
     const fit = r.fit || {score: 0, reasons: [], concerns: []};
     const done = DONE.has(r.status) || (r.run && UNDER_WAY.has(r.run.status)) || !!r.not_interested;
     const unwanted = r.not_interested;
+    // the Job cell's third line: only the chips that warn (the green reasons come up with the score's parts)
     const chips = [
-      ...(isNew(r) ? [`<span class="chip new">New</span>`] : []),
       ...(unwanted ? [`<span class="chip stop">Not interested${NI_WORDS[unwanted.reason] ? `: ${esc(NI_WORDS[unwanted.reason])}` : ""}</span>`] : []),
-      ...(r.handled ? [`<span class="chip handled" title="In the plugin's live check, the desk took a test applicant at this employer all the way to the review page.">Desk goes all the way</span>`] : []),
-      ...fit.reasons.map((x) => `<span class="chip plus">${esc(x)}</span>`),
       ...fit.concerns.map((x) => `<span class="chip ${fit.blocked || fit.avoided ? "stop" : "minus"}">${esc(x)}</span>`),
       // a clearance read from the posting's words, not said surely: shown, never hidden by No clearance needed
       ...(maybeClearance(fit) ? [`<span class="chip" title="Read from the posting's text: No clearance needed never hides this job for it">may need a security clearance</span>`] : []),
@@ -1719,42 +1771,53 @@ function renderRows() {
       ? `<button class="link" data-job="${r.job_id}" data-job-act="unskip" title="Put this job back where it was before you skipped it">Undo</button>` : "";
     // Not interested: on an opening the desk hasn't a card for (begun or skipped there: Skip job is for those) and that
     // isn't sent in; hidden, it has Undo
-    const ni = unwanted ? `<button class="link" data-ni-undo="${esc(r.url)}" title="Show this opening again">Undo</button>`
-      : !r.run && !SENT.has(r.status) ? `<button class="link" data-ni="${esc(r.url)}" title="Hide this opening: it's never applied to, and Undo brings it back">Not interested</button>` : "";
+    const ni = unwanted ? `<button class="btn sm" data-ni-undo="${esc(r.url)}" title="Show this opening again">Undo</button>`
+      : !r.run && !SENT.has(r.status) ? `<button class="btn ghost icon sm ni" data-ni="${esc(r.url)}" title="Not interested" aria-label="Not interested: ${esc(r.title)}"><svg class="ico" aria-hidden="true"><use href="#i-x"/></svg></button>` : "";
     // the same posting saved from a job board too: one row, applied for on the employer's site; the board's link here
     const also = (r.also_on || []).map((a) => link(a.url, `Also on ${esc(a.site)}`, "also")).join(" · ");
     // how the score adds up (recommend.py's own parts, which sum to it): on the score's tooltip, and under the tags
     // once the score is pressed. A score saved before scores had parts has none
     const parts = (fit.parts || []).map((p) => `${p.why} ${points(p.points, p.why === "start")}`);
+    const reasons = fit.reasons || [];
     const tip = `How well it fits your profile, out of 100 (${RECOMMEND_AT} or more is recommended).`
-      + (parts.length ? ` ${parts.join(", ")} = ${fit.score}. Press to see it under the tags.` : " The tags below say why.")
+      + (parts.length ? ` ${parts.join(", ")} = ${fit.score}. Press to see it under the job.` : reasons.length ? " Press to see why." : "")
       + (fit.placed ? ` ${fit.placed}.` : "");  // (what worked before: its place in the list, not its score)
-    const score = parts.length
-      ? `<button class="score ${scoreClass(fit.score)}" data-parts="${esc(r.url)}" aria-expanded="${partsOpen.has(r.url)}" title="${esc(tip)}">${esc(fit.score)}</button>`
-      : `<span class="score ${scoreClass(fit.score)}" title="${esc(tip)}">${esc(fit.score)}</span>`;
-    const sum = parts.length && partsOpen.has(r.url) ? `<div class="parts">${(fit.parts || []).map((p) =>
+    const ring = `class="score ${scoreClass(fit.score)}" style="--p: ${Math.max(0, Math.min(100, Number(fit.score) || 0))}" title="${esc(tip)}"`;
+    const score = parts.length || reasons.length
+      ? `<button ${ring} data-parts="${esc(r.url)}" aria-expanded="${partsOpen.has(r.url)}"><b>${esc(fit.score)}</b></button>`
+      : `<span ${ring}><b>${esc(fit.score)}</b></span>`;
+    // pressed: the green reasons, then how the score adds up
+    const sum = !partsOpen.has(r.url) ? "" : (reasons.length ? `<div class="reasons">${reasons.map((x) => `<span class="chip plus">${esc(x)}</span>`).join("")}</div>` : "")
+      + (parts.length ? `<div class="parts">${(fit.parts || []).map((p) =>
       `<span class="pt">${esc(p.why)} <span class="n">${esc(points(p.points, p.why === "start"))}</span></span>`).join(" · ")}
-      = <span class="n">${esc(fit.score)}</span></div>${fit.placed ? `<div class="parts placed">${esc(fit.placed)}.</div>` : ""}` : "";
-    return {key: r.url, html: `<li class="row ${DONE.has(r.status) || unwanted ? "done" : ""}">
-      <input type="checkbox" data-pick="${esc(r.url)}" ${checked} ${done ? "disabled" : ""} aria-label="Select ${esc(r.title)}">
-      ${score}
-      <div>${link(r.url, esc(r.title), "title")}
+      = <span class="n">${esc(fit.score)}</span></div>${fit.placed ? `<div class="parts placed">${esc(fit.placed)}.</div>` : ""}` : "");
+    // Applies on: the job system, and under it whether the desk goes all the way there
+    const system = `<b>${esc((r.system && r.system.name) || "")}</b>${r.handled ? `<span class="chip handled" title="In the plugin's live check, the desk took a test applicant at this employer all the way to the review page."><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg>Goes all the way</span>` : ""}`;
+    const pill = statusPill(r) || (isNew(r) ? `<span class="pill new chip">New</span>` : "");
+    const rowClass = ["row", DONE.has(r.status) || unwanted ? "done" : "", checked ? "sel" : ""].filter(Boolean).join(" ");
+    return {key: r.url, html: `<li class="${rowClass}" role="row">
+      <div class="c-pick" role="cell"><input type="checkbox" data-pick="${esc(r.url)}" ${checked} ${done ? "disabled" : ""} aria-label="Select ${esc(r.title)}"></div>
+      <div class="c-fit" role="cell">${score}</div>
+      <div class="c-job" role="cell">${link(r.url, esc(r.title), "title")}
         <div class="meta">${[esc(r.company), r.location ? `<span title="${esc(r.location)}">${esc(places(r.location))}</span>` : "",
-          milesText(r), postedText(r), payText(r), workplaceText(r), jobTypesText(r)].filter(Boolean).join(" · ")}</div>
-        ${also ? `<div class="meta also-on" title="The same posting, saved from a job board too. It's applied for on the employer's site.">${also}</div>` : ""}
-        <div class="chips">${chips}</div>${sum}</div>
-      <div class="state">${statusPill(r)}${undo}${ni}</div></li>`};
+          milesText(r), workplaceText(r), jobTypesText(r)].filter(Boolean).join(" · ")}</div>
+        <div class="chips"${chips ? "" : " hidden"}>${chips}</div>
+        ${also ? `<div class="meta also-on" title="The same posting, saved from a job board too. It's applied for on the employer's site.">${also}</div>` : ""}${sum}</div>
+      <div class="c-pay" role="cell">${payText(r)}</div>
+      <div class="c-posted" role="cell">${postedText(r)}</div>
+      <div class="c-sys" role="cell">${system}</div>
+      <div class="state" role="cell">${pill}${undo}${ni}</div></li>`};
   });
   if (!entries.length) {
     const msg = query.trim() && (filter === "unwanted" ? all.some((r) => r.not_interested)
         : listed.filter(filtered).filter(inStop).length) ? "Nothing matches what you typed. Empty the search box to see the rest."
-      : stopFilter !== "any" && listed.some(shown) ? "None here right now. Press Any to see them all."
+      : stopFilter !== "any" && listed.some(shown) ? "None here right now. Set Status to Any, under More filters, to see them all."
       : state.search.status === "running" ? "Searching employers' career sites…"
       : onlyHandled && listed.length ? "Nothing here from the employers where the desk goes all the way. Turn off that switch to see the rest."
       : (state.settings.min_pay || state.settings.posted_within) && !state.settings.within_miles && !chipsOn() && !companiesOn() && listed.length
-        ? "Nothing here at that pay or posting date. Empty Pay at least, or press Posted: Any, to see the rest."
+        ? "Nothing here at that pay or posting date. Empty Pay at least, or set Posted to Any time, to see the rest."
       : state.settings.within_miles && !state.settings.min_pay && !state.settings.posted_within && !chipsOn() && !companiesOn() && listed.length
-        ? "Nothing here that near your home. Press Within: Any, or a farther one, to see the rest."
+        ? "Nothing here that near your home. Set Within to Any distance, or a farther one, to see the rest."
       : companiesOn() && !state.settings.min_pay && !state.settings.posted_within && !state.settings.within_miles && !chipsOn() && listed.length
         ? "Nothing here from the companies chosen. Press a company to let go of it, or press Find jobs to search again."
       : (state.settings.min_pay || state.settings.posted_within || state.settings.within_miles || chipsOn() || companiesOn()) && listed.length
@@ -1762,10 +1825,14 @@ function renderRows() {
       : troubleshooting ? "Nothing here yet from the employers where the desk doesn't go all the way. Press Find jobs: troubleshooting searches every list's employers."
       : (state.listings || []).length ? "Nothing recommended. Switch to All to see every opening."
       : "Press Find jobs to search every employer's career site for openings that fit your profile.";
-    entries.push({key: "empty", html: `<li class="empty">${esc(msg)}</li>`});
+    entries.push({key: "empty", html: `<li class="empty" role="row"><span role="cell">${esc(msg)}</span></li>`});
   }
   patch($("rows"), entries);
   const n = [...selected].filter(selectable).length;
+  // the header's box: unticked with nothing ticked, ticked when Select recommended would tick nothing more, half otherwise
+  const pickAll = $("pick-all"), whole = n > 0 && !toRecommend().length;
+  if (pickAll.checked !== whole) pickAll.checked = whole;
+  if (pickAll.indeterminate !== (n > 0 && !whole)) pickAll.indeterminate = n > 0 && !whole;
   $("apply").disabled = n === 0;
   $("apply").textContent = n ? `Apply to ${n} selected` : "Apply to selected";
   $("apply-hint").textContent = n || !rows.some((r) => selectable(r.url)) ? "" : "Tick the jobs to apply to.";
@@ -2897,6 +2964,31 @@ async function act(fn, hold = true) {
 // filled and waiting on its review page, or on the person, has its own buttons: Apply would
 // start it over. A failed one can be tried again.
 const UNDER_WAY = new Set(["submitted", "running", "queued", "ready", "needs_you"]);
+// What Select recommended (and the table's header box) would tick: the recommended openings shown that can be applied
+// to and aren't ticked yet; troubleshooting, one opening per employer (the best fit), since its others most likely stop
+// where it does (an employer with one ticked already, or one tried, has its one)
+function toRecommend() {
+  const s = state.settings || {};
+  const employerOf = (r) => String(r.company || "").trim().toLowerCase();
+  const picked = new Set((state.listings || []).filter((r) => r.run || (selected.has(r.url) && selectable(r.url)))
+    .map(employerOf));
+  const rank = (r) => (r.fit || {}).rank ?? (r.fit || {}).score ?? 0;  // (the order what worked before gives)
+  const urls = [];
+  [...(state.listings || [])].sort((x, y) => rank(y) - rank(x)).forEach((r) => {
+    if (!((s.troubleshoot || r.fit && r.fit.recommended) && !DONE.has(r.status) && !r.run && selectable(r.url)
+          && (s.handled_only ? r.handled : s.troubleshoot ? !r.handled : true))) return;
+    const employer = employerOf(r);
+    if (selected.has(r.url) || (s.troubleshoot && employer && picked.has(employer))) return;
+    picked.add(employer);
+    urls.push(r.url);
+  });
+  return urls;
+}
+function selectRecommended() {
+  toRecommend().forEach((url) => selected.add(url));
+  renderRows();
+}
+
 function selectable(url) {
   const r = (state.listings || []).find((x) => x.url === url);
   return !!r && shown(r) && inStop(r) && !DONE.has(r.status) && !(r.run && UNDER_WAY.has(r.run.status)) && !r.not_interested;
@@ -3295,24 +3387,7 @@ document.addEventListener("click", (e) => {
       });
     }
   }
-  if (a === "select-recommended") {
-    const s = state.settings || {};
-    // troubleshooting: one opening per employer (the best fit), since its others most likely stop where it does;
-    // an employer with one ticked already, or one tried, has its one
-    const employerOf = (r) => String(r.company || "").trim().toLowerCase();
-    const picked = new Set((state.listings || []).filter((r) => r.run || (selected.has(r.url) && selectable(r.url)))
-      .map(employerOf));
-    const rank = (r) => (r.fit || {}).rank ?? (r.fit || {}).score ?? 0;  // (the order what worked before gives)
-    [...(state.listings || [])].sort((x, y) => rank(y) - rank(x)).forEach((r) => {
-      if (!((s.troubleshoot || r.fit && r.fit.recommended) && !DONE.has(r.status) && !r.run && selectable(r.url)
-            && (s.handled_only ? r.handled : s.troubleshoot ? !r.handled : true))) return;
-      const employer = employerOf(r);
-      if (s.troubleshoot && employer && picked.has(employer)) return;
-      picked.add(employer);
-      selected.add(r.url);
-    });
-    renderRows();
-  }
+  if (a === "select-recommended") selectRecommended();
   if (a === "select-none") { selected.clear(); renderRows(); }
   if (a === "troubleshoot-off") {  // (the hint's and the notice's button: as the switch on the Settings page, turned off)
     selected.clear();
@@ -3454,6 +3529,9 @@ document.addEventListener("change", (e) => {
   const t = e.target;
   if (t.id === "company-add" && state) addCompany(t);
   if (t.dataset.pick) { t.checked ? selected.add(t.dataset.pick) : selected.delete(t.dataset.pick); renderRows(); }
+  if (t.id === "pick-all" && state) {  // (the header's box: unticked, as Select recommended; otherwise, as Clear)
+    if ([...selected].some(selectable)) { selected.clear(); renderRows(); } else selectRecommended();
+  }
   if (t.id === "auto") {
     if (t.checked && !confirm("Submit complete applications without asking you first? You can turn this off any time.")) { t.checked = false; return; }
     act(() => api("/api/settings", {auto_submit: t.checked}));
