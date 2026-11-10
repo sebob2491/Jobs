@@ -504,10 +504,23 @@ def test_an_update_reopens_the_desk_only_once_its_packages_and_browser_are_set_u
     post = _step(iss["code"], "ssPostInstall")
     setup = post.index("SetUp();")
     reopen = re.search(r"if Relaunch\(\) then\s*begin\s*Log\('Job Desk: opening the updated desk\.'\);\s*"
-                       r"Reopened := OpenDesk\(ExpandConstant\('\{app\}'\)\);\s*end;", post)
+                       r"Reopened := OpenDesk\(ExpandConstant\('\{app\}'\)\);", post)
     assert reopen and reopen.start() > setup > -1, post
     assert post.index("SuppressibleMsgBox('The Job Desk is installed, but:'") < reopen.start()
     assert "Log('Job Desk: the install finished.');" in _step(iss["code"], "ssDone")
+
+
+def test_an_update_whose_desk_wont_open_says_where_to_open_it(iss):
+    """A good update whose desk won't start (OpenDesk false) says so rather than nothing: a line in the log, and "The
+    Job Desk was updated. Open it from the Start menu." in a message a silent install shows (unless message boxes are
+    suppressed)."""
+    post = _step(iss["code"], "ssPostInstall")
+    said = re.search(r"Reopened := OpenDesk\(ExpandConstant\('\{app\}'\)\);\s*(\{[^}]*\}\s*)?"
+                     r"if not Reopened then\s*begin\s*"
+                     r"Log\('Job Desk: the update finished, but the desk could not be opened\.'\);\s*"
+                     r"SuppressibleMsgBox\('The Job Desk was updated\. Open it from the Start menu\.', mbInformation, "
+                     r"MB_OK, IDOK\);\s*end;\s*end;", post)
+    assert said, post
 
 
 def test_an_update_that_didnt_finish_opens_the_desk_still_installed(iss):

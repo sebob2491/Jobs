@@ -277,6 +277,12 @@ begin
     begin
       Log('Job Desk: opening the updated desk.');
       Reopened := OpenDesk(ExpandConstant('{app}'));
+      { (it wouldn't start: the update is done all the same, and the person is told where to open it) }
+      if not Reopened then
+      begin
+        Log('Job Desk: the update finished, but the desk could not be opened.');
+        SuppressibleMsgBox('The Job Desk was updated. Open it from the Start menu.', mbInformation, MB_OK, IDOK);
+      end;
     end;
   end;
   if CurStep = ssDone then
