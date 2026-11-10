@@ -1,5 +1,6 @@
 {
  "profile": {
+  "documents": {"resume": "resume.pdf", "cover_letter": null},
   "name": "Sam Rivera",
   "missing": [],
   "gaps": [
@@ -13,6 +14,15 @@
   "home_problem": ""
  },
  "settings": {
+  "accept_notices": true,
+  "accept_cookies": false,
+  "email_codes": false,
+  "email_tracking": false,
+  "desk_window": "app",
+  "browser_channel": "chrome",
+  "cover_letter_model": "",
+  "phone_alerts_server": "",
+  "manage_accounts_setting": false,
   "submit_mode": "review",
   "dry_run": false,
   "manage_accounts": false,

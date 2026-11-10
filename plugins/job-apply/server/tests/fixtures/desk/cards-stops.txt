@@ -462,6 +462,17 @@ Each employer has its own account on its job site. Save one password for a job s
 Your email: with an app password for the address in your profile (for Gmail, make one at myaccount.google.com/apppasswords; it needs 2-Step Verification), a job waiting on an emailed code or link gets it from your inbox: only mail from that job's site that arrived after it began waiting, read without marking anything read. Without one, with email_codes: true in your profile and the Gmail connector in Claude, Claude reads it through Gmail while the desk's chat is open (only that job's own mail), and the desk puts it in.
 An Anthropic API key (make one in the Claude Console, console.anthropic.com, and add some credit under Billing): with Write a cover letter for each job on, Claude writes each letter through Anthropic's API with it (about 10 to 20 cents a letter, written and checked), so the desk doesn't need Claude Code or your Claude login for them. Each letter is checked against your resume and profile the same way.
 
+## panel-email-h
+Your email's app password
+A separate password your email provider gives to one program. With it, the desk reads only mail from the job's own site that arrived after the job began waiting, and marks nothing as read. Works with Gmail, Yahoo, iCloud and AOL addresses.
+How to make one for Gmail
+Not saved
+Save
+Test it
+Test it now
+Let Claude read codes through Gmail
+Without an app password, Claude reads the code through its Gmail connector while your chat is open, and the desk puts it in.
+
 ## phone-h
 Phone alerts
 Off
@@ -478,6 +489,20 @@ Alert me
 ## alert-server-h
 Your own alert server
 Leave this empty to use ntfy.sh.
+
+## panel-documents-h
+Your resume
+resume.pdf
+Replace
+Your usual cover letter
+Optional. It goes in where a site asks for one and no letter was written for the job.
+Choose a file
+Tailor my resume for each job
+Each job waits for Claude to write a resume for it.
+Write a cover letter for each job
+Written through your own Claude sign-in. The first one waits for your OK.
+Which model writes the letters
+Leave this empty for the usual one.
 
 ## panel-about-h
 Open the desk in
