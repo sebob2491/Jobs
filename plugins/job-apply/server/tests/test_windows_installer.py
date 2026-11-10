@@ -515,12 +515,20 @@ def test_the_workflow_tries_an_update_started_as_the_desk_starts_one(iss):
     uninstall = names.index("Uninstall silently; the person's job-apply folder stays")
     assert window + 1 == update == uninstall - 1, names
     run = job["steps"][update]["run"]
-    assert "updates.start_installer(Path(sys.argv[1]), Path(sys.argv[2]))" in run
+    assert "_, out = updates.start_installer(Path(sys.argv[1]), Path(sys.argv[2]))" in run
     assert re.search(r'Start-Process -FilePath "\$env:APP\\bin\\uvw\.exe" .*\n\s*"run --frozen --python 3\.13 '
-                     r'--project `"\$env:SERVER`" python `"\$script`" `"\$exe`" `"\$log`" `"\$starterId`""\)', run), run
+                     r'--project `"\$env:SERVER`" python `"\$script`" `"\$exe`" `"\$log`" `"\$starterId`" '
+                     r'`"\$starterSaid`""\)', run), run
     assert "plugins/job-apply/setup/windows/Output/JobDeskSetup.exe" in run and "$log = Join-Path $updates" in run
     assert "$deadline = (Get-Date).AddMinutes(3)" in run and "desk_watch_8765.json" in run
     finished = re.search(r"Log\('(Job Desk: the install finished\.)'\);", iss["code"])
     assert finished and f"-Pattern '{finished.group(1)}' -SimpleMatch" in run
     assert "$now.pid -ne $before.pid" in run and 'http://127.0.0.1:$($now.port)/' in run
+    # which way the installer was started, out of the starter's job or inside it: said, and said again at the end
+    out = "The installer was started out of the starter's job."
+    inside = "The installer was started inside the starter's job (Windows refused to start it outside)."
+    assert f'said = "{out}"' in run and f'said = "{inside}"' in run
+    assert 'Path(sys.argv[4]).write_text(said, encoding="utf-8")' in run and "print(said, flush=True)" in run
+    assert "$how = (Get-Content -Raw -LiteralPath $starterSaid).Trim()" in run
+    assert run.rstrip().endswith('and the starter ($id) is gone. $how"')
     assert "Get-Process -Id $id" in run and "if ($missing.Count -gt 0) { throw ($missing -join '. ') }" in run

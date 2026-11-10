@@ -150,11 +150,12 @@ def updates_folder() -> Path:
     return config.home() / "updates"
 
 
-def start_installer(installer: Path, log: Path, popen: Callable[..., Any] | None = None) -> Any:
+def start_installer(installer: Path, log: Path, popen: Callable[..., Any] | None = None) -> tuple[Any, bool]:
     """Start a downloaded installer on its own (window.start_detached: it outlives the desk, out of the desk's job where
     Windows allows), with exactly INSTALLER_ARGS and /LOG=`log`, never through a shell, nothing of the desk's in its
-    input or output; what `popen` (subprocess.Popen) gave back. The installer workflow's update step calls this too,
-    with the installer it built."""
+    input or output. Gives back what `popen` (subprocess.Popen) gave, and whether it was started out of the desk's job
+    (False: inside it, Windows having refused). The installer workflow's update step calls this too, with the
+    installer it built, and says which way it went."""
     return window.start_detached([str(installer), *INSTALLER_ARGS, f"/LOG={log}"], popen=popen,
                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -371,7 +372,7 @@ class UpdateCheck:
                 raise UpdateFailed(NOT_SAVED) from e
             recorded = True
             try:
-                process = start_installer(saved, folder / f"install-{version}.log", self.popen)
+                process, _ = start_installer(saved, folder / f"install-{version}.log", self.popen)
             except (OSError, ValueError, subprocess.SubprocessError) as e:
                 raise UpdateFailed(WONT_START) from e
             # 7. the desk stops only once the installer has taken over: one that already ended never began

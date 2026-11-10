@@ -490,10 +490,12 @@ def test_the_installer_starts_out_of_the_desks_job_where_windows_allows_it(monke
     log, exe = tmp_path / "install.log", tmp_path / "JobDeskSetup-0.4.4.exe"
     detached = window.DETACHED_PROCESS | window.CREATE_NEW_PROCESS_GROUP
     monkeypatch.setattr(window, "_system", lambda: "windows")
-    assert isinstance(updates.start_installer(exe, log, starter()), Process)
+    process, out = updates.start_installer(exe, log, starter())
+    assert isinstance(process, Process) and out is True  # (out of the starter's job)
     assert calls == [detached | window.CREATE_BREAKAWAY_FROM_JOB] and window.CREATE_BREAKAWAY_FROM_JOB == 0x01000000
     calls.clear()
-    assert isinstance(updates.start_installer(exe, log, starter(refuse_breakaway=True)), Process)
+    process, out = updates.start_installer(exe, log, starter(refuse_breakaway=True))
+    assert isinstance(process, Process) and out is False  # (inside it: Windows refused)
     assert calls == [detached | window.CREATE_BREAKAWAY_FROM_JOB, detached]
     calls.clear()
     with pytest.raises(FileNotFoundError):  # (anything else is no job's refusal: not tried again)
@@ -501,7 +503,7 @@ def test_the_installer_starts_out_of_the_desks_job_where_windows_allows_it(monke
     assert calls == [detached | window.CREATE_BREAKAWAY_FROM_JOB]
     calls.clear()
     monkeypatch.setattr(window, "_system", lambda: "linux")
-    updates.start_installer(exe, log, starter())
+    assert updates.start_installer(exe, log, starter())[1] is True  # (no such job here)
     assert calls == [True]
 
 

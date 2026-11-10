@@ -76,20 +76,22 @@ def detached() -> dict[str, Any]:
     return {"start_new_session": True}
 
 
-def start_detached(args: list[str], popen: Callable[..., Any] | None = None, **options: Any) -> Any:
-    """Start `args` on its own (detached()), never through a shell, and give back what `popen` (subprocess.Popen)
-    gave. On Windows it's also taken out of the job the desk's process may be in (uv's launcher holds what it starts
-    in one), so a program that outlives the desk on purpose, such as the installer of an update, isn't stopped when
-    the desk's process is: CREATE_BREAKAWAY_FROM_JOB. A job that forbids that refuses it with "access denied": then
-    it's started without, as before."""
+def start_detached(args: list[str], popen: Callable[..., Any] | None = None,
+                   **options: Any) -> tuple[Any, bool]:
+    """Start `args` on its own (detached()), never through a shell. Gives back what `popen` (subprocess.Popen) gave,
+    and whether it was started out of the starter's job: True, or False when Windows refused that and it was started
+    inside it (elsewhere there's no such job: True). On Windows it's also taken out of the job the desk's process may
+    be in (uv's launcher holds what it starts in one), so a program that outlives the desk on purpose, such as the
+    installer of an update, isn't stopped when the desk's process is: CREATE_BREAKAWAY_FROM_JOB. A job that forbids
+    that refuses it with "access denied": then it's started without, as before."""
     popen = popen or subprocess.Popen
     flags = detached()
     if "creationflags" in flags:
         try:
-            return popen(args, **options, creationflags=flags["creationflags"] | CREATE_BREAKAWAY_FROM_JOB)
+            return popen(args, **options, creationflags=flags["creationflags"] | CREATE_BREAKAWAY_FROM_JOB), True
         except PermissionError:  # (Windows' ERROR_ACCESS_DENIED: the job allows no breaking away)
-            pass
-    return popen(args, **options, **flags)
+            return popen(args, **options, **flags), False
+    return popen(args, **options, **flags), True
 
 
 def open_window(url: str, mode: str) -> str:
