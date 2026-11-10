@@ -14,10 +14,9 @@
      ?other: that Last Name shows another name than the profile's (the site's own) on load, marked the same way.
      ?suggest: that Last Name is a type-ahead: leaving it after keys were typed into it puts its suggestion in
      ("Rivera Jr"), which the record takes, and the error goes.
-     ?locks: that Last Name turns read-only as it's gone back into, once it's been left: nothing can be typed again.
      ?decoys: boxes showing the profile's answers that must never be typed again: Email marked invalid with no error
      naming it, Address Line 1 named by an error but disabled, Postal Code named but read-only, and a text area
-     (Mailing City) named by an error.
+     ("In what city do you live?", which the profile answers) named by an error.
      window.record is the page's record, by label; window.keyed counts characters typed key by key into each box (a
      fill types none);
      window.sent counts presses of Submit application. -->
@@ -68,9 +67,9 @@
     };
     mark('a_ad', '100 W Main St', 'disabled');
     mark('a_zp', '85225', 'readonly');
-    document.getElementById('mailing').innerHTML = '<label for="m_ci">Mailing City</label>'
-      + '<textarea id="m_ci" name="Mailing City" aria-invalid="true" aria-describedby="m_ci_error">Chandler</textarea>'
-      + '<div id="m_ci_error"><div role="alert">Error: Mailing City cannot be left blank.</div></div>';
+    document.getElementById('mailing').innerHTML = '<label for="m_ci">In what city do you live?</label>'
+      + '<textarea id="m_ci" name="Home City" aria-invalid="true" aria-describedby="m_ci_error">Chandler</textarea>'
+      + '<div id="m_ci_error"><div role="alert">Error: In what city do you live? cannot be left blank.</div></div>';
     // Email: marked invalid whatever it holds, and no error names it
     const email = document.getElementById('c_em');
     email.setAttribute('aria-invalid', 'true');
@@ -92,10 +91,7 @@
       if (!q.has('refuse')) waiting = setTimeout(() => { window.record['Last Name'] = value; waiting = null; }, 300);
     });
   }
-  let left = false;
-  lastName.addEventListener('focus', () => { if (q.has('locks') && left) lastName.readOnly = true; });
   lastName.addEventListener('blur', () => {
-    left = true;
     clearTimeout(waiting);
     waiting = null;
     if (q.has('suggest') && keys && lastName.value) {

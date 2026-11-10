@@ -13505,14 +13505,27 @@ def test_a_review_page_with_errors_after_an_earlier_press_says_both(srv, monkeyp
     assert "Last Name cannot be left blank" in r.reason, r.reason
 
 
-def _lost_name_run(srv, monkeypatch, query: str = "", carry_on: bool = False) -> tuple[Run, int, dict, dict]:
+def _lost_name_run(srv, monkeypatch, query: str = "", carry_on: bool = False,
+                   types_nothing: bool = False) -> tuple[Run, int, dict, dict, list]:
     """tests/fixtures/site/eightfold-lost-name.html with `query`, run until the job stops or is ready (and, with
     `carry_on`, once more after the person's Carry on on that stop): the run, how many times Submit application was
-    pressed, the page's own record of its boxes (by label), and how many keys were typed into each box (by label)."""
+    pressed, the page's own record of its boxes (by label), how many characters were typed key by key into each box
+    (by label), and the boxes the desk asked the browser to type again, by label, as many times as it asked. With
+    `types_nothing`, the browser types none of them (a box gone, or one that takes no keys)."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     job = srv.add_job(url=fixture_url("site/eightfold-lost-name.html") + query, title="Equipment Technician",
                       company="Example Fab")["job"]
     applier = Applier(srv)
+    asked: list[str] = []
+    retype = srv.browser.retype
+
+    async def spy(field_ids, settle=0):
+        page = await srv.browser.page()
+        for fid in field_ids:
+            asked.append(await page.evaluate("(id) => document.querySelector(`[data-ja-id='${id}']`).name", fid))
+        return [] if types_nothing else await retype(field_ids, settle=settle)
+
+    monkeypatch.setattr(srv.browser, "retype", spy)
 
     async def go():
         applier.start()
@@ -13523,7 +13536,7 @@ def _lost_name_run(srv, monkeypatch, query: str = "", carry_on: bool = False) ->
                 r = applier.resume(job["id"])
                 await until(lambda: r.status not in ("queued", "running"), about=state(r))
             return (r, await r.page.evaluate("() => window.sent"), await r.page.evaluate("() => window.record"),
-                    await r.page.evaluate("() => window.keyed"))
+                    await r.page.evaluate("() => window.keyed"), asked)
         finally:
             await applier.stop()
 
@@ -13537,12 +13550,13 @@ def test_a_box_the_review_says_is_blank_though_it_shows_the_profiles_answer_is_t
     (three rounds, Carry on and all). A text box the page says is blank while it shows the profile's answer for that
     very box is typed again, key by key, once, and the page read again: ready, with the page's record holding it. That
     box alone: not Contact Information's "Last name", which the error's words name too but the page doesn't mark."""
-    r, sent, record, keyed = _lost_name_run(srv, monkeypatch)
+    r, sent, record, keyed, asked = _lost_name_run(srv, monkeypatch)
     assert r.status == "ready", (r.status, r.reason, r.log)
     assert record.get("Last Name") == "Rivera", record
-    assert keyed == {"Last Name": len("Rivera")}, keyed
+    assert asked == ["Last Name"] and keyed == {"Last Name": len("Rivera")}, (asked, keyed)
     assert any(line.startswith("typed again what the page said was empty") and "Last Name" in line
                for line in r.log), "\n".join(r.log)
+    assert r.last_action and r.last_action["target"] == "Last Name", r.last_action
     assert sent == 0
 
 
@@ -13551,12 +13565,13 @@ def test_a_box_the_review_still_refuses_or_that_shows_another_answer_stops_for_t
     """The same page, where typing the box again doesn't help (?refuse: typed again once, never more, and the job is
     the person's with what the page says; their Carry on on that stop doesn't type it again), and where the box shows
     a name that isn't the profile's (?other: never typed again, never replaced: the person's)."""
-    r, sent, record, keyed = _lost_name_run(srv, monkeypatch, query, carry_on=True)
+    r, sent, record, keyed, asked = _lost_name_run(srv, monkeypatch, query, carry_on=True)
     assert (r.status, r.need, r.code) == ("needs_you", "stuck", "review_errors"), (r.status, r.reason, r.log)
     assert "Last Name cannot be left blank" in r.reason and r.reason.endswith("the desk checks the page again."), \
         r.reason
     typed = [line for line in r.log if line.startswith("typed again what the page said was empty")]
     assert len(typed) == (1 if query == "?refuse" else 0), r.log
+    assert asked == (["Last Name"] if query == "?refuse" else []), asked
     assert keyed == ({"Last Name": len("Rivera")} if query == "?refuse" else {}), keyed
     assert "Last Name" not in record and sent == 0, record
 
@@ -13564,10 +13579,11 @@ def test_a_box_the_review_still_refuses_or_that_shows_another_answer_stops_for_t
 def test_only_the_named_text_box_the_review_marks_is_typed_again(srv, monkeypatch):
     """Boxes showing the profile's answers that the review never types again: one marked invalid that no error names
     (Email), one an error names that's disabled (Address Line 1) or read-only (Postal Code), and a text area an error
-    names (Mailing City). The Last Name alone is typed again; the others stay the person's, said on the stop."""
-    r, sent, record, keyed = _lost_name_run(srv, monkeypatch, "?decoys")
+    names ("In what city do you live?"). The Last Name alone is typed again; the others stay the person's, said on the
+    stop."""
+    r, sent, record, keyed, asked = _lost_name_run(srv, monkeypatch, "?decoys")
     assert (r.status, r.code) == ("needs_you", "review_errors"), (r.status, r.reason, r.log)
-    assert keyed == {"Last Name": len("Rivera")}, keyed
+    assert asked == ["Last Name"] and keyed == {"Last Name": len("Rivera")}, (asked, keyed)
     assert record.get("Last Name") == "Rivera" and sent == 0, record
 
 
@@ -13575,20 +13591,19 @@ def test_a_box_that_changes_once_typed_again_is_the_persons_said_with_what_it_sh
     """A type-ahead box drawn as a text box puts its suggestion in as it's left ("Rivera" becomes "Rivera Jr"), and the
     page's error goes: never called fixed (it no longer shows the answer typed), never typed again, and the stop says
     what the box shows now and what to do."""
-    r, sent, record, keyed = _lost_name_run(srv, monkeypatch, "?suggest")
+    r, sent, record, keyed, asked = _lost_name_run(srv, monkeypatch, "?suggest")
     assert (r.status, r.need, r.code) == ("needs_you", "stuck", "review_errors"), (r.status, r.reason, r.log)
     assert "\u201cLast Name\u201d now shows \u201cRivera Jr\u201d" in r.reason, r.reason
     assert r.reason.endswith("the desk checks the page again."), r.reason
-    assert keyed == {"Last Name": len("Rivera")} and sent == 0, keyed
+    assert asked == ["Last Name"] and keyed == {"Last Name": len("Rivera")} and sent == 0, (asked, keyed)
 
 
 def test_a_box_the_review_couldnt_type_again_isnt_recorded_as_typed(srv, monkeypatch):
-    """The box turns read-only as it's gone back into (?locks): nothing is typed again, so the stop's record of what
-    the desk last did (Run.last_action) never says it typed that box, nor does the log."""
-    monkeypatch.setattr(browser_module, "FOCUS_TIMEOUT", 1000)
-    r, sent, record, keyed = _lost_name_run(srv, monkeypatch, "?locks")
+    """The browser types nothing of the box asked for (one gone, or taking no keys): the stop's record of what the desk
+    last did (Run.last_action) never says it typed that box, nor does the log."""
+    r, sent, record, keyed, asked = _lost_name_run(srv, monkeypatch, types_nothing=True)
     assert (r.status, r.code) == ("needs_you", "review_errors"), (r.status, r.reason, r.log)
-    assert not keyed and sent == 0, keyed
+    assert asked == ["Last Name"] and not keyed and sent == 0, (asked, keyed)
     assert not any(line.startswith("typed again what the page said was empty") for line in r.log), r.log
     assert (r.last_action or {}).get("target") != "Last Name", r.last_action
 
