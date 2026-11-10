@@ -823,12 +823,37 @@ def make_site_password(name: str, replace: bool = False) -> bool:
     if not isinstance(name, str) or name not in DESK_PASSWORDS:
         raise ValueError(f"not a job system's password: {name!r}")
     with _SECRETS_LOCK:
-        if not replace:
-            vault.get(name, fresh=True)  # (another program's save since the vault was last read: read again)
-            if get_secret(name):
-                return False
+        # (read again: another program's save since the vault was last read, or a vault locked since, found out now)
+        vault.get(name, fresh=True)
+        # A vault out of use can't say what it holds: "none saved" would be a guess, and the made one, kept in the
+        # file, would come before the person's own in it and, at the next start, be moved over it. Never then, with
+        # `replace` or without
+        if (why := vault_unreachable()) is not None:
+            raise VaultUnreachable(why)
+        if not replace and get_secret(name):
+            return False
         save_site_password(name, passwords.make())
     return True
+
+
+class VaultUnreachable(Exception):
+    """The computer's password vault is out of use (it failed or didn't answer, locked): what's saved in it can't be
+    read, so the desk neither makes, nor shows as none, nor forgets a password until it answers again. Its words are
+    vault_unreachable's, for the page."""
+
+
+def vault_unreachable() -> str | None:
+    """Why a password can't be made, shown or forgotten just now, in one plain sentence for the page: the computer's
+    password vault is there but out of use (vault.status().down: locked, or not answering). None while it answers, and
+    on a computer with no vault at all (the file is the store there)."""
+    from . import vault
+
+    s = vault.status()
+    if not s.down:
+        return None
+    named = f" ({s.name})" if s.name and s.name != "The password vault" else ""
+    return (f"Your password vault{named} isn't answering, so the desk can't read the passwords saved in it: unlock "
+            "it, then open the Job Desk again.")
 
 
 def forget_secret(name: str) -> bool:
@@ -843,11 +868,18 @@ def forget_secret(name: str) -> bool:
 def forget_password(name: str) -> bool:
     """A saved password forgotten on the desk's page (its Forget): a job system's, the email app password or the
     Anthropic API key (FORGETTABLE, by its exact name), taken out as forget_secret takes the phone alerts' topic out,
-    under the same lock and all or nothing. Whether there was one. A ValueError for any other name (the topic's too:
-    its own card turns it off), or when the vault won't let it go."""
+    under the same lock and all or nothing. Whether there was one. A ValueError for any other name (the
+    topic's too: its own card turns it off), or when the vault won't let it go; VaultUnreachable while the vault is out
+    of use (it can't take out what it can't reach, and the file's line alone going would leave the vault's to come
+    back)."""
+    from . import vault
+
     if not isinstance(name, str) or name not in FORGETTABLE:
         raise ValueError(f"not a password the desk forgets: {name!r}")
     with _SECRETS_LOCK:
+        vault.get(name, fresh=True)  # (a vault locked since the last read, found out now)
+        if (why := vault_unreachable()) is not None:
+            raise VaultUnreachable(why)
         if (path := secrets_path()).exists():
             read_secrets(path)  # (a file that can't be read stops it here, before the vault's is taken out)
         return _forget(name)

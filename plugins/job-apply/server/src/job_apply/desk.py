@@ -44,7 +44,7 @@ from . import (autofill, config, employment, history, letters, mailbox, outcomes
                report, vault, window, workplace)
 from .browser import _cookie_setting
 from .pipeline import (DESK_PASSWORDS, MAIL_WATCH_MAX, QUEUE_NO_LOCK, Applier, _may_accept_notices,
-                       _may_manage_accounts, _secret, _test_identity, placed_key, question_key)
+                       _may_manage_accounts, _secret, _test_identity, password_for, placed_key, question_key)
 from .ats import ATS_NAMES, JOB_BOARDS, detect_ats, job_board
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .recommend import (applicant_degree, days_since, not_interested_in, recommend, score_listing, target_titles,
@@ -85,6 +85,9 @@ NOT_SENT_YET = ("That job hasn't been sent yet. If you sent it on the site yours
 # (JOB_APPLY_SECRET_<NAME>), which the desk neither replaces nor forgets
 NEVER_SHOWN = "That one is never shown."
 FROM_ENVIRONMENT = "This one comes from your computer's own settings, not from the desk."
+# What Show and Copy say inside Claude (Desk.standalone false): there the page's key is in Claude's hands (the tool that
+# opens the desk gives the address with it), so no password is given to the page
+SHOWN_ON_ITS_OWN = "Passwords are shown only when the Job Desk is opened on its own, not inside Claude."
 
 
 def _recommendations_path() -> Path:
@@ -1333,7 +1336,9 @@ class Desk:
         passes through here: the answer names the ones made ({"made": [...]}, never a password), and desk.json keeps
         the day each was made (made_passwords). Only a job system's (DESK_PASSWORDS, by its exact name): never the
         email app password, the Anthropic API key or the phone alerts' topic. One set in the environment is left
-        alone, and Make a new one says so (409)."""
+        alone, and Make a new one says so (409). Nothing is made while the password vault is out of use (409,
+        config.vault_unreachable: it can't say what it holds), and Make a new one waits while a job is being filled on
+        that job system (409: the site would be left on one password and the desk on another)."""
         return await self._password_route(request, self._make_passwords)
 
     async def _make_passwords(self, body: dict[str, Any]) -> Response:
@@ -1345,6 +1350,8 @@ class Desk:
         elif isinstance(name, str) and name in DESK_PASSWORDS:
             if replace and _from_environment(name):
                 return JSONResponse({"error": FROM_ENVIRONMENT}, status_code=409)
+            if replace and (busy := self._being_filled_on(name)) is not None:
+                return JSONResponse({"error": busy}, status_code=409)
             names = [name]
         else:
             return JSONResponse({"error": "The desk makes a password for a job system only."}, status_code=400)
@@ -1356,6 +1363,8 @@ class Desk:
                     if await asyncio.to_thread(config.make_site_password, each, replace):
                         made.append(each)
                         self.made_passwords[each] = _today()
+            except config.VaultUnreachable as e:  # (one plain sentence of the desk's own: never a password's)
+                return JSONResponse({"error": str(e)}, status_code=409)
             except OSError as e:
                 # (a save the file couldn't take, in the system's own words: they name the file, never a password.
                 # Any other failure is _password_route's, said by its kind alone: a secrets.yaml that isn't text
@@ -1371,17 +1380,27 @@ class Desk:
         page that asked ({"value": ...}) and nowhere else: never its state, a log or a report. Only a job system's, by
         its exact name (DESK_PASSWORDS): never the email app password, the Anthropic API key, the phone alerts' topic,
         a password under a name of the person's own, or a name spelled another way (get_secret reads the environment's
-        by the name in capitals)."""
+        by the name in capitals). Only on a desk run on its own (standalone): inside Claude, whose tool hands out the
+        page's key, it answers 409 and gives nothing. With none found while the password vault is out of use, 409
+        (config.vault_unreachable), never "none saved": the vault may hold one. Each password given is logged by its
+        job system's name alone."""
         return await self._password_route(request, self._show_password)
 
     async def _show_password(self, body: dict[str, Any]) -> Response:
+        if not self.standalone:
+            return JSONResponse({"error": SHOWN_ON_ITS_OWN}, status_code=409)
         name = body.get("name")
         if not isinstance(name, str) or name not in DESK_PASSWORDS:
             return JSONResponse({"error": NEVER_SHOWN}, status_code=400)
-        # (off the event loop, as a save is; one that can't be read just now is none the desk could type either)
+        # (off the event loop, as a save is)
         value = await asyncio.to_thread(_secret, name)
         if not value:
+            # (one the vault can't be asked for just now isn't "none": the page says the vault isn't answering)
+            if (why := await asyncio.to_thread(config.vault_unreachable)) is not None:
+                return JSONResponse({"error": why}, status_code=409)
             return JSONResponse({"error": f"No password is saved for {DESK_PASSWORDS[name]}."}, status_code=404)
+        # (the system's name alone: never the value)
+        logging.getLogger(__name__).warning("%s password shown on the desk page", DESK_PASSWORDS[name])
         # (one that can't be written as an answer fails by its kind alone, in _password_route: never in words about it)
         return JSONResponse({"value": value})
 
@@ -1389,7 +1408,8 @@ class Desk:
         """Forget: a saved password taken out of the password vault and secrets.yaml (config.forget_password: a job
         system's, the email app password or the Anthropic API key, by its exact name; all or nothing), and its day out
         of made_passwords. One set in the environment isn't the desk's to forget (409), and the phone alerts' topic
-        keeps its own card's Turn off."""
+        keeps its own card's Turn off. Nothing is forgotten while the password vault is out of use (409,
+        config.vault_unreachable), nor a job system's while a job is being filled on that job system (409)."""
         return await self._password_route(request, self._forget_password)
 
     async def _forget_password(self, body: dict[str, Any]) -> Response:
@@ -1401,9 +1421,13 @@ class Desk:
             return JSONResponse({"error": "That isn't a password the desk keeps."}, status_code=400)
         if _from_environment(name):
             return JSONResponse({"error": FROM_ENVIRONMENT}, status_code=409)
+        if (busy := self._being_filled_on(name)) is not None:
+            return JSONResponse({"error": busy}, status_code=409)
         async with self._passwords_turn:
             try:
                 await asyncio.to_thread(config.forget_password, name)  # (off the event loop, as a save is)
+            except config.VaultUnreachable as e:  # (one plain sentence of the desk's own)
+                return JSONResponse({"error": str(e)}, status_code=409)
             except UnicodeError:  # (a secrets.yaml that isn't text: the failure's words quote a byte of it)
                 raise
             except (ValueError, OSError) as e:  # (the vault wouldn't let it go, or secrets.yaml couldn't be changed)
@@ -1414,6 +1438,32 @@ class Desk:
             # (the page's note about the app password turned down goes with it, as it does when a new one is saved)
             self.applier.mail_problem = self.applier._mail_refused = None
         return JSONResponse({"forgotten": True})
+
+    def _being_filled_on(self, name: str) -> str | None:
+        """What Make a new one and Forget say while a job is being filled at an employer on the job system whose
+        password `name` is (a job under way: Applier._under_way, its step holding the browser, or its pass running),
+        by the job system's name as the page names it; None otherwise, and for a name that isn't a job system's. The
+        job's system is the one its addresses are on (pipeline.password_for: its posting's, its application's, where
+        it paused, and its tab's now), as the desk picks the password it types there."""
+        system = DESK_PASSWORDS.get(name)
+        if system is None:
+            return None
+        a = self.applier
+        runs = {id(run): run for run in [*a._under_way(), *(r for r in a.runs.values() if r.status == "running")]}
+        if a.current is not None and (driving := a.runs.get(a.current)) is not None:
+            runs[id(driving)] = driving
+        t = self.srv.tracker()
+        for run in runs.values():
+            job = t.get(run.job_id, with_description=False) or {}
+            urls = [run.url, job.get("url"), job.get("apply_url"),
+                    f"https://{run.paused_host}/" if run.paused_host else ""]
+            with contextlib.suppress(Exception):  # (a tab closed meanwhile)
+                if run.page is not None and not run.page.is_closed():
+                    urls.append(run.page.url)
+            if any(password_for(u) == name for u in urls if u):
+                article = "An" if system[0].lower() in "aeio" else "A"  # An iCIMS, an Infor; a UKG Pro, a Workday
+                return f"{article} {system} job is being filled now. Try again when it is done."
+        return None
 
     async def phone_view(self, request: Request) -> Response:
         """The Phone alerts card: `make` a new topic (saved as a password is, in the password vault or secrets.yaml,

@@ -34,6 +34,10 @@ KEY = "sk-ant-api03-not-a-real-key-000000000000"
 TOPIC = "jobdesk-notarealtopic0000000001"
 NEVER_SHOWN = "That one is never shown."
 FROM_ENVIRONMENT = "This one comes from your computer's own settings, not from the desk."
+SHOWN_ON_ITS_OWN = "Passwords are shown only when the Job Desk is opened on its own, not inside Claude."
+# What the three routes say while the password vault is out of use, after "Your password vault (its name)"
+VAULT_DOWN = (" isn't answering, so the desk can't read the passwords saved in it: unlock it, then open the Job Desk "
+              "again.")
 MAKE, SHOW, FORGET = "/api/password/make", "/api/password/show", "/api/password/forget"
 
 
@@ -49,10 +53,12 @@ def in_vault(fake: MemoryVault, name: str) -> str | None:
     return fake.store.get((vault.service(), name))
 
 
-def idle_desk(srv) -> Desk:
-    """A desk that drives nothing: only its page's routes are asked."""
+def idle_desk(srv, standalone: bool = True) -> Desk:
+    """A desk that drives nothing: only its page's routes are asked. Run on its own (job-apply-desk), as Show needs,
+    unless not `standalone` (inside Claude)."""
     desk = Desk(srv)
     desk.applier.start = lambda: None
+    desk.standalone = standalone
     return desk
 
 
@@ -324,17 +330,20 @@ def test_a_made_password_that_cant_be_saved_leaves_the_one_saved_before(srv, job
             with monkeypatch.context() as m:
                 m.setattr(memory_vault, "set_password", refuse)
                 m.setattr(config, "write_text_atomic", full)
-                answers = [await ask(c, h, MAKE, body, 400) for body in (
-                    {"name": "workday_password", "replace": True}, {"name": "icims_password", "replace": True}, {})]
+                answers = [await ask(c, h, MAKE, {"name": "workday_password", "replace": True}, 400)]
+                # (the vault that refused is out of use now: nothing more is made until it answers again)
+                answers += [await ask(c, h, MAKE, body, 409)
+                            for body in ({"name": "icims_password", "replace": True}, {})]
             vault.reset()  # (as a new start reads them: the vault answers again)
             return before, answers, (await c.get("/api/state", headers=h)).json()
 
     before, answers, state = run(go())
     assert {name: config.get_secret(name) for name in SITE} == before
     assert before["icims_password"] == "Typed-by-me-2" and keeps_the_rules(before["workday_password"])
+    assert "No space left on device" in answers[0].json()["error"]
+    assert all(answer.json()["error"].endswith(VAULT_DOWN) for answer in answers[1:])
     for answer in answers:
-        assert "No space left on device" in answer.json()["error"] and "made" not in answer.json()
-        assert before["workday_password"] not in answer.text
+        assert "made" not in answer.json() and before["workday_password"] not in answer.text
     assert state["passwords_made"] == {"workday_password": "2026-11-10"}
     assert not config.secrets_path().exists()
 
@@ -994,3 +1003,216 @@ def test_config_makes_and_forgets_only_the_names_on_its_own_lists(job_apply_home
         config.forget_secret("icims_password")  # (the topic's own: never a password)
     assert config.get_secret("icims_password") == "saved-by-another-program"
     assert config.forget_secret(config.NTFY_TOPIC_NAME) is True
+
+
+# ------------------------------------------------------------------ the vault out of use (the review of Version E)
+def vault_down_sentence(answer: httpx.Response) -> bool:
+    """The answer is the plain sentence for a vault out of use, naming it as the person knows it."""
+    said = answer.json()["error"]
+    return said == f"Your password vault ({vault.status().name}){VAULT_DOWN}" and said.endswith(VAULT_DOWN)
+
+
+def put_out_of_use(memory_vault: MemoryVault, monkeypatch) -> None:
+    """The vault stops answering (locked since the desk started), as a read finds it: out of use for the rest of the
+    process, as the page's vault_problem says, while it still holds what it held."""
+
+    def refuse(*args):
+        raise keyring.errors.KeyringLocked("locked")
+
+    with monkeypatch.context() as m:
+        m.setattr(memory_vault, "get_password", refuse)
+        vault.get("workday_password", fresh=True)
+    assert vault.status().down and vault.problem()
+
+
+def test_with_the_vault_out_of_use_make_my_passwords_writes_over_no_password_saved_in_it(srv, job_apply_home,
+                                                                                       memory_vault, monkeypatch):
+    """The review of Version E: "none saved" read off a vault out of use is a guess. The made one would go to the file,
+    which the desk types first and which, at the next start, is moved over the person's own in the vault. So nothing
+    is made, the file gains no line, and the vault, back at the next start, still holds the person's own. The page's
+    state says the vault's problem beside "not saved" (vault_problem), which tells "none" from "can't tell"."""
+    config.save_site_password("workday_password", "Persons-Own-1")
+    desk = idle_desk(srv)
+    path = config.secrets_path()
+
+    async def go():
+        async with serving(desk) as (c, h):
+            put_out_of_use(memory_vault, monkeypatch)
+            state = (await c.get("/api/state", headers=h)).json()
+            return state, await ask(c, h, MAKE, {}, 409)
+
+    state, answer = run(go())
+    assert vault_down_sentence(answer)
+    assert state["vault_problem"] and state["passwords"]["workday"] is False and state["passwords_made"] == {}
+    assert not path.exists() or config.read_secrets(path) == {}
+    assert made_days(job_apply_home) in (None, {}) and desk.made_passwords == {}
+    vault.reset()  # (the desk's next start: the vault answers again)
+    config.move_secrets_to_vault()
+    assert in_vault(memory_vault, "workday_password") == "Persons-Own-1"
+    assert config.get_secret("workday_password") == "Persons-Own-1"
+    assert all(in_vault(memory_vault, name) is None for name in SITE[1:])
+
+
+def test_with_the_vault_locked_since_its_last_read_make_a_new_one_makes_nothing(srv, job_apply_home, memory_vault,
+                                                                               monkeypatch):
+    """Make a new one, with the vault locked since the desk last read it (found out by this very press) or out of use
+    already: refused the same way, never a made one in the file over the vault's."""
+    config.save_site_password("workday_password", "Persons-Own-1")
+    desk = idle_desk(srv)
+    path = config.secrets_path()
+
+    def refuse(*args):
+        raise keyring.errors.KeyringLocked("locked")
+
+    async def go():
+        async with serving(desk) as (c, h):
+            with monkeypatch.context() as m:
+                m.setattr(memory_vault, "get_password", refuse)
+                m.setattr(memory_vault, "set_password", refuse)
+                locked = await ask(c, h, MAKE, {"name": "workday_password", "replace": True}, 409)
+            again = await ask(c, h, MAKE, {"name": "workday_password", "replace": True}, 409)
+            one = await ask(c, h, MAKE, {"name": "icims_password"}, 409)
+            return locked, again, one
+
+    answers = run(go())
+    assert all(vault_down_sentence(answer) for answer in answers)
+    assert not path.exists() or config.read_secrets(path) == {}
+    assert made_days(job_apply_home) in (None, {})
+    vault.reset()
+    config.move_secrets_to_vault()
+    assert in_vault(memory_vault, "workday_password") == "Persons-Own-1"
+    assert config.get_secret("workday_password") == "Persons-Own-1" and config.get_secret("icims_password") is None
+
+
+def test_with_the_vault_out_of_use_show_and_forget_refuse_with_the_sentence(srv, job_apply_home, memory_vault,
+                                                                           monkeypatch):
+    """Show never says "No password is saved" of one the vault may hold, and Forget can't take out what it can't
+    reach: both say the vault isn't answering, and what to do. The password stays, and so does its day."""
+    on_day(monkeypatch, "2026-11-10")
+    desk = idle_desk(srv)
+
+    async def go():
+        async with serving(desk) as (c, h):
+            await ask(c, h, MAKE, {"name": "workday_password"})
+            await ask(c, h, MAKE, {"name": "email_password"}, 400)
+            config.save_site_password("email_password", "abcd efgh ijkl mnop")
+            made = in_vault(memory_vault, "workday_password")
+            put_out_of_use(memory_vault, monkeypatch)
+            shown = await ask(c, h, SHOW, {"name": "workday_password"}, 409)
+            forgot = [await ask(c, h, FORGET, {"name": name}, 409) for name in ("workday_password", "email_password")]
+            return made, shown, forgot
+
+    made, shown, forgot = run(go())
+    assert keeps_the_rules(made)
+    for answer in (shown, *forgot):
+        assert vault_down_sentence(answer) and made not in answer.text
+    assert in_vault(memory_vault, "workday_password") == made
+    assert in_vault(memory_vault, "email_password") == "abcd efgh ijkl mnop"
+    assert desk.made_passwords == made_days(job_apply_home) == {"workday_password": "2026-11-10"}
+    vault.reset()
+    assert config.get_secret("workday_password") == made
+
+
+def test_without_a_vault_at_all_make_show_and_forget_work_from_the_file(srv, job_apply_home, no_vault, monkeypatch):
+    """A computer with no vault (the file is the store there) is not one whose vault is out of use: Make my passwords,
+    Make a new one, Show and Forget work as built."""
+    on_day(monkeypatch, "2026-11-10")
+    desk = idle_desk(srv)
+
+    async def go():
+        async with serving(desk) as (c, h):
+            made = await ask(c, h, MAKE, {})
+            new = await ask(c, h, MAKE, {"name": "workday_password", "replace": True})
+            shown = await ask(c, h, SHOW, {"name": "workday_password"})
+            forgot = await ask(c, h, FORGET, {"name": "icims_password"})
+            none = await ask(c, h, SHOW, {"name": "icims_password"}, 404)
+            return made, new, shown, forgot, none, (await c.get("/api/state", headers=h)).json()
+
+    made, new, shown, forgot, none, state = run(go())
+    assert made.json() == {"made": SITE} and new.json() == {"made": ["workday_password"]}
+    assert shown.json() == {"value": config.read_secrets(config.secrets_path())["workday_password"]}
+    assert forgot.json() == {"forgotten": True} and none.json() == {"error": "No password is saved for iCIMS."}
+    assert state["vault_problem"] is None and state["passwords"]["workday"] is True
+
+
+# ------------------------------------------------------------------ Show only on a desk run on its own
+def test_inside_claude_show_answers_409_and_gives_no_password(srv, job_apply_home, memory_vault):
+    """Inside Claude (Desk.standalone false) the page's key is in Claude's hands, so Show and Copy give nothing there,
+    for a saved one, one made there, or none."""
+    config.save_site_password("workday_password", "Typed-Workday-1")
+    desk = idle_desk(srv, standalone=False)
+
+    async def go():
+        async with serving(desk) as (c, h):
+            await ask(c, h, MAKE, {"name": "icims_password"})
+            return [await ask(c, h, SHOW, {"name": name}, 409)
+                    for name in ("workday_password", "icims_password", "taleo_password")]
+
+    answers = run(go())
+    made = config.get_secret("icims_password")
+    for answer in answers:
+        assert answer.json() == {"error": SHOWN_ON_ITS_OWN}
+        assert "Typed-Workday-1" not in answer.text and made not in answer.text
+
+
+def test_each_password_shown_is_logged_by_its_systems_name_alone(srv, job_apply_home, memory_vault, caplog):
+    """On a desk run on its own, Show works as built, and each password it gives writes one line to the desk's log:
+    the job system's name, never the value. One it doesn't give (none saved, a name never shown) writes none."""
+    config.save_site_password("workday_password", "Typed-Workday-1")
+    caplog.set_level(logging.DEBUG)
+    desk = idle_desk(srv)
+
+    async def go():
+        async with serving(desk) as (c, h):
+            await ask(c, h, MAKE, {"name": "icims_password"})
+            shown = [await ask(c, h, SHOW, {"name": name}) for name in ("workday_password", "icims_password")]
+            await ask(c, h, SHOW, {"name": "taleo_password"}, 404)
+            await ask(c, h, SHOW, {"name": "email_password"}, 400)
+            return shown
+
+    shown = run(go())
+    made = config.get_secret("icims_password")
+    assert [answer.json() for answer in shown] == [{"value": "Typed-Workday-1"}, {"value": made}]
+    lines = [record.getMessage() for record in caplog.records if "shown on the desk page" in record.getMessage()]
+    assert lines == ["Workday password shown on the desk page", "iCIMS password shown on the desk page"]
+    assert "Typed-Workday-1" not in caplog.text and made not in caplog.text
+    assert not any(value in str(record.args) for record in caplog.records for value in ("Typed-Workday-1", made))
+
+
+# ------------------------------------------------------------------ while a job is being filled on that system
+def test_make_a_new_one_and_forget_wait_while_a_job_is_being_filled_on_that_job_system(srv, job_apply_home,
+                                                                                     memory_vault):
+    """Make a new one or Forget while a job at a Workday employer is being filled could leave the site on one password
+    and the desk on another: both answer 409 by the job system's name, and change nothing. Another job system's, and
+    Make my passwords (only where none is saved), go on."""
+    desk = idle_desk(srv)
+    job = srv.add_job(url="https://example.wd5.myworkdayjobs.com/en-US/careers/job/Tech_R1",
+                      title="Equipment Technician", company="Example Fab")["job"]
+
+    async def go():
+        async with serving(desk) as (c, h):
+            await ask(c, h, MAKE, {})
+            before = {name: config.get_secret(name) for name in SITE}
+            await ask(c, h, FORGET, {"name": "taleo_password"})
+            desk.applier.runs[job["id"]] = Run(job["id"], "Equipment Technician", "Example Fab", status="running",
+                                               url=job["url"])
+            refused = [await ask(c, h, MAKE, {"name": "workday_password", "replace": True}, 409),
+                       await ask(c, h, FORGET, {"name": "workday_password"}, 409)]
+            others = [await ask(c, h, MAKE, {"name": "icims_password", "replace": True}),
+                      await ask(c, h, FORGET, {"name": "ukg_password"}), await ask(c, h, MAKE, {})]
+            # one at an iCIMS employer, its step holding the browser, by its application's address
+            desk.applier.runs[job["id"]] = Run(job["id"], "Equipment Technician", "Example Fab", status="needs_you",
+                                               url="https://careers-example.icims.com/jobs/1/login")
+            desk.applier.current = job["id"]
+            icims = await ask(c, h, MAKE, {"name": "icims_password", "replace": True}, 409)
+            desk.applier.current = None
+            return before, refused, others, icims
+
+    before, refused, others, icims = run(go())
+    assert [answer.json() for answer in refused] == [
+        {"error": "A Workday job is being filled now. Try again when it is done."}] * 2
+    assert icims.json() == {"error": "An iCIMS job is being filled now. Try again when it is done."}
+    assert config.get_secret("workday_password") == before["workday_password"]
+    assert [answer.json() for answer in others] == [{"made": ["icims_password"]}, {"forgotten": True},
+                                                    {"made": ["ukg_password", "taleo_password"]}]
+
