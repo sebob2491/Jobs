@@ -409,10 +409,14 @@ async def person_browser():
 async def open_desk(page, desk, at: str = "home") -> None:
     """The desk's page opened on one of its side menu's pages (home, openings, applications, answers, working,
     settings or help), its state drawn. A card shows only on its own page, so a test opens the page its card is on;
-    one that uses two pages presses the menu's link for the second, as a person would."""
+    one that uses two pages presses the menu's link for the second, as a person would. A panel of the Settings page
+    (the design's D1) is opened by its address, as `at="settings/applying"`: that panel shown."""
     await page.goto(f"{desk.url}#{at}")
     # (in the page, not in sight: under 1,024 px wide the side menu shows its icons only, the version out of sight)
     await page.wait_for_selector("#plugin-version:not(:empty)", state="attached")
+    if "/" in at:
+        await page.wait_for_function("([at, panel]) => document.body.dataset.page === at"
+                                     " && document.body.dataset.panel === panel", arg=at.split("/", 1))
 
 
 async def open_filter(page, name: str) -> None:
@@ -426,9 +430,16 @@ async def open_filter(page, name: str) -> None:
 
 
 async def press_menu(page, at: str) -> None:
-    """The side menu's link for the page `at` pressed, as a person would, and that page shown."""
-    await page.click(f".nav a[href='#{at}']")
-    await page.wait_for_function("(at) => document.body.dataset.page === at", arg=at)
+    """The side menu's link for the page `at` pressed, as a person would, and that page shown. For a panel of the
+    Settings page (`at="settings/applying"`), the side menu's Settings (unless Settings shows already), then the
+    panel's link in Settings' own menu."""
+    name, _, panel = at.partition("/")
+    if not panel or await page.evaluate("() => document.body.dataset.page") != name:
+        await page.click(f".nav a[href='#{name}']")
+        await page.wait_for_function("(at) => document.body.dataset.page === at", arg=name)
+    if panel:
+        await page.click(f".snav a[href='#{at}']")
+        await page.wait_for_function("(panel) => document.body.dataset.panel === panel", arg=panel)
 
 
 @pytest.fixture
