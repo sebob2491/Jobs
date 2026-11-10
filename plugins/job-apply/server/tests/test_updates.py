@@ -536,6 +536,120 @@ def test_a_queue_paused_before_the_update_stays_paused_when_the_installer_ends_a
     assert run(go(False)) == ("failed", False, False)
 
 
+# ------------------------------------------------------------------ the applier held while an update quits the desk
+
+
+def _held_desk(srv):
+    """A desk whose applier drives nothing (its worker not started, a pass's task a stand-in), with a job ready to
+    submit, one waiting on the person's sign-in, and one on a questions card."""
+    from job_apply.pipeline import Run
+
+    desk = _desk(srv, updates.UpdateCheck())
+    began = []
+
+    async def no_pass(kind, run):
+        began.append((kind, run.job_id))
+
+    desk.applier._run_task = no_pass
+    jobs = [srv.add_job(url=f"https://example.com/{n}", title="FSE", company=f"Example {n}")["job"]["id"]
+            for n in ("a", "b", "c")]
+    a = desk.applier
+    a.runs[jobs[0]] = Run(jobs[0], "FSE", "Example a", status="ready")
+    a.runs[jobs[1]] = Run(jobs[1], "FSE", "Example b", status="needs_you", need="sign_in")
+    a.runs[jobs[2]] = Run(jobs[2], "FSE", "Example c", status="needs_you", need="questions",
+                          questions=[{"label": "Years of experience", "required": True}])
+    return desk, jobs, began
+
+
+def test_while_an_update_holds_the_applier_a_submit_or_a_pressed_job_is_refused_and_nothing_starts(
+        srv, copy, monkeypatch):
+    """From the moment an installed copy's update pauses the queue until the desk quits, nothing starts: a Submit, a
+    job's Carry on, its answers, Go through them (a round), Try now each answer 400 with the sentence, nothing is
+    queued or sent, and the queue's worker begins no pass, not even one pressed before the hold."""
+    from job_apply import pipeline
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.01)
+    desk, (ready, signing_in, asking), began = _held_desk(srv)
+    a = desk.applier
+    said = "The Job Desk is updating. Try again when it is back."
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            h = {"x-desk-token": desk.token}
+            async with _client(desk) as c:
+                a.resume(signing_in)  # (pressed before the update: queued, and it would go while paused)
+                desk._pause_for_update()
+                answers = []
+                for path, body in ((f"/api/job/{ready}/submit", {}), (f"/api/job/{signing_in}/resume", {}),
+                                   (f"/api/job/{ready}/round", {}), (f"/api/job/{signing_in}/retry", {}),
+                                   ("/api/answer", {"job_id": asking, "answers": [
+                                       {"label": "Years of experience", "value": "3"}]})):
+                    answer = await c.post(path, headers=h, json=body)
+                    answers.append((answer.status_code, answer.json()))
+                await a._tick()
+                return answers
+        finally:
+            await desk.stop()
+
+    answers = run(go())
+    assert answers == [(400, {"error": said})] * 5
+    assert pipeline.UPDATING == said
+    assert a.runs[ready].status == "ready" and not a.runs[ready].submit_pressed
+    assert a.runs[asking].status == "needs_you" and a.round_job is None
+    assert not any(t[0] == "submit" for t in a.tasks) and began == [] and not a._slots
+    assert config.saved_answers() == []
+
+
+def test_a_failed_update_lets_go_of_the_applier(srv, copy):
+    """The hold is set with the update's pause, before the installer starts, and let go with it when the update fails
+    (here the installer ended at once): the person's Submit goes again."""
+    copy.installed(True)
+    held_then = []
+
+    def popen(args, **options):
+        held_then.append(desk.applier.updating)
+        return Process(1)
+
+    check = updates.UpdateCheck(transport=_site(), popen=popen)
+    check.latest = "0.4.4"
+    desk, (ready, _, _), began = _held_desk(srv)
+    desk.updates = check
+    desk.standalone = True
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            h = {"x-desk-token": desk.token}
+            async with _client(desk) as c:
+                assert (await c.post("/api/update/start", headers=h, json={})).status_code == 200
+                for _ in range(300):
+                    if check.progress == "failed":
+                        break
+                    await asyncio.sleep(0.02)
+                return (await c.post(f"/api/job/{ready}/submit", headers=h, json={})).status_code
+        finally:
+            await desk.stop()
+
+    assert run(go()) == 200
+    assert held_then == [True] and desk.applier.updating is False and check.progress == "failed"
+    assert ("submit", ready) in desk.applier.tasks
+
+
+def test_a_job_begun_but_not_yet_at_its_first_step_counts_as_being_filled(srv, copy):
+    """The queue makes a pass's task (the applier's _slots) before its run is running or its step holds the browser:
+    from then on a job is about to be filled, and an update must wait."""
+    desk = _desk(srv, updates.UpdateCheck())
+    a = desk.applier
+    assert not desk._filling()
+    a._slots[5] = object()  # (a pass begun, not yet at its first step)
+    try:
+        assert a.current is None and not any(r.status == "running" for r in a.runs.values())
+        assert desk._filling()
+    finally:
+        a._slots.clear()
+
+
 # ------------------------------------------------------------------ what a failure says, and a download kept
 
 

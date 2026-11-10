@@ -115,6 +115,8 @@ HANDS_ON_TIMEOUT = 45 * 60  # the longest it holds the queue, even for someone a
 NOTED = {"stuck", "sign_in", "submit_failed", "check_submit"}
 STOP = "stop"  # the page a job stopped on, saved for a problem report: its folder's debug/<time>-stop
 POLL_SECONDS = 3.0
+# A start asked for while an installed copy's update holds the applier (Applier.updating): refused with this
+UPDATING = "The Job Desk is updating. Try again when it is back."
 # A tab waiting on the person that hasn't changed (nor paused) for STILL_SECONDS is looked at this often instead: each
 # look reads every frame of it, every few seconds for up to 45 minutes (the review of Oct 15)
 SLOW_POLL_SECONDS = 10.0
@@ -1784,6 +1786,10 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         # but those they pressed Resume on, or answered on their card (pressed)
         self.paused = False
         self.pressed: set[int] = set()
+        # An installed copy's update holds the applier (set with its pause, before the installer starts: the desk is
+        # about to quit for it; cleared should the update fail): nothing starts, not a queued job, nor one the person
+        # pressed, nor their Submit, nor a round (refuse_while_updating)
+        self.updating = False
         # (paused only by a restart's jobs back in the queue, not by the person's Pause queue: Clear the queue ends it)
         self._restore_held = False
         # "Don't wait for me" (desk.json, the owner, Oct 24: the desk left to go through the whole list): no sign-in or
@@ -1964,6 +1970,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         press: they may have reset the password to it by hand, as the card asks. One for each such Resume;
         none for a Resume on any other card (a question, a stuck page), nor when the queue carries on with
         the job by itself."""
+        self.refuse_while_updating()
         run = self.runs.get(job_id)
         signing_in = run is not None and run.need == "sign_in"  # (before enqueue clears it)
         if run is not None and run.status == "needs_you":
@@ -2012,8 +2019,14 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             self._log(other, "the queue went on: you pressed Carry on for (or answered) another job. This one's tab is "
                       "watched between jobs, and the desk carries on with it once it's past this step.")
 
+    def refuse_while_updating(self) -> None:
+        """A start the person asked for, refused while an update holds the applier (updating): ValueError, with why."""
+        if self.updating:
+            raise ValueError(UPDATING)
+
     def submit_now(self, job_id: int) -> Run:
         """The person pressed Submit for a job that's waiting on its review page."""
+        self.refuse_while_updating()
         run = self.runs[job_id]
         if self.hold_submits:
             raise ValueError("Troubleshooting is on, so nothing is sent. Turn it off on the desk to send this one.")
@@ -2137,6 +2150,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
 
     def use_usual_resume(self, job_id: int) -> Run:
         """Go ahead with this job without a tailored resume."""
+        self.refuse_while_updating()
         run = self.runs[job_id]
         run.usual_resume = True
         return self.enqueue(job_id, submit=run.submit, front=True)
@@ -2144,6 +2158,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
     def apply_anyway(self, job_id: int) -> Run:
         """The person's Apply anyway on a job that may be one they began or applied to on another site
         (_maybe_done_elsewhere): it isn't, for this job only (the other is still asked about), and it goes on now."""
+        self.refuse_while_updating()
         run = self.runs.get(job_id)
         if run is None or run.status != "needs_you" or run.need != "maybe_duplicate":
             raise ValueError("That job isn't waiting on that question any more.")
@@ -2158,6 +2173,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
     def retry_now(self, job_id: int) -> Run:
         """The person's Try now on a job waiting to be tried again by itself after the site's error (_retry_later): it
         goes now, opened afresh, as the one try (even while the queue is paused: their own press)."""
+        self.refuse_while_updating()
         run = self.runs.get(job_id)
         if run is None or run.status != "needs_you" or not run.retry_at:
             raise ValueError("That job isn't waiting to be tried again any more.")
@@ -2779,6 +2795,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
     def start_round(self, job_id: int) -> None:
         """The person is at this job's tab in one of the desk's rounds (focus() brought it up): its bot check, or
         its review page to check before they press Submit."""
+        self.refuse_while_updating()
         if self.round_job != job_id and job_id in self.runs:
             self.runs[job_id].rounds += 1  # (for its lines in the desk's history)
         self.round_job, self.round_at = job_id, time.time()
@@ -2799,6 +2816,10 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         return True
 
     async def _tick(self) -> None:
+        if self.updating:  # (the desk is about to quit for its installer: nothing starts, nor is looked at, meanwhile)
+            self._wake.clear()
+            await self._sleep(POLL_SECONDS)
+            return
         self._site_holds_said()
         if self._full() and not (self._slots.keys() <= self._waiting) and not self._may_go_beside():
             # as many jobs under way as go at once: nothing else is begun or looked at until one is done (with one at

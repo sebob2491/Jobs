@@ -62,6 +62,9 @@ VISIT_GAP = 30 * 60  # a look at the openings this long (seconds) after the one 
 SEEN_WRITE = 60  # the time of the last look is written to desk.json at most this often (the page looks again and again)
 FOUND_KEEP = 5000  # the openings whose first-found time is kept (openings_found.json): the newest
 WHATS_NEW_MOST = 50  # the openings whats_new lists (it counts them all)
+# a job card's buttons that start something in the browser (a pass, a Submit, a round): refused while an update holds
+# the applier (Applier.updating)
+_STARTS = frozenset({"resume", "retry", "submit", "round", "usual_resume", "letter_ok", "letters_off", "apply_anyway"})
 OPEN_URL_MOST = 2000  # the longest address /api/open hands to the person's usual browser
 # The desk's own window is started with a one-time code in its address, never the page's key: a program's command
 # line can be read by the computer's other accounts for as long as it runs. A code is good for one use and this many
@@ -683,16 +686,29 @@ class Desk:
         return JSONResponse({"started": True})
 
     def _filling(self) -> bool:
-        """Is a job being filled now (its pass under way, or its step holding the browser)?"""
+        """Is a job being filled now, or about to be: its pass's task made (the applier's _slots, from the moment the
+        queue begins it, before its first step runs), its step holding the browser, or its run running?"""
         a = self.applier
-        return a.current is not None or any(run.status == "running" for run in a.runs.values())
+        return (a.current is not None or bool(a._slots)
+                or any(run.status == "running" for run in a.runs.values()))
 
     def _pause_for_update(self) -> Callable[[], None]:
-        """The queue paused for an update, as the Pause queue button pauses it (queue_view); what undoes it, should
-        the installer not start (nothing, when it was paused already)."""
-        was = self.applier.paused
-        self.applier.pause_queue()
-        return (lambda: None) if was else self.applier.resume_queue
+        """The queue paused for an update, as the Pause queue button pauses it (queue_view), and the applier held
+        (Applier.updating: from here until the desk quits nothing starts, not even a job or a Submit the person
+        presses); what undoes both, should the installer not start (the queue left paused when it was already)."""
+        a = self.applier
+        was = a.paused
+        a.pause_queue()
+        a.updating = True
+
+        def undo() -> None:
+            a.updating = False
+            if not was:
+                a.resume_queue()
+            else:
+                a.wake()
+
+        return undo
 
     async def seen_view(self, request: Request) -> Response:
         """The page loaded, or came to the front: the person looked at the openings (saw)."""
@@ -815,6 +831,8 @@ class Desk:
         if job_id >= 2 ** 63:  # past what the tracker can hold: no such job
             return JSONResponse({"error": f"No job with id {job_id}"}, status_code=404)
         try:
+            if action in _STARTS:  # (refused before anything is done: a round's tab isn't even brought up)
+                a.refuse_while_updating()
             if action == "resume":
                 a.resume(job_id)
             elif action == "retry":  # Try now, on a job waiting to be tried again after the site's error
@@ -1572,6 +1590,7 @@ class Desk:
     def answer(self, job_id: int, answers: list[dict[str, Any]]) -> str | None:
         """Fill the person's answers in. Returns a note if some couldn't be remembered (they
         still go into this application)."""
+        self.applier.refuse_while_updating()  # (nothing remembered, nothing started: the desk is about to quit)
         run = self.applier.runs.get(job_id)
         if run is None or run.status != "needs_you":
             # nothing is remembered for a job that isn't asking (a stale page)
