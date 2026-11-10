@@ -791,3 +791,29 @@ def test_a_narrow_window_keeps_pause_queue_as_an_icon_in_the_menu(srv):
                     "words": "Carry on with the queue (4 waiting)", "drawn": True, "title": _PAUSE_TITLE,
                     "label": None, "icon": None, "width": wide["width"], "link": wide["link"]}, wide
     assert wide["width"] > 150  # (full width in the card, as it was)
+
+
+def test_a_narrow_window_hides_a_queue_card_with_no_pause_queue_to_show(srv, monkeypatch):
+    """Under 1,024 px the queue's card is only its Pause queue icon, so with none to show (only Clear the queue would:
+    jobs held before they begin) the card is hidden, not left as an empty box. At 1,280 px it is as it was."""
+    desk = _canned(srv, monkeypatch, _queue(_state("state-ready.json"), ["needs_you", "ready"], clearable=1))
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                seen = {}
+                for width in (960, 1280):
+                    page = await browser.new_page(viewport={"width": width, "height": 800})
+                    await open_desk(page, desk)
+                    await page.wait_for_function("document.getElementById('clear-queue-btn').hidden === false")
+                    seen[width] = await page.evaluate("""() => {
+                      const inSight = (id) => document.getElementById(id).getClientRects().length > 0;
+                      return [inSight('queue-card'), inSight('pause-btn'), inSight('clear-queue-btn')]; }""")
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    assert seen == {960: [False, False, False], 1280: [True, False, True]}, seen
