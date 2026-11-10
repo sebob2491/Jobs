@@ -364,10 +364,11 @@ ul.rows { list-style: none; margin: 0; padding: 0; }
 /* the Fit ring: filled to the score, the number inside, its color the score's band */
 .score { --p: 0; --c: var(--muted); width: 38px; height: 38px; padding: 0; border: 0; border-radius: 50%;
   display: grid; place-items: center; background: conic-gradient(var(--c) calc(var(--p) * 1%), var(--line) 0);
-  box-shadow: none; color: var(--text); }
-.score b { width: 30px; height: 30px; border-radius: 50%; background: var(--panel); display: grid; place-items: center;
+  box-shadow: none; color: var(--text); position: relative; isolation: isolate;
   font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.row.sel .score b { background: var(--row-sel); }
+/* (the disc inside the ring, behind the number: the number stays the score's own text) */
+.score::before { content: ""; position: absolute; inset: 4px; z-index: -1; border-radius: 50%; background: var(--panel); }
+.row.sel .score::before { background: var(--row-sel); }
 /* a score that can show why and how it adds up: pressed, its reasons and parts come up under the Job cell */
 button.score, button.score:hover { height: 38px; background: conic-gradient(var(--c) calc(var(--p) * 1%), var(--line) 0); }
 button.score:hover { box-shadow: 0 0 0 2px var(--control-line); }
@@ -1784,8 +1785,8 @@ function renderRows() {
       + (fit.placed ? ` ${fit.placed}.` : "");  // (what worked before: its place in the list, not its score)
     const ring = `class="score ${scoreClass(fit.score)}" style="--p: ${Math.max(0, Math.min(100, Number(fit.score) || 0))}" title="${esc(tip)}"`;
     const score = parts.length || reasons.length
-      ? `<button ${ring} data-parts="${esc(r.url)}" aria-expanded="${partsOpen.has(r.url)}"><b>${esc(fit.score)}</b></button>`
-      : `<span ${ring}><b>${esc(fit.score)}</b></span>`;
+      ? `<button ${ring} data-parts="${esc(r.url)}" aria-expanded="${partsOpen.has(r.url)}">${esc(fit.score)}</button>`
+      : `<span ${ring}>${esc(fit.score)}</span>`;
     // pressed: the green reasons, then how the score adds up
     const sum = !partsOpen.has(r.url) ? "" : (reasons.length ? `<div class="reasons">${reasons.map((x) => `<span class="chip plus">${esc(x)}</span>`).join("")}</div>` : "")
       + (parts.length ? `<div class="parts">${(fit.parts || []).map((p) =>
