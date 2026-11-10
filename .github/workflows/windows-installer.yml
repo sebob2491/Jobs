@@ -202,18 +202,17 @@ jobs:
           $draft = gh release view $tag --json isDraft --jq '.isDraft' 2>$null
           $there = $LASTEXITCODE -eq 0
           if ($there -and $draft -eq 'true') {
-            # a draft left by a run that was stopped while making it: never out, so taken away and made afresh below
-            gh release delete $tag --yes
-            if ($LASTEXITCODE -ne 0) { throw "Couldn't take away the unfinished draft of $tag" }
-            $there = $false
+            # a draft isn't out, and isn't this step's to finish or to take away: one a person began (its notes
+            # written ahead), or one left by a run that was stopped while making the Release
+            throw "There's a draft Release for $tag. Publish it or delete it on GitHub's Releases page, then run this again"
           }
           $names = @()
           if ($there) {
             $names = @(gh release view $tag --json assets --jq '.assets[].name')
             if ($LASTEXITCODE -ne 0) { throw "Couldn't read the Release $tag" }
           }
-          # An installer already published is never replaced by a push: only by a run by hand with `release` ticked
           if (($names -contains 'JobDeskSetup.exe') -and -not $byHand) {
+            # An installer already published is never replaced by a push: only by a run by hand with `release` ticked
             if ($names -contains 'JobDeskSetup.exe.sha256') {
               Write-Host "$tag already has its installer, left as it is"
             } else {
@@ -228,35 +227,33 @@ jobs:
               gh release upload $tag "$published.sha256"
               if ($LASTEXITCODE -ne 0) { throw "Couldn't attach the sha256 to $tag" }
             }
-            $global:LASTEXITCODE = 0
-            exit 0
-          }
-          Write-Sum $exe
-          if (-not $there) {
-            # made with its files: gh keeps the Release a draft until both are up, and takes it away if they don't
-            # get there, so it's never out empty (the README's link would lead nowhere)
-            gh release create $tag $exe "$exe.sha256" --target $env:GITHUB_SHA --title "job-apply $version" `
-              --notes "JobDeskSetup.exe: the Job Desk for Windows. Download it, double-click it (Windows may say it protected your PC: More info, then Run anyway), and open the Job Desk from the Start menu."
-            if ($LASTEXITCODE -ne 0) { throw "Couldn't make the Release $tag" }
           } else {
-            # there already: with no installer yet (nothing of one to replace), or this is a run by hand with
-            # `release` ticked, which may replace what's out
-            gh release upload $tag $exe "$exe.sha256" --clobber
-            if ($LASTEXITCODE -ne 0) { throw "Couldn't attach the installer to $tag" }
+            Write-Sum $exe
+            if (-not $there) {
+              # made with its files: gh keeps the Release a draft until both are up, and takes it away if they don't
+              # get there, so it's never out empty (the README's link would lead nowhere)
+              gh release create $tag $exe "$exe.sha256" --target $env:GITHUB_SHA --title "job-apply $version" `
+                --notes "JobDeskSetup.exe: the Job Desk for Windows. Download it, double-click it (Windows may say it protected your PC: More info, then Run anyway), and open the Job Desk from the Start menu."
+              if ($LASTEXITCODE -ne 0) { throw "Couldn't make the Release $tag" }
+            } else {
+              # there already: with no installer yet (nothing of one to replace), or this is a run by hand with
+              # `release` ticked, which may replace what's out
+              gh release upload $tag $exe "$exe.sha256" --clobber
+              if ($LASTEXITCODE -ne 0) { throw "Couldn't attach the installer to $tag" }
+            }
           }
           # The latest Release is the newest version's: the README's link and the desk's Update button read it. GitHub
-          # marks a Release made just now as the latest whatever its number, so when a later version is out, that one
-          # is marked again. Then it's checked, a few times over (GitHub's answer can be a moment behind)
+          # marks a Release made just now as the latest whatever its number, so the newest is marked, every time (this
+          # run's own is among them whatever the list says: the list can trail what was just made). Then it's checked,
+          # a few times over (GitHub's answer can be a moment behind too)
           $tags = @(gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.draft | not) | .tag_name')
           if ($LASTEXITCODE -ne 0) { throw "Couldn't list the Releases" }
-          $newest = $tags | Where-Object { $_ -match '^job-apply-v\d+(\.\d+)+$' } |
+          $newest = (@($tags) + $tag) | Where-Object { $_ -match '^job-apply-v\d+(\.\d+)+$' } |
             Sort-Object { [version]($_ -replace '^job-apply-v', '') } | Select-Object -Last 1
-          if ($newest -ne $tag) {
-            gh release edit $newest --latest
-            if ($LASTEXITCODE -ne 0) { throw "Couldn't mark $newest as the latest Release again" }
-          }
+          gh release edit $newest --latest
+          if ($LASTEXITCODE -ne 0) { throw "Couldn't mark $newest as the latest Release" }
           $latest = ''
-          foreach ($look in 1..5) {
+          foreach ($look in 1..10) {
             $latest = gh api "repos/$env:GITHUB_REPOSITORY/releases/latest" --jq '.tag_name'
             if ($LASTEXITCODE -eq 0 -and $latest -eq $newest) { break }
             Start-Sleep -Seconds 3
