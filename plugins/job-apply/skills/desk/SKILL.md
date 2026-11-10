@@ -182,7 +182,7 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   beside the jobs under way. **Working on** shows each job under way. 1 fills them one after another, as before. The desk's choice is kept in
   `desk.json` until profile.yaml's setting is changed.
 - **Skip job** takes a job out of the queue and closes its tabs (its windows too, never another job's); it's never applied to until
-  **Undo** (on its card under Ready and done, or by its row in the list) puts it back where it
+  **Undo** (on its card under Done this visit, or by its row in the list) puts it back where it
   was, with the tracker's status from before: back in the queue (opened again from the start), or
   in the list unticked if the desk hadn't begun it. Undo sends nothing: the job stops at its review page.
 - **Pause queue** (in the header, while jobs are queued or running) lets the jobs under way finish their pass and
@@ -312,10 +312,20 @@ Use the desk's own words when you talk about it, and keep to them when you chang
   (its text starts "Problem: "); green is done or safe; grey is neutral.
 - A message says what happened, then what to press, in two sentences. The browser the desk fills applications in
   is "the desk's browser window", and a site's applicant system is a "job system (Workday, say)", never an "ATS".
-- A count beside a word means the same set wherever that word appears. "Needs you" (the side card, and the page's
-  title) counts every job stopped for the user; among the openings the bar shows, those are its Bot checks and
-  Questions and sign-ins, the stopped ones among its Stuck, and the ones among its Ready that wait on a Submit or a
-  check of the user's. "N to submit" in Ready and done's head counts its Ready to submit cards.
+- A count beside a word means the same set wherever that word appears. The page's title and the Home menu's number
+  count every job waiting on the user: Home's Needs you and Ready to submit lists together. Needs you's own number
+  counts its list (questions, sign-ins, emailed codes, bot checks, stuck and failed jobs, a resume or letter to
+  decide); "N to submit" in Ready to submit's head counts its cards (ready, and the ones waiting on a Submit or a
+  check of the user's).
+- **Home** is what to do now: **Getting started** (seven lines for a new person, gone once the profile, the search,
+  a first search and a first application are done), four tiles, then **Needs you**, **Ready to submit** and **Done
+  this visit** beside **Working on** (each running job's step: Opened, Account, Form, Review) and **This week**.
+  Each job is a row that opens (its chevron); a list of four or more starts closed. **Go through them** takes the
+  user through Needs you one job at a time (Next leaves one for later, Stop ends it; bot checks come last).
+- **A desk run on its own** (the Start menu's Job Desk, no Claude beside it) offers nothing that needs Claude: no
+  Tailor my resume (no job ever waits for a resume there), no Prep me or Follow up, and its messages say what to
+  do on the page. An application's status is set by hand there: **Change status** (the ⋯ at the end of an
+  Applications row: Applied, Interviewing, Offer, Rejected, Withdrawn), for a job already sent.
 
 ## Steps
 
