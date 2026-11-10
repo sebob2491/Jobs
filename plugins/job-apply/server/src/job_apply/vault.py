@@ -52,8 +52,8 @@ NAMES_ENTRY = "job_apply_names"  # the vault's own entry holding the list of nam
 # service for an empty user name)
 NAME = re.compile(r"^[a-z0-9_]+$")
 # What the desk and the doctor say when the vault stops answering
-DIDNT_ANSWER = ("{vault} didn't answer, so saved passwords in it can't be read until it's unlocked and the desk "
-                "restarted ({detail})")
+DIDNT_ANSWER = ("{vault} didn't answer, so saved passwords in it can't be read. Unlock it, then restart the desk "
+                "({detail})")
 
 # The vault's name as a person knows it, by the keyring backend's module
 VAULT_NAMES = {

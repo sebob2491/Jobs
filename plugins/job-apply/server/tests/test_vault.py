@@ -229,8 +229,8 @@ def test_a_vault_that_stops_answering_is_out_of_use_and_said(srv, job_apply_home
         assert time.monotonic() - started < 3
         assert vault.status().usable is False and vault.status().down
         said = vault.problem()
-        assert said is not None and "didn't answer, so saved passwords in it can't be read until it's unlocked and " \
-                                     "the desk restarted" in said
+        assert said is not None and "didn't answer, so saved passwords in it can't be read. Unlock it, then restart " \
+                                     "the desk (" in said
         # out of use: never asked again; the file is read, and a save goes there
         assert config.get_secret("icims_password") == "Ic-in-the-file" and len(asked) == 1
         config.save_site_password("taleo_password", "Ta-saved-now")
