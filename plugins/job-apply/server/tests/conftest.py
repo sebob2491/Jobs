@@ -415,6 +415,12 @@ async def open_desk(page, desk, at: str = "home") -> None:
     await page.wait_for_selector("#plugin-version:not(:empty)", state="attached")
 
 
+async def press_menu(page, at: str) -> None:
+    """The side menu's link for the page `at` pressed, as a person would, and that page shown."""
+    await page.click(f".nav a[href='#{at}']")
+    await page.wait_for_function("(at) => document.body.dataset.page === at", arg=at)
+
+
 @pytest.fixture
 def srv(job_apply_home, loop):
     """The MCP server module with a fresh tracker; closes its browser afterwards."""

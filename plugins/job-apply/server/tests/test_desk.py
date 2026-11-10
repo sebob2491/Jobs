@@ -10,7 +10,7 @@ from pathlib import Path
 import httpx
 import pytest
 import yaml
-from conftest import browser_available, fixture_url, person_browser, run
+from conftest import browser_available, fixture_url, open_desk, person_browser, press_menu, run
 
 import job_apply.pipeline as pipeline
 from job_apply import autofill, config, mailbox
@@ -159,7 +159,7 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_selector("text=Field Service Engineer")
                 assert await page.locator("text=Accountant").count() == 0  # not recommended: hidden by default
                 where = page.locator(f"span[title='{many}']")
@@ -180,6 +180,7 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
                 assert [srv.tracker().get(j)["title"] for j in queued] == ["Field Service Engineer"]
                 assert said.startswith("Before these go") and "common question" in said, said
 
+                await press_menu(page, "home")
                 await page.select_option("select[data-q]", "Yes")
                 # a searchable list: typed in, the entry needn't be among those shown
                 country = page.locator("input[list][data-q='Country']")
@@ -196,6 +197,7 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
                 assert saved == {"Do you have a valid driver's license?": "Yes", "Country": "United States"}
                 assert ("apply", other["id"]) in desk.applier.tasks
 
+                await press_menu(page, "openings")
                 await page.fill("#add-links", fixture_url("jsonld_posting.html"))
                 await page.click("#add-btn")
                 # listed, picked for Apply, and the box emptied (waited for: the page's own
@@ -206,6 +208,7 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
                     && document.getElementById('add-links').value === '';
                 }""", timeout=20000)
 
+                await press_menu(page, "settings")
                 await page.fill("#pw", "typed-on-the-page")
                 await page.click("#pw-form button[type=submit]")
                 await page.wait_for_selector("#pw-state [data-site=workday].good")
@@ -305,7 +308,7 @@ def test_the_page_alerts_when_a_job_needs_you(srv):
             async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.add_init_script(fake)
-                await page.goto(desk.url)
+                await open_desk(page, desk, "settings")
                 await page.wait_for_selector("#alerts:text('Alert me')")
                 await page.click("#alerts")
                 await page.wait_for_selector("#alerts:text('Alerts on')")
@@ -354,12 +357,13 @@ def test_a_job_the_desk_tries_again_after_the_sites_error_alerts_no_one_until_it
             async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.add_init_script(fake)
-                await page.goto(desk.url)
+                await open_desk(page, desk, "settings")
                 await page.wait_for_selector("#alerts:text('Alerts on')")
                 r = desk.applier.runs[job["id"]] = Run(job["id"], "Field Service Engineer", "Example Fab",
                                                        status="needs_you", need="stuck", code="site_error",
                                                        reason="502 Bad Gateway. I'll try this job again by itself.",
                                                        retry_at=time.time() + 600)
+                await press_menu(page, "home")
                 await page.locator("#needs [data-job-act=retry]").wait_for()
                 await asyncio.sleep(2)  # (a refresh or two)
                 waiting = await page.evaluate("window.__shown")
@@ -408,7 +412,7 @@ def test_a_job_the_desk_tried_again_says_to_check_it_didnt_go_in_where_it_is_sen
             async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.add_init_script(fake)
-                await page.goto(desk.url)
+                await open_desk(page, desk, "settings")
                 await page.wait_for_selector("#alerts:text('Alerts on')")
                 desk.applier.runs[held["id"]] = Run(held["id"], title, "Example Held", status="ready",
                                                     reason=f"Filled and waiting on the review page. {_RETRY_HELD_SAYS}",
@@ -515,7 +519,7 @@ def test_a_posting_from_indeed_and_the_employers_site_is_one_row_also_on_indeed(
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 row = page.locator("li.row", has_text="Equipment Technician")
                 await row.wait_for()
                 also = row.locator("a", has_text="Also on Indeed")
@@ -581,7 +585,7 @@ def test_the_desk_searches_by_itself_only_with_its_switch_on_and_a_search_can_be
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)  # never searched before: the old page searched on opening
+                await open_desk(page, desk, "openings")  # never searched before: the old page searched on opening
                 await page.wait_for_selector("text=Press Find jobs")
                 await asyncio.sleep(3.5)  # (two of the page's refreshes)
                 assert not searched and desk.search["status"] == "idle"
@@ -1229,7 +1233,7 @@ def test_dont_wait_for_me_lets_the_queue_go_on_past_a_sign_in_or_code(srv, job_a
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_selector("#dont-wait-hint:has-text('Off')")  # (drawn from the desk's state)
                 async with page.expect_response("**/api/settings"):
                     await page.check("#dont-wait")
@@ -1345,7 +1349,7 @@ def test_the_working_on_card_shows_every_job_under_way_and_the_jobs_at_once_butt
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_selector("#plugin-version:not(:empty)")  # the page has its state
                 await page.wait_for_selector("[data-at-once='1'][aria-pressed='true']")  # (the tests' profile)
                 for n, job_id in enumerate(ids):
@@ -1353,9 +1357,11 @@ def test_the_working_on_card_shows_every_job_under_way_and_the_jobs_at_once_butt
                                                            status="running" if n < 2 else "queued")
                     run_.log.append(f"opened https://careers.employer{n}.example/job/{n}")
                 desk.applier.tasks.append(("apply", ids[2]))
+                await press_menu(page, "home")
                 await page.wait_for_selector("#work :text('1 more queued.')")
                 work = await page.locator("#work").inner_text()
                 assert "Technician 0" in work and "Technician 1" in work and "Technician 2" not in work, work
+                await press_menu(page, "openings")
                 await page.click("[data-at-once='3']")
                 await page.wait_for_selector("[data-at-once='3'][aria-pressed='true']")
                 for _ in range(50):
@@ -1393,7 +1399,7 @@ def test_only_where_the_desk_goes_all_the_way_shows_those_employers_alone_and_is
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_selector("text=Field Service Engineer")
                 row = page.locator("li.row", has_text="Module Equipment Technician")
                 assert await row.locator(".chip.handled").count() == 1
@@ -1491,7 +1497,7 @@ def test_the_openings_sort_by_pay_or_date_and_the_filters_hide_only_what_says_it
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_selector("text=Ebara Technologies Technician")
                 ebara = page.locator("li.row", has_text="Ebara Technologies Technician").locator(".meta").first
                 assert "$26–$28/hr (≈$54k–$58k/yr)" in await ebara.inner_text()
@@ -1639,7 +1645,7 @@ def test_the_requirement_chips_hide_only_a_job_that_says_it_fails_them(srv, job_
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_selector("text=Later Technician")
                 assert await _shown_titles(page) == every
                 assert await page.inner_text("#degree-chip") == "My degree is enough"  # (the profile's Bachelor's)
@@ -1718,7 +1724,7 @@ def test_the_workplace_chips_hide_only_a_job_that_surely_says_its_done_another_w
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_selector("text=Read Technician")
 
                 def meta(title):
@@ -1812,7 +1818,7 @@ def test_within_miles_hides_only_a_job_surely_farther_from_home(srv, job_apply_h
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_selector("text=Read Technician")
                 assert await _shown_titles(page) == every
 
@@ -1874,7 +1880,7 @@ def test_within_miles_is_off_and_the_window_says_why_without_a_home_town(srv, jo
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_selector("text=Tucson Technician")
                 # (a profile without its city: Set up your profile opens by itself, and the person closes it)
                 await page.click("#setup [data-act='setup-close']")
@@ -1965,7 +1971,7 @@ def test_the_type_chips_hide_only_a_job_whose_system_says_its_of_other_types(srv
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_selector("text=Both Technician")
 
                 def meta(title):
@@ -2035,7 +2041,7 @@ def test_a_state_asked_before_a_chip_is_pressed_never_puts_the_old_chips_back(sr
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_selector("text=Hybrid Technician")
                 # a state asked, then the chip pressed while it's on its way
                 async with page.expect_request("**/api/state") as asked:
@@ -2131,7 +2137,7 @@ def test_the_company_box_shows_only_the_openings_of_the_companies_chosen(srv, jo
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_selector("text=Maintenance Technician")
                 names = await page.eval_on_selector_all("#company-names option", "os => os.map((o) => o.value)")
                 assert names == ["Example Fab", "Intel Corporation", "Microchip Technology"], names
@@ -2205,7 +2211,7 @@ def test_the_system_chips_show_only_the_jobs_on_the_systems_pressed(srv, job_app
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_selector("text=Unnamed Technician")
                 assert await page.is_visible("#system-chips")
                 chips = await page.locator("[data-chip='systems']").all_inner_texts()
@@ -2299,7 +2305,8 @@ def test_a_posting_that_wont_sponsor_a_visa_says_so_only_to_a_person_who_needs_s
                     return page.locator("li.row", has_text=title).locator(".chips")
 
                 async def shown():
-                    await page.goto(desk.url)
+                    await page.goto("about:blank")
+                    await open_desk(page, desk, "openings")
                     await page.click("[data-filter='all']")
                     await page.wait_for_selector("text=Needs Technician")
                     return {t: (await chips(t).inner_text()).count("won't sponsor a work visa")
@@ -2352,7 +2359,7 @@ def test_troubleshooting_searches_every_list_shows_where_the_desk_stops_and_send
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.check("#handled-only")
                 await page.wait_for_selector("text=HR Generalist", state="detached")
                 listed = list(desk.listings)
@@ -2572,7 +2579,7 @@ def test_the_page_keeps_its_lists_steady(srv):
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_selector("#skipped-sites summary")
                 await page.click("#skipped-sites summary")
                 await page.wait_for_timeout(4000)  # two refreshes or more
@@ -3061,7 +3068,7 @@ def test_the_notes_are_counted_in_the_header_shown_as_one_issue_and_cleared(srv,
             async with person_browser() as browser:
                 page = await browser.new_page()
                 page.on("dialog", lambda d: asyncio.ensure_future(d.accept()))  # Clear's "are you sure"
-                await page.goto(desk.url)
+                await open_desk(page, desk, "help")
                 await page.wait_for_selector("#plugin-version:not(:empty)")  # the page has its state
                 assert await page.locator("#notes-btn").is_hidden()  # none yet
                 for i in range(3):
@@ -3184,18 +3191,21 @@ def test_undo_on_the_page_puts_a_skipped_job_back(srv, width):
         try:
             async with person_browser() as browser:
                 page = await browser.new_page(viewport={"width": width, "height": 900})
-                await page.goto(desk.url)
+                await open_desk(page, desk, "home")
                 await page.click(f"#needs button[data-job='{begun['id']}'][data-job-act=skip]")
                 await page.wait_for_selector(f"#done {undo}[data-job='{begun['id']}']")
                 assert desk.applier.runs[begun["id"]].status == "skipped"
                 assert srv.get_job(begun["id"])["job"]["status"] == "skipped"
+                await press_menu(page, "openings")
                 assert await page.locator(f"#rows {undo}").count() == 2  # both skipped rows offer it too
                 sizes = await page.evaluate("() => [document.documentElement.scrollWidth, "
                                             "document.documentElement.clientWidth]")
                 assert sizes[0] <= sizes[1], sizes
 
+                await press_menu(page, "home")
                 await page.click(f"#done {undo}[data-job='{begun['id']}']")
                 await page.wait_for_selector(f"#done {undo}", state="detached")
+                await press_menu(page, "openings")
                 row = page.locator("li.row", has_text="Field Service Engineer")
                 await row.locator(".pill:text('Queued')").wait_for()
                 assert desk.applier.runs[begun["id"]].status == "queued"
@@ -3282,9 +3292,10 @@ def test_the_page_lists_my_applications_folds_an_idle_side_and_closes_a_tip(srv,
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "home")
                 await page.wait_for_selector("#idle-card:not([hidden])")
                 assert await page.locator("#needs").is_hidden() and await page.locator("#work").is_hidden()
+                await press_menu(page, "openings")
                 assert "location not given" not in await page.inner_text("#rows")
                 assert "(2)" in await page.inner_text("[data-filter=mine]")
                 await page.click("[data-filter=mine]")
@@ -3294,6 +3305,7 @@ def test_the_page_lists_my_applications_folds_an_idle_side_and_closes_a_tip(srv,
                 assert "Fewer stops" in await page.inner_text("#notices")
                 await page.click("[data-act=dismiss]")
                 await page.reload()
+                await press_menu(page, "home")
                 await page.wait_for_selector("#idle-card:not([hidden])")
                 await page.wait_for_timeout(500)
                 assert "Fewer stops" not in await page.inner_text("#notices")
@@ -3324,7 +3336,7 @@ def test_the_common_questions_are_asked_once_on_the_page_and_kept(srv, job_apply
                 assert r.status_code == 400
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "answers")
                 await page.click("#bank [data-act=bank-all]")  # (the most asked four show until Show all)
                 await page.wait_for_selector("#bank-card:not([hidden]) select[data-bank=shift]")
                 await page.select_option("select[data-bank=shift]", "Nights")
@@ -3915,7 +3927,7 @@ def test_the_openings_bar_shows_where_each_job_stands_and_troubleshooting_ticks_
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_selector("#stops:not([hidden]) [data-stop='bot']")
                 bar = {await b.get_attribute("data-stop"): " ".join((await b.inner_text()).split())
                        for b in await page.locator("#stops button").all()}
@@ -3923,17 +3935,19 @@ def test_the_openings_bar_shows_where_each_job_stands_and_troubleshooting_ticks_
                                 "you": "Questions and sign-ins 1", "stuck": "Stuck 1", "ready": "Ready 1"}), bar
                 await page.click("[data-stop='bot']")
                 await page.wait_for_selector("text=Technician new1", state="detached")
-                assert await page.locator("#rows .row").count() == 1 and await page.is_visible("text=Technician bot")
+                # (in the openings: the job's card, of the same name, is on Home)
+                assert (await page.locator("#rows .row").count() == 1
+                        and await page.is_visible("#rows >> text=Technician bot"))
                 assert await page.is_visible("#stop-hint [data-act='bot-round']")
                 await page.click("[data-stop='stuck']")
-                await page.wait_for_selector("text=Technician stuck")
+                await page.wait_for_selector("#rows >> text=Technician stuck")
                 assert await page.locator("#rows .row").count() == 1
                 assert "Report a problem" in await page.inner_text("#stop-hint")
                 # a group picked: Select recommended ticks nothing it hides (none of the stuck one's is new)
                 await page.click("[data-act='select-recommended']")
                 assert await page.is_disabled("#apply")
                 await page.click("[data-stop='new']")
-                await page.wait_for_selector("text=Technician new1")
+                await page.wait_for_selector("#rows >> text=Technician new1")
                 await page.click("[data-act='select-recommended']")
                 ticked = await page.eval_on_selector_all("[data-pick]:checked", "bs => bs.map((b) => b.dataset.pick)")
                 # one per employer, the best fit of Example Fab E's two
@@ -3981,7 +3995,7 @@ def test_select_recommended_where_the_desk_goes_all_the_way_ticks_only_those_emp
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_selector("[data-pick='https://example.com/saved']")
                 assert await page.locator("[data-pick='https://example.com/cleared']").count() == 0
                 await page.click("[data-act='select-recommended']")
@@ -4878,7 +4892,7 @@ def test_my_applications_on_the_page_are_grouped_marked_for_follow_up_and_copy_a
                 sent: list[str] = []
                 page.on("request",
                         lambda r: sent.append(r.url) if not r.url.startswith(desk.url.split("?")[0]) else None)
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_function("document.getElementById('mine-count').textContent === '(10)'")
                 seen = {"hidden_on_openings": await page.locator("#app-groups").is_hidden()}
                 await page.click("[data-filter=mine]")
@@ -5294,7 +5308,7 @@ def test_the_page_marks_new_openings_hides_one_not_wanted_with_undo_and_shows_sa
         try:
             async with person_browser() as browser:
                 page = await browser.new_page(viewport={"width": 390, "height": 900})
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_selector("text=Field Service Engineer")
                 seen = {"new": sorted(await page.locator("li.row", has=page.locator(".chip.new")).locator(".title")
                                       .all_inner_texts())}
@@ -5342,6 +5356,7 @@ def test_the_page_marks_new_openings_hides_one_not_wanted_with_undo_and_shows_sa
                 await page.locator("li.row", has_text="Equipment Technician").wait_for()
                 seen["left"] = srv.tracker().not_interested()
                 # the header's Safety
+                await press_menu(page, "settings")
                 await page.click("#safety-btn")
                 await page.wait_for_selector("#safety[open] li[data-safety=auto_submit]")
                 seen["safety"] = await page.inner_text("#safety-body li[data-safety=auto_submit]")
@@ -5477,7 +5492,7 @@ def test_undo_on_an_employers_row_hidden_by_its_indeed_jobs_mark_brings_it_back(
                 page = await browser.new_page(viewport={"width": 390, "height": 900})
                 said: list[str] = []
                 page.on("dialog", lambda d: (said.append(d.message), asyncio.ensure_future(d.dismiss())))
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.click("[data-stop=unwanted]")
                 row = page.locator("li.row", has_text="Equipment Technician")
                 await row.locator(f"[data-ni-undo='{INTEL_JOB}']").click()
@@ -5778,7 +5793,7 @@ def test_the_score_breakdown_wraps_on_a_phone(srv, job_apply_home):
         try:
             async with person_browser() as browser:
                 page = await browser.new_page(viewport={"width": 390, "height": 900})
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.click(f"button.score[data-parts='{url}']")
                 await page.wait_for_selector(".parts")
                 sizes = await page.evaluate("() => [document.documentElement.scrollWidth, "
@@ -5833,14 +5848,17 @@ def test_the_needs_you_count_is_the_bars_groups_added_up(srv, job_apply_home):
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_selector("#stops:not([hidden]) [data-stop='you']")
+                await press_menu(page, "home")
                 card = int(await page.inner_text("#needs-count"))
+                await press_menu(page, "openings")
                 bar = {await b.get_attribute("data-stop"): " ".join((await b.inner_text()).split())
                        for b in await page.locator("#stops button").all()}
                 rows = await page.eval_on_selector_all("#rows .row", """rs => rs.map((r) => [
                     r.querySelector('.meta').innerText, r.querySelector('.state .pill').innerText,
                     r.querySelector('.state .pill').className])""")
+                await press_menu(page, "home")
                 cards = await page.eval_on_selector_all("#needs .task h3", """hs => hs.map((h) => [
                     h.innerText, h.querySelector('.pill').innerText])""")
                 await browser.close()
@@ -5929,7 +5947,7 @@ def test_a_job_ready_to_submit_is_listed_first(srv, job_apply_home):
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "home")
                 await page.wait_for_selector("#done-count:not([hidden])")
                 order = await page.eval_on_selector_all("#done .task h3 .pill", "ps => ps.map((p) => p.innerText)")
                 count = await page.eval_on_selector("#done-count", """p => [p.innerText, p.className,
@@ -5941,7 +5959,7 @@ def test_a_job_ready_to_submit_is_listed_first(srv, job_apply_home):
 
     order, count = run(go())
     assert order == ["Ready to submit", "Didn't finish", "Submitted", "Skipped"], order
-    assert count == ["1 to submit", "pill info", "rgb(11, 87, 208)"], count
+    assert count == ["1 to submit", "pill info", "rgb(29, 78, 216)"], count
 
 
 def test_the_desks_words_name_its_buttons_and_the_window(srv, job_apply_home):
@@ -5963,20 +5981,24 @@ def test_the_desks_words_name_its_buttons_and_the_window(srv, job_apply_home):
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "home")
                 await page.wait_for_selector("#needs [data-job-act=later]")
+                await press_menu(page, "openings")
                 area = await page.inner_text("#area-btn")
+                await press_menu(page, "home")
                 later = await page.get_attribute("#needs [data-job-act=later]", "title")
                 applied = await page.eval_on_selector_all("[data-job-act=applied]", "bs => bs.map((b) => b.innerText)")
+                await press_menu(page, "openings")
                 errs = await page.eval_on_selector_all("#skipped-sites details div", """ds => ds.map((d) => [d.textContent.trim(),
                     d.querySelector('[title]').title])""")  # noqa: E501
-                footer = await page.inner_text("footer")
+                await press_menu(page, "help")
+                how = await page.inner_text("section[aria-labelledby=how-h]")
                 await browser.close()
-                return area, later, applied, errs, footer
+                return area, later, applied, errs, how
         finally:
             await desk.stop()
 
-    area, later, applied, errs, footer = run(go())
+    area, later, applied, errs, how = run(go())
     assert area.startswith("What and where: "), area
     assert later == "Let the other jobs go on; this one waits in its tab until you finish it there", later
     assert applied == ["I submitted it myself"] * 2, applied
@@ -5986,7 +6008,7 @@ def test_the_desks_words_name_its_buttons_and_the_window(srv, job_apply_home):
                      "browser search: TimeoutError: Timeout 30000ms exceeded (2 of 4 searches failed)"],
                     ["Half Co: the site didn't answer (the others' results are listed)",
                      "SearchError: HTTP 502 from x (1 of 2 searches failed; the others' results are listed)"]], errs
-    assert "the desk's browser window" in footer and "automation" not in footer, footer
+    assert "the desk's browser window" in how and "automation" not in how, how
 
 
 def test_a_submit_with_no_confirmation_is_one_to_check_never_one_to_press_again(srv, job_apply_home):
@@ -6160,7 +6182,7 @@ def test_each_switch_that_is_on_is_said_under_the_openings_head(srv, job_apply_h
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_selector("text=Example Bank")
                 seen["first"] = await hint()
                 seen["more_hidden"] = await page.is_hidden("#troubleshoot") and await page.is_hidden("#auto-search")
@@ -6217,19 +6239,22 @@ def test_the_common_questions_show_the_most_asked_four_and_site_passwords_only_t
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "answers")
                 await page.wait_for_selector("#bank-card:not([hidden]) [data-bank]")
                 seen["shown"] = await page.eval_on_selector_all("#bank [data-bank]",
                                                                 "bs => bs.map((b) => b.dataset.bank)")
                 seen["link"] = await page.inner_text("#bank [data-act=bank-all]")
+                await press_menu(page, "settings")
                 seen["pills"] = await page.inner_text("#pw-state")
                 seen["pills_hidden"] = await page.is_hidden("#pw-state")
                 seen["count"] = await page.inner_text("#pw-count")
+                await press_menu(page, "answers")
                 await page.click("#bank [data-act=bank-all]")
                 await page.wait_for_selector("#bank [data-act=bank-all]", state="detached")
                 seen["all"] = await page.eval_on_selector_all("#bank [data-bank]",
                                                               "bs => bs.map((b) => b.dataset.bank)")
                 config.secrets_path().write_text("workday_password: a\n", encoding="utf-8")
+                await press_menu(page, "settings")
                 await page.wait_for_selector("#pw-state [data-site=workday]")
                 seen["saved"] = await page.eval_on_selector_all("#pw-state .pill", "ps => ps.map((p) => p.innerText)")
                 seen["count_saved"] = await page.inner_text("#pw-count")
@@ -6267,7 +6292,7 @@ def test_the_preflight_dialog_defaults_to_seeing_to_things_first(srv, job_apply_
             async with person_browser() as browser:
                 page = await browser.new_page(viewport={"width": 1200, "height": 700})
                 page.on("dialog", lambda d: (seen["native"].append(d.message), asyncio.ensure_future(d.dismiss())))
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_selector("text=Technician")
                 await page.click("text=Select recommended")
                 await page.click("#apply")
@@ -6284,12 +6309,14 @@ def test_the_preflight_dialog_defaults_to_seeing_to_things_first(srv, job_apply_
                 seen["pw_in_view"] = await page.evaluate("(() => { const r = document.getElementById('pw-h')"
                                                          ".getBoundingClientRect(); "
                                                          "return r.top >= 0 && r.top < innerHeight; })()")
+                await press_menu(page, "openings")  # (See to these first led to Settings)
                 await page.click("#apply")
                 await page.wait_for_selector("#preflight[open]")
                 await page.keyboard.press("Escape")
                 await page.wait_for_selector("#preflight", state="hidden")
                 await page.wait_for_timeout(500)
                 seen["after_escape"] = list(desk.applier.tasks)
+                await press_menu(page, "openings")  # (Escape sees to them first too: it led to Settings)
                 await page.click("#apply")
                 await page.wait_for_selector("#preflight[open]")
                 await page.click("#preflight-apply")
@@ -6331,9 +6358,10 @@ def test_see_to_these_first_for_the_common_questions_shows_them_all(srv, job_app
         try:
             async with person_browser() as browser:
                 page = await browser.new_page(viewport={"width": 1200, "height": 700})
-                await page.goto(desk.url)
+                await open_desk(page, desk, "answers")
                 await page.wait_for_selector("#bank-card:not([hidden]) [data-act=bank-all]")
                 seen["before"] = await page.locator("#bank [data-bank]").count()
+                await press_menu(page, "openings")
                 await page.click("text=Select recommended")
                 await page.click("#apply")
                 await page.wait_for_selector("#preflight[open]")
@@ -6373,7 +6401,7 @@ def test_two_quick_presses_of_apply_ask_the_preflight_once(srv, job_apply_home):
                 page = await browser.new_page()
                 page.on("request", lambda r: calls.append(r.url.split("?")[0].rsplit("/api/", 1)[-1])
                         if "/api/preflight" in r.url or "/api/apply" in r.url else None)
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_selector("text=Technician")
                 await page.click("text=Select recommended")
                 await page.dblclick("#apply")
@@ -6410,7 +6438,7 @@ def test_more_stays_open_while_troubleshooting_is_on(srv, job_apply_home, monkey
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_selector("#troubleshoot:visible")
                 seen["open"] = await page.eval_on_selector("#more", "d => d.open")
                 await page.click("#more summary")  # (closed by the person)
