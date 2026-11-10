@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import yaml
-from conftest import browser_available, person_browser, run
+from conftest import browser_available, open_desk, person_browser, run
 
 from job_apply import config, phone
 from job_apply.desk import Desk
@@ -558,7 +558,7 @@ def test_the_phone_alerts_card_turns_them_on_and_sends_a_test(srv):
                 def accept(d):
                     asyncio.ensure_future(d.accept())
                 page.on("dialog", accept)
-                await page.goto(desk.url)
+                await open_desk(page, desk, "settings")
                 await page.wait_for_selector("#plugin-version:not(:empty)")
                 assert await page.inner_text("#phone-pill") == "Off"
                 await page.click("[data-act=phone-make]")
