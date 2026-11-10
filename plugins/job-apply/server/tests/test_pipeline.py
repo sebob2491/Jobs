@@ -1478,7 +1478,8 @@ def test_a_cookie_banner_with_no_way_to_decline_is_the_persons_unless_they_allow
 
     r, (accepted, prefs) = apply_once()
     assert (r.status, r.need) == ("needs_you", "stuck") and "can't decline" in r.reason, (r.reason, r.log)
-    assert "accept_cookies: true" in r.reason and (accepted, prefs) == (0, 0)
+    assert ("To have the desk accept banners that have no way to decline, choose that in Settings, under Applying."
+            in r.reason and (accepted, prefs) == (0, 0))
     profile = job_apply_home / "profile.yaml"
     profile.write_text(profile.read_text(encoding="utf-8").replace("settings:\n",
                                                                    "settings:\n  accept_cookies: true\n"),
@@ -1608,7 +1609,7 @@ def test_a_notice_over_the_form_is_the_persons_and_the_form_is_filled_after_it(s
     r, (status, need, reason, before), after = run(go())
     assert (status, need) == ("needs_you", "stuck") and f"“{NOTICE}”" in reason, reason
     assert ("press its button in the desk's browser window, then press Carry on" in reason
-            and "accept_notices: true" in reason)
+            and "turn on Agree to required notices in Settings, under Applying." in reason)
     assert before == {"uploads": 0, "agreed": 0, "first": "", "country": "", "terms": ""}  # nothing done behind it
     assert (r.status, r.need) == ("needs_you", "questions"), (r.status, r.reason, r.log)
     assert [q["label"][:20] for q in r.questions] == ["Terms and Conditions"], r.questions
@@ -1723,7 +1724,8 @@ def test_a_privacy_dialog_over_the_form_is_agreed_and_another_is_the_persons(srv
     elif notice in ("waiver", "signup"):  # (not the setting's to give: no hint that it would)
         assert "Use of the Eightfold AI" in r.reason and "accept_notices" not in r.reason, r.reason
     else:
-        assert "“Privacy Policy of Example Corp”" in r.reason and "accept_notices: true" in r.reason, r.reason
+        assert ("“Privacy Policy of Example Corp”" in r.reason
+                and "turn on Agree to required notices in Settings, under Applying." in r.reason), r.reason
 
 
 CONFIRMS = {
@@ -2683,7 +2685,8 @@ def test_a_data_privacy_statement_is_the_persons_without_accept_notices(srv, mon
     r, kept, filled = create_account_on_sf(srv)
     assert (r.status, r.need) == ("needs_you", "sign_in"), (r.status, r.reason, r.log)
     assert "asks you to read and accept its data privacy statement" in r.reason, r.reason
-    assert "accept_notices: true" in r.reason and "I tried" not in r.reason, r.reason
+    assert ("turn on Agree to required notices in Settings, under Applying." in r.reason
+            and "I tried" not in r.reason), r.reason
     assert kept == {}, kept  # the statement never opened, nothing pressed
     assert filled == ["sam.rivera@example.com", "Sam", "United States", True], filled  # the form is filled in
     assert not any("agreed to" in line for line in r.log), r.log
@@ -14171,7 +14174,8 @@ def test_a_degree_list_with_several_kinds_of_the_profiles_degree_says_so(srv):
                                         {"url": "https://example.wd1.myworkdayjobs.com/x"}, [degree])
     assert (f"The Degree list for {school} in Education 1 has several kinds of Bachelor's Degree (Bachelor of Arts, "
             "Bachelor of Science)") in said, said
-    assert "has no choice for" not in said and "degree: Bachelor of Science" in said, said
+    assert "has no choice for" not in said and (
+        "Or write it in full in your profile (Settings, Your profile), Bachelor of Science, say" in said), said
     assert rest == []
 
 
