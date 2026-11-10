@@ -512,8 +512,8 @@ def test_the_tiles_and_this_week_from_fixed_applications_and_a_fixed_clock(srv, 
                                    ["Working on", "2", "3 more waiting", False],
                                    ["Ready to submit", "2", "Filled in, waiting for your OK", False],
                                    ["Sent this week", "4", "7 sent in all", False]],
-                         **week, "order": ["start", "tile-needs", "tile-work", "tile-ready", "tile-sent", "needs-h", "done-h",
-                                           "finished-h", "work-h", "thisweek-h"]}, busy_seen
+                         **week, "order": ["start", "tile-needs", "tile-work", "tile-ready", "tile-sent", "needs-h",
+                                           "done-h", "finished-h", "work-h", "thisweek-h"]}, busy_seen
     assert quiet_seen["tiles"] == [["Needs you", "0", "Nothing right now", False],
                                    ["Working on", "0", "Nothing waiting", False],
                                    ["Ready to submit", "0", "Nothing yet", False],
