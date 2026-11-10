@@ -221,6 +221,32 @@ def _probe() -> Status:
     return Status(False, name, DIDNT_ANSWER.format(vault=name, detail=_detail(answer)), down=True)
 
 
+def try_again() -> bool:
+    """Whether the vault answers, asked once more when it's out of use (down): a person's press on the desk's password
+    panel (Make, Show, Forget), never a loop, so a vault that hangs is waited on VAULT_WAIT seconds per press at most.
+    Asked as the start's probe asks it, under the vault's lock. Once it answers, it's in use again as though it had
+    never been down: problem() is None and what it holds is read afresh. Usable or not, as status() says otherwise."""
+    global _status
+    with _lock:
+        s = status()
+        if not s.down:
+            return s.usable
+        try:
+            kr = _keyring()
+            backends = _backends(kr)
+        except Exception:
+            return False
+        if not backends:
+            return False
+        if "value" not in _run("probe", kr.get_password, service(), PROBE_NAME):
+            return False
+        _status = Status(True, vault_name(backends[0]))
+        _read.clear()
+        _said.discard("down")  # (should it stop answering again, that's said again)
+    log.warning("%s answers again: saved passwords in it are read again", _status.name)
+    return True
+
+
 def problem() -> str | None:
     """Why the vault there is isn't being used (it failed or didn't answer), for the desk's page; None otherwise."""
     s = status()

@@ -1357,6 +1357,7 @@ class Desk:
             return JSONResponse({"error": "The desk makes a password for a job system only."}, status_code=400)
         made: list[str] = []
         async with self._passwords_turn:
+            await asyncio.to_thread(vault.try_again)  # (a vault out of use, asked once more for this press)
             try:
                 for each in names:
                     # (off the event loop: the vault's call can wait VAULT_WAIT seconds)
@@ -1392,7 +1393,8 @@ class Desk:
         name = body.get("name")
         if not isinstance(name, str) or name not in DESK_PASSWORDS:
             return JSONResponse({"error": NEVER_SHOWN}, status_code=400)
-        # (off the event loop, as a save is)
+        # (off the event loop, as a save is; a vault out of use asked once more for this press first)
+        await asyncio.to_thread(vault.try_again)
         value = await asyncio.to_thread(_secret, name)
         if not value:
             # (one the vault can't be asked for just now isn't "none": the page says the vault isn't answering)
@@ -1424,6 +1426,7 @@ class Desk:
         if (busy := self._being_filled_on(name)) is not None:
             return JSONResponse({"error": busy}, status_code=409)
         async with self._passwords_turn:
+            await asyncio.to_thread(vault.try_again)  # (a vault out of use, asked once more for this press)
             try:
                 await asyncio.to_thread(config.forget_password, name)  # (off the event loop, as a save is)
             except config.VaultUnreachable as e:  # (one plain sentence of the desk's own)
@@ -1444,7 +1447,11 @@ class Desk:
         password `name` is (a job under way: Applier._under_way, its step holding the browser, or its pass running),
         by the job system's name as the page names it; None otherwise, and for a name that isn't a job system's. The
         job's system is the one its addresses are on (pipeline.password_for: its posting's, its application's, where
-        it paused, and its tab's now), as the desk picks the password it types there."""
+        it paused, its tab's now and each of that tab's frames', as the driver types a password into a job system's
+        frame inside an employer's own page: pipeline._password_place), as the desk picks the password it types there.
+        A tab that can't be read (closed, broken) adds no address: can't tell, so not refused. A job waiting on the
+        person (needs_you, its step not holding the browser) is deliberately not counted: it could wait for days, and
+        a password changed meanwhile is put right by the site's reset the next time the desk signs in there."""
         system = DESK_PASSWORDS.get(name)
         if system is None:
             return None
@@ -1457,9 +1464,7 @@ class Desk:
             job = t.get(run.job_id, with_description=False) or {}
             urls = [run.url, job.get("url"), job.get("apply_url"),
                     f"https://{run.paused_host}/" if run.paused_host else ""]
-            with contextlib.suppress(Exception):  # (a tab closed meanwhile)
-                if run.page is not None and not run.page.is_closed():
-                    urls.append(run.page.url)
+            urls += _tab_addresses(run.page)
             if any(password_for(u) == name for u in urls if u):
                 article = "An" if system[0].lower() in "aeio" else "A"  # An iCIMS, an Infor; a UKG Pro, a Workday
                 return f"{article} {system} job is being filled now. Try again when it is done."
@@ -2782,6 +2787,24 @@ def _saved(names: list[str]) -> dict[str, bool]:
 
     return {n: f"JOB_APPLY_SECRET_{re.sub(r'[^A-Z0-9]', '_', n.upper())}" in env or data.get(n) is not None
             or in_vault(n) for n in names}
+
+
+def _tab_addresses(page: Any) -> list[str]:
+    """A job's open tab's address and each of its frames', read as Playwright keeps them (no call to the browser,
+    nothing awaited); none for no tab, a closed one, or one that can't be read."""
+    urls: list[str] = []
+    if page is None:
+        return urls
+    try:
+        if page.is_closed():
+            return urls
+        urls.append(str(page.url or ""))
+        for frame in list(page.frames):
+            with contextlib.suppress(Exception):  # (a frame gone meanwhile: the others are still read)
+                urls.append(str(frame.url or ""))
+    except Exception:
+        return urls
+    return urls
 
 
 def _from_environment(name: str) -> bool:

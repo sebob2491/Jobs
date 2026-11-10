@@ -845,15 +845,16 @@ class VaultUnreachable(Exception):
 def vault_unreachable() -> str | None:
     """Why a password can't be made, shown or forgotten just now, in one plain sentence for the page: the computer's
     password vault is there but out of use (vault.status().down: locked, or not answering). None while it answers, and
-    on a computer with no vault at all (the file is the store there)."""
+    on a computer with no vault at all (the file is the store there). It doesn't ask the vault again: the desk's
+    routes do that once a press (vault.try_again)."""
     from . import vault
 
     s = vault.status()
     if not s.down:
         return None
     named = f" ({s.name})" if s.name and s.name != "The password vault" else ""
-    return (f"Your password vault{named} isn't answering, so the desk can't read the passwords saved in it: unlock "
-            "it, then open the Job Desk again.")
+    return (f"Your password vault{named} isn't answering, so the desk can't read the passwords saved in it. Unlock "
+            "it, then try again.")
 
 
 def forget_secret(name: str) -> bool:

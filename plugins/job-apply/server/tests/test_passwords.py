@@ -36,8 +36,7 @@ NEVER_SHOWN = "That one is never shown."
 FROM_ENVIRONMENT = "This one comes from your computer's own settings, not from the desk."
 SHOWN_ON_ITS_OWN = "Passwords are shown only when the Job Desk is opened on its own, not inside Claude."
 # What the three routes say while the password vault is out of use, after "Your password vault (its name)"
-VAULT_DOWN = (" isn't answering, so the desk can't read the passwords saved in it: unlock it, then open the Job Desk "
-              "again.")
+VAULT_DOWN = " isn't answering, so the desk can't read the passwords saved in it. Unlock it, then try again."
 MAKE, SHOW, FORGET = "/api/password/make", "/api/password/show", "/api/password/forget"
 
 
@@ -330,20 +329,17 @@ def test_a_made_password_that_cant_be_saved_leaves_the_one_saved_before(srv, job
             with monkeypatch.context() as m:
                 m.setattr(memory_vault, "set_password", refuse)
                 m.setattr(config, "write_text_atomic", full)
-                answers = [await ask(c, h, MAKE, {"name": "workday_password", "replace": True}, 400)]
-                # (the vault that refused is out of use now: nothing more is made until it answers again)
-                answers += [await ask(c, h, MAKE, body, 409)
-                            for body in ({"name": "icims_password", "replace": True}, {})]
+                answers = [await ask(c, h, MAKE, body, 400) for body in (
+                    {"name": "workday_password", "replace": True}, {"name": "icims_password", "replace": True}, {})]
             vault.reset()  # (as a new start reads them: the vault answers again)
             return before, answers, (await c.get("/api/state", headers=h)).json()
 
     before, answers, state = run(go())
     assert {name: config.get_secret(name) for name in SITE} == before
     assert before["icims_password"] == "Typed-by-me-2" and keeps_the_rules(before["workday_password"])
-    assert "No space left on device" in answers[0].json()["error"]
-    assert all(answer.json()["error"].endswith(VAULT_DOWN) for answer in answers[1:])
     for answer in answers:
-        assert "made" not in answer.json() and before["workday_password"] not in answer.text
+        assert "No space left on device" in answer.json()["error"] and "made" not in answer.json()
+        assert before["workday_password"] not in answer.text
     assert state["passwords_made"] == {"workday_password": "2026-11-10"}
     assert not config.secrets_path().exists()
 
@@ -1012,17 +1008,29 @@ def vault_down_sentence(answer: httpx.Response) -> bool:
     return said == f"Your password vault ({vault.status().name}){VAULT_DOWN}" and said.endswith(VAULT_DOWN)
 
 
-def put_out_of_use(memory_vault: MemoryVault, monkeypatch) -> None:
-    """The vault stops answering (locked since the desk started), as a read finds it: out of use for the rest of the
-    process, as the page's vault_problem says, while it still holds what it held."""
+class Locked:
+    """The vault locked: each read of it refused (and counted), until it answers again."""
 
-    def refuse(*args):
+    def __init__(self, fake: MemoryVault) -> None:
+        self.fake, self.asked = fake, 0
+
+    def __call__(self, *args):
+        self.asked += 1
         raise keyring.errors.KeyringLocked("locked")
 
-    with monkeypatch.context() as m:
-        m.setattr(memory_vault, "get_password", refuse)
-        vault.get("workday_password", fresh=True)
+    def answers_again(self) -> None:
+        vars(self.fake).pop("get_password", None)
+
+
+def put_out_of_use(memory_vault: MemoryVault, monkeypatch) -> Locked:
+    """The vault stops answering (locked since the desk started), as a read finds it: out of use, as the page's
+    vault_problem says, while it still holds what it held. It stays locked until the test unlocks it (answers_again)."""
+    locked = Locked(memory_vault)
+    monkeypatch.setattr(memory_vault, "get_password", locked)
+    vault.get("workday_password", fresh=True)
     assert vault.status().down and vault.problem()
+    locked.asked = 0
+    return locked
 
 
 def test_with_the_vault_out_of_use_make_my_passwords_writes_over_no_password_saved_in_it(srv, job_apply_home,
@@ -1037,9 +1045,11 @@ def test_with_the_vault_out_of_use_make_my_passwords_writes_over_no_password_sav
 
     async def go():
         async with serving(desk) as (c, h):
-            put_out_of_use(memory_vault, monkeypatch)
+            locked = put_out_of_use(memory_vault, monkeypatch)
             state = (await c.get("/api/state", headers=h)).json()
-            return state, await ask(c, h, MAKE, {}, 409)
+            answer = await ask(c, h, MAKE, {}, 409)
+            locked.answers_again()
+            return state, answer
 
     state, answer = run(go())
     assert vault_down_sentence(answer)
@@ -1070,8 +1080,8 @@ def test_with_the_vault_locked_since_its_last_read_make_a_new_one_makes_nothing(
                 m.setattr(memory_vault, "get_password", refuse)
                 m.setattr(memory_vault, "set_password", refuse)
                 locked = await ask(c, h, MAKE, {"name": "workday_password", "replace": True}, 409)
-            again = await ask(c, h, MAKE, {"name": "workday_password", "replace": True}, 409)
-            one = await ask(c, h, MAKE, {"name": "icims_password"}, 409)
+                again = await ask(c, h, MAKE, {"name": "workday_password", "replace": True}, 409)
+                one = await ask(c, h, MAKE, {"name": "icims_password"}, 409)
             return locked, again, one
 
     answers = run(go())
@@ -1097,9 +1107,10 @@ def test_with_the_vault_out_of_use_show_and_forget_refuse_with_the_sentence(srv,
             await ask(c, h, MAKE, {"name": "email_password"}, 400)
             config.save_site_password("email_password", "abcd efgh ijkl mnop")
             made = in_vault(memory_vault, "workday_password")
-            put_out_of_use(memory_vault, monkeypatch)
+            locked = put_out_of_use(memory_vault, monkeypatch)
             shown = await ask(c, h, SHOW, {"name": "workday_password"}, 409)
             forgot = [await ask(c, h, FORGET, {"name": name}, 409) for name in ("workday_password", "email_password")]
+            locked.answers_again()
             return made, shown, forgot
 
     made, shown, forgot = run(go())
@@ -1133,6 +1144,57 @@ def test_without_a_vault_at_all_make_show_and_forget_work_from_the_file(srv, job
     assert shown.json() == {"value": config.read_secrets(config.secrets_path())["workday_password"]}
     assert forgot.json() == {"forgotten": True} and none.json() == {"error": "No password is saved for iCIMS."}
     assert state["vault_problem"] is None and state["passwords"]["workday"] is True
+
+
+
+def test_a_vault_that_answers_again_is_used_again_at_the_next_press(srv, job_apply_home, memory_vault, monkeypatch):
+    """Out of use is not for the life of the desk: unlocked meanwhile, the vault is asked once more at the next press
+    and used again as though it had never been down. Make my passwords then makes only for the job systems with none
+    in it, the person's own is left as it was, Show gives it, and the page's vault_problem clears."""
+    on_day(monkeypatch, "2026-11-10")
+    config.save_site_password("workday_password", "Persons-Own-1")
+    desk = idle_desk(srv)
+
+    async def go():
+        async with serving(desk) as (c, h):
+            locked = put_out_of_use(memory_vault, monkeypatch)
+            down = (await c.get("/api/state", headers=h)).json()
+            locked.answers_again()  # (the person unlocks it)
+            made = await ask(c, h, MAKE, {})
+            shown = await ask(c, h, SHOW, {"name": "workday_password"})
+            return down, made, shown, (await c.get("/api/state", headers=h)).json()
+
+    down, made, shown, state = run(go())
+    assert down["vault_problem"] and down["passwords"]["workday"] is False
+    assert made.json() == {"made": SITE[1:]} and shown.json() == {"value": "Persons-Own-1"}
+    assert in_vault(memory_vault, "workday_password") == "Persons-Own-1"
+    assert all(keeps_the_rules(in_vault(memory_vault, name) or "") for name in SITE[1:])
+    assert state["vault_problem"] is None and all(state["passwords"][n.removesuffix("_password")] for n in SITE)
+    assert state["passwords_made"] == {name: "2026-11-10" for name in SITE[1:]}
+    assert not config.secrets_path().exists() or config.read_secrets(config.secrets_path()) == {}
+
+
+def test_a_vault_still_locked_is_asked_once_more_per_press_and_refused(srv, job_apply_home, memory_vault,
+                                                                       monkeypatch):
+    """Still locked: each press of Make, Show or Forget asks it once more (one wait at most, never a loop, never once
+    for each job system), and is refused with the sentence."""
+    config.save_site_password("workday_password", "Persons-Own-1")
+    desk = idle_desk(srv)
+
+    async def go():
+        async with serving(desk) as (c, h):
+            locked = put_out_of_use(memory_vault, monkeypatch)
+            asked = []
+            for path, body in ((MAKE, {}), (MAKE, {"name": "icims_password", "replace": True}),
+                               (SHOW, {"name": "workday_password"}), (FORGET, {"name": "workday_password"})):
+                answer = await ask(c, h, path, body, 409)
+                asked.append((locked.asked, vault_down_sentence(answer)))
+            locked.answers_again()
+            return asked
+
+    assert run(go()) == [(1, True), (2, True), (3, True), (4, True)]
+    vault.reset()
+    assert in_vault(memory_vault, "workday_password") == "Persons-Own-1" and config.get_secret("icims_password") is None
 
 
 # ------------------------------------------------------------------ Show only on a desk run on its own
@@ -1215,6 +1277,52 @@ def test_make_a_new_one_and_forget_wait_while_a_job_is_being_filled_on_that_job_
     assert config.get_secret("workday_password") == before["workday_password"]
     assert [answer.json() for answer in others] == [{"made": ["icims_password"]}, {"forgotten": True},
                                                     {"made": ["ukg_password", "taleo_password"]}]
+
+
+class Frame:
+    """A stand-in for a Playwright frame: its address, as Playwright keeps it."""
+
+    def __init__(self, url: str) -> None:
+        self.url = url
+
+
+class Tab:
+    """A stand-in for a job's open tab (Run.page): its address and its frames', read without awaiting the browser."""
+
+    def __init__(self, url: str, *frames: str, broken: bool = False) -> None:
+        self.url, self.broken = url, broken
+        self.frames = [Frame(url), *(Frame(u) for u in frames)]
+
+    def is_closed(self) -> bool:
+        if self.broken:
+            raise RuntimeError("Target page, context or browser has been closed")
+        return False
+
+
+def test_a_job_whose_sign_in_is_in_a_job_systems_frame_counts_as_filled_on_that_system(srv, job_apply_home,
+                                                                                      memory_vault):
+    """The driver types a password into a job system's frame inside an employer's own page (iCIMS' sign-in on an
+    employer's careers page): Make a new one and Forget wait for that job too. A tab that can't be read says nothing,
+    so nothing is refused for it."""
+    desk = idle_desk(srv)
+    own = "https://careers.example-fab.com/apply/1"
+    job = srv.add_job(url=own, title="Equipment Technician", company="Example Fab")["job"]
+
+    async def go():
+        async with serving(desk) as (c, h):
+            await ask(c, h, MAKE, {})
+            run_ = Run(job["id"], "Equipment Technician", "Example Fab", status="running", url=own)
+            run_.page = Tab(own, "https://careers-examplefab.icims.com/jobs/1/login?in_iframe=1")
+            desk.applier.runs[job["id"]] = run_
+            refused = [await ask(c, h, MAKE, {"name": "icims_password", "replace": True}, 409),
+                       await ask(c, h, FORGET, {"name": "icims_password"}, 409)]
+            run_.page = Tab(own, "https://careers-examplefab.icims.com/jobs/1/login", broken=True)
+            return refused, await ask(c, h, MAKE, {"name": "icims_password", "replace": True})
+
+    refused, unread = run(go())
+    assert [answer.json() for answer in refused] == [
+        {"error": "An iCIMS job is being filled now. Try again when it is done."}] * 2
+    assert unread.json() == {"made": ["icims_password"]}
 
 
 # ------------------------------------------------------------------ Forget, all or nothing
