@@ -278,6 +278,55 @@ def loop(worker_loop):
 # (Browser.new_context's options: launch_persistent_context's others are the browser's own)
 _CONTEXT_OPTIONS = set(inspect.signature(Browser.new_context).parameters) - {"self"}
 
+# A mock site's page saved on this computer (a file: address) keeps what happened in its tab's sessionStorage, as a real
+# site keeps it on its server. CI's headless browser (Chrome 153's headless shell), under load, now and then hands such
+# a page a sessionStorage without what the page before it in its tab stored, and a later page the older one again (the
+# sooner the page reads it as it starts, the more often; never over http; the tab's name is never lost: measured Nov 9,
+# test_pipeline's test_two_mock_pages_remember_what_a_lost_sessionStorage_forgot). So in the tests' browser each such
+# page's sessionStorage is kept in its tab's name too (its ss= part, beside any part a page keeps there itself), as the
+# page stores, and put back from it the first time the page uses it: never sooner, which would bring on what it mends.
+# Only a file: page in a tab of its own: never a frame, a page over http or https (the desk's own, a routed site's), nor
+# localStorage (the browser's, not one tab's). The desk's own code has none of this.
+KEEPS_SESSION_STORAGE = r"""
+(() => {
+  if (location.protocol !== 'file:' || window.top !== window) return;
+  const real = {};
+  for (const how of ['getItem', 'setItem', 'removeItem', 'clear', 'key']) real[how] = Storage.prototype[how];
+  const parts = () => (window.name || '').split(';').filter(Boolean);
+  let ready = false;
+  const restore = (store) => {
+    if (ready) return;
+    ready = true;
+    const part = parts().find((p) => p.startsWith('ss='));
+    let kept = null;
+    try { kept = part ? JSON.parse(decodeURIComponent(part.slice(3))) : null; } catch (e) { /* not this script's */ }
+    if (!kept || typeof kept !== 'object') return;
+    for (const key of Object.keys(store)) {
+      if (!Object.prototype.hasOwnProperty.call(kept, key)) real.removeItem.call(store, key);
+    }
+    for (const [key, value] of Object.entries(kept)) {
+      if (real.getItem.call(store, key) !== value) real.setItem.call(store, key, value);
+    }
+  };
+  const keep = (store) => {
+    const all = {};
+    for (const key of Object.keys(store)) all[key] = real.getItem.call(store, key);
+    window.name = [...parts().filter((p) => !p.startsWith('ss=')),
+                   'ss=' + encodeURIComponent(JSON.stringify(all))].join(';');
+  };
+  for (const how of Object.keys(real)) {
+    Storage.prototype[how] = function (...args) {
+      let mine = false;
+      try { mine = this === window.sessionStorage; } catch (e) { /* no storage for this page */ }
+      if (mine) restore(this);
+      const out = real[how].apply(this, args);
+      if (mine && how !== 'getItem' && how !== 'key') keep(this);
+      return out;
+    };
+  }
+})();
+"""
+
 
 class _WorkerPlaywright:
     """`async_playwright()` as the desk's BrowserSession gets it in a test: each launch it asks for is a fresh context
@@ -305,6 +354,7 @@ class _WorkerPlaywright:
             ctx = await browser.new_context(**{k: v for k, v in options.items() if k in _CONTEXT_OPTIONS})
         else:
             ctx = await (await worker_playwright()).chromium.launch_persistent_context(**options)
+        await ctx.add_init_script(KEEPS_SESSION_STORAGE)  # (the mock sites' pages: their tab's storage, kept)
         self.opened.append(ctx)
         return ctx
 

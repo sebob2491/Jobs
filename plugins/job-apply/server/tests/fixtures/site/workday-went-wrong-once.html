@@ -18,8 +18,15 @@
   const reloaded = (performance.getEntriesByType('navigation')[0] || {}).type === 'reload';
   let visit = reloaded ? Number(sessionStorage.getItem('wwo.visit') || 0) : 0;
   if (!visit) {
-    const visits = Number(localStorage.getItem('wwo.visits') || 0);
+    // (the visits counted in the tab's name too, its wwo= part: CI's headless browser, under load, now and then hands
+    // a page saved on this computer a localStorage without what the page before it stored, as it does a
+    // sessionStorage (workday-account.html), and the desk's try in the same tab was the first visit over again; the
+    // tab's name goes with it from page to page. The larger count is the one)
+    const parts = (window.name || '').split(';').filter(Boolean);
+    const named = Number((parts.find((p) => p.startsWith('wwo=')) || 'wwo=0').slice(4));
+    const visits = Math.max(Number(localStorage.getItem('wwo.visits') || 0), named);
     visit = reloaded && visits ? visits : visits + 1;
+    window.name = [...parts.filter((p) => !p.startsWith('wwo=')), 'wwo=' + visit].join(';');
     localStorage.setItem('wwo.visits', String(visit));
     sessionStorage.setItem('wwo.visit', String(visit));
   }
