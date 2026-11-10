@@ -774,6 +774,8 @@ def test_a_narrow_window_keeps_pause_queue_as_an_icon_in_the_menu(srv):
                 paused = await page.evaluate(_NARROW_QUEUE)
                 await page.set_viewport_size({"width": 1280, "height": 800})
                 await page.wait_for_selector("#queue-said", state="visible")
+                # (the styles change with the width at once; the page's own redraw for the width comes a moment after)
+                await page.wait_for_selector("#pause-btn:not([aria-label])")
                 wide = await page.evaluate(_NARROW_QUEUE)
                 await browser.close()
                 return narrow, paused, wide
