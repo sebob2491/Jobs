@@ -276,21 +276,25 @@ def test_the_stops_about_past_jobs_and_schools_name_claude_only_inside_claude(sr
     def said(*boxes):
         return applier._entry_gaps(Run(1, "Technician", "Example Litho"), site, list(boxes))[0]
 
-    jobs = ("Workday asks about your past jobs, and your profile doesn't have this for them: Equipment Technician at "
-            "Intel (From). " + ADD_IT + ("" if standalone else ASK_FOR_JOBS))
+    def jobs(add_it=ADD_IT):
+        return ("Workday asks about your past jobs, and your profile doesn't have this for them: Equipment Technician "
+                "at Intel (From). " + add_it + ("" if standalone else ASK_FOR_JOBS))
 
     def schools(what):
         return ("Workday asks about your schools, and your profile doesn't have this for them: Arizona State "
                 f"University in Education 1 ({what}). " + ADD_IT + ("" if standalone else ASK_FOR_SCHOOLS))
 
-    assert said(work) == jobs + AFTER
+    assert said(work) == jobs() + AFTER
     assert said(school) == schools("From") + AFTER
     assert said(degree) == schools("Degree") + NO_DEGREE + AFTER
-    assert said(work, school) == jobs + " " + schools("From") + AFTER
+    # (both to add: Carry on is asked for once, after the schools)
+    assert said(work, school) == (jobs("Add it in your profile (Settings, Your profile).") + " " + schools("From")
+                                  + AFTER)
     for each in (said(work), said(school), said(degree), said(work, school)):
         assert "profile.yaml" not in each and "_history" not in each, each
         assert ("Claude" in each) is not standalone, each
-        assert "Then press Carry on" not in each and each.count("press Carry on") == each.count("Add it in") + 1
+        # (once for what was added in the profile, once for the other way: typing into the page)
+        assert "Then press Carry on" not in each and each.count("press Carry on") == 2, each
 
 
 def test_the_sentences_the_same_with_claude_and_without():

@@ -513,9 +513,10 @@ class FillingMixin:
 
         site, said = pipeline._site(run, data), []
         if missing["work"]:
+            # (with schools to add too, Carry on is asked for once, after both: the schools' sentence says it)
             said.append(f"{site} asks about your past jobs, and your profile doesn't have this for them: "
-                        f"{listed(missing['work'])}. Add it in your profile (Settings, Your profile), then press "
-                        "Carry on."
+                        f"{listed(missing['work'])}. Add it in your profile (Settings, Your profile)"
+                        + ("." if missing["education"] else ", then press Carry on.")
                         + ("" if self.standalone else " Or ask Claude: \u201cadd the start and end months of my jobs "
                            "from my resume to my profile\u201d."))
         if missing["education"]:
