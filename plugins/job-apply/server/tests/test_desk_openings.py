@@ -691,7 +691,11 @@ def test_change_status_sets_each_of_the_five_through_the_route_and_closes_as_the
                 await page.mouse.click(700, 880)  # (outside it: the page below the list)
                 seen["after a click outside"] = (await page.evaluate(_MENUS))["Quiet Fab"]["menu"]["open"]
                 await page.click(menu.format(quiet) + " > summary")
-                await page.click(menu.format(ids["Talk Fab"]) + " > summary")  # (one at a time)
+                # (one at a time. By the keyboard: the open menu's choices may lie over the next row's button, where
+                # a press of the mouse would choose one of them)
+                await page.focus(menu.format(ids["Talk Fab"]) + " > summary")
+                await page.keyboard.press("Enter")
+                await page.wait_for_selector(menu.format(ids["Talk Fab"]) + "[open]")
                 seen["another"] = sorted(c for c, m in (await page.evaluate(_MENUS)).items()
                                          if m["menu"] and m["menu"]["open"])
                 await page.keyboard.press("Escape")
