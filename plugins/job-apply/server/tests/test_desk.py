@@ -164,7 +164,7 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
                 assert await page.locator("text=Accountant").count() == 0  # not recommended: hidden by default
                 where = page.locator(f"span[title='{many}']")
                 assert await where.inner_text() == "Phoenix, AZ; Chandler, AZ; Austin, TX and 2 more"
-                meta = await page.locator(".meta").first.inner_text()
+                meta = await page.locator("#rows .when").first.inner_text()  # (its Posted cell)
                 assert "2026-08-25" in meta and "T13:11" not in meta  # the date, not the time of day
                 await page.click("text=Select recommended")
                 # what will stop them, said first (the common questions unanswered here), and Apply anyway pressed
@@ -1483,8 +1483,8 @@ def test_each_opening_says_its_pay_or_that_it_isnt_listed(srv, job_apply_home):
 
 
 def test_the_openings_sort_by_pay_or_date_and_the_filters_hide_only_what_says_its_below(srv, job_apply_home):
-    """The design of Oct 18, F1 and F2, its acceptance: Onto's and Ebara's rows show their pay, Lam's "pay not
-    listed", which sorts last by pay and is never hidden by "Pay at least"; Ebara's says "date unknown", sorts last by
+    """The design of Oct 18, F1 and F2, its acceptance: Onto's and Ebara's rows show their pay, Lam's "Not
+    listed", which sorts last by pay and is never hidden by "Pay at least"; Ebara's says "No date", sorts last by
     newest and is never hidden by "Posted". Both filters are kept in desk.json, and nothing hidden is picked."""
     desk = Desk(srv)
     desk.listings = _fixture_openings()
@@ -1501,14 +1501,16 @@ def test_the_openings_sort_by_pay_or_date_and_the_filters_hide_only_what_says_it
                 page = await browser.new_page()
                 await open_desk(page, desk, "openings")
                 await page.wait_for_selector("text=Ebara Technologies Technician")
-                ebara = page.locator("li.row", has_text="Ebara Technologies Technician").locator(".meta").first
+                # (Pay and the date in their own cells, B4's; "No date" and "Not listed", B4's words)
+                ebara_row = page.locator("li.row", has_text="Ebara Technologies Technician")
+                ebara = ebara_row.locator(".c-pay")
                 assert "$26–$28/hr (≈$54k–$58k/yr)" in await ebara.inner_text()
-                assert "date unknown" in await ebara.inner_text()
+                assert "No date" in await ebara_row.locator(".c-posted").inner_text()
                 assert await ebara.locator(".pay").get_attribute("title") == "From the posting's pay line"
-                onto = page.locator("li.row", has_text="Onto Innovation Technician").locator(".meta").first
+                onto = page.locator("li.row", has_text="Onto Innovation Technician").locator(".c-pay")
                 assert "$71k–$107k/yr" in await onto.inner_text()
-                lam = page.locator("li.row", has_text="Lam Research Technician").locator(".meta").first
-                assert "pay not listed" in await lam.inner_text()
+                lam = page.locator("li.row", has_text="Lam Research Technician").locator(".c-pay")
+                assert "Not listed" in await lam.inner_text()
                 assert await order(page) == ["Lam", "Onto", "Ebara"]  # (fit)
                 # (the second review) a pay read from the text, not its pay line, never fails "Pay at least"
                 assert await page.evaluate("[paysEnough({pay: {sure: false, top: 40000}}, 60000),"
