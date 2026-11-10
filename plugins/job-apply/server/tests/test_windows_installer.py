@@ -499,3 +499,28 @@ def test_an_update_that_didnt_finish_opens_the_desk_still_installed(iss):
     assert said == "'" + start_menu["Parameters"] + "'", said
     assert args[2] == "App + '\\plugin\\server'" and start_menu["WorkingDir"] == app + "\\plugin\\server"
     assert args[3:] == ["SW_SHOWNORMAL", "ewNoWait", "Code"]
+
+
+def test_the_workflow_tries_an_update_started_as_the_desk_starts_one(iss):
+    """Whether the installer outlives the processes it stops (the one that started it among them) can only be seen
+    on Windows: a step, after the window's and before the uninstall, starts the installer just built with the code's
+    own updates.start_installer, from the installed program's Python run through its uvw.exe, and waits up to 3
+    minutes for the installer's log to say it finished (the very line JobDeskSetup.iss logs), a new desk on the watch
+    file's port, and the starter gone, saying which didn't happen."""
+    flow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    (job,) = flow["jobs"].values()
+    names = [s.get("name", "") for s in job["steps"]]
+    window = names.index("The desk's own window outlives the start that opened it")
+    update = names.index("An update started by the desk replaces it and brings it back")
+    uninstall = names.index("Uninstall silently; the person's job-apply folder stays")
+    assert window + 1 == update == uninstall - 1, names
+    run = job["steps"][update]["run"]
+    assert "updates.start_installer(Path(sys.argv[1]), Path(sys.argv[2]))" in run
+    assert re.search(r'Start-Process -FilePath "\$env:APP\\bin\\uvw\.exe" .*\n\s*"run --frozen --python 3\.13 '
+                     r'--project `"\$env:SERVER`" python `"\$script`" `"\$exe`" `"\$log`" `"\$starterId`""\)', run), run
+    assert "plugins/job-apply/setup/windows/Output/JobDeskSetup.exe" in run and "$log = Join-Path $updates" in run
+    assert "$deadline = (Get-Date).AddMinutes(3)" in run and "desk_watch_8765.json" in run
+    finished = re.search(r"Log\('(Job Desk: the install finished\.)'\);", iss["code"])
+    assert finished and f"-Pattern '{finished.group(1)}' -SimpleMatch" in run
+    assert "$now.pid -ne $before.pid" in run and 'http://127.0.0.1:$($now.port)/' in run
+    assert "Get-Process -Id $id" in run and "if ($missing.Count -gt 0) { throw ($missing -join '. ') }" in run

@@ -13,7 +13,8 @@ from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "job_apply"
 # the files whose sentences are read: the server's (Python) and the page's (HTML)
-CHECKED = ["desk.py", "config.py", "letters.py", *sorted(p.name for p in SRC.glob("pipeline*.py")), "static/desk.html"]
+CHECKED = ["desk.py", "config.py", "letters.py", "updates.py", *sorted(p.name for p in SRC.glob("pipeline*.py")),
+           "static/desk.html"]
 # a file whose words are still to be reworded before it's read (the page was, until Version C's page half): none now
 PAGE_LATER: list[str] = []
 
