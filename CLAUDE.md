@@ -295,8 +295,9 @@ this file says otherwise, it wins.
     the inbox's (`mailbox.pick`) and types the code itself; Claude never sends, deletes, labels or marks mail,
     and a password reset's email is never asked of it (resets stay with the app password: the owner's call, Oct 21);
   - never ask for a password in chat (the desk page holds them).
-  - a site password is shown on the desk page only when the person presses Show or Copy there; the inbox app
-    password, the API key and the alert channel are never shown.
+  - a site password is shown on the desk page only when the person presses Show or Copy there, on a desk opened on
+    its own (never inside Claude); the inbox app password and the API key are never shown, and the password routes
+    never show the alert channel (Phone alerts has its own Show).
 - **Updating:** the desk's Update button fetches only this repository's own Release (the repository named in the
   installed `plugin.json`; nothing the page or the network's answer says changes where from), over https, and runs the
   installer only after its SHA-256 matches the Release's checksum file. It runs with the person's own rights, never
