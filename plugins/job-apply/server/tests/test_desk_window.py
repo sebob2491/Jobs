@@ -567,7 +567,7 @@ def test_a_link_no_browser_took_opens_the_ordinary_way_from_the_desks_own_window
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with _page(desk, desk.url + "&w=app") as (page, calls):
+            async with _page(desk, desk.url + "&w=app#openings") as (page, calls):
                 await page.context.route("https://careers.example.com/**", a_job)
                 async with page.context.expect_page() as new:
                     await page.click("#rows li.row:has-text('Example Fab') a.title")
