@@ -334,7 +334,7 @@ class MailMixin:
             if login is not None and "app password" in str(e):  # (only the inbox's own sign-in says so)
                 self._mail_refused = login[1]  # not tried again until a new one is saved
                 self.mail_problem = (f"The desk couldn't read your email: {e}. Save a new email app password "
-                                     "in the Site passwords card to try again.")
+                                     "in Settings, under Email codes, to try again.")
             else:
                 self.mail_problem = f"The desk couldn't read your email: {e}. It tries again shortly."
             # (tried: a reset's wait runs on through the inbox's own errors, never for ever. Only looks held off for

@@ -5760,8 +5760,8 @@ def test_the_safety_windows_troubleshooting_and_accounts_say_what_the_desk_does(
     made = s["manage_accounts"]
     assert (made["value"] == "on") == makes, made
     if makes:
-        assert "with the job system's password saved under Site passwords, or with the code the site emails where it " \
-               "asks for no password (Eightfold's)" in made["said"], made
+        assert "with the job system's password saved in Settings, under Accounts and passwords, or with the code the " \
+               "site emails where it asks for no password (Eightfold's)" in made["said"], made
         assert "never when it also signs you up for job alerts, a newsletter, a talent community or marketing" \
             in made["said"], made
 

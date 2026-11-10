@@ -477,3 +477,62 @@ def test_open_folder_starts_the_systems_file_manager_on_that_folder_and_no_shell
             assert args == [program, str(tmp_path.resolve())] and not kw.get("shell"), (args, kw)
     started.clear()
     assert window.open_folder(tmp_path / "not-there") is False and started == []
+
+
+# ------------------------------------------------------------------ the Safety window's two forms, and the panel's name
+
+def _safety(desk: Desk) -> dict[str, dict]:
+    return {line["key"]: line for line in desk.safety()["lines"]}
+
+
+@pytest.mark.parametrize("standalone", [False, True], ids=["with Claude", "without Claude"])
+def test_the_safety_windows_lines_take_their_form_with_claude_and_without(srv, monkeypatch, standalone):
+    """"Changed in Version D": the lines on sending, cover letters and passwords, and the email app password's, name
+    Claude only where Claude is there; the cover letter line says what writes the letters, as the Resume and cover
+    letters panel's row does."""
+    monkeypatch.setitem(mailbox.IMAP_HOSTS, "example.com", "imap.example.com")
+    config.save_site_password("email_password", APP_PASSWORD)
+    desk = _desk(srv)
+    desk.standalone = standalone
+    desk.applier.letters = True
+    s = _safety(desk)
+    if standalone:
+        assert s["practice"]["said"] == ("Applications can be sent: when you press Submit on the desk, or by Submit "
+                                         "for me when it's on.")
+        assert s["cover_letters"]["said"].startswith("This needs an Anthropic API key. Save one under Accounts and "
+                                                     "passwords. ")
+        assert s["passwords"]["said"] == ("A password saved on the desk is typed only into its own job system's "
+                                          "sites, and stays on this computer.")
+        assert s["email_password"]["said"].endswith(", opened read-only. Nothing else in your inbox.")
+        assert not [k for k in ("practice", "cover_letters", "passwords", "email_password") if "Claude" in s[k]["said"]]
+    else:
+        assert s["practice"]["said"] == ("Applications can be sent: when you press Submit on the desk, by Submit for "
+                                         "me when it's on, or when you tell Claude to submit one in the chat.")
+        assert s["cover_letters"]["said"].startswith("Written through your own Claude sign-in. ")
+        assert s["passwords"]["said"].endswith("and Claude never sees it. Never type one into the chat.")
+        assert s["email_password"]["said"].endswith("Nothing else in your inbox, and Claude never sees the password.")
+    assert s["email_password"]["value"] == "saved"
+    assert APP_PASSWORD not in json.dumps(desk.safety())
+
+
+@pytest.mark.parametrize("standalone", [False, True], ids=["with Claude", "without Claude"])
+def test_the_safety_windows_cover_letter_line_with_an_api_key_saved(srv, standalone):
+    """With an Anthropic API key saved, the letters are written through Anthropic's API, Claude or not: the line says
+    so, as the panel's row does, and never shows the key."""
+    config.save_site_password(config.API_KEY_NAME, "sk-ant-not-a-real-key")
+    desk = _desk(srv)
+    desk.standalone = standalone
+    desk.applier.letters = True
+    said = _safety(desk)["cover_letters"]["said"]
+    assert said.startswith("Written through Anthropic's API with your key, about 10 to 20 cents a letter. "), said
+    assert "sk-ant" not in json.dumps(desk.safety())
+
+
+def test_no_sentence_names_the_site_passwords_card_any_more():
+    """The Site passwords card is the Settings page's Accounts and passwords panel now (and the email app password is
+    on Email codes): no sentence the server says names the card."""
+    from test_plain_wording import CHECKED, _said
+
+    said = [(name, line, s) for name in CHECKED if name.endswith(".py") for line, s in _said(name)
+            if "Site passwords" in s]
+    assert said == []

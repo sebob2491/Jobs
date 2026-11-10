@@ -1350,11 +1350,11 @@ class Desk:
         for name, n in sorted(by_system.items(), key=lambda kv: (-kv[1], kv[0])):
             if not saved[name]:
                 lines.append(f"{DESK_PASSWORDS[name]}: no password saved, so {n} of these jobs "
-                             f"{'stop' if n != 1 else 'stops'} at the sign-in for you. Save one under Site passwords "
-                             "and the desk signs in itself.")
+                             f"{'stop' if n != 1 else 'stops'} at the sign-in for you. Save one in Settings, under "
+                             "Accounts and passwords, and the desk signs in itself.")
         if mailing and not saved["email_password"]:
             lines.append("No email app password saved: a site that emails a sign-up code or link waits for you to "
-                         "enter it. Save one under Site passwords and the desk reads it from your inbox.")
+                         "enter it. Save one in Settings, under Email codes, and the desk reads it from your inbox.")
         try:
             left = sum(1 for q in autofill.common_questions(config.Profile.load()) if q.get("answer") in (None, ""))
         except ValueError:  # a profile that doesn't read: the queue says so itself
@@ -1982,12 +1982,12 @@ class Desk:
             line("manage_accounts", "Make accounts", "on" if s.manage_accounts_chosen else
                  "on (your profile doesn't say, so it's on by default)",
                  "Where an employer's site needs an account, the desk creates yours there: with the job system's "
-                 "password saved under Site passwords, or with the code the site emails where it asks for no password "
-                 "(Eightfold's), ticking only the site's terms (never a newsletter). It resets a saved password a site "
-                 "refuses through the site's own \"Forgot password\" email. A consent to be considered for other "
-                 "positions is given only where the site won't make the account without it, never when it also signs "
-                 "you up for job alerts, a newsletter, a talent community or marketing. A CAPTCHA or security question "
-                 "on the way stays yours.", where)
+                 "password saved in Settings, under Accounts and passwords, or with the code the site emails where it "
+                 "asks for no password (Eightfold's), ticking only the site's terms (never a newsletter). It resets a "
+                 "saved password a site refuses through the site's own \"Forgot password\" email. A consent to be "
+                 "considered for other positions is given only where the site won't make the account without it, "
+                 "never when it also signs you up for job alerts, a newsletter, a talent community or marketing. A "
+                 "CAPTCHA or security question on the way stays yours.", where)
         elif unread:
             line("manage_accounts", "Make accounts", fix,
                  "The desk makes no account and resets no password until it's fixed.", where)
@@ -2032,7 +2032,8 @@ class Desk:
             line("email_password", "Email app password (the desk)", "saved",
                  "The desk reads only the sign-up codes and links a job's own site emails you"
                  + (", and the password-reset email it just asked that site for" if accounts else "")
-                 + ", opened read-only. Nothing else in your inbox, and Claude never sees the password.", where)
+                 + (", opened read-only. Nothing else in your inbox, and Claude never sees the password."
+                    if with_claude else ", opened read-only. Nothing else in your inbox."), where)
         elif saved:
             line("email_password", "Email app password (the desk)", "saved, but the desk can't use it now",
                  (why or "Your profile has no email address it can read mail for, or your mail service turned the "
