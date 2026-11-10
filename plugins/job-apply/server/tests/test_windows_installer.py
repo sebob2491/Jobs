@@ -268,7 +268,9 @@ def test_the_workflow_builds_on_windows_installs_checks_and_uninstalls_with_acti
     text = WORKFLOW.read_text(encoding="utf-8")
     flow = yaml.safe_load(text)
     on = flow[True]  # (YAML 1.1 reads the key `on` as true)
-    assert "workflow_dispatch" in on and on["push"] == {"tags": ["job-apply-v*"]}
+    # by hand, for a tag, and for every version: a push to main that changes the manifest, which each version bumps
+    assert "workflow_dispatch" in on and on["push"] == {
+        "tags": ["job-apply-v*"], "branches": ["main"], "paths": ["plugins/job-apply/.claude-plugin/plugin.json"]}
     assert flow["permissions"] == {"contents": "read"}
     (job,) = flow["jobs"].values()
     assert job["runs-on"] == "windows-latest"
@@ -290,7 +292,157 @@ def test_the_workflow_builds_on_windows_installs_checks_and_uninstalls_with_acti
     upload = next(s for s in job["steps"] if s.get("uses", "").startswith("actions/upload-artifact@"))
     assert upload["with"]["path"].endswith("Output/JobDeskSetup.exe")
     release = job["steps"][-1]
-    assert "refs/tags/job-apply-v" in release["if"] and "gh release upload" in release["run"]
+    assert release["if"] == "github.event_name == 'push' || inputs.release" and "gh release upload" in release["run"]
+
+
+# Nothing here runs PowerShell, so the publishing step's script is pinned whole, comments aside: a change to one of
+# its lines is a change to look over again. (The reviews of Nov 9 took a line out at a time: a push went on to replace
+# a published installer, a failed upload ended green, and the tests of the time passed.)
+_STEP = """\
+$ErrorActionPreference = 'Stop'
+$version = (Get-Content -Raw -Encoding UTF8 plugins/job-apply/.claude-plugin/plugin.json | ConvertFrom-Json).version
+if ($version -notmatch '^\\d+(\\.\\d+)+$') { throw "The plugin's version, $version, isn't numbers and dots" }
+$tag = "job-apply-v$version"
+if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne $tag) {
+  throw "The tag $env:GITHUB_REF_NAME isn't $tag, the plugin's version"
+}
+function Write-Sum([string]$file) {
+  $sum = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLower()
+  Set-Content -LiteralPath "$file.sha256" -Value "$sum  JobDeskSetup.exe`n" -NoNewline -Encoding ascii
+  Get-Content -LiteralPath "$file.sha256" | Write-Host
+}
+$byHand = $env:GITHUB_EVENT_NAME -ne 'push'
+$exe = 'plugins/job-apply/setup/windows/Output/JobDeskSetup.exe'
+$draft = gh release view $tag --json isDraft --jq '.isDraft' 2>$null
+$there = $LASTEXITCODE -eq 0
+if ($there -and $draft -eq 'true') {
+  throw "There's a draft Release for $tag. Publish it or delete it on GitHub's Releases page, then run this again"
+}
+$names = @()
+if ($there) {
+  $names = @(gh release view $tag --json assets --jq '.assets[].name')
+  if ($LASTEXITCODE -ne 0) { throw "Couldn't read the Release $tag" }
+}
+if (($names -contains 'JobDeskSetup.exe') -and -not $byHand) {
+  if ($names -contains 'JobDeskSetup.exe.sha256') {
+    Write-Host "$tag already has its installer, left as it is"
+  } else {
+    $was = Join-Path $env:RUNNER_TEMP 'published'
+    New-Item -ItemType Directory -Force -Path $was | Out-Null
+    gh release download $tag --pattern 'JobDeskSetup.exe' --dir $was
+    if ($LASTEXITCODE -ne 0) { throw "Couldn't download the installer $tag has" }
+    $published = Join-Path $was 'JobDeskSetup.exe'
+    Write-Sum $published
+    gh release upload $tag "$published.sha256"
+    if ($LASTEXITCODE -ne 0) { throw "Couldn't attach the sha256 to $tag" }
+  }
+} else {
+  Write-Sum $exe
+  if (-not $there) {
+    gh release create $tag $exe "$exe.sha256" --target $env:GITHUB_SHA --title "job-apply $version" `
+      --notes "JobDeskSetup.exe: the Job Desk for Windows. Download it, double-click it (Windows may say it protected \
+your PC: More info, then Run anyway), and open the Job Desk from the Start menu."
+    if ($LASTEXITCODE -ne 0) { throw "Couldn't make the Release $tag" }
+  } else {
+    gh release upload $tag $exe "$exe.sha256" --clobber
+    if ($LASTEXITCODE -ne 0) { throw "Couldn't attach the installer to $tag" }
+  }
+}
+$tags = @(gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.draft | not) | .tag_name')
+if ($LASTEXITCODE -ne 0) { throw "Couldn't list the Releases" }
+$newest = (@($tags) + $tag) | Where-Object { $_ -match '^job-apply-v\\d+(\\.\\d+)+$' } |
+  Sort-Object { [version]($_ -replace '^job-apply-v', '') } | Select-Object -Last 1
+gh release edit $newest --latest
+if ($LASTEXITCODE -ne 0) { throw "Couldn't mark $newest as the latest Release" }
+$latest = ''
+foreach ($look in 1..10) {
+  $latest = gh api "repos/$env:GITHUB_REPOSITORY/releases/latest" --jq '.tag_name'
+  if ($LASTEXITCODE -eq 0 -and $latest -eq $newest) { break }
+  Start-Sleep -Seconds 3
+}
+if ($latest -ne $newest) { throw "The latest Release is $latest, not $newest, the newest version's" }
+"""
+# its three parts: before the push's guard, a push that finds an installer already out, and making or replacing one
+_GUARD = "if (($names -contains 'JobDeskSetup.exe') -and -not $byHand) {\n"
+_BEFORE, _REST = _STEP.split(_GUARD)
+_KEPT, _REST = _REST.split("} else {\n  Write-Sum $exe\n")
+_MADE, _ENDING = _REST.split("}\n$tags = ")
+
+
+def _publishing() -> dict:
+    """The workflow, once its publishing step's script (its last step's) is the one pinned here."""
+    flow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    (job,) = flow["jobs"].values()
+    run = job["steps"][-1]["run"]
+    code = "".join(line for line in run.splitlines(keepends=True) if not line.lstrip().startswith("#"))
+    assert code == _STEP
+    return flow
+
+
+def test_a_version_publishes_its_installer_once_with_its_sha256_under_its_own_number():
+    """The design of Nov 9 (F1): every version publishes its installer by itself, and the desk's Update button reads
+    the Release. So the step that publishes: refuses a version that isn't numbers and dots and a tag that isn't the
+    manifest's version (an installer never goes out under another number) before it looks at anything, and writes the
+    installer's sha256 beside it exactly as sha256sum would (the Update button checks a download against it)."""
+    _publishing()
+    # the version and the tag are checked before anything is looked at, and nothing is written before the look
+    assert _BEFORE.index("-notmatch") < _BEFORE.index('throw "The tag') < _BEFORE.index("gh ")
+    assert _BEFORE.count("gh ") == 2 and "gh release view" in _BEFORE
+    # the sum: the digest in lower case, two spaces, the name, one LF and no more (no BOM, no CRLF: -NoNewline, ascii)
+    assert '-Value "$sum  JobDeskSetup.exe`n" -NoNewline -Encoding ascii' in _BEFORE
+    # this build's sum is written only where it's this build going out, and the Release is made with both files
+    assert _STEP.count("Write-Sum $exe") == 1 and 'gh release create $tag $exe "$exe.sha256"' in _MADE
+
+
+def test_a_push_never_replaces_an_installer_that_is_out_and_gives_it_its_sha256_if_it_has_none():
+    """The review of F1: the test let the upload sit above the guard (every push would then replace what's out), and
+    a push left an installer published without its sha256 (0.3.252's, or one whose upload was cut short) without one
+    for good. So: on a push that finds JobDeskSetup.exe on the Release, nothing can replace a file (no --clobber, no
+    upload of this build's installer, no Release made); where the sha256 is missing it is worked out from the
+    installer that's out, downloaded, and only it is attached. Every way of replacing or making is in the other
+    branch. The second look: the lines that read what the Release holds decide all of that (one of them read wrongly,
+    or its failure unchecked, and a push went on to replace a published installer), so the whole script is pinned;
+    and a draft isn't out, nor this step's to finish or take away (a person's, its notes written ahead, or one left
+    by a stopped run): the step stops and says so."""
+    _publishing()
+    for part in (_BEFORE, _KEPT, _ENDING):
+        assert "--clobber" not in part and "gh release create" not in part and "gh release upload $tag $exe" not in part
+        assert "gh release delete" not in part and "$exe" not in part.replace("$exe = '", "")
+    assert "gh release upload" not in _BEFORE and "gh release download" not in _BEFORE
+    assert _KEPT.index("gh release download $tag --pattern 'JobDeskSetup.exe'") < _KEPT.index("Write-Sum $published") \
+        < _KEPT.index('gh release upload $tag "$published.sha256"') and _KEPT.count("gh release upload") == 1
+    assert _MADE.count("--clobber") == 1 and "gh release delete" not in _STEP
+    assert "if ($there -and $draft -eq 'true') {\n  throw \"There's a draft Release for $tag." in _BEFORE
+
+
+def test_a_release_is_made_with_its_files_one_run_at_a_time_and_the_latest_stays_the_newest_versions():
+    """The review of F1, the rest. The Release was made empty and then filled (the README's link led nowhere in
+    between, and for good if the upload failed): it's made with both files, which gh keeps a draft until they're up.
+    Two runs for one version (a merge and its tag) could both pass the look and one replace the other's files: runs
+    that publish share one concurrency group, where each waits its turn (`queue: max`: without it GitHub keeps only
+    the newest one waiting and cancels the rest). A Release made late for an older version becomes the latest, which
+    the README's link and the Update button read: the newest version's is marked the latest on every run that
+    publishes, a push that found its installer already out among them (it ended before this, so a marking that had
+    failed stayed wrong), with this run's own tag among the candidates (the list can trail what was just made), and
+    the step ends by checking it. And a gh call that fails says so: PowerShell goes on past a program's failure."""
+    flow = _publishing()
+    assert flow["concurrency"] == {
+        "group": "${{ (github.event_name == 'push' || inputs.release) && 'windows-installer-publish' "
+                 "|| format('windows-installer-{0}', github.run_id) }}",
+        "cancel-in-progress": False, "queue": "max"}
+    # no such flag where gh starts a draft, and no early way out: every path reaches the ending
+    assert "--latest" not in _MADE and "exit" not in _STEP
+    assert "(@($tags) + $tag) | Where-Object" in _ENDING and "gh release edit $newest --latest\n" in _ENDING
+    assert _STEP.rstrip().endswith('if ($latest -ne $newest) { throw "The latest Release is $latest, not $newest, '
+                                   'the newest version\'s" }')
+    lines = _STEP.splitlines()
+    calls = [i for i, line in enumerate(lines) if "gh " in line and not line.lstrip().startswith(("throw", "if "))]
+    assert len(calls) == 9, [lines[i] for i in calls]
+    for i in calls:
+        after = next(x.lstrip() for x in lines[i + 1:] if not x.lstrip().startswith(("--notes", "your PC")))
+        # (the two that ask whether something is there are read from their exit code on the next line)
+        assert after.startswith(("if ($LASTEXITCODE -ne 0) { throw ", "$there = $LASTEXITCODE -eq 0",
+                                 "if ($LASTEXITCODE -eq 0 -and $latest -eq $newest) { break }")), lines[i]
 
 
 def test_the_readme_offers_the_installer_first_and_says_how_past_smartscreen():
