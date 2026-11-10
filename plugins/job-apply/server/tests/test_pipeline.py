@@ -5885,6 +5885,37 @@ def test_two_mock_pages_remember_what_a_lost_sessionStorage_forgot(srv):
     assert run(go()) == ([0, 1], [1, 1, 2, 2, 3])
 
 
+def test_the_tests_browser_keeps_a_mock_pages_sessionStorage_the_browser_lost(srv):
+    """The same loss, for every mock page at once (conftest's KEEPS_SESSION_STORAGE): in the tests' browser a page saved
+    on this computer has its tab's sessionStorage kept in the tab's name as it stores, and put back the first time it
+    uses it. Here on a page that keeps its one load only there (workday-sections-loading.html ?heal draws its sections
+    the second time it's opened): emptied behind the page's back, as the browser loses it, then put back older, the
+    page opened again still knows it was opened before, and what it stores next is kept as well."""
+    page = fixture_url("site/workday-sections-loading.html") + "?heal"
+    # (the browser's own Storage, not the page's: an empty frame's, which the tests' browser leaves alone)
+    lose = """([how, ...args]) => {
+        const frame = document.body.appendChild(document.createElement('iframe'));
+        frame.contentWindow.Storage.prototype[how].call(sessionStorage, ...args);
+        frame.remove();
+    }"""
+
+    async def go():
+        tab = await srv.browser.page()
+        await tab.goto(page)
+        greyed = [await tab.locator("#next").is_disabled()]
+        await tab.evaluate(lose, ["clear"])
+        await tab.goto(page)
+        greyed.append(await tab.locator("#next").is_disabled())
+        await tab.evaluate("() => sessionStorage.setItem('more', 'kept')")
+        await tab.evaluate(lose, ["setItem", "seen", "0"])  # (an older one again)
+        await tab.evaluate(lose, ["removeItem", "more"])
+        await tab.goto(page)
+        return greyed, await tab.locator("#next").is_disabled(), await tab.evaluate(
+            "() => [sessionStorage.getItem('seen'), sessionStorage.getItem('more')]")
+
+    assert run(go()) == ([True, False], False, ["1", "kept"])
+
+
 def test_a_workday_account_is_said_made_only_once_its_sign_in_gets_in(srv, monkeypatch, job_apply_home):
     """A Workday site's Create Account wants its "I confirm that I have read the privacy notice" box
     ticked (never a "keep me informed" one), and goes on to its Sign In whether or not it made the
