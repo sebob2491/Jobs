@@ -1504,7 +1504,13 @@ function patch(container, entries) {
     existing.delete(key);
     const ref = prev ? prev.nextSibling : container.firstChild;
     if (el !== ref) container.insertBefore(el, ref);
-    if (refocus) { const again = el.querySelector(refocus); if (again) again.focus(); }
+    if (refocus) {
+      const again = el.querySelector(refocus);
+      // (a control inside a <details> had the focus with it open, as a menu's choice: open again, or it can't take it)
+      const inside = again && again.closest("details");
+      if (inside && again.parentElement !== inside) inside.open = true;
+      if (again) again.focus();
+    }
     prev = el;
   }
   for (const el of existing.values()) el.remove();
@@ -1684,7 +1690,7 @@ function renderApps() {
 const MARKED = ["applied", "interviewing", "offer", "rejected", "withdrawn"];
 let menuOpen = "";  // the job whose menu is open ("": none), kept across the refreshes that draw its row again
 const statusMenu = (j) => !MARKED.includes(j.status) ? "" : `<details class="menu" data-menu="${j.id}">
-  <summary class="btn icon" aria-label="Change status" title="Change status"><svg class="ico" aria-hidden="true"><use href="#i-more"/></svg></summary>
+  <summary class="btn icon" data-menu-button="${j.id}" aria-label="Change status" title="Change status"><svg class="ico" aria-hidden="true"><use href="#i-more"/></svg></summary>
   <div class="menu-panel" role="group" aria-label="Change status">${MARKED.map((s) => `<button data-status="${s}" data-act="set-status" data-job="${j.id}" aria-pressed="${s === j.status}"><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg>${esc(STATUS[s][0])}</button>`).join("")}</div></details>`;
 document.addEventListener("toggle", (e) => {
   const d = e.target;

@@ -627,6 +627,12 @@ _MENUS = """() => Object.fromEntries([...document.querySelectorAll('#app-rows li
 _PILL_IS = """([company, words]) => [...document.querySelectorAll('#app-rows li.row')].some((r) =>
   r.querySelector('.meta').innerText.trim() === company
   && r.querySelector('.state .pill').innerText.trim() === words)"""
+_HEARD_IS = """([company, words]) => [...document.querySelectorAll('#app-rows li.row')].some((r) =>
+  r.querySelector('.meta').innerText.trim() === company
+  && r.querySelector('.c-heard').innerText.replace(/\\s+/g, ' ').trim() === words)"""
+# the control in focus: its tag, the job of the menu it's in, and which of the five it is (none for the menu's button)
+_FOCUS = """() => { const f = document.activeElement, d = f && f.closest('details.menu');
+  return [f.tagName, d ? d.dataset.menu : null, ...(f.dataset.status ? [f.dataset.status] : [])]; }"""
 
 
 def test_change_status_sets_each_of_the_five_through_the_route_and_closes_as_the_drop_downs_do(
@@ -664,6 +670,19 @@ def test_change_status_sets_each_of_the_five_through_the_route_and_closes_as_the
                 seen["opened"] = (await page.evaluate(_MENUS))["Quiet Fab"]["menu"]
                 await page.wait_for_timeout(3200)  # (two refreshes)
                 seen["after two refreshes"] = (await page.evaluate(_MENUS))["Quiet Fab"]["menu"]
+                # (the row's own HTML changes while its menu is open, a reply logged: the row is drawn anew, its menu
+                # still open, the focus on the control it was on, the menu's button and then one of its five)
+                seen["redrawn"] = []
+                for focus, category, day in ((None, "confirmation", "2026-10-14"), ("offer", "other", "2026-10-15")):
+                    if focus:
+                        await page.focus(menu.format(quiet) + f" [data-status={focus}]")
+                    before = await page.evaluate(_FOCUS)
+                    srv.log_email(quiet, f"quiet-{category}", category, "A reply", day)
+                    words = f"Heard {day}: " + {"confirmation": "confirmation", "other": "other email"}[category]
+                    await page.wait_for_function(_HEARD_IS, arg=["Quiet Fab", words])
+                    row = (await page.evaluate(_MENUS))["Quiet Fab"]
+                    seen["redrawn"].append((before, row["menu"]["open"], row["menu"]["shown"],
+                                            await page.evaluate(_FOCUS)))
                 await page.keyboard.press("Escape")
                 seen["after escape"] = (await page.evaluate(_MENUS))["Quiet Fab"]["menu"]["open"]
                 seen["focus"] = await page.evaluate("() => [document.activeElement.tagName, "
@@ -717,6 +736,8 @@ def test_change_status_sets_each_of_the_five_through_the_route_and_closes_as_the
     assert sum(1 for row in first.values() if row["menu"]) == 9, first  # (every application but Ready Fab)
     assert seen["opened"] == {**first["Quiet Fab"]["menu"], "open": True, "shown": True}, seen
     assert seen["after two refreshes"] == seen["opened"], seen
+    assert seen["redrawn"] == [(["SUMMARY", str(quiet)], True, True, ["SUMMARY", str(quiet)]),
+                               (["BUTTON", str(quiet), "offer"], True, True, ["BUTTON", str(quiet), "offer"])], seen
     assert seen["after escape"] is False and seen["focus"] == ["SUMMARY", str(quiet)], seen
     assert seen["after a click outside"] is False and seen["another"] == ["Talk Fab"], seen
     assert seen["set"] == [(status, True, words, [status], status) for status, words in (
