@@ -155,6 +155,39 @@ jobs:
           if (@(Get-ChildItem -LiteralPath $folder -Filter 'desk_watch_*.json').Count -ne 1) { throw 'Two desks run' }
           Set-Content -LiteralPath "$folder\keep-me.txt" -Value 'the person''s own' -Encoding utf8
 
+      - name: The desk's own window outlives the start that opened it
+        # The desk opens in a window of the person's own Edge (0.4.0: window.py). If Edge wasn't running, the Edge
+        # started there is the person's whole browser from then on, so it must not go down with the program that
+        # started it (uv's launcher holds what it starts in a job: the review of Nov 9 couldn't check that from
+        # Linux). A second start, as the Start menu makes it, opens the running desk's window and ends: the browser
+        # it started has to be there after it. Where no browser comes up on this machine at all, that's said and
+        # nothing is checked (it isn't the installer's to fail for).
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $programs = [Environment]::GetFolderPath('Programs')
+          $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $programs 'Job Desk.lnk'))
+          $before = @(Get-Process -Name msedge -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
+          $start = Start-Process -FilePath $lnk.TargetPath -ArgumentList $lnk.Arguments `
+            -WorkingDirectory $lnk.WorkingDirectory -PassThru
+          $came = @()
+          for ($i = 0; $i -lt 45 -and $came.Count -eq 0; $i++) {
+            Start-Sleep 2
+            $came = @(Get-Process -Name msedge -ErrorAction SilentlyContinue | Where-Object { $_.Id -notin $before })
+          }
+          if (-not $start.WaitForExit(120000)) { $start.Kill(); throw "A start that found the desk running didn't end" }
+          if ($came.Count -eq 0) {
+            Write-Host "::warning::No browser came up for the desk's window on this machine: not checked"
+          } else {
+            Start-Sleep 15
+            $still = @(Get-Process -Name msedge -ErrorAction SilentlyContinue | Where-Object { $_.Id -notin $before })
+            Write-Host "Edge processes the window started: $($came.Count); there 15 s after the start ended: $($still.Count)"
+            if ($still.Count -eq 0) { throw "The desk's window went down with the program that started it" }
+            $still | Stop-Process -Force -ErrorAction SilentlyContinue
+          }
+          if (@(Get-ChildItem -LiteralPath (Join-Path $HOME '.job-apply') -Filter 'desk_watch_*.json').Count -ne 1) {
+            throw 'Two desks run'
+          }
+
       - name: Uninstall silently; the person's job-apply folder stays
         run: |
           $ErrorActionPreference = 'Stop'
