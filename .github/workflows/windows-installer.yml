@@ -10,8 +10,8 @@ name: windows installer
 # Every version publishes itself: a push to main that changes the plugin's manifest (each version bumps it) runs
 # this, as does a tag job-apply-v*, which must name the manifest's version. An installer already published is never
 # replaced by a push: only by a run by hand with `release` ticked (a push adds the sha256 to one that's out without
-# it, worked out from the installer that's out). A Release is made with its files, so it's never out empty, and one
-# for a version older than the newest out isn't marked the latest. Not signed yet: Windows' SmartScreen asks "More
+# it, worked out from the installer that's out). A Release is made with its files, so it's never out empty, and the
+# latest Release stays the newest version's, checked at the end. Not signed yet: Windows' SmartScreen asks "More
 # info", "Run anyway" (the README says so).
 on:
   workflow_dispatch:
@@ -29,11 +29,13 @@ on:
 permissions:
   contents: read
 
-# One run that publishes at a time (its last step looks at the Release, then adds to it): the next waits for it. A run
-# by hand that publishes nothing (a try of the build) has a group of its own and waits for nobody.
+# One run that publishes at a time (its last step looks at the Release, then adds to it): the others wait their turn,
+# every one of them (`queue: max`; GitHub's own way is to keep the newest waiting and cancel the rest). A run by hand
+# that publishes nothing (a try of the build) has a group of its own and waits for nobody.
 concurrency:
   group: ${{ (github.event_name == 'push' || inputs.release) && 'windows-installer-publish' || format('windows-installer-{0}', github.run_id) }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   installer:
@@ -196,8 +198,15 @@ jobs:
           }
           $byHand = $env:GITHUB_EVENT_NAME -ne 'push'
           $exe = 'plugins/job-apply/setup/windows/Output/JobDeskSetup.exe'
-          gh release view $tag *> $null
+          # The Release as it is: there or not, and the files it holds
+          $draft = gh release view $tag --json isDraft --jq '.isDraft' 2>$null
           $there = $LASTEXITCODE -eq 0
+          if ($there -and $draft -eq 'true') {
+            # a draft left by a run that was stopped while making it: never out, so taken away and made afresh below
+            gh release delete $tag --yes
+            if ($LASTEXITCODE -ne 0) { throw "Couldn't take away the unfinished draft of $tag" }
+            $there = $false
+          }
           $names = @()
           if ($there) {
             $names = @(gh release view $tag --json assets --jq '.assets[].name')
@@ -223,16 +232,10 @@ jobs:
             exit 0
           }
           Write-Sum $exe
-          # A version older than one already out is never marked the latest, which the README's link and the desk's
-          # Update button read
-          $tags = @(gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].tag_name')
-          if ($LASTEXITCODE -ne 0) { throw "Couldn't list the Releases" }
-          $later = @($tags | Where-Object { $_ -match '^job-apply-v(\d+(\.\d+)+)$' -and [version]$Matches[1] -gt [version]$version })
-          $latest = if ($later.Count -gt 0) { '--latest=false' } else { '--latest' }
           if (-not $there) {
             # made with its files: gh keeps the Release a draft until both are up, and takes it away if they don't
             # get there, so it's never out empty (the README's link would lead nowhere)
-            gh release create $tag $exe "$exe.sha256" --target $env:GITHUB_SHA --title "job-apply $version" $latest `
+            gh release create $tag $exe "$exe.sha256" --target $env:GITHUB_SHA --title "job-apply $version" `
               --notes "JobDeskSetup.exe: the Job Desk for Windows. Download it, double-click it (Windows may say it protected your PC: More info, then Run anyway), and open the Job Desk from the Start menu."
             if ($LASTEXITCODE -ne 0) { throw "Couldn't make the Release $tag" }
           } else {
@@ -241,3 +244,21 @@ jobs:
             gh release upload $tag $exe "$exe.sha256" --clobber
             if ($LASTEXITCODE -ne 0) { throw "Couldn't attach the installer to $tag" }
           }
+          # The latest Release is the newest version's: the README's link and the desk's Update button read it. GitHub
+          # marks a Release made just now as the latest whatever its number, so when a later version is out, that one
+          # is marked again. Then it's checked, a few times over (GitHub's answer can be a moment behind)
+          $tags = @(gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.draft | not) | .tag_name')
+          if ($LASTEXITCODE -ne 0) { throw "Couldn't list the Releases" }
+          $newest = $tags | Where-Object { $_ -match '^job-apply-v\d+(\.\d+)+$' } |
+            Sort-Object { [version]($_ -replace '^job-apply-v', '') } | Select-Object -Last 1
+          if ($newest -ne $tag) {
+            gh release edit $newest --latest
+            if ($LASTEXITCODE -ne 0) { throw "Couldn't mark $newest as the latest Release again" }
+          }
+          $latest = ''
+          foreach ($look in 1..5) {
+            $latest = gh api "repos/$env:GITHUB_REPOSITORY/releases/latest" --jq '.tag_name'
+            if ($LASTEXITCODE -eq 0 -and $latest -eq $newest) { break }
+            Start-Sleep -Seconds 3
+          }
+          if ($latest -ne $newest) { throw "The latest Release is $latest, not $newest, the newest version's" }

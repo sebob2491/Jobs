@@ -296,8 +296,9 @@ def test_the_workflow_builds_on_windows_installs_checks_and_uninstalls_with_acti
 
 
 def _publishing():
-    """The workflow, and its last step's script in the three parts it runs in: `before` the look at the Release,
-    `kept` (a push that finds an installer already out: it ends there), and `publish` (everything after)."""
+    """The workflow, and its last step's script in the three parts it runs in: `before` the push's guard (the look at
+    the Release), `kept` (a push that finds an installer already out: it ends there), and `publish` (everything
+    after)."""
     flow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     (job,) = flow["jobs"].values()
     run = job["steps"][-1]["run"]
@@ -309,24 +310,99 @@ def _publishing():
     return flow, before, kept, publish
 
 
+# Nothing here runs PowerShell, so the lines of the publishing step that decide what is made, replaced or left alone
+# are pinned whole, comments aside: a change to one of them is a change to look over again (the reviews of Nov 9
+# took a line out at a time, and every one of these let a push replace a published installer, or a failure end green)
+_HEAD = """\
+$ErrorActionPreference = 'Stop'
+$version = (Get-Content -Raw -Encoding UTF8 plugins/job-apply/.claude-plugin/plugin.json | ConvertFrom-Json).version
+if ($version -notmatch '^\\d+(\\.\\d+)+$') { throw "The plugin's version, $version, isn't numbers and dots" }
+$tag = "job-apply-v$version"
+if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne $tag) {
+  throw "The tag $env:GITHUB_REF_NAME isn't $tag, the plugin's version"
+}
+function Write-Sum([string]$file) {
+  $sum = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLower()
+  Set-Content -LiteralPath "$file.sha256" -Value "$sum  JobDeskSetup.exe`n" -NoNewline -Encoding ascii
+  Get-Content -LiteralPath "$file.sha256" | Write-Host
+}
+$byHand = $env:GITHUB_EVENT_NAME -ne 'push'
+$exe = 'plugins/job-apply/setup/windows/Output/JobDeskSetup.exe'
+"""
+_LOOK = """\
+$draft = gh release view $tag --json isDraft --jq '.isDraft' 2>$null
+$there = $LASTEXITCODE -eq 0
+if ($there -and $draft -eq 'true') {
+  gh release delete $tag --yes
+  if ($LASTEXITCODE -ne 0) { throw "Couldn't take away the unfinished draft of $tag" }
+  $there = $false
+}
+$names = @()
+if ($there) {
+  $names = @(gh release view $tag --json assets --jq '.assets[].name')
+  if ($LASTEXITCODE -ne 0) { throw "Couldn't read the Release $tag" }
+}
+"""
+_KEPT = """\
+  if ($names -contains 'JobDeskSetup.exe.sha256') {
+    Write-Host "$tag already has its installer, left as it is"
+  } else {
+    $was = Join-Path $env:RUNNER_TEMP 'published'
+    New-Item -ItemType Directory -Force -Path $was | Out-Null
+    gh release download $tag --pattern 'JobDeskSetup.exe' --dir $was
+    if ($LASTEXITCODE -ne 0) { throw "Couldn't download the installer $tag has" }
+    $published = Join-Path $was 'JobDeskSetup.exe'
+    Write-Sum $published
+    gh release upload $tag "$published.sha256"
+    if ($LASTEXITCODE -ne 0) { throw "Couldn't attach the sha256 to $tag" }
+  }
+"""
+_PUBLISH = """\
+Write-Sum $exe
+if (-not $there) {
+  gh release create $tag $exe "$exe.sha256" --target $env:GITHUB_SHA --title "job-apply $version" `
+    --notes "JobDeskSetup.exe: the Job Desk for Windows. Download it, double-click it (Windows may say it protected \
+your PC: More info, then Run anyway), and open the Job Desk from the Start menu."
+  if ($LASTEXITCODE -ne 0) { throw "Couldn't make the Release $tag" }
+} else {
+  gh release upload $tag $exe "$exe.sha256" --clobber
+  if ($LASTEXITCODE -ne 0) { throw "Couldn't attach the installer to $tag" }
+}
+$tags = @(gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.draft | not) | .tag_name')
+if ($LASTEXITCODE -ne 0) { throw "Couldn't list the Releases" }
+$newest = $tags | Where-Object { $_ -match '^job-apply-v\\d+(\\.\\d+)+$' } |
+  Sort-Object { [version]($_ -replace '^job-apply-v', '') } | Select-Object -Last 1
+if ($newest -ne $tag) {
+  gh release edit $newest --latest
+  if ($LASTEXITCODE -ne 0) { throw "Couldn't mark $newest as the latest Release again" }
+}
+$latest = ''
+foreach ($look in 1..5) {
+  $latest = gh api "repos/$env:GITHUB_REPOSITORY/releases/latest" --jq '.tag_name'
+  if ($LASTEXITCODE -eq 0 -and $latest -eq $newest) { break }
+  Start-Sleep -Seconds 3
+}
+if ($latest -ne $newest) { throw "The latest Release is $latest, not $newest, the newest version's" }
+"""
+
+
+def _code(script: str) -> str:
+    """A PowerShell script without the lines that are only a comment."""
+    return "".join(line for line in script.splitlines(keepends=True) if not line.lstrip().startswith("#"))
+
+
 def test_a_version_publishes_its_installer_once_with_its_sha256_under_its_own_number():
     """The design of Nov 9 (F1): every version publishes its installer by itself, and the desk's Update button reads
     the Release. So the step that publishes: refuses a version that isn't numbers and dots and a tag that isn't the
     manifest's version (an installer never goes out under another number) before it looks at anything, and writes the
     installer's sha256 beside it exactly as sha256sum would (the Update button checks a download against it)."""
     _flow, before, _kept, publish = _publishing()
-    assert "if ($version -notmatch '^\\d+(\\.\\d+)+$') { throw" in before
-    assert '$tag = "job-apply-v$version"' in before
-    assert "if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne $tag) {\n  throw \"The tag" in before
-    assert before.index('throw "The tag') < before.index("gh release view")  # (before anything is looked at)
-    assert "$byHand = $env:GITHUB_EVENT_NAME -ne 'push'" in before
-    # the digest in lower case, two spaces, the name, one LF and no more (no BOM, no CRLF: -NoNewline, ascii)
-    assert ("$sum = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLower()\n"
-            '  Set-Content -LiteralPath "$file.sha256" -Value "$sum  JobDeskSetup.exe`n" -NoNewline -Encoding ascii\n'
-            ) in before
-    assert publish.lstrip().startswith("Write-Sum $exe\n")  # (this build's sum, only once it's this build going out)
-    assert 'gh release create $tag $exe "$exe.sha256" --target $env:GITHUB_SHA' in publish
-    assert 'gh release upload $tag $exe "$exe.sha256" --clobber' in publish
+    assert _code(before) == _HEAD + _LOOK
+    # the version and the tag are checked before anything is looked at, and nothing is written before the look
+    assert _HEAD.index("-notmatch") < _HEAD.index('throw "The tag') and "gh " not in _HEAD
+    # the sum: the digest in lower case, two spaces, the name, one LF and no more (no BOM, no CRLF: -NoNewline, ascii)
+    assert '-Value "$sum  JobDeskSetup.exe`n" -NoNewline -Encoding ascii' in _HEAD
+    assert _code(publish) == _PUBLISH  # (this build's sum only once it's this build going out; made with its files)
 
 
 def test_a_push_never_replaces_an_installer_that_is_out_and_gives_it_its_sha256_if_it_has_none():
@@ -335,47 +411,43 @@ def test_a_push_never_replaces_an_installer_that_is_out_and_gives_it_its_sha256_
     for good. So: a push that finds JobDeskSetup.exe on the Release ends there, and nothing in that part can replace
     a file (no --clobber, no upload of this build's installer, no Release made); where the sha256 is missing it is
     worked out from the installer that's out, downloaded, and only it is attached. Every way of replacing or making
-    comes after that end."""
+    comes after that end. The second look: the lines that read what the Release holds decide all of that (one of
+    them read wrongly, or its failure unchecked, and a push went on to replace a published installer), and a draft
+    left by a run stopped while making one counted as the Release being there, so nothing was ever published: the
+    look is pinned whole, and takes such a draft away."""
     _flow, before, kept, publish = _publishing()
+    assert _code(before) == _HEAD + _LOOK and _code(kept) == _KEPT
     for part in (before, kept):
         assert "--clobber" not in part and "gh release create" not in part and "gh release upload $tag $exe" not in part
     assert "gh release upload" not in before and "gh release download" not in before
-    assert "if ($names -contains 'JobDeskSetup.exe.sha256') {" in kept
-    download = kept.index("gh release download $tag --pattern 'JobDeskSetup.exe' --dir $was")
-    summed = kept.index("Write-Sum $published")
-    attached = kept.index('gh release upload $tag "$published.sha256"')
-    assert download < kept.index("$published = Join-Path $was 'JobDeskSetup.exe'") < summed < attached
     assert kept.count("gh release upload") == 1 and "$exe" not in kept  # (nothing of this build goes up)
     assert publish.count("--clobber") == 1  # (only where no installer is out, or by hand)
 
 
-def test_a_release_is_made_with_its_files_one_run_at_a_time_and_an_older_one_is_not_the_latest():
+def test_a_release_is_made_with_its_files_one_run_at_a_time_and_the_latest_stays_the_newest_versions():
     """The review of F1, the rest. The Release was made empty and then filled (the README's link led nowhere in
     between, and for good if the upload failed): it's made with both files, which gh keeps a draft until they're up.
     Two runs for one version (a merge and its tag) could both pass the look and one replace the other's files: runs
-    that publish share one concurrency group, and none is cancelled. A Release made late for an older version would
-    become the latest, which the README's link and the Update button read: it's told not to be."""
-    flow, _before, _kept, publish = _publishing()
+    that publish share one concurrency group, where each waits its turn (`queue: max`: without it GitHub keeps only
+    the newest one waiting and cancels the rest). A Release made late for an older version becomes the latest, which
+    the README's link and the Update button read: the newest version's is marked again, and the step ends by checking
+    that the latest is the newest. And a gh call that fails says so: PowerShell goes on past a program's failure."""
+    flow, before, kept, publish = _publishing()
     assert flow["concurrency"] == {
         "group": "${{ (github.event_name == 'push' || inputs.release) && 'windows-installer-publish' "
                  "|| format('windows-installer-{0}', github.run_id) }}",
-        "cancel-in-progress": False}
-    made = publish.index('gh release create $tag $exe "$exe.sha256" --target $env:GITHUB_SHA --title '
-                         '"job-apply $version" $latest `\n')
-    assert publish.count("gh release create") == 1 and "if (-not $there) {" in publish[:made]
-    listed = publish.index("$tags = @(gh api \"repos/$env:GITHUB_REPOSITORY/releases?per_page=100\" --jq "
-                           "'.[].tag_name')")
-    older = publish.index("$later = @($tags | Where-Object { $_ -match '^job-apply-v(\\d+(\\.\\d+)+)$' -and "
-                          "[version]$Matches[1] -gt [version]$version })")
-    chosen = publish.index("$latest = if ($later.Count -gt 0) { '--latest=false' } else { '--latest' }")
-    assert listed < older < chosen < made
-    # every gh call that changes or reads something says so when it fails (PowerShell goes on past a program's
-    # failure by itself)
-    lines = publish.splitlines()
-    for i, line in enumerate(lines):
-        if line.lstrip().startswith(("gh release create", "gh release upload", "$tags = @(gh api")):
-            after = next(x for x in lines[i + 1:] if not x.lstrip().startswith("--notes"))
-            assert after.lstrip().startswith("if ($LASTEXITCODE -ne 0) { throw "), line
+        "cancel-in-progress": False, "queue": "max"}
+    assert publish.count("gh release create") == 1 and "--latest" not in publish.split("gh release edit")[0]
+    assert publish.rstrip().endswith('if ($latest -ne $newest) { throw "The latest Release is $latest, not $newest, '
+                                     'the newest version\'s" }')
+    lines = _code(before + kept + publish).splitlines()
+    calls = [i for i, line in enumerate(lines) if "gh " in line and not line.lstrip().startswith(("throw", "if "))]
+    assert len(calls) == 10, [lines[i] for i in calls]
+    for i in calls:
+        after = next(x.lstrip() for x in lines[i + 1:] if not x.lstrip().startswith("--notes"))
+        # (the two that ask whether something is there are read from their exit code on the next line)
+        assert after.startswith(("if ($LASTEXITCODE -ne 0) { throw ", "$there = $LASTEXITCODE -eq 0",
+                                 "if ($LASTEXITCODE -eq 0 -and $latest -eq $newest) { break }")), lines[i]
 
 
 def test_the_readme_offers_the_installer_first_and_says_how_past_smartscreen():
