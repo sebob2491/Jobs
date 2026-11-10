@@ -10,7 +10,7 @@ import time
 from urllib.parse import urlsplit
 
 import pytest
-from conftest import browser_available, person_browser, run
+from conftest import browser_available, open_desk, person_browser, run
 from test_desk import _history_line, _note, _stopped_desk
 
 from job_apply import report
@@ -23,8 +23,9 @@ _POLLS = ("/api/state", "/api/seen")
 
 
 @contextlib.asynccontextmanager
-async def _desk_page(desk: Desk, dialogs: list[str] | None = None):
-    """The desk started, its page open in a browser of the person's own; with the list of the calls the page makes to
+async def _desk_page(desk: Desk, dialogs: list[str] | None = None, at: str = "home"):
+    """The desk started, its page open on its page `at` (the one the card a test presses is on) in a browser of the
+    person's own; with the list of the calls the page makes to
     the desk's API besides its refresh (method, path with its query, the JSON sent), and the alerts and confirms it
     shows (accepted) in `dialogs`."""
     calls: list[tuple[str, str, object]] = []
@@ -44,7 +45,7 @@ async def _desk_page(desk: Desk, dialogs: list[str] | None = None):
             page.on("request", record)
             page.on("dialog", lambda d: (dialogs.append(d.message) if dialogs is not None else None,
                                          asyncio.ensure_future(d.accept())))
-            await page.goto(desk.url)
+            await open_desk(page, desk, at)
             await page.wait_for_selector("#plugin-version:not(:empty)")  # the page has its state
             yield page, calls
             await browser.close()
@@ -179,7 +180,7 @@ def test_undo_on_a_skipped_jobs_row_puts_it_back_in_the_queue(srv):
     srv.update_job(job_id, status="skipped")
 
     async def go():
-        async with _desk_page(desk) as (page, calls):
+        async with _desk_page(desk, at="openings") as (page, calls):
             row = page.locator("#rows li.row", has_text="Example Fab")
             await row.locator("button[data-job-act=unskip]").click()
             await row.locator(".pill:text-is('Queued')").wait_for()
@@ -232,7 +233,7 @@ def test_clear_unticks_every_opening_and_calls_nothing(srv):
                       "location": "Phoenix, AZ", "fit": fit} for i, name in enumerate(("Fab", "Litho", "Etch"))]
 
     async def go():
-        async with _desk_page(desk) as (page, calls):
+        async with _desk_page(desk, at="openings") as (page, calls):
             await page.click("[data-act=select-recommended]")
             await page.wait_for_selector("#apply:text-is('Apply to 3 selected')")
             ticked = await page.locator("[data-pick]:checked").count()
@@ -316,7 +317,7 @@ def test_safety_opens_with_each_setting_as_the_desk_acts_on_it(srv, job_apply_ho
     lines = desk.safety()["lines"]
 
     async def go():
-        async with _desk_page(desk) as (page, calls):
+        async with _desk_page(desk, at="settings") as (page, calls):
             await page.click("#safety-btn")
             await page.wait_for_selector("#safety[open] #safety-body li")
             keys = await page.eval_on_selector_all("#safety-body li", "ls => ls.map((l) => l.dataset.safety)")
@@ -341,7 +342,7 @@ def test_notes_opens_the_notes_as_the_one_issue_they_make(srv, job_apply_home):
     shown = report.notes()
 
     async def go():
-        async with _desk_page(desk) as (page, calls):
+        async with _desk_page(desk, at="help") as (page, calls):
             await page.click("#notes-btn:text-is('Notes (2)')")
             await page.wait_for_selector("#notes[open]")
             text = await page.inner_text("#notes-text")
@@ -368,7 +369,7 @@ def test_what_and_where_opens_on_the_profiles_titles_and_places_and_cancel_saves
     searched = desk.search["at"]
 
     async def go():
-        async with _desk_page(desk) as (page, calls):
+        async with _desk_page(desk, at="openings") as (page, calls):
             await page.wait_for_function("document.getElementById('area-btn').textContent.includes('Mesa, AZ')")
             await page.click("#area-btn")
             await page.wait_for_selector("#area[open]")
