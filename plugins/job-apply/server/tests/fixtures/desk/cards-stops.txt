@@ -8,7 +8,7 @@ Choose what to look for, and where
 The job titles and the places Find jobs searches.
 Choose
 Save your site passwords
-The desk signs in with them and makes your accounts. 0 of 8 saved.
+The desk signs in with them and makes your accounts. 0 of 7 saved.
 Open Settings
 Let the desk read emailed codes
 Optional. Many sites email a code when you sign in. With this, the desk enters it for you.
@@ -113,7 +113,7 @@ Report a problem
 Equipment Technician · Example Letter Cover letter to check
 12 min
 Read it
-This is the first cover letter the desk wrote for you (with your Claude login), and this job waits for your say. If it's right, press Use it: from then on each job's letter goes in without asking. To change how they're written, tell Claude in the chat what to change, or press Turn cover letters off.
+This is the first cover letter the desk wrote for you, and this job waits for your say. If it's right, press Use it: from then on each job's letter goes in without asking. If it isn't, press Turn cover letters off. Or tell Claude in the chat what to change.
 # Sam Rivera
 sam.rivera@example.com · 480-555-0123 · Chandler, AZ
 Dear Hiring Team,

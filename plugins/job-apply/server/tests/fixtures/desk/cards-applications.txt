@@ -8,7 +8,7 @@ Choose what to look for, and where
 The job titles and the places Find jobs searches.
 Choose
 Save your site passwords
-The desk signs in with them and makes your accounts. 1 of 8 saved.
+The desk signs in with them and makes your accounts. 1 of 7 saved.
 Let the desk read emailed codes
 Optional. Many sites email a code when you sign in. With this, the desk enters it for you.
 Open Settings
@@ -77,6 +77,11 @@ No reply yet
 Applied
 Follow-up due YYYY-MM-DD
 Follow up
+Applied
+Interviewing
+Offer
+Rejected
+Withdrawn
 Field Service Engineer
 Example Optics
 YYYY-MM-DD

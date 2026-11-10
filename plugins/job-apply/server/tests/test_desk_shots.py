@@ -165,6 +165,63 @@ def test_a_picture_of_home_with_many_jobs(srv, job_apply_home, monkeypatch, card
     assert path.stat().st_size > 2000
 
 
+@pytest.mark.parametrize("look", LOOKS)
+def test_a_picture_of_the_applications_with_change_status_open(srv, job_apply_home, monkeypatch, look):
+    """The Applications page (the openings state) with the first row's Change status menu open (the design's C8), in
+    each look, in a window of 1440 by 900; saved as openings-applications-status-<look>.png."""
+    folder = Path(SHOTS)
+    folder.mkdir(parents=True, exist_ok=True)
+    desk = _canned(srv, monkeypatch, _state("state-openings.json"))
+    path = folder / f"openings-applications-status-{look}.png"
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1440, "height": 900}, color_scheme=look)
+                await open_desk(page, desk, "applications")
+                await page.click("#app-rows details.menu > summary >> nth=0")
+                await page.wait_for_selector("#app-rows details.menu[open] .menu-panel", state="visible")
+                await page.wait_for_timeout(150)
+                await page.screenshot(path=str(path))
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert path.stat().st_size > 2000
+
+
+@pytest.mark.parametrize("page_name", ["home", "openings"])
+@pytest.mark.parametrize("look", LOOKS)
+def test_a_picture_of_a_desk_without_claude(srv, job_apply_home, monkeypatch, look, page_name):
+    """Home and Openings of a desk run on its own (the design's C7: state.standalone), drawn from the openings state,
+    on Openings with the recommended openings ticked so the apply bar shows (without Tailor my resume), in each look, in
+    a window of 1440 by 900; saved as standalone-<page>-<look>.png."""
+    folder = Path(SHOTS)
+    folder.mkdir(parents=True, exist_ok=True)
+    desk = _canned(srv, monkeypatch, {**_state("state-openings.json"), "standalone": True})
+    path = folder / f"standalone-{page_name}-{look}.png"
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1440, "height": 900}, color_scheme=look)
+                await open_desk(page, desk, page_name)
+                if page_name == "openings":
+                    await page.click("[data-act=select-recommended]")
+                    await page.wait_for_selector(".applybar", state="visible")
+                await page.wait_for_timeout(150)
+                await page.screenshot(path=str(path))
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert path.stat().st_size > 2000
+
+
 @pytest.mark.parametrize("window", WINDOWS, ids=lambda w: f"{w[0]}x{w[1]}")
 @pytest.mark.parametrize("look", LOOKS)
 def test_a_picture_of_a_new_persons_home(srv, job_apply_home, monkeypatch, look, window):
