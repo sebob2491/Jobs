@@ -3,18 +3,20 @@ profile's settings.desk_window that chooses between a window and a tab, and the 
 No browser is started here but the tests' own: Popen and the person's usual browser are stand-ins."""
 
 import asyncio
+import logging
 import re
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import pytest
 import yaml
 from conftest import browser_available, person_browser, run
-from test_desk import _set_profile_settings
+from test_desk import _client, _set_profile_settings
 
 from job_apply import config, window
 from job_apply import desk as desk_module
@@ -223,7 +225,8 @@ def test_desk_window_is_app_unless_the_profile_says_tab(job_apply_home):
 
 def test_the_desk_opens_its_page_as_the_profile_says_and_nothing_when_told_not_to(srv, monkeypatch, job_apply_home):
     """Desk.start (Claude's open_job_desk) and a second start of job-apply-desk open the page through open_window, with
-    the profile's settings.desk_window as it is then; open_browser=False opens nothing at all."""
+    the profile's settings.desk_window as it is then; open_browser=False opens nothing at all. Each time with a new
+    one-time code in the address, never the page's key (/api/window for the second start)."""
     opened: list[tuple[str, str]] = []
 
     def nothing_else(*a, **k):
@@ -259,10 +262,79 @@ def test_the_desk_opens_its_page_as_the_profile_says_and_nothing_when_told_not_t
 
     quiet, in_window, in_tab = run(go())
     assert quiet == []
-    assert in_window == [(desk.url, "app")]
-    assert in_tab == [(desk.url, "app"), (desk.url, "tab")]
+    assert in_window == opened[:1] and in_tab == opened[:2]
     # (a profile that can't be read just now: the setting's default, never a desk that won't open)
-    assert opened[2:] == [(desk.url, "tab"), (desk.url, "app")]
+    assert [mode for _, mode in opened] == ["app", "tab", "tab", "app"]
+    coded = rf"http://127\.0\.0\.1:{desk.port}/\?c=[A-Za-z0-9_-]{{20,}}"
+    assert all(re.fullmatch(coded, url) for url, _ in opened), opened
+    assert len({url for url, _ in opened}) == 4  # (a new code each time)
+
+
+def test_the_window_is_never_handed_the_pages_key_and_no_log_line_holds_it_or_a_code(srv, monkeypatch, started,
+                                                                                    job_apply_home, caplog):
+    """The page's key on a browser's command line could be read by the computer's other accounts as long as the
+    browser runs. Both places that open the desk's window (Desk.start, and a second start finding this desk running)
+    start the browser with a one-time code in its place, which the desk trades for its own address with the key (and
+    &w=app) once. Nothing the desk logs meanwhile holds the key or a code."""
+    caplog.set_level(logging.DEBUG)
+    monkeypatch.setattr(window, "find_browser", lambda: "/made/up/browser")
+    desk = Desk(srv)
+    desk.applier.start = lambda: None  # (the queue isn't worked here)
+    desk.search.update(status="done", at=time.time())
+
+    def second_desk(srv_module):
+        raise AssertionError("a second desk was started")
+
+    monkeypatch.setattr(desk_module, "get_desk", second_desk)
+
+    async def go():
+        await desk.start(port=0, open_browser=True)
+        try:
+            assert await asyncio.to_thread(desk_module.main, ["--port", str(desk.port)]) == 0
+            logged = list(caplog.records)  # (what the desk logged: the test's own fetches below log what they fetch)
+            async with _client(desk) as c:
+                gone_to = []
+                for args, _ in started.programs:
+                    r = await c.get(args[1].removeprefix("--app="))
+                    gone_to.append((r.status_code, r.headers.get("location")))
+                return gone_to, logged
+        finally:
+            await desk.stop()
+
+    gone_to, records = run(go())
+    assert len(started.programs) == 2 and started.tabs == [], started
+    codes = []
+    for args, _ in started.programs:
+        assert len(args) == 3 and args[2] == "--window-size=1280,860", args
+        assert desk.token not in " ".join(args), args
+        address = args[1].removeprefix("--app=")
+        assert re.fullmatch(rf"http://127\.0\.0\.1:{desk.port}/\?c=[A-Za-z0-9_-]{{20,}}&w=app", address), address
+        codes.append(parse_qs(urlsplit(address).query)["c"][0])
+    assert codes[0] != codes[1]
+    assert gone_to == [(303, desk.url + "&w=app")] * 2, gone_to
+    logged = "\n".join(f"{r.name} {r.getMessage()}" for r in records)
+    assert all(secret not in logged for secret in (desk.token, *codes)), logged
+
+
+def test_the_desk_reads_the_profile_for_its_window_off_its_event_loop(srv, monkeypatch, job_apply_home):
+    """Desk.start reads settings.desk_window in the same call off the event loop as the window's opening: a profile
+    read never holds up the desk's other work."""
+    read_on: list[int] = []
+    monkeypatch.setattr(desk_module, "_desk_window", lambda: read_on.append(threading.get_ident()) or "app")
+    monkeypatch.setattr(window, "open_window", lambda url, mode: mode)
+    desk = Desk(srv)
+    desk.applier.start = lambda: None
+    desk.search.update(status="done", at=time.time())
+
+    async def go():
+        await desk.start(port=0, open_browser=True)
+        try:
+            return threading.get_ident()
+        finally:
+            await desk.stop()
+
+    loop_thread = run(go())
+    assert len(read_on) == 1 and read_on[0] != loop_thread, (read_on, loop_thread)
 
 
 def test_no_browser_says_what_it_leaves_closed(capsys):

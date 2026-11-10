@@ -8,9 +8,10 @@ import contextlib
 import json
 import socket
 import threading
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from starlette.applications import Starlette
 from conftest import browser_available, person_browser, run
 from test_desk import _client, _fit, _jobs, _keep_queue, _kept_queue, _stopped_desk, _until
 from test_desk_buttons import _POLLS, _idle_desk
@@ -23,6 +24,7 @@ needs_browser = pytest.mark.skipif(not browser_available(), reason="no Playwrigh
 
 JOB = "https://careers.example.com/jobs/12345?source=desk#apply"
 NOT_WEB = "Only web addresses can be opened."
+NO_BROWSER = "No browser opened it."
 QUIT_ASKS = "Quit the Job Desk? Jobs it is working on stop where they are. The queue is kept for next time."
 INSIDE_CLAUDE = "The desk runs inside Claude here: close Claude to stop it."
 STOPPED = ["The Job Desk has stopped", "You can close this window. Open Job Desk again to carry on."]
@@ -121,6 +123,137 @@ def test_api_open_hands_a_web_address_to_the_usual_browser_and_nothing_else(srv,
     assert opened == done  # (none of the refused ones opened anything)
 
 
+def test_api_open_says_so_when_no_browser_took_the_link(srv, monkeypatch):
+    """webbrowser.open says False when no browser took the address: /api/open answers 502 then, never that it opened
+    it, so the page opens the link the ordinary way."""
+    tried: list[str] = []
+    monkeypatch.setattr(desk_module.webbrowser, "open", lambda url, *a, **k: tried.append(url) and False)
+    desk = _idle_desk(srv)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with _client(desk) as c:
+                return await c.post("/api/open", headers={"x-desk-token": desk.token}, json={"url": JOB})
+        finally:
+            await desk.stop()
+
+    r = run(go())
+    assert (r.status_code, r.json()) == (502, {"error": NO_BROWSER}) and tried == [JOB]
+
+
+def _code(address: str) -> str:
+    """The one-time code in a window's address (Desk.window_url)."""
+    said = parse_qs(urlsplit(address).query)
+    assert list(said) == ["c"], address
+    return said["c"][0]
+
+
+def test_a_windows_code_opens_the_page_once_within_a_minute_and_otherwise_is_a_wrong_key(srv, monkeypatch):
+    """The page's address with a window's one-time code goes on to the page's own address with its key (and &w=app
+    where the window gave it), once. A code used already, one 60 seconds old, a made-up one, and the oldest of more
+    than the handful kept get the page as a wrong key does: no redirect, no key. Under another site's name, 403, and
+    the code isn't used up."""
+    now = [1000.0]
+    monkeypatch.setattr(desk_module, "_clock", lambda: now[0])
+    desk = _idle_desk(srv)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with _client(desk) as c:
+                async def get(params: str):
+                    r = await c.get("/" + params)
+                    return r.status_code, r.headers.get("location"), r.text
+
+                wrong_key = await get(f"?t=a-guess-{desk.token}")
+                assert wrong_key[:2] == (200, None)
+                said: dict[str, object] = {"wrong key": wrong_key}
+                first = _code(desk.window_url())
+                said["foreign"] = (await c.get(f"/?c={first}", headers={"host": "careers.example.com"})).status_code
+                said["first"] = await get(f"?c={first}")
+                said["again"] = await get(f"?c={first}")
+                windowed = _code(desk.window_url())
+                said["windowed"] = await get(f"?c={windowed}&w=app")
+                said["made up"] = await get("?c=a-made-up-code&w=app")
+                said["empty"] = await get("?c=")
+                said["not ascii"] = await get("?c=caf%C3%A9")
+                late, in_time = _code(desk.window_url()), _code(desk.window_url())
+                now[0] += 59.9
+                said["in time"] = await get(f"?c={in_time}")
+                now[0] += 0.1
+                said["late"] = await get(f"?c={late}")
+                many = [_code(desk.window_url()) for _ in range(desk_module.WINDOW_CODES_MOST + 1)]
+                said["oldest of many"] = await get(f"?c={many[0]}")
+                said["newest of many"] = await get(f"?c={many[-1]}")
+                return said, len(desk._window_codes)
+        finally:
+            await desk.stop()
+
+    said, kept = run(go())
+    wrong_key = said.pop("wrong key")
+    assert said.pop("foreign") == 403
+    page = (303, desk.url, "")
+    assert said == {"first": page, "again": wrong_key, "windowed": (303, desk.url + "&w=app", ""),
+                    "made up": wrong_key, "empty": wrong_key, "not ascii": wrong_key, "in time": page,
+                    "late": wrong_key, "oldest of many": wrong_key, "newest of many": page}, said
+    assert kept <= desk_module.WINDOW_CODES_MOST
+
+
+def test_api_window_needs_the_pages_key_and_gives_a_new_code_each_time(srv):
+    """/api/window, which a second start asks for the window's address: an address with a new one-time code each time,
+    and no key in it. Without the page's key, or under another site's name, 403, as every route is."""
+    desk = _idle_desk(srv)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            h = {"x-desk-token": desk.token}
+            async with _client(desk) as c:
+                refused = [(await c.post("/api/window", headers=headers, json={})).status_code
+                           for headers in ({}, {"x-desk-token": "a-guess"}, {**h, "host": "careers.example.com"})]
+                got = [await c.post("/api/window", headers=h, json={}) for _ in range(3)]
+                not_get = (await c.get("/api/window", headers=h)).status_code
+                return refused, [(r.status_code, r.json()) for r in got], not_get
+        finally:
+            await desk.stop()
+
+    refused, got, not_get = run(go())
+    assert refused == [403, 403, 403] and not_get == 405
+    assert all(status == 200 and list(body) == ["url"] for status, body in got), got
+    addresses = [body["url"] for _, body in got]
+    assert all(a.startswith(f"http://127.0.0.1:{desk.port}/?c=") and desk.token not in a for a in addresses), addresses
+    assert len({_code(a) for a in addresses}) == 3
+
+
+def test_a_second_start_opens_the_keyed_address_where_the_running_desk_has_no_api_window(srv, monkeypatch):
+    """A desk from before /api/window, found running by a second start: its page opens at the address with its key,
+    as before, rather than not at all."""
+    opened: list[tuple[str, str]] = []
+    monkeypatch.setattr(window, "open_window", lambda url, mode: opened.append((url, mode)) or mode)
+    every_route = Desk.app
+    monkeypatch.setattr(Desk, "app", lambda self: Starlette(
+        routes=[route for route in every_route(self).routes if getattr(route, "path", "") != "/api/window"]))
+    desk = _idle_desk(srv)
+
+    def second_desk(server):
+        raise AssertionError("a second desk was started")
+
+    monkeypatch.setattr(desk_module, "get_desk", second_desk)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with _client(desk) as c:
+                assert (await c.post("/api/window", headers={"x-desk-token": desk.token}, json={})).status_code == 404
+            return await asyncio.to_thread(desk_module.main, ["--port", str(desk.port)])
+        finally:
+            await desk.stop()
+
+    assert run(go()) == 0
+    assert opened == [(desk.url, "app")]
+
+
 def test_api_quit_is_for_a_desk_run_on_its_own_and_needs_the_pages_key(srv):
     """/api/quit: a desk inside Claude's plugin answers 409, saying how it stops, and isn't stopped. One run on its own
     (the state's `standalone`) says it's quitting and sets what job-apply-desk waits on. Without the page's key, 403."""
@@ -212,7 +345,10 @@ def test_job_apply_desk_runs_until_its_page_quits_it_then_stops_as_ctrl_c_does(s
     assert closed == [True]  # (the browser closed once, after the desk had stopped)
     assert running_desk(desk.port) is None and not watch_path(desk.port).exists()
     assert [job["id"] for job in _kept_queue()["jobs"]] == [first, second]
-    assert opened == ([] if quiet else [(url, "app")])
+    # (with a one-time code in its address, never the page's key)
+    assert [mode for _, mode in opened] == ([] if quiet else ["app"]), opened
+    assert all(address == f"http://127.0.0.1:{desk.port}/?c={_code(address)}" and desk.token not in address
+               for address, _ in opened), (opened, url)
 
 
 @needs_browser
@@ -338,3 +474,34 @@ def test_a_link_opens_in_the_usual_browser_from_the_desks_own_window_and_as_befo
     assert refused == ([("POST", "/api/open", {"url": long})], [read], [long]), refused[1:]
     # a tab: no call, nothing handed over, and the link's own page opens
     assert tab == ([], [read], [read]), tab
+
+
+@needs_browser
+def test_a_link_no_browser_took_opens_the_ordinary_way_from_the_desks_own_window(srv, monkeypatch):
+    """In the desk's own window, a link the desk handed on but no browser took (/api/open's 502) opens the ordinary
+    way, as one the desk refuses does: never a press that does nothing."""
+    tried: list[str] = []
+    monkeypatch.setattr(desk_module.webbrowser, "open", lambda url, *a, **k: tried.append(url) and False)
+    desk = _idle_desk(srv)
+    job = "https://careers.example.com/jobs/3"
+    desk.listings = [{"company": "Example Fab", "title": "Field Service Engineer", "url": job,
+                      "location": "Phoenix, AZ", "fit": _fit(80)}]
+
+    async def a_job(route):  # (the employer's site, made up: nothing leaves this computer)
+        await route.fulfill(status=200, content_type="text/html", body="<title>A job</title>")
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with _page(desk, desk.url + "&w=app") as (page, calls):
+                await page.context.route("https://careers.example.com/**", a_job)
+                async with page.context.expect_page() as new:
+                    await page.click("#rows li.row:has-text('Example Fab') a.title")
+                await (await new.value).wait_for_url(lambda url: url == job)
+                return list(calls), [other.url for other in page.context.pages[1:]]
+        finally:
+            await desk.stop()
+
+    calls, pages = run(go())
+    assert calls == [("POST", "/api/open", {"url": job})] and tried == [job], (calls, tried)
+    assert pages == [job], pages
