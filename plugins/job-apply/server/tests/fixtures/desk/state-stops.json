@@ -83,7 +83,19 @@
  "tracker_damaged": false,
  "tracker_path": "~/.job-apply/tracker.db",
  "version": "0.0.0",
- "update": null,
+ "update": {
+  "current": "0.0.0",
+  "latest": "0.0.0",
+  "newer": false,
+  "kind": "plugin",
+  "checked_at": 1792350000.0,
+  "progress": null,
+  "error": null,
+  "commands": [
+   "claude plugin marketplace update sebob-jobs",
+   "claude plugin update job-apply@sebob-jobs"
+  ]
+ },
  "answers_problem": null,
  "search": {
   "status": "done",

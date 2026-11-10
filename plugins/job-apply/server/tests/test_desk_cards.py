@@ -112,6 +112,10 @@ def _cards(srv, monkeypatch, state: dict, storage: dict | None = None, press: li
         began = next((t for t in r.get("log_at") or [] if t), 0)
         if began:
             r["log_at"] = [t and now - 3 * 60 - 30 + (t - began) for t in r["log_at"]]
+    # (and the update card's last look for a newer version, F2, is drawn as 2 hours before `now`: "Checked 2 hours
+    # ago.")
+    if (state.get("update") or {}).get("checked_at"):
+        state["update"]["checked_at"] = now - 2 * 3600
     monkeypatch.setattr(Desk, "state", lambda self: copy.deepcopy(state))
     desk = Desk(srv)
     desk.applier.start = lambda: None  # (nothing is worked: the page shows only the canned state)
@@ -202,10 +206,10 @@ def test_the_desks_cards_say_what_they_said(srv, job_apply_home, monkeypatch, ca
                   how.get("list", "openings"))
     # (every card: Home's six (Version C's This week and Getting started among them), the Openings card, the
     # Applications card (Version B's B6), Your answers' two (D5's Answers the desk remembers) and What's working's,
-    # Settings' eleven (Version D's Job search and Applying cards among them, Safety a row of Applying's; D3's Your own
+    # Settings' twelve (Version D's Job search and Applying cards among them, Safety a row of Applying's; D3's Your own
     # alert server under Phone alerts, the rows of Updates and about, and those of Email codes and of Resume and cover
-    # letters), Help's two)
-    assert seen.count("\n## ") + 1 == 24, seen
+    # letters; F2's update card), Help's two)
+    assert seen.count("\n## ") + 1 == 25, seen
     _compare(how["golden"], seen)
 
 

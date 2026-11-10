@@ -523,6 +523,11 @@ Written through your own Claude sign-in. The first one waits for your OK.
 Which model writes the letters
 Leave this empty for the usual one.
 
+## update-h
+You have the newest version
+Version 0.0.0. Checked 2 hours ago.
+Check now
+
 ## panel-about-h
 Open the desk in
 This applies the next time the desk opens.

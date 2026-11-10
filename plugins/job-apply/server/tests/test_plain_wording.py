@@ -46,8 +46,8 @@ ALLOWED = [
     ("pipeline.py", "(settings.accept_notices)"),
     ("pipeline_accounts.py", "(settings.manage_accounts)"),
     ("pipeline_mail.py", "settings.email_codes is off"),
-    # the page's update notice: Version F
-    ("static/desk.html", "in a terminal (PowerShell on Windows)"),
+    # the update card's fallback, when Claude couldn't update the plugin: its two commands ("The test")
+    ("static/desk.html", "You can also run these in a terminal:"),
 ]
 
 _LOGGERS = {"log", "logger", "logging", "_logger"}

@@ -911,7 +911,8 @@ def test_the_desk_page_says_a_newer_version_is_out(srv, monkeypatch):
             await desk.stop()
 
     text = run(go("0.3.71"))
-    assert "job-apply 0.3.71 is out (you have 0.3.70)" in text, text
-    assert "claude plugin marketplace update sebob-jobs" in text and "claude plugin update job-apply@sebob-jobs" in text
+    assert "Version 0.3.71 is ready (you have 0.3.70). Update" in text, text
+    # (F2: the notice names no command, and its link leads to the update card: test_desk_update_page.py)
+    assert "claude plugin marketplace update sebob-jobs" not in text and "claude plugin update" not in text
     for same in ("0.3.70", None):  # (the state's update is always there now: the notice only when newer)
-        assert "is out" not in run(go(same))
+        assert "is ready" not in run(go(same))

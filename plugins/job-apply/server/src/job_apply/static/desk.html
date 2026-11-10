@@ -101,9 +101,12 @@ body > .app { display: grid; grid-template-columns: 244px minmax(0, 1fr); height
   line-height: 1.25; text-align: center; }
 .queue .btn.sm + .btn.sm { margin-top: 4px; }
 #pause-btn .ico { display: none; }
-/* the person: one button, for their profile */
+/* the person: one button, for their profile; and under their name the version, laid over the button's second line
+   (its own element, outside the button: with a newer version out it is a link to Updates and about, F2, and a link
+   can't be inside a button) */
+.me-row { position: relative; margin-top: 6px; flex: none; }
 button.me { display: flex; align-items: center; justify-content: flex-start; gap: 10px; width: 100%; height: auto;
-  margin-top: 6px; padding: 8px; border: 0; border-radius: 8px; background: none; box-shadow: none; color: var(--text);
+  margin: 0; padding: 8px; border: 0; border-radius: 8px; background: none; box-shadow: none; color: var(--text);
   text-align: left; white-space: normal; flex: none; }
 button.me:hover { background: var(--hover); }
 .avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--accent-bg); color: var(--accent-2);
@@ -112,6 +115,10 @@ button.me:hover { background: var(--hover); }
 .me b { display: block; font-size: 13px; font-weight: 600; line-height: 1.25; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; }
 .me small { display: block; color: var(--muted); font-size: 11.5px; font-weight: 400; }
+.me .me-room { visibility: hidden; }
+#plugin-version { position: absolute; left: 48px; right: 8px; top: 24px; margin: 0; color: var(--muted); font-size: 11.5px;
+  font-weight: 400; line-height: 1.45; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+#plugin-version a { pointer-events: auto; }
 
 .main { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); min-width: 0;
   min-height: 0; }
@@ -257,6 +264,12 @@ input[type=checkbox]:disabled { opacity: .5; cursor: default; }
   .setrow.stack > form { justify-self: start; }
 }
 .set-err { grid-column: 1 / -1; margin: -6px 0 0; color: var(--bad); font-size: 13px; }
+/* the update card (Version F, the mockup's .update): the program's mark, what the update is doing, its buttons */
+.setrow.update { grid-template-columns: 38px minmax(0, 1fr) auto; gap: 14px; padding: 15px 18px; }
+.setrow.update > .logo { width: 38px; height: 38px; }
+.setrow.update .s { overflow-wrap: anywhere; }
+.setrow.update .s code { font-size: 12.5px; }
+.setrow.update .acts:empty { display: none; }
 /* under a card's rows, a button of its own (the Safety window's) */
 .setfoot { padding: 13px 18px; border-top: 1px solid var(--line-2); }
 /* under a card's rows: a closed <details> holding rows seldom needed */
@@ -715,7 +728,8 @@ body.stopped > :not(#stopped) { display: none; }
     line-height: 15px; }
   .nav .sep { margin: 10px 4px; }
   button.me { justify-content: center; padding: 6px 0; position: relative; }
-  .me-words { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .me-words, #plugin-version { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%);
+    white-space: nowrap; }
   .top, body[data-page] .top { grid-template-columns: minmax(0, 1fr); padding: 10px 16px; }
   .top-l { flex-wrap: wrap; }
   .top-r { justify-content: flex-start; }
@@ -739,6 +753,8 @@ body.stopped > :not(#stopped) { display: none; }
   .setrow { grid-template-columns: minmax(0, 1fr); gap: 10px; }
   .setrow > .seg, .setrow > .switch, .setrow > .btn { justify-self: start; }
   .setrow > .acts { justify-content: flex-start; }
+  .setrow.update { grid-template-columns: 38px minmax(0, 1fr); }
+  .setrow.update > .acts { grid-column: 2; }
   .tbody { margin-left: 0; }
 }
 </style>
@@ -803,7 +819,10 @@ body.stopped > :not(#stopped) { display: none; }
       <button class="btn sm" id="pause-btn" data-act="pause" title="The job under way finishes what it is doing; no other job starts until you press Carry on with the queue" hidden><svg class="ico" aria-hidden="true"><use href="#i-pause"/></svg>Pause queue</button>
       <button class="btn sm ghost" id="clear-queue-btn" data-act="clear-queue" title="Take the jobs not started yet out of the queue, back to the openings (not skipped); jobs already begun keep their cards" hidden>Clear the queue</button>
     </div>
-    <button class="me" data-act="setup" title="Your profile"><span class="avatar" id="me-avatar" aria-hidden="true"><svg class="ico" aria-hidden="true"><use href="#i-user"/></svg></span><span class="me-words"><b id="who"></b><small id="plugin-version"></small></span></button>
+    <div class="me-row">
+      <button class="me" data-act="setup" title="Your profile"><span class="avatar" id="me-avatar" aria-hidden="true"><svg class="ico" aria-hidden="true"><use href="#i-user"/></svg></span><span class="me-words"><b id="who"></b><small class="me-room" aria-hidden="true">&nbsp;</small></span></button>
+      <small id="plugin-version"></small>
+    </div>
   </aside>
   <div class="main">
     <!-- the top bar, one for all pages: each control in a wrapper that route shows on its pages (data-pages), so the
@@ -1306,7 +1325,17 @@ body.stopped > :not(#stopped) { display: none; }
           </div>
           <div class="spanel" id="panel-about" data-panel="about" hidden>
             <div class="spanel-h"><h2 id="panel-about-h">Updates and about</h2></div>
-            <!-- (the update card goes here: the design's Version F) -->
+            <!-- the update card (the design's F2): this version, a newer one and Update now, an update under way, or why
+                 one didn't go through; drawn by renderUpdate from the state's update -->
+            <section class="card" id="update-card" aria-labelledby="update-h" hidden>
+              <div class="setrow update" id="update-row">
+                <svg class="logo" aria-hidden="true"><use href="#logo"/></svg>
+                <div><h2 class="t" id="update-h"></h2>
+                  <p class="s" id="update-said"></p>
+                  <div id="update-more"></div></div>
+                <div class="acts" id="update-acts"></div>
+              </div>
+            </section>
             <!-- (D3: where the desk opens, its look (this browser's only), the browser it fills forms in, its folder) -->
             <section class="card" aria-labelledby="panel-about-h">
               <div class="setrow">
@@ -3113,7 +3142,14 @@ function renderHeader() {
     : "Hides a job whose posting has a line labelled with the education it requires (Minimum Education: Bachelor's Degree), with no way around it. One that only says it in its text, or isn't read yet, always stays.";
   const troubleshootOn = $("troubleshoot");
   if (document.activeElement !== troubleshootOn) troubleshootOn.checked = !!s.troubleshoot;
-  $("plugin-version").textContent = state.version ? `Version ${state.version}` : "";
+  // (under the person's name: the version, and with a newer one out "update ready", a link to Updates and about, F2)
+  const ready = (state.update || {}).newer && state.version;
+  const version = !state.version ? "" : ready ? `<a href="#settings/about">Version ${esc(state.version)} · update ready</a>`
+    : `Version ${esc(state.version)}`;
+  if ($("plugin-version").dataset.html !== version) {
+    $("plugin-version").innerHTML = version;
+    $("plugin-version").dataset.html = version;
+  }
   $("tailor-hint").textContent = state.standalone ? "" : s.tailor_resumes ? "On: each job waits for Claude to write a resume for it." : "Off: your usual resume goes with every application.";
   const writer = state.letters_by || "your Claude login";
   $("letters-hint").textContent = !s.cover_letters ? "Off: your usual cover letter, if you have one, goes in."
@@ -3185,10 +3221,11 @@ function renderHeader() {
     (agreeing to its terms for you) and, when a site turns your saved password down, resets it to that one through the
     site's "Forgot password" email. To keep doing these yourself, turn off Make my accounts in Settings, under Applying.
     <button class="link" data-act="accounts-keep">Keep it on</button>`});
+  // a newer version out (F2): said, with a link to its card in Settings (Updates and about), which updates it; not while
+  // an update is under way or done (the card says so)
   const up = state.update;
-  if (up && up.newer) notes.push({cls: "notice info", html: `job-apply ${esc(up.latest)} is out (you have ${esc(up.current)}). Between runs, `
-    + `in a terminal (PowerShell on Windows) run ${up.commands.map((c) => `<code>${esc(c)}</code>`).join(", then ")}, then `
-    + `restart the Claude app.`});
+  if (up && up.newer && !UPDATING.includes(up.progress) && up.progress !== "done") notes.push({cls: "notice info",
+    html: `Version ${esc(up.latest)} is ready (you have ${esc(up.current)}). <a href="#settings/about">Update</a>`});
   // problems: red, each said "Problem: ..." (yellow is only for what waits for you now)
   if (sr.status === "failed") notes.push({cls: "notice bad", html: `Problem: the search failed: <span title="${esc(sr.error || "")}">`
     + `${esc(searchWords(sr.error, "something went wrong in it"))}</span>. Press Find jobs to try again.`});
@@ -3460,6 +3497,64 @@ function renderProgram() {
   $("program-version").textContent = state.version ? `Version ${state.version}.` : "";
   $("program-own").hidden = $("quit-btn").hidden = !state.standalone;
   $("program-claude").hidden = !!state.standalone;
+}
+
+// Settings' update card (F2), from the state's update: this version and Check now; a newer one, with Update now where
+// this copy can update itself (disabled while a job is being filled); an update under way, step by step; or why one
+// didn't go through, with the server's sentence. A button being pressed (saveRow) is left as it is until it's done
+const UPDATING = ["downloading", "installing", "updating"];  // (an update under way: updates.UNDER_WAY)
+function agoWords(t) {
+  const s = Math.max(0, Date.now() / 1000 - t), n = (k, unit) => `${k} ${unit}${k === 1 ? "" : "s"} ago`;
+  return s < 60 ? "just now" : s < 3600 ? n(Math.round(s / 60), "minute") : s < 86400 ? n(Math.round(s / 3600), "hour")
+    : n(Math.round(s / 86400), "day");
+}
+function renderUpdate() {
+  const up = state.update;
+  $("update-card").hidden = !up;
+  if (!up || $("update-acts").querySelector("[data-saving]")) return;
+  const latest = esc(up.latest || ""), current = esc(up.current || "");
+  const filling = state.current != null || allRuns().some((r) => r.status === "running");
+  const fillingSaid = filling ? " Wait for the jobs being filled to finish, or pause the queue." : "";
+  const updateNow = `<button class="btn sm primary" data-act="update-start"${filling ? " disabled" : ""}>Update now</button>`;
+  const checkNow = `<button class="btn sm" data-act="update-check">Check now</button>`;
+  const canUpdate = up.newer && up.kind !== "manual";
+  let title, said, more = "", buttons = "";
+  if (up.progress === "downloading") [title, said] = [`Downloading version ${latest}`, "This takes a moment."];
+  else if (up.progress === "installing") [title, said] = [`Installing version ${latest}`, "This window closes, and the Job Desk opens again by itself."];
+  else if (up.progress === "updating") [title, said] = ["Updating the plugin", "This takes a moment."];
+  else if (up.progress === "done") [title, said] = [`Updated to ${latest}`, "Restart Claude to use it."];
+  else if (up.progress === "failed") {
+    [title, said] = ["The update didn't go through", `${esc(up.error || "")} Nothing was changed.${canUpdate ? fillingSaid : ""}`];
+    if (up.kind === "plugin") more = `<p class="s">You can also run these in a terminal:</p>`
+      + `<p class="s">${(up.commands || []).map((c) => `<code>${esc(c)}</code>`).join("<br>")}</p>`;
+    buttons = canUpdate ? updateNow : checkNow;
+  } else if (!up.newer) {
+    [title, said] = up.checked_at ? ["You have the newest version", `Version ${current}. Checked ${agoWords(up.checked_at)}.`]
+      : [`Version ${current}`, "The desk couldn't look for a newer one. It needs the internet for that."];
+    buttons = checkNow;
+  } else if (up.kind === "manual") {
+    [title, said] = [`Version ${latest} is out`, `You have ${current}. This copy isn't one the desk can update by itself.`];
+  } else {
+    title = `Version ${latest} is ready`;
+    said = `You have ${current}. ` + (up.kind === "installed"
+      ? "Updating takes about a minute. The desk closes, installs, and opens again. Your queue is kept."
+      : "The desk updates the plugin. Then restart Claude to use it.") + fillingSaid;
+    buttons = updateNow;
+  }
+  $("update-h").textContent = title;
+  for (const [id, html] of [["update-said", said], ["update-more", more], ["update-acts", buttons]]) {
+    if ($(id).dataset.html !== html) { $(id).innerHTML = html; $(id).dataset.html = html; }
+  }
+}
+// Update now (F2), and its Try again: an installed copy's update closes the desk's browser window, so with jobs waiting
+// on the person there (their pages filled in, maybe typed into) it asks first
+function updateNow(t) {
+  const waiting = (state.update || {}).kind === "installed"
+    ? allRuns().filter((r) => r.status === "needs_you" || r.status === "ready").length : 0;
+  if (waiting && !confirm("Updating closes the desk's browser window. " + (waiting === 1
+    ? "1 job is waiting on you there, and what you have typed into its page will be lost."
+    : `${waiting} jobs are waiting on you there, and what you have typed into their pages will be lost.`) + " Update now?")) return;
+  saveRow(t, () => api("/api/update/start", {}));
 }
 
 async function copyNotes() {
@@ -3824,6 +3919,7 @@ function render() {
   renderNotes();
   renderMenu();
   renderProgram();
+  renderUpdate();
   renderSettingsRows();
   announce();
   // (a profile that lacks what an application needs: Set up your profile, once a visit, over no other window)
@@ -3860,12 +3956,17 @@ function refresh() {
   return mine;
 }
 
+// The desk gone while an update was under way (the brief's item 6): an installed copy's desk stops for its installer,
+// and opens again by itself. The page says so in place of "the desk isn't answering", closes its window where the
+// browser lets it (F2: installing), and reloads itself the moment the desk answers again
+let updateDown = false;
 async function load(at = changes) {
   try {
     // (the first look told before the first state, whose New marks go from it; then now and then while in front)
     if (!seenSent) await sawOpenings();
     else if (document.visibilityState === "visible" && document.hasFocus()) sawOpenings(SEEN_STAYING);
     const fresh = await api("/api/state");
+    if (updateDown) { location.reload(); return; }  // (back: the page as the desk now serves it)
     if (at !== changes) return;  // (a change made on the page since it was asked: the next refresh asks again)
     state = fresh;
     render();
@@ -3877,6 +3978,14 @@ async function load(at = changes) {
       await api("/api/search", {auto: true});
     }
   } catch (e) {
+    const up = (state || {}).update;
+    if (updateDown || (e.status === undefined && up && UPDATING.includes(up.progress))) {
+      if (e.status !== undefined) { location.reload(); return; }  // (it answers again, whatever it says)
+      if (!updateDown && up.progress === "installing") window.close();
+      updateDown = true;
+      $("notices").innerHTML = `<p class="notice info">The Job Desk is updating. This window will show it again when it is back.</p>`;
+      return;
+    }
     $("notices").innerHTML = e.status === 403
       ? `<p class="notice bad">Problem: the desk was restarted, and this window's key is out of date. Close it and open the Job Desk again.</p>`
       : `<p class="notice bad">Problem: the desk isn't answering (${esc(e.message)}). It may have been closed. Open the Job Desk again.</p>`;
@@ -4360,6 +4469,8 @@ document.addEventListener("click", (e) => {
   if (a === "area-avoid-add") { areaAdd("avoid_titles", $("area-avoid-new").value); $("area-avoid-new").value = ""; }
   if (a === "pause" || a === "resume") act(() => api(`/api/queue/${a}`, {}));
   if (a === "open-home") saveRow(t, () => postEmpty("/api/open/home"));  // (the desk's own folder, and only it)
+  if (a === "update-check") saveRow(t, () => api("/api/update/check", {}));  // (Check now: the server keeps its pace)
+  if (a === "update-start") updateNow(t);
   if (a === "mail-test") mailTest(t);
   if (a === "set-resume") $("set-resume-file").click();  // (the file picked: documentPicked)
   if (a === "set-letter") $("set-letter-pick").click();
