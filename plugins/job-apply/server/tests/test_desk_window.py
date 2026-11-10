@@ -282,6 +282,9 @@ def test_a_second_start_takes_only_the_running_desks_own_coded_address_from_what
 
     class Other(http.server.BaseHTTPRequestHandler):
         def do_POST(self):  # (http.server's own name for it)
+            # (what was sent is read before the answer: closed unread, Windows resets the connection and the asker
+            # may never see the answer)
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
             body = answer.replace("PORT", str(self.server.server_address[1])).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -308,6 +311,9 @@ def test_a_second_start_believes_the_running_desks_own_coded_address():
 
     class Own(http.server.BaseHTTPRequestHandler):
         def do_POST(self):  # (http.server's own name for it)
+            # (what was sent is read before the answer: closed unread, Windows resets the connection and the asker
+            # may never see the answer)
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
             body = ('{"url": "http://127.0.0.1:%d/?c=Ab-_9"}' % self.server.server_address[1]).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
