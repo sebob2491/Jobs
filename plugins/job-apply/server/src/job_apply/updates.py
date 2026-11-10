@@ -345,7 +345,7 @@ class UpdateCheck:
         except UpdateFailed as e:
             self._fail_installed(saved, undo, str(e))
             return
-        except (OSError, httpx.HTTPError, ValueError):
+        except Exception:  # (offline, a disk that's full, anything else: never left "under way")
             self._fail_installed(saved, undo, NOT_DOWNLOADED)
             return
         # 7. the desk stops, as Quit does
@@ -374,7 +374,7 @@ class UpdateCheck:
                 done = await loop.run_in_executor(None, functools.partial(
                     self.run, args, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
                     errors="replace", timeout=COMMAND_TIMEOUT, env=letters.child_env(), **_no_window()))
-            except (OSError, ValueError, subprocess.SubprocessError) as e:
+            except Exception as e:  # (it won't start, it ran too long: never left "under way")
                 self.output = type(e).__name__
                 self._failed(CLAUDE_FAILED)
                 return
