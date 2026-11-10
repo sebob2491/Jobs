@@ -2371,10 +2371,10 @@ def running_desk(port: int) -> str | None:
     return f"http://127.0.0.1:{port}/?t={token}"
 
 
-def window_address(url: str) -> str:
+def window_address(url: str) -> str | None:
     """For a second start: the running desk at `url` (running_desk's, with its key) asked for an address with a
-    one-time code (/api/window), to open its window with. Where it can't give one (a desk from before /api/window),
-    `url` itself."""
+    one-time code (/api/window), to open its window with. None where it can't give one (a desk from before
+    /api/window, or one that doesn't answer in time): main then opens `url` itself, in a tab."""
     parts = urlsplit(url)
     token = parse_qs(parts.query).get("t", [""])[0]
     ask = urllib.request.Request(f"http://127.0.0.1:{parts.port}/api/window", data=b"{}", method="POST",
@@ -2384,11 +2384,12 @@ def window_address(url: str) -> str:
         with opener.open(ask, timeout=5) as answer:
             coded = json.loads(answer.read().decode("utf-8")).get("url")
     except (OSError, ValueError, AttributeError, http.client.HTTPException):
-        return url
-    # (only the running desk's own page, with a code: anything else, the address as before)
+        return None
+    # (only the running desk's own page, with a code, is opened: whatever else answers on that port can't send the
+    # window anywhere else)
     own = f"http://127.0.0.1:{parts.port}/?c="
     if not isinstance(coded, str) or not re.fullmatch(re.escape(own) + r"[A-Za-z0-9_-]+", coded):
-        return url
+        return None
     return coded
 
 
@@ -2401,7 +2402,13 @@ def main(argv: list[str] | None = None) -> int:
     if (url := running_desk(args.port)) is not None:
         print(f"The Job Desk is already running: {url}", flush=True)
         if not args.no_browser:
-            window.open_window(window_address(url), _desk_window())
+            coded = window_address(url)
+            if coded is not None:
+                window.open_window(coded, _desk_window())
+            else:
+                # (no code to be had: the address with the key, in a tab of the usual browser, never on a browser's
+                # command line, where a window's address goes: the review of Nov 9)
+                window.open_window(url, "tab")
         return 0
     from . import server
 

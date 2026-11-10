@@ -230,7 +230,8 @@ def test_a_second_start_opens_with_a_code_or_the_keyed_address_where_the_running
                                                                                                         monkeypatch):
     """A second start opens the running desk's page with the one-time code /api/window gives. A desk from before
     /api/window (Not Found there) has its page opened at the address with its key, as before, rather than not at
-    all."""
+    all: in a tab, whatever the profile says, as a window's address goes on the browser's command line, where the key
+    must never be (the second look of Nov 9)."""
     opened: list[tuple[str, str]] = []
     monkeypatch.setattr(window, "open_window", lambda url, mode: opened.append((url, mode)) or mode)
     older = [False]
@@ -262,7 +263,69 @@ def test_a_second_start_opens_with_a_code_or_the_keyed_address_where_the_running
     assert len(opened) == 2, opened
     (coded, mode), keyed = opened
     assert coded == f"http://127.0.0.1:{desk.port}/?c={_code(coded)}" and mode == "app", coded
-    assert keyed == (desk.url, "app")
+    assert keyed == (desk.url, "tab")
+
+
+@pytest.mark.parametrize("answer", [
+    '{"url": "http://127.0.0.1:PORT/?c=abc&t=more"}', '{"url": "http://127.0.0.1:PORT/?c=abc#x"}',
+    '{"url": "http://127.0.0.1:1/?c=abc"}', '{"url": "http://careers.example.com/?c=abc"}',
+    '{"url": "https://127.0.0.1:PORT/?c=abc"}', '{"url": "http://127.0.0.1:PORT/?c="}',
+    '{"url": "http://127.0.0.1:PORT/?c=abc def"}', '{"url": "file:///C:/x?c=abc"}', '{"url": 7}', '{"url": null}',
+    '{}', '[]', 'not json', ''])
+def test_a_second_start_takes_only_the_running_desks_own_coded_address_from_what_answers_on_its_port(
+        answer, monkeypatch):
+    """The second look of Nov 9: what answers /api/window on the desk's port is believed only when it is that desk's
+    own page with a code and nothing more (the check could be deleted and every test passed). Anything else, another
+    host or port, more after the code, another kind of address, no address: no coded address, so the keyed one is
+    opened in a tab."""
+    import http.server
+
+    class Other(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):  # (http.server's own name for it)
+            body = answer.replace("PORT", str(self.server.server_address[1])).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Other)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        assert desk_module.window_address(f"http://127.0.0.1:{port}/?t=a-key") is None
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_a_second_start_believes_the_running_desks_own_coded_address():
+    """...and the one address it does take: the same port's page with a code."""
+    import http.server
+
+    class Own(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):  # (http.server's own name for it)
+            body = ('{"url": "http://127.0.0.1:%d/?c=Ab-_9"}' % self.server.server_address[1]).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Own)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        assert desk_module.window_address(f"http://127.0.0.1:{port}/?t=a-key") == f"http://127.0.0.1:{port}/?c=Ab-_9"
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def test_api_quit_is_for_a_desk_run_on_its_own_and_needs_the_pages_key(srv):
