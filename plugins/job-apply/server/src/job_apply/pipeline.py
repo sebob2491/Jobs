@@ -43,7 +43,8 @@ from .tracker import city_key, title_key
 from .ats import ATS_NAMES, JOB_BOARDS, detect_ats, host_of, shared_system
 from .autofill import (_OTHER_DOCUMENT, clean_label, documents_asked, documents_named, entry_list_unloaded,
                        _CHOICE_KINDS, is_empty_value, kept_documents, norm, phone_digits,
-                       profile_entries, unset_choice, polarity, tailored_document, works_there_now)
+                       profile_entries, resolve_field, unset_choice, polarity, tailored_document,
+                       works_there_now)
 from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
                       confirmations, declines_cookies, final_text, may_accept_cookies, questions_shown)
 from .never import (ANYWHERE, CALLS_OR_TEXTS, EMAILS, FUTURE_ROLES, GATE_OWN, GATE_PAGE, MAIL, NEVER,
@@ -57,6 +58,9 @@ from .pipeline_mail import MailAsk, MailMixin
 # ---------------------------------------------------------- timings and limits
 NEW_TAB_WAIT = 4  # seconds to wait for a tab opened late by a click before calling it a stall
 ONCE_SETTLE = 1.0  # seconds after filling the person's answers before checking they stayed in
+# seconds after typing again a box the review says is blank though it shows its answer, before leaving it (a page
+# that takes a change a moment after it's made), and after leaving it, before the page is read again
+REVIEW_RETYPE_SETTLE = 1.0
 MAX_STEPS = 30  # passes over a job's pages (Avnet's Workday, run 53: an account and seven steps took 15)
 # seconds a pass over a job's pages may take before it stops where it is: its waits (a page's buttons, a step saving, a
 # list's choices) add up, and one job held the queue for as long as they took (the review of Oct 15)
@@ -1199,6 +1203,7 @@ class Run:
     # re-review of 0.3.209)
     in_their_hands: bool = False
     invalid_redone: bool = False  # the review page's invalid lists answered again from the profile (once a job)
+    review_retyped: set[str] = field(default_factory=set)  # boxes the review typed again (_shown_but_lost: once a box)
     # the step a fill last went over, and the boxes its plan left empty on purpose (a current job's end date):
     # _form_lap's, never counted as left empty by the check before the job is called ready (_unready)
     skipped_on: tuple[Any, ...] = ()
@@ -1373,7 +1378,7 @@ class Run:
                                 "maybe_shown", "kept_replaced", "once_left", "opened_tabs", "letter_tried",
                                 "letter_text", "letter_wait", "asked_once", "skipped_on", "site_retries",
                                 "fresh_retry", "retry_stop", "retry_mark", "no_retry", "retry_tabs", "email_step",
-                                "seen_sent")},
+                                "seen_sent", "review_retyped")},
                 # (its try by itself after the site's error, on its card alone: Try now; and a try called off where its
                 # tab said it went in: I submitted it myself first)
                 "retry_at": self.retry_at if self.status == "needs_you" else 0.0,
@@ -5955,6 +5960,20 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             if again:
                 self._log(run, f"filled again {len(again)} field(s) the page marked invalid")
                 data, text = await self._look()
+        if lost := _shown_but_lost(run, data, job or {}):
+            # text boxes the page says are blank though they show the profile's answer for that very box (or the
+            # person's): the page lost its own record of them (Micron's Eightfold, run 200: "Error: Last Name cannot
+            # be left blank." beside the last name shown, on a one-page form whose review is its own Submit, so the
+            # retype after a step pressed in vain never came). Typed again key by key, once a box, and the page read
+            # again; one it still refuses is the person's (_unready)
+            run.review_retyped |= {str(f["id"]) for f in lost}
+            run.did("typed", lost)
+            again = set(await srv.browser.retype([str(f["id"]) for f in lost], settle=REVIEW_RETYPE_SETTLE))
+            if again:
+                names = ", ".join(clean_label(f.get("label") or "") for f in lost if str(f["id"]) in again)
+                self._log(run, f"typed again what the page said was empty though it showed your answer: {names}")
+                await asyncio.sleep(REVIEW_RETYPE_SETTLE)
+                data, text = await self._look()
         if self._unready(run, data):
             return
         if ats in config.HUMAN_SUBMIT_ONLY:
@@ -8550,6 +8569,36 @@ def question_key(label: str) -> str:
 def placed_key(field: dict[str, Any]) -> str:
     """The key of an answer given for one box: the desk sends "section | label | sub-label"."""
     return question_key(f"{field.get('section') or ''} | {field.get('label') or ''} | {field.get('sublabel') or ''}")
+
+
+def _shown_but_lost(run: Run, data: dict[str, Any], job: dict[str, Any]) -> list[dict[str, Any]]:
+    """The text boxes a review page marks invalid and its errors name, showing word for word the profile's answer for
+    that very box, or the person's for this application (on the page it first went in on, keyed as _fill_once keys
+    it): the page lost its own record of what it shows (Micron's Eightfold, run 200). Never one typed again before
+    (Run.review_retyped), one shown long (it's typed key by key), or one showing anything else: what the site wrote
+    itself, or the person typed in the browser, is theirs."""
+    said = norm(" ".join(str(e) for e in [*(data.get("errors") or []), *(data.get("wanted") or [])]
+                         if _errorish(str(e))))
+    if not said:
+        return []
+    prof, here, out = config.Profile.load(), _answers_page(data), []
+    for f in data.get("fields") or []:
+        shown, label = str(f.get("value") or "").strip(), norm(clean_label(f.get("label") or ""))
+        if (f.get("kind") != "text" or not f.get("invalid") or f.get("disabled") or f.get("readonly")
+                or str(f.get("id")) in run.review_retyped or not shown or len(shown) > 80 or len(label) < 3
+                or not re.search(rf"\b{re.escape(label)}\b", said)):
+            continue
+        key = placed if (placed := placed_key(f)) in run.once else question_key(f.get("label") or "")
+        answers = [run.once[key]] if key in run.once and run.once_page.get(key, here) == here else []
+        try:
+            if (ans := resolve_field(f, prof, job)) is not None:
+                answers.append(ans.value)
+        except Exception:  # (an odd box: the person's answer alone, if any)
+            pass
+        if any(isinstance(a, (str, int, float)) and not isinstance(a, bool) and str(a).strip() == shown
+               for a in answers):
+            out.append(f)
+    return out
 
 
 def _lost_answers(run: Run, data: dict[str, Any], fields: list[dict[str, Any]]) -> dict[str, Any]:

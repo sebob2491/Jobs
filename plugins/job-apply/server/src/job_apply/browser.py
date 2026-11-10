@@ -1624,10 +1624,11 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
             if not again:
                 return
 
-    async def retype(self, field_ids: list[str]) -> list[str]:
+    async def retype(self, field_ids: list[str], settle: float = 0) -> list[str]:
         """Type again, key by key, what text boxes show: emptied first (a framework ignores a box set to the value
-        it already shows), then blurred. For boxes the page says are empty though they show a value (its own
-        record of them was lost). The ids typed again."""
+        it already shows), then blurred (`settle` seconds after the last key: a page that takes a change a moment
+        after it's made, and checks the box as it's left). For boxes the page says are empty though they show a
+        value (its own record of them was lost). The ids typed again."""
         done = []
         async with self._lock:
             page = await self.page()
@@ -1645,6 +1646,8 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
                     await loc.press_sequentially(value, delay=30, timeout=FOCUS_TIMEOUT * 3)
                     if await loc.input_value(timeout=FOCUS_TIMEOUT) != value:  # (an autocomplete changed it, say)
                         await loc.fill(value, timeout=FOCUS_TIMEOUT)
+                    if settle:
+                        await page.wait_for_timeout(settle * 1000)
                     await loc.evaluate("el => el.blur()", timeout=FOCUS_TIMEOUT)
                     done.append(field_id)
                 except (PlaywrightError, PlaywrightTimeout):
