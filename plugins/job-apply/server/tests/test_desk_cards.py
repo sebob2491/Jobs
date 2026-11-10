@@ -82,14 +82,15 @@ def _cards(srv, monkeypatch, state: dict, storage: dict | None = None, press: li
     them, each read on its own page (the Openings card on `list_page`, where `press` is pressed)."""
     # A stopped job's row says how long it has waited (the design's C3: from its paused_at, by the page's clock). So
     # that it says the same every run, the page's clock is held at the time the cards are drawn (`now`), and each job
-    # stopped is drawn as stopped 12 minutes before it, in the fixture's order (a second apart, as there)
+    # stopped is drawn as stopped 12 and a half minutes before it (its wait, in whole seconds, says "12 min" still),
+    # in the fixture's order (a second apart, as there)
     now = time.time()
     state = copy.deepcopy(state)
     stopped = [row["run"] for row in [*state.get("listings", []), *state.get("others", [])]
                if (row.get("run") or {}).get("paused_at")]
     latest = max((r["paused_at"] for r in stopped), default=0)
     for r in stopped:
-        r["paused_at"] = now - 12 * 60 - (latest - r["paused_at"])
+        r["paused_at"] = now - 12 * 60 - 30 - (latest - r["paused_at"])
     monkeypatch.setattr(Desk, "state", lambda self: copy.deepcopy(state))
     desk = Desk(srv)
     desk.applier.start = lambda: None  # (nothing is worked: the page shows only the canned state)
