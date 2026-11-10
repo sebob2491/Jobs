@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
-from conftest import browser_available, open_desk, person_browser, run
+from conftest import browser_available, open_desk, person_browser, press_menu, run
 from test_desk import _fit, _note, _preflight_desk, _stopped_desk, _until
 from test_desk_buttons import _POLLS, _idle_desk
 
@@ -27,7 +27,9 @@ PAGES = {"home": "Home", "openings": "Openings", "applications": "Applications",
 # working card
 CARDS = {"home": ["start-h", "needs-h", "done-h", "work-h", "thisweek-h"], "openings": ["list-h"],
          "applications": ["apps-h"], "answers": ["bank-h"], "working": [],
-         "settings": ["profile-h", "safety-card-h", "searching-h", "pw-h", "phone-h", "alerts-h", "program-h"],
+         # (Settings opens on its Your profile panel, the design's D1: the other panels' cards are in the page, each
+         # shown by its panel's address, test_desk_settings_page.py)
+         "settings": ["profile-h"],
          "help": ["how-h", "notes-card-h"]}
 # And the top bar's controls it shows while a search runs (Stop search shows only then, on the pages that have it)
 SEARCH = ["searched", "stop-search", "find"]
@@ -359,7 +361,7 @@ def test_quit_the_job_desk_shows_only_on_a_desk_run_on_its_own(srv):
                 page = await browser.new_page()
                 page.on("request", record)
                 page.on("dialog", lambda d: (said.append(d.message), asyncio.ensure_future(d.accept())))
-                await open_desk(page, desk, "settings")
+                await open_desk(page, desk, "settings/about")  # (This program: Settings, Updates and about)
                 await page.wait_for_selector(f"{card} :text('The desk runs inside Claude here.')")
                 inside = (" ".join((await page.inner_text(card)).split()),
                           await page.locator(f"{card} [data-act=quit]").count(),
@@ -368,6 +370,7 @@ def test_quit_the_job_desk_shows_only_on_a_desk_run_on_its_own(srv):
                 elsewhere = await page.is_visible("[data-act=quit]")
                 desk.standalone = True  # (as job-apply-desk sets it)
                 await _at(page, "settings")
+                await press_menu(page, "settings/about")
                 await page.wait_for_selector(f"{card} [data-act=quit]:visible")
                 own = " ".join((await page.inner_text(card)).split())
                 # (the window's own close noted: a page that closed itself would be gone before it's read)
@@ -601,7 +604,8 @@ def test_the_new_settings_and_help_cards_say_the_designs_words(srv):
     desk = _idle_desk(srv)
 
     def card(heading: str) -> str:
-        return f"section.card[aria-labelledby={heading}]"
+        # (Safety is a row of the Applying panel's card now, under its rows: the design's D3)
+        return ".item:has(#safety-card-h)" if heading == "safety-card-h" else f"section.card[aria-labelledby={heading}]"
 
     async def words(page, heading: str) -> str:
         return " ".join((await page.inner_text(card(heading))).split())
@@ -611,12 +615,19 @@ def test_the_new_settings_and_help_cards_say_the_designs_words(srv):
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
+                # (each on its Settings panel, the design's D1: Your profile, Applying, Phone alerts)
                 await open_desk(page, desk, "settings")
-                seen = {h: await words(page, h) for h in ("profile-h", "safety-card-h", "alerts-h")}
+                seen = {"profile-h": await words(page, "profile-h")}
+                await press_menu(page, "settings/applying")
+                seen["safety-card-h"] = await words(page, "safety-card-h")
+                await press_menu(page, "settings/phone")
+                seen["alerts-h"] = await words(page, "alerts-h")
                 seen["alerts"] = await page.locator(f"{card('alerts-h')} #alerts[data-act=alerts]").count()
+                await press_menu(page, "settings/applying")
                 await page.click(f"{card('safety-card-h')} #safety-btn")
                 await page.wait_for_selector("#safety[open] #safety-body li")
                 await page.click("[data-act=safety-close]")
+                await press_menu(page, "settings/profile")
                 await page.click(f"{card('profile-h')} #setup-btn")
                 await page.wait_for_selector("#setup[open]")
                 await page.click("[data-act=setup-close]")
@@ -703,11 +714,14 @@ def test_a_narrow_window_shows_the_menus_icons_only_and_every_page_fits(srv, mon
                                "current": "#help"}, (width, seen[width])
 
 
-@pytest.mark.parametrize("ats, url, page_name, heading", [
-    ("workday", "https://acme.wd1.myworkdayjobs.com/External/job/Phoenix-AZ/Technician_R1", "settings", "pw-h"),
-    ("greenhouse", "https://boards.greenhouse.io/example/jobs/1", "answers", "bank-h"),
+# (Site passwords at its Settings panel's own address, the design's D1)
+@pytest.mark.parametrize("ats, url, page_name, address, heading", [
+    ("workday", "https://acme.wd1.myworkdayjobs.com/External/job/Phoenix-AZ/Technician_R1", "settings",
+     "#settings/passwords", "pw-h"),
+    ("greenhouse", "https://boards.greenhouse.io/example/jobs/1", "answers", "#answers", "bank-h"),
 ], ids=["a site password", "the common questions"])
-def test_see_to_these_first_leads_to_the_page_of_the_card_it_names(srv, job_apply_home, ats, url, page_name, heading):
+def test_see_to_these_first_leads_to_the_page_of_the_card_it_names(srv, job_apply_home, ats, url, page_name, address,
+                                                                   heading):
     """Before Apply sends jobs off it says what will stop them, and See to these first leads to the card for the first
     thing said. That card is on another page than the openings now (Site passwords on Settings, Common questions on
     Your answers): the desk goes to that page, the address with it, and the card is in sight."""
@@ -737,7 +751,7 @@ def test_see_to_these_first_leads_to_the_page_of_the_card_it_names(srv, job_appl
             await desk.stop()
 
     seen, tasks = run(go())
-    assert (seen["hash"], seen["title"], seen["shown"]) == (f"#{page_name}", PAGES[page_name], True), seen
+    assert (seen["hash"], seen["title"], seen["shown"]) == (address, PAGES[page_name], True), seen
     assert 64 <= seen["top"] and seen["bottom"] <= seen["window"], seen  # (under the top bar, in the window)
     assert seen["focused"] == ("pw" if page_name == "settings" else ""), seen
     assert tasks == []  # (nothing was applied to)

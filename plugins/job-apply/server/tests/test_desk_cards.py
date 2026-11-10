@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 import pytest
-from conftest import browser_available, open_desk, person_browser, run
+from conftest import browser_available, open_desk, person_browser, press_menu, run
 
 from job_apply.desk import Desk
 
@@ -20,6 +20,8 @@ pytestmark = pytest.mark.skipif(not browser_available(), reason="no Playwright C
 
 DESK_FIXTURES = Path(__file__).parent / "fixtures" / "desk"
 UPDATE = os.environ.get("JOB_APPLY_UPDATE_SNAPSHOTS") == "1"
+# The Settings page's eight panels (the design's D1), each at #settings/<panel>
+SETTINGS_PANELS = ("profile", "search", "applying", "passwords", "email", "phone", "documents", "about")
 
 # Each case: the canned state it draws, the snapshot its cards are compared with, what's kept in the browser before the
 # page opens (its localStorage), and what's pressed before the cards are read. A card shows only on its own page of the
@@ -120,10 +122,12 @@ def _cards(srv, monkeypatch, state: dict, storage: dict | None = None, press: li
                 await open_desk(page, desk)
                 await page.wait_for_selector("#plugin-version:not(:empty)")  # the state is drawn
                 cards: dict[str, str | None] = {}
-                for at in ("home", list_page, "answers", "working", "settings", "help"):
+                # (the Settings page's cards each on its panel, the design's D1: each panel in turn, by its link in
+                # Settings' own menu)
+                panels = [f"settings/{p}" for p in SETTINGS_PANELS]
+                for at in ("home", list_page, "answers", "working", *panels, "help"):
                     if at != "home":
-                        await page.click(f".nav a[href='#{at}']")
-                        await page.wait_for_function("(at) => document.body.dataset.page === at", arg=at)
+                        await press_menu(page, at)
                     if at == list_page:
                         for selector in press:
                             await page.click(selector)
@@ -181,8 +185,8 @@ def test_the_desks_cards_say_what_they_said(srv, job_apply_home, monkeypatch, ca
     seen = _cards(srv, monkeypatch, _state(how["state"]), how.get("storage"), how.get("press", []),
                   how.get("list", "openings"))
     # (every card: Home's six (Version C's This week and Getting started among them), the Openings card, the
-    # Applications card (Version B's B6), Your answers' and What's working's, Settings' seven (Version B's Searching and
-    # applying among them), Help's two)
+    # Applications card (Version B's B6), Your answers' and What's working's, Settings' seven (Version D's Job search
+    # and Applying cards among them, Safety a row of Applying's), Help's two)
     assert seen.count("\n## ") + 1 == 19, seen
     _compare(how["golden"], seen)
 

@@ -209,7 +209,7 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
                     && document.getElementById('add-links').value === '';
                 }""", timeout=20000)
 
-                await press_menu(page, "settings")
+                await press_menu(page, "settings/passwords")
                 await page.fill("#pw", "typed-on-the-page")
                 await page.click("#pw-form button[type=submit]")
                 await page.wait_for_selector("#pw-state [data-site=workday].good")
@@ -309,7 +309,7 @@ def test_the_page_alerts_when_a_job_needs_you(srv):
             async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.add_init_script(fake)
-                await open_desk(page, desk, "settings")
+                await open_desk(page, desk, "settings/phone")  # (Alerts on this computer: Settings, Phone alerts)
                 await page.wait_for_selector("#alerts:text('Alert me')")
                 await page.click("#alerts")
                 await page.wait_for_selector("#alerts:text('Alerts on')")
@@ -358,7 +358,7 @@ def test_a_job_the_desk_tries_again_after_the_sites_error_alerts_no_one_until_it
             async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.add_init_script(fake)
-                await open_desk(page, desk, "settings")
+                await open_desk(page, desk, "settings/phone")  # (Alerts on this computer: Settings, Phone alerts)
                 await page.wait_for_selector("#alerts:text('Alerts on')")
                 r = desk.applier.runs[job["id"]] = Run(job["id"], "Field Service Engineer", "Example Fab",
                                                        status="needs_you", need="stuck", code="site_error",
@@ -413,7 +413,7 @@ def test_a_job_the_desk_tried_again_says_to_check_it_didnt_go_in_where_it_is_sen
             async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.add_init_script(fake)
-                await open_desk(page, desk, "settings")
+                await open_desk(page, desk, "settings/phone")  # (Alerts on this computer: Settings, Phone alerts)
                 await page.wait_for_selector("#alerts:text('Alerts on')")
                 desk.applier.runs[held["id"]] = Run(held["id"], title, "Example Held", status="ready",
                                                     reason=f"Filled and waiting on the review page. {_RETRY_HELD_SAYS}",
@@ -593,7 +593,7 @@ def test_the_desk_searches_by_itself_only_with_its_switch_on_and_a_search_can_be
                 assert not await page.is_checked("#auto-search") and await page.is_hidden("#stop-search")
                 # turned on while the queue is paused: still nothing
                 desk.applier.paused = True
-                await press_menu(page, "settings")  # (Searching and applying, on the Settings page)
+                await press_menu(page, "settings/search")  # (Search by itself: Settings, Job search)
                 await page.check("#auto-search")
                 await press_menu(page, "openings")
                 await asyncio.sleep(3.5)
@@ -1235,7 +1235,7 @@ def test_dont_wait_for_me_lets_the_queue_go_on_past_a_sign_in_or_code(srv, job_a
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await open_desk(page, desk, "settings")  # (Don't wait for me: Settings, Searching and applying)
+                await open_desk(page, desk, "settings/applying")  # (Don't wait for me: Settings, Applying)
                 await page.wait_for_selector("#dont-wait-hint:has-text('Off')")  # (drawn from the desk's state)
                 async with page.expect_response("**/api/settings"):
                     await page.check("#dont-wait")
@@ -1351,7 +1351,7 @@ def test_the_working_on_card_shows_every_job_under_way_and_the_jobs_at_once_butt
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await open_desk(page, desk, "settings")  # (Jobs at once: Settings, Searching and applying)
+                await open_desk(page, desk, "settings/applying")  # (Jobs at once: Settings, Applying)
                 await page.wait_for_selector("#plugin-version:not(:empty)")  # the page has its state
                 await page.wait_for_selector("[data-at-once='1'][aria-pressed='true']")  # (the tests' profile)
                 for n, job_id in enumerate(ids):
@@ -1363,7 +1363,7 @@ def test_the_working_on_card_shows_every_job_under_way_and_the_jobs_at_once_butt
                 await page.wait_for_selector("#work :text('1 more waiting their turn')")
                 work = await page.locator("#work").inner_text()
                 assert "Technician 0" in work and "Technician 1" in work and "Technician 2" not in work, work
-                await press_menu(page, "settings")
+                await press_menu(page, "settings/applying")
                 await page.click("[data-at-once='3']")
                 await page.wait_for_selector("[data-at-once='3'][aria-pressed='true']")
                 for _ in range(50):
@@ -2384,7 +2384,9 @@ def test_troubleshooting_searches_every_list_shows_where_the_desk_stops_and_send
                 await page.check("#handled-only")
                 await page.wait_for_selector("text=HR Generalist", state="detached")
                 listed = list(desk.listings)
-                await press_menu(page, "settings")  # (Searching and applying, on the Settings page)
+                # (Troubleshooting: Settings, Applying, under For fixing the desk)
+                await press_menu(page, "settings/applying")
+                await page.click("#panel-applying details.setmore > summary")
                 await page.check("#troubleshoot")
                 await press_menu(page, "openings")
                 # the other way's openings are cleared; Find jobs searches again, troubleshooting's way
@@ -5401,7 +5403,7 @@ def test_the_page_marks_new_openings_hides_one_not_wanted_with_undo_and_shows_sa
                 await page.locator("li.row", has_text="Equipment Technician").wait_for()
                 seen["left"] = srv.tracker().not_interested()
                 # the header's Safety
-                await press_menu(page, "settings")
+                await press_menu(page, "settings/applying")
                 await page.click("#safety-btn")
                 await page.wait_for_selector("#safety[open] li[data-safety=auto_submit]")
                 seen["safety"] = await page.inner_text("#safety-body li[data-safety=auto_submit]")
@@ -6240,7 +6242,7 @@ def test_each_switch_that_is_on_is_said_under_the_openings_head(srv, job_apply_h
                 seen["handled"] = await said("Only where")
                 await page.uncheck("#handled-only")
                 seen["handled_off"] = await gone()
-                await press_menu(page, "settings")  # (Searching and applying, on the Settings page)
+                await press_menu(page, "settings/search")  # (Search by itself: Settings, Job search)
                 await page.check("#auto-search")
                 await press_menu(page, "openings")
                 seen["auto"] = await said("Search by itself:")
@@ -6248,16 +6250,18 @@ def test_each_switch_that_is_on_is_said_under_the_openings_head(srv, job_apply_h
                 seen["mine"] = await gone()
                 await press_menu(page, "openings")  # (the Openings tabs are on Openings)
                 await said("Search by itself:")
-                await press_menu(page, "settings")
+                await press_menu(page, "settings/search")
                 await page.uncheck("#auto-search")
                 await press_menu(page, "openings")
                 seen["auto_off"] = await gone()
                 # (last: turned on or off, Troubleshooting clears the openings for Find jobs to search again)
-                await press_menu(page, "settings")
+                # (Settings, Applying, under For fixing the desk: left open, for the uncheck below)
+                await press_menu(page, "settings/applying")
+                await page.click("#panel-applying details.setmore > summary")
                 await page.check("#troubleshoot")
                 await press_menu(page, "openings")
                 seen["troubleshoot"] = await said("Troubleshooting:")
-                await press_menu(page, "settings")
+                await press_menu(page, "settings/applying")
                 await page.uncheck("#troubleshoot")
                 await press_menu(page, "openings")
                 seen["troubleshoot_off"] = await gone()
@@ -6301,7 +6305,7 @@ def test_the_common_questions_show_the_most_asked_four_and_site_passwords_only_t
                 seen["shown"] = await page.eval_on_selector_all("#bank [data-bank]",
                                                                 "bs => bs.map((b) => b.dataset.bank)")
                 seen["link"] = await page.inner_text("#bank [data-act=bank-all]")
-                await press_menu(page, "settings")
+                await press_menu(page, "settings/passwords")
                 seen["pills"] = await page.inner_text("#pw-state")
                 seen["pills_hidden"] = await page.is_hidden("#pw-state")
                 seen["count"] = await page.inner_text("#pw-count")
@@ -6311,7 +6315,7 @@ def test_the_common_questions_show_the_most_asked_four_and_site_passwords_only_t
                 seen["all"] = await page.eval_on_selector_all("#bank [data-bank]",
                                                               "bs => bs.map((b) => b.dataset.bank)")
                 config.secrets_path().write_text("workday_password: a\n", encoding="utf-8")
-                await press_menu(page, "settings")
+                await press_menu(page, "settings/passwords")
                 await page.wait_for_selector("#pw-state [data-site=workday]")
                 seen["saved"] = await page.eval_on_selector_all("#pw-state .pill", "ps => ps.map((p) => p.innerText)")
                 seen["count_saved"] = await page.inner_text("#pw-count")
