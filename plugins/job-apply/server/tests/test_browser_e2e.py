@@ -556,7 +556,8 @@ def test_dry_run_never_submits(srv, monkeypatch):
     assert run(srv.open_application(job_id=job["id"]))["submit_policy"] == "dry_run"
     run(srv.autofill())
     out = run(srv.submit_application(job_id=job["id"], user_confirmed=True))
-    assert out["submitted"] is False and "Dry run" in out["reason"]
+    assert out["submitted"] is False
+    assert out["reason"] == "Practice mode: the form is filled and left unsubmitted. Nothing was sent."
     assert srv.get_job(job["id"])["job"]["status"] == "ready_to_submit"
     # even the low-level click refuses, and the page is untouched
     submit_id = run(srv.browser.find_submit())[0]["id"]
