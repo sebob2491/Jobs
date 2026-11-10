@@ -29,7 +29,11 @@
       + '<div style="width: 8px; height: 8px; border-radius: 4px; background: #ccd"></div>'
       + '<div style="width: 8px; height: 8px; border-radius: 4px; background: #ccd"></div></div></div></main></div>';
   }
-  const healed = q.has('heal') && sessionStorage.getItem('seen') === '1';
+  // (reloaded, by the browser's own word too, as posting-empty.html's: CI's headless browser, under load, now and then
+  // hands a page saved on this computer a sessionStorage without what its first load stored, and the page reloaded
+  // stayed its loading skeleton)
+  const reloaded = (performance.getEntriesByType('navigation')[0] || {}).type === 'reload';
+  const healed = q.has('heal') && (sessionStorage.getItem('seen') === '1' || reloaded);
   sessionStorage.setItem('seen', '1');
   const draw = () => {
     document.getElementById('step').innerHTML = '<h2>Review</h2><form onsubmit="return false"><label for="fn">First '

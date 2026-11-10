@@ -5,8 +5,8 @@
 <!-- like a Workday site's Create Account/Sign In step (live, Oct 2026): Sign In, Create Account and
      Forgot Password swap in one place on one page. Create Account makes the account only with its
      privacy-notice box ticked (and says so when it isn't), then goes on to Sign In; a wrong password is
-     refused in the site's own words. What happened is kept for the tab (sessionStorage's wd.* keys), so a
-     reload doesn't lose it.
+     refused in the site's own words. What happened is kept for the tab (sessionStorage's wd.* keys, and the
+     tab's name), so a reload doesn't lose it.
      ?exists=<password>: the email has an account there already, with that password; Create Account then
      goes back to Sign In without a word, as the live site did.
      ?create: the step starts on Create Account. ?adult: Create Account also requires an "18 or older"
@@ -37,8 +37,21 @@
 <div id="step"></div>
 <script>
   const q = new URLSearchParams(location.search);
+  // What the page stores, kept in the tab's name too (its wd= part) and put back from it as the page starts: CI's
+  // headless browser, under load, now and then hands a page saved on this computer a sessionStorage without what the
+  // page before it stored, and a later page the older one again (the sign-ins counted went from 2 back to 1). The
+  // tab's name goes with it from page to page (as signin-submit.html's token); workday_did reads it
+  const named = () => {
+    const part = (window.name || '').split(';').find((p) => p.startsWith('wd='));
+    return part ? JSON.parse(decodeURIComponent(part.slice(3))) : {};
+  };
+  for (const [k, v] of Object.entries(named())) sessionStorage.setItem('wd.' + k, JSON.stringify(v));
   const got = (k, d) => JSON.parse(sessionStorage.getItem('wd.' + k) || JSON.stringify(d));
-  const put = (k, v) => sessionStorage.setItem('wd.' + k, JSON.stringify(v));
+  const put = (k, v) => {
+    sessionStorage.setItem('wd.' + k, JSON.stringify(v));
+    window.name = [...(window.name || '').split(';').filter((p) => p && !p.startsWith('wd=')),
+                   'wd=' + encodeURIComponent(JSON.stringify({ ...named(), [k]: v }))].join(';');
+  };
   const bump = (k) => put(k, got(k, 0) + 1);
   if (q.has('exists') && got('account', null) === null) put('account', q.get('exists'));
   const step = document.getElementById('step');
