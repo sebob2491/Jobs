@@ -266,7 +266,8 @@ def test_the_job_button_is_carry_on_and_resume_is_only_the_document():
               if text.strip() != "Resume" and re.search(r"(?<![\w/])Resume\b(?![/._])", text)]
     assert not button, button
     desk = (PIPELINE.parent / "static" / "desk.html").read_text(encoding="utf-8")
-    assert not re.search(r"(?<![\w/])Resume\b(?![/._])", re.sub(r"(?<!:)//.*", "", desk))  # (comments aside)
+    # (comments aside; and the Settings panel named for the documents, "Resume and cover letters": the design's D1)
+    assert not re.search(r"(?<![\w/])Resume\b(?![/._]| and cover letters)", re.sub(r"(?<!:)//.*", "", desk))
     assert 'b("resume", "Carry on")' in desk and 'data-act="resume">Carry on with the queue<' in desk
 
 
