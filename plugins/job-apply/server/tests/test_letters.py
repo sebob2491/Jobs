@@ -66,8 +66,13 @@ record = {"argv": args, "stdin": stdin, "cwd": os.getcwd(), "pid": os.getpid(),
           "secrets": sorted(k for k in os.environ if k.startswith(("JOB_APPLY_SECRET_", "LIVE_TEST_"))),
           "env": sorted(k for k in os.environ if k.startswith(("CLAUDE", "AI_AGENT", "TRACE", "HOME", "USERPROFILE"))),
           "mcp": read(arg("--mcp-config")), "system": read(arg("--system-prompt-file"))}
-with open(os.environ["FAKE_CLAUDE_RECORD"], "a", encoding="utf-8") as f:
-    f.write(json.dumps(record) + "\n")
+# (a file of its own for each run, named for when it began: the desk writes two letters at once, so two of these start
+# together, and two appending to one file lost a run on Windows, where an append is two steps, a seek to the file's end
+# and then the write: two lines of the same length from the same place left one)
+name = os.path.join(os.environ["FAKE_CLAUDE_RECORD"], "%020d-%d" % (time.time_ns(), os.getpid()))
+with open(name + ".part", "w", encoding="utf-8") as f:
+    f.write(json.dumps(record))
+os.replace(name + ".part", name + ".json")
 # the check of a letter's claims (letters.check_letter), answered as FAKE_CLAUDE_CHECK says
 checking = (record["system"] or "").startswith("You check")
 if checking:
@@ -104,8 +109,9 @@ print(json.dumps({"type": "result", "subtype": "success", "is_error": False,
 def fake_claude(tmp_path: Path, monkeypatch, mode: str = "ok", body: str = BODY, on_path: bool = True,
                 check: str = "none") -> Path:
     """A claude command of the tests' own (the only one the desk can find): it writes down how it was run (one JSON
-    line a run, in the file this returns) and answers as `mode` says; the check of a letter's claims as `check` says
-    (none found, "found", "fenced", "garbage", "wrong", or the "error", "login" or "sleep" of a call)."""
+    file a run, in the folder this returns: runs_of reads them) and answers as `mode` says; the check of a letter's
+    claims as `check` says (none found, "found", "fenced", "garbage", "wrong", or the "error", "login" or "sleep" of a
+    call)."""
     where = tmp_path / "bin"
     where.mkdir(exist_ok=True)
     script = where / "fake_claude.py"
@@ -117,7 +123,8 @@ def fake_claude(tmp_path: Path, monkeypatch, mode: str = "ok", body: str = BODY,
         exe = where / "claude"
         exe.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n', encoding="utf-8")
         exe.chmod(0o755)
-    record = tmp_path / "claude-runs.jsonl"
+    record = tmp_path / "claude-runs"
+    record.mkdir(exist_ok=True)
     monkeypatch.setenv("FAKE_CLAUDE_RECORD", str(record))
     monkeypatch.setenv("FAKE_CLAUDE_MODE", mode)
     monkeypatch.setenv("FAKE_CLAUDE_BODY", body)
@@ -140,7 +147,8 @@ def no_claude(tmp_path: Path, monkeypatch) -> None:
 
 
 def runs_of(record: Path) -> list[dict]:
-    return [json.loads(line) for line in record.read_text(encoding="utf-8").splitlines()] if record.exists() else []
+    """The fake claude's runs so far, the first to begin first (fake_claude's folder: a file a run)."""
+    return [json.loads(path.read_text(encoding="utf-8")) for path in sorted(record.glob("*.json"))]
 
 
 def after(argv: list[str], flag: str) -> str | None:

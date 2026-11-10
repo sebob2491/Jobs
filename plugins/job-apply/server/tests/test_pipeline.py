@@ -5840,9 +5840,49 @@ def test_a_new_account_the_site_takes_a_moment_over_is_signed_in_to(srv, monkeyp
 
 
 async def workday_did(page):
-    """What the Workday-like account page (site/workday-account.html) has seen in this tab."""
-    return await page.evaluate("() => Object.fromEntries(Object.entries(sessionStorage).filter(([k]) => "
-                               "k.startsWith('wd.')).map(([k, v]) => [k.slice(3), JSON.parse(v)]))")
+    """What the Workday-like account page (site/workday-account.html) has seen in this tab: as the tab's name keeps it
+    (the page's own record, which goes with the tab from page to page), then what only its sessionStorage holds (a
+    test's own wd.verified). Never the sessionStorage alone: CI's headless browser, under load, now and then hands a
+    page saved on this computer one without what the page before it stored, or the older one again."""
+    return await page.evaluate("""() => {
+        const part = (window.name || '').split(';').find((p) => p.startsWith('wd='));
+        const stored = Object.entries(sessionStorage).filter(([k]) => k.startsWith('wd.'));
+        return { ...Object.fromEntries(stored.map(([k, v]) => [k.slice(3), JSON.parse(v)])),
+                 ...(part ? JSON.parse(decodeURIComponent(part.slice(3))) : {}) };
+    }""")
+
+
+def test_two_mock_pages_remember_what_a_lost_sessionStorage_forgot(srv):
+    """CI's headless browser (Chrome 153's headless shell), under load, now and then hands a page saved on this
+    computer a sessionStorage without what the page before it in its tab stored, and a later page the older one again.
+    Measured with it on Nov 9, ten browsers at work at once: 30 of 400 tabs; 116 of 400 where each page read it sooner
+    still (as it began), none of 400 where it first read it 300 ms on, none of 800 over http, and no tab lost its name.
+    Two tests failed for it on main (Nov 2): the sign-in step that draws on a reload stayed its loading skeleton, and
+    the account page's sign-ins counted went from 2 back to 1. Both pages keep what their tests read some other way
+    too: workday-signin-loading.html counts its reload by the browser's own word, and workday-account.html keeps its
+    record in the tab's name, which workday_did reads. Here with the storage emptied, or put back older, between their
+    pages."""
+    account = fixture_url("site/workday-account.html") + "?exists=another-password"
+
+    async def go():
+        tab = await srv.browser.page()
+        await tab.goto(fixture_url("site/workday-signin-loading.html") + "?heal")
+        drawn = [await tab.locator("#step form").count()]
+        await tab.evaluate("() => sessionStorage.clear()")
+        await tab.reload()
+        drawn.append(await tab.locator("#step form").count())
+        await tab.goto(account)
+        counted = []
+        for lose in ("() => sessionStorage.clear()", "() => sessionStorage.setItem('wd.signIns', '1')", None):
+            await tab.click("#go")  # (its Sign In: refused, and counted)
+            counted.append((await workday_did(tab))["signIns"])
+            if lose:
+                await tab.evaluate(lose)
+                counted.append((await workday_did(tab))["signIns"])
+                await tab.goto(account)
+        return drawn, counted
+
+    assert run(go()) == ([0, 1], [1, 1, 2, 2, 3])
 
 
 def test_a_workday_account_is_said_made_only_once_its_sign_in_gets_in(srv, monkeypatch, job_apply_home):
@@ -7750,8 +7790,7 @@ def test_a_resume_after_the_password_is_reset_by_hand_signs_in(srv, monkeypatch,
                 await until(lambda: r.status not in ("queued", "running"), about=state(r))
                 seen.append((r.need, r.reason, (await workday_did(r.page))["signIns"]))
                 if then == "reset by hand":  # to the saved password, through the site's own Forgot Password
-                    await r.page.evaluate("() => sessionStorage.setItem('wd.account', "
-                                          "JSON.stringify('not-a-real-password'))")
+                    await r.page.evaluate("() => put('account', 'not-a-real-password')")  # (the page's own store)
                 if then == "queue":
                     applier.enqueue(job["id"], front=True)
                 elif then:
@@ -11207,20 +11246,24 @@ def _example_corp(srv, monkeypatch, loads: list[str]) -> str:
 
 async def _crash(tab):
     """Crash a tab's page, as Chrome's "Aw, Snap!" is: by the browser's own Page.crash (on CI, under load, a navigation
-    to chrome://crash now and then never crashed it, #215), and that navigation only if it didn't."""
+    to chrome://crash now and then never crashed it, #215), and that navigation only if it didn't. Now and then
+    Chromium goes down whole with the tab (Windows CI, a loaded machine): the tab is closed with its browser then and
+    never said to have crashed, so a crash is waited for no longer (it was, for a minute: "timed out waiting" on CI,
+    Nov 9, the desk's read of the tab's title meanwhile refused with "Target page, context or browser has been closed",
+    which a crashed page's isn't). What a test takes a browser gone for is its own to say."""
     crashed = []
     tab.once("crash", lambda _: crashed.append(True))
     with contextlib.suppress(Exception):
         cdp = await tab.context.new_cdp_session(tab)
         await asyncio.wait_for(cdp.send("Page.crash"), 5)  # (it never answers: its page is gone)
     for _ in range(50):
-        if crashed:
+        if crashed or tab.is_closed():
             break
         await asyncio.sleep(0.2)
-    if not crashed:
+    if not crashed and not tab.is_closed():
         with contextlib.suppress(Exception):
             await tab.goto("chrome://crash", timeout=5000)
-    await until(lambda: crashed)
+    await until(lambda: crashed or tab.is_closed())
 
 
 @pytest.mark.parametrize("how", ["answered", "resumed", pytest.param("crashed", marks=pytest.mark.own_browser),
