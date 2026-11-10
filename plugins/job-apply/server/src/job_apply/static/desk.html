@@ -271,15 +271,15 @@ details.f > summary .count { background: var(--accent); color: var(--on-accent);
 @media (prefers-reduced-motion: no-preference) {
   details.f > summary { transition: background-color .12s ease-out, border-color .12s ease-out, color .12s ease-out; }
 }
-.f-panel { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; min-width: 240px;
-  max-width: min(560px, calc(100vw - 48px)); padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px;
+.f-panel { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; min-width: 240px; width: max-content;
+  max-width: min(400px, calc(100vw - 48px)); padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px;
   background: var(--panel); box-shadow: var(--shadow-lg); color: var(--body); white-space: normal; }
 /* (More filters' panel under the row's left end, so its width fits the window; Add job links' under its right end) */
 details.f#more { position: static; }
-#more > .f-panel { left: 18px; top: calc(100% - 4px); width: min(560px, calc(100% - 36px)); }
-.f-end > .f-panel { left: auto; right: 0; width: min(520px, calc(100vw - 48px)); }
+#more > .f-panel { left: 18px; top: calc(100% - 4px); width: min(560px, calc(100% - 36px)); max-width: none; }
+.f-end > .f-panel { left: auto; right: 0; width: min(520px, calc(100vw - 48px)); max-width: none; }
 .f-panel .group { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
-.f-note { margin: 10px 0 0; color: var(--muted); font-size: 12.5px; max-width: 360px; }
+.f-note { margin: 10px 0 0; color: var(--muted); font-size: 12.5px; }
 .f-h { margin: 12px 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
 .f-group:first-child .f-h { margin-top: 0; }
 .f-panel .hint { color: var(--muted); }
