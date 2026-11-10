@@ -905,7 +905,8 @@ def test_the_desk_page_says_account_handling_is_on_until_the_profile_says(srv, j
     settings = Desk(srv).state()["settings"]
     assert (settings["manage_accounts"], settings["manage_accounts_chosen"]) == (True, False)
     page = (Path(srv.__file__).parent / "static" / "desk.html").read_text(encoding="utf-8")
-    assert "s.manage_accounts && !s.manage_accounts_chosen" in page and "manage_accounts: false" in page
+    assert "s.manage_accounts && !s.manage_accounts_chosen" in page
+    assert "To keep doing these yourself, turn off Make my accounts in Settings, under Applying." in page
 
 
 def test_two_boxes_with_one_label_keep_their_own_answers(srv, job_apply_home):
