@@ -89,6 +89,11 @@ def _cards(srv, monkeypatch, state: dict, storage: dict | None = None, press: li
         try:
             async with person_browser() as browser:
                 page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                # The Alerts on this computer card's button says what the browser allows ("Alert me", "Alerts
+                # blocked"), and the tests' browsers differ in that (CI's headless shell blocks notifications, a
+                # full Chromium hasn't been asked): the cards are read as on a browser not asked yet
+                await page.add_init_script("""(() => { try { Object.defineProperty(Notification, "permission",
+                    {get: () => "default"}); } catch (e) {} })()""")
                 if storage:
                     await page.add_init_script(f"""(() => {{ try {{ for (const [k, v] of Object.entries({json.dumps(storage)}))
                         localStorage.setItem(k, v); }} catch (e) {{}} }})()""")  # noqa: E501
