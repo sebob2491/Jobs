@@ -260,7 +260,18 @@ def connect(address: str, password: str, timeout: float = 20) -> tuple[imaplib.I
     except MailboxError:
         logout(box)
         raise
+    except BaseException:  # (a server gone quiet mid-way, a dropped socket: not signed in, so the connection is shut)
+        _shut(box)
+        raise
     return box, host
+
+
+def _shut(box: imaplib.IMAP4) -> None:
+    """The connection closed without a sign-out (there was no sign-in to end)."""
+    try:
+        box.shutdown()
+    except Exception:
+        pass
 
 
 # The Email codes panel's Test it (Version D): the most it waits, in seconds, and what it says when it didn't work

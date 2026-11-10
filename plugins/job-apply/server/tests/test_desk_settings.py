@@ -231,10 +231,11 @@ def test_mail_test_says_a_provider_that_doesnt_answer_and_gives_up_in_time(srv, 
 
     released = threading.Event()
 
-    class Silent(FakeImap):
+    class Silent(Closes):
         def login(self, user, password):
             self.calls.append(("login", user))
-            released.wait(5)  # (a server that never answers: let go once the test has its answer)
+            released.wait(5)  # (a server that never answers: its socket's timeout, once the test has its answer)
+            raise TimeoutError("The read operation timed out")
 
     assert mailbox.SIGN_IN_TEST_WAIT == 10
     monkeypatch.setattr(mailbox, "SIGN_IN_TEST_WAIT", 0.5)
@@ -245,7 +246,31 @@ def test_mail_test_says_a_provider_that_doesnt_answer_and_gives_up_in_time(srv, 
         assert time.monotonic() - began < 4
     finally:
         released.set()
-    assert all(call[0] in ("login", "logout") for box in imap.instances for call in box.calls)
+    # (and the connection the thread left waiting is shut once its sign-in gives up)
+    [box] = imap.instances
+    for _ in range(100):
+        if ("shutdown",) in box.calls:
+            break
+        time.sleep(0.05)
+    assert box.calls == [("login", ADDRESS), ("shutdown",)], box.calls
+
+
+class Closes(FakeImap):
+    """The fake server, noting when its connection is shut without a sign-out."""
+
+    def shutdown(self):
+        self.calls.append(("shutdown",))
+
+
+@pytest.mark.parametrize("error", [TimeoutError("The read operation timed out"), ConnectionResetError(104, "reset")])
+def test_mail_test_closes_the_connection_when_the_sign_in_itself_fails(srv, imap, monkeypatch, error):
+    """A sign-in that raises a timeout or a dropped socket: said as no answer, and the connection is shut (there was
+    no sign-in to sign out of), never left open."""
+    monkeypatch.setattr(mailbox.imaplib, "IMAP4_SSL", Closes)
+    imap.login_error = error
+    assert _mail_test(srv) == (200, {"ok": False, "why": "your email provider didn't answer"})
+    [box] = imap.instances
+    assert box.calls == [("login", ADDRESS), ("shutdown",)], box.calls
 
 
 def test_mail_test_never_lets_the_password_or_the_address_out(srv, imap, caplog, monkeypatch):
