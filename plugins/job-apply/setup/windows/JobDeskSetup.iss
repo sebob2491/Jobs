@@ -79,8 +79,11 @@ Name: "{autodesktop}\Job Desk"; Filename: "{app}\bin\uvw.exe"; Parameters: "run 
 [Run]
 ; Claude Code, when its box was ticked: the one-step PowerShell installer (Git, Claude Code, the plugin), in a
 ; window of its own that stays open to read
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "{code:ClaudeCodeParams}"; StatusMsg: "Starting the Claude Code setup in its own window..."; Tasks: claudecode; Flags: nowait
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "{code:ClaudeCodeParams}"; StatusMsg: "Starting the Claude Code setup in its own window..."; Tasks: claudecode; Check: not Relaunch; Flags: nowait
 Filename: "{app}\bin\uvw.exe"; Parameters: "run --frozen --python {#Python} --project ""{app}\plugin\server"" job-apply-desk"; WorkingDir: "{app}\plugin\server"; Description: "Open the Job Desk now"; Flags: postinstall nowait skipifsilent
+; an update from the desk's Update button (/RELAUNCH=1, silent): the desk opens again, as the Start menu's shortcut
+; opens it
+Filename: "{app}\bin\uvw.exe"; Parameters: "run --frozen --python {#Python} --project ""{app}\plugin\server"" job-apply-desk"; WorkingDir: "{app}\plugin\server"; Check: Relaunch; Flags: nowait
 
 [UninstallDelete]
 ; what uv made here (the Python environment) and what ran from here wrote (caches): this program's folders alone
@@ -91,6 +94,13 @@ Type: dirifempty; Name: "{app}"
 [Code]
 var
   Problems: String;
+
+{ Started by the desk's Update button (updates.py: /RELAUNCH=1): open the desk again once installed, and never run
+  the Claude Code setup, whatever box was ticked last time }
+function Relaunch(): Boolean;
+begin
+  Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
+end;
 
 function SetEnvironmentVariable(lpName, lpValue: String): BOOL;
   external 'SetEnvironmentVariableW@kernel32.dll stdcall';

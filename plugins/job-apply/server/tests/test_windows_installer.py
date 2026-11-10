@@ -450,3 +450,23 @@ def test_the_readme_offers_the_installer_first_and_says_how_past_smartscreen():
     link = "https://github.com/sebob2491/Jobs/releases/latest/download/JobDeskSetup.exe"
     assert link in readme and "More info" in readme and "Run anyway" in readme
     assert readme.index(link) < readme.index("install.ps1 | iex")
+
+
+def test_an_update_reopens_the_desk_and_never_runs_the_claude_code_setup_again(iss):
+    """The desk's Update button starts the installer with /SILENT ... /RELAUNCH=1 (updates.py): only then does a [Run]
+    line start the desk again, exactly as the Start menu's shortcut does; the finish page's box stays skipped in a
+    silent install, and the Claude Code setup (a box the installer remembers) never runs in an update."""
+    code = iss["code"]
+    assert re.search(r"function Relaunch\(\): Boolean;\s*begin\s*"
+                     r"Result := ExpandConstant\('\{param:RELAUNCH\|0\}'\) = '1';\s*end;", code), code
+    start_menu = iss["Icons"][0]
+    relaunch = [e for e in iss["Run"] if e.get("Check") == "Relaunch"]
+    assert len(relaunch) == 1
+    assert {k: v for k, v in relaunch[0].items() if k not in ("Flags", "Check")} == {
+        "Filename": start_menu["Filename"], "Parameters": start_menu["Parameters"],
+        "WorkingDir": start_menu["WorkingDir"]}
+    assert relaunch[0]["Flags"] == "nowait"
+    claude = next(e for e in iss["Run"] if e.get("Tasks") == "claudecode")
+    assert claude["Check"] == "not Relaunch"
+    finish = next(e for e in iss["Run"] if e.get("Description") == "Open the Job Desk now")
+    assert "skipifsilent" in finish["Flags"].split() and "Check" not in finish
