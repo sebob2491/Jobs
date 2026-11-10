@@ -1,6 +1,7 @@
 ## needs-h
 Needs you
 11
+Go through them
 Equipment Technician · Example Sign In Sign in
 12 min
 Show me
@@ -118,6 +119,7 @@ Report a problem
 ## done-h
 Ready to submit
 4 to submit
+Review them
 Equipment Technician · Example Captcha CAPTCHA
 12 min
 Submit
