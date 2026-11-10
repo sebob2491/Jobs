@@ -23,6 +23,8 @@
   --good: #15803d; --good-bg: #dcfce7; --warn: #b45309; --warn-bg: #fef3c7; --bad: #b91c1c; --bad-bg: #fee2e2;
   --info: #1d4ed8; --info-bg: #dbeafe;
   --link: var(--accent);  /* (words that are a link: no color of their own, the accent that reads on the panel) */
+  /* (the apply bar, dark in both looks: the text's color behind light words here, a panel in the dark look) */
+  --bar-bg: var(--text); --bar-fg: var(--bg); --bar-strong: var(--panel); --bar-line: var(--text);
   --shadow: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.05);
   --shadow-lg: 0 14px 34px rgba(16,24,40,.22), 0 3px 8px rgba(16,24,40,.10);
   --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
@@ -36,6 +38,7 @@
     --on-accent: #ffffff;
     --good: #4ade80; --good-bg: #12301f; --warn: #fbbf24; --warn-bg: #33270b; --bad: #f87171; --bad-bg: #3a1616;
     --info: #60a5fa; --info-bg: #132a4a; --link: var(--accent-2);
+    --bar-bg: var(--panel); --bar-fg: var(--body); --bar-strong: var(--text); --bar-line: var(--control-line);
     --shadow: none; --shadow-lg: 0 14px 34px rgba(0,0,0,.55), 0 3px 8px rgba(0,0,0,.35);
   }
 }
@@ -47,6 +50,7 @@
   --on-accent: #ffffff;
   --good: #4ade80; --good-bg: #12301f; --warn: #fbbf24; --warn-bg: #33270b; --bad: #f87171; --bad-bg: #3a1616;
   --info: #60a5fa; --info-bg: #132a4a; --link: var(--accent-2);
+  --bar-bg: var(--panel); --bar-fg: var(--body); --bar-strong: var(--text); --bar-line: var(--control-line);
   --shadow: none; --shadow-lg: 0 14px 34px rgba(0,0,0,.55), 0 3px 8px rgba(0,0,0,.35);
 }
 * { box-sizing: border-box; }
@@ -185,6 +189,8 @@ input[type=checkbox] { appearance: none; -webkit-appearance: none; width: 17px; 
   background: var(--panel) center / 11px 11px no-repeat; cursor: pointer; }
 input[type=checkbox]:checked { border-color: var(--accent); background-color: var(--accent);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12.5 4.5 4.5L19 7'/%3E%3C/svg%3E"); }
+input[type=checkbox]:indeterminate:not(.switch) { border-color: var(--accent); background-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.4' stroke-linecap='round'%3E%3Cpath d='M6 12h12'/%3E%3C/svg%3E"); }
 input[type=checkbox]:disabled { opacity: .5; cursor: default; }
 @media (prefers-reduced-motion: no-preference) {
   button, .btn, a.button, .nav a, input, select { transition: background-color .12s ease-out, border-color .12s ease-out,
@@ -216,6 +222,12 @@ input[type=checkbox]:disabled { opacity: .5; cursor: default; }
 .item .s { margin: 1px 0 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .item .acts { display: flex; align-items: center; gap: 6px; }
 .item > .logo { width: 38px; height: 38px; }
+/* a setting's row: its name and one sentence at the left, its control at the right */
+.setrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: center; padding: 13px 18px;
+  border-top: 1px solid var(--line-2); }
+.card-h + .setrow { border-top: 0; }
+.setrow .t { margin: 0; font-size: 14px; font-weight: 600; }
+.setrow .s { margin: 1px 0 0; color: var(--muted); font-size: 13px; }
 #alerts[aria-pressed="true"] { background: var(--accent-bg); border-color: var(--accent-line); color: var(--accent-2);
   font-weight: 600; }
 
@@ -225,77 +237,205 @@ input[type=checkbox]:disabled { opacity: .5; cursor: default; }
   background: none; box-shadow: none; color: var(--muted); font-size: 14px; }
 .tabs button:hover { background: none; color: var(--text); }
 .tabs button[aria-pressed="true"] { color: var(--text); font-weight: 600; border-bottom-color: var(--accent); }
-#mine-count:empty { display: none; }
-.links { display: inline-flex; gap: 12px; }
-.handled-switch { font-size: 13px; display: flex; align-items: center; gap: 6px; color: var(--body); }
-/* the Openings head's More (Troubleshooting, Search by itself), and a muted line for each switch that's on */
-.card-head details.more { padding: 0; border-top: 0; color: var(--text); }
-.more-body { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 6px; }
-.switch-hint { flex-basis: 100%; font-size: 13px; color: var(--muted); }
+.tabs .count { margin-left: 7px; }
+.count:empty { display: none; }
+.links { display: inline-flex; align-items: center; gap: 12px; }
+/* out of sight, still read by a screen reader (and in the card's words) */
+.vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* the Openings head: the tabs at the left, Select recommended and Add job links at the right */
+.list-head { padding-top: 6px; padding-bottom: 0; min-height: 52px; position: relative; }
+.list-head .tabs { margin: 0; align-self: flex-end; }
+.list-head .tabs button { height: 44px; }
+/* a switch: the native checkbox, drawn as a track with its knob at the right when it's on */
+input[type=checkbox].switch { width: 34px; height: 20px; border: 0; border-radius: 99px; background: var(--control-line);
+  position: relative; vertical-align: middle; margin: 0; }
+input[type=checkbox].switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  border-radius: 50%; background: var(--on-accent); box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+input[type=checkbox].switch:checked { background: var(--accent); background-image: none; }
+input[type=checkbox].switch:checked::after { left: 16px; }
+@media (prefers-reduced-motion: no-preference) { input[type=checkbox].switch::after { transition: left .12s ease-out; } }
+.sw-label { margin-left: auto; display: flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 500;
+  color: var(--body); white-space: nowrap; cursor: pointer; }
+/* a muted line for each switch that's on, and what to do with the group picked, under the filters */
+.switch-hint { padding: 0 18px 12px; font-size: 13px; color: var(--muted); }
 .switch-hint p { margin: 0; }
-/* the openings' sort and filters (pay, posted), under the tabs */
-.filters { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; padding: 12px 18px; font-size: 13px;
-  color: var(--body); }
-.filters .group { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
-.filters .hint { color: var(--muted); }
-.filters input { width: 7em; height: 28px; font-size: 13px; }
+.switch-hint button { height: 26px; padding: 0 9px; font-size: 12.5px; border-radius: 7px; margin-left: 4px; }
+/* the openings' filters: one row of drop-downs under the tabs, each a <details> whose summary says what's chosen and
+   whose panel holds the controls; the switch at the row's right end */
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px 18px; font-size: 13px;
+  color: var(--body); position: relative; }
+details.f { padding: 0; border: 0; position: relative; color: var(--body); font-size: 13px; }
+details.f > summary { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px 0 11px;
+  border: 1px solid var(--control-line); border-radius: 8px; background: var(--panel); color: var(--body);
+  font-weight: 500; white-space: nowrap; list-style: none; cursor: pointer; user-select: none; }
+details.f > summary::-webkit-details-marker { display: none; }
+details.f > summary:hover { text-decoration: none; background: var(--hover); }
+details.f > summary .ico { width: 15px; height: 15px; color: var(--muted); }
+details.f.on > summary { border-color: var(--accent-line); background: var(--accent-bg); color: var(--accent-2); }
+details.f.on > summary .ico { color: var(--accent); }
+details.f > summary .count { background: var(--accent); color: var(--on-accent); }
+@media (prefers-reduced-motion: no-preference) {
+  details.f > summary { transition: background-color .12s ease-out, border-color .12s ease-out, color .12s ease-out; }
+}
+.f-panel { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; min-width: 240px; width: max-content;
+  max-width: min(400px, calc(100vw - 48px)); padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px;
+  background: var(--panel); box-shadow: var(--shadow-lg); color: var(--body); white-space: normal; }
+/* (More filters' panel under the row's left end, so its width fits the window; Add job links' under its right end) */
+details.f#more { position: static; }
+#more > .f-panel { left: 18px; top: calc(100% - 4px); width: min(560px, calc(100% - 36px)); max-width: none; }
+.f-end > .f-panel { left: auto; right: 0; width: min(520px, calc(100vw - 48px)); max-width: none; }
+.f-panel .group { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.f-note { margin: 10px 0 0; color: var(--muted); font-size: 12.5px; }
+.f-h { margin: 12px 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.f-group:first-child .f-h { margin-top: 0; }
+.f-panel .hint { color: var(--muted); }
+.f-panel input[type=text] { width: 7em; height: 28px; font-size: 13px; }
 #company-add { width: 10.5em; }  /* (its placeholder whole) */
+/* the top bar's search box, on Openings */
+.search { display: flex; align-items: center; gap: 8px; width: 270px; height: 34px; padding: 0 11px;
+  border: 1px solid var(--control-line); border-radius: 8px; background: var(--panel); color: var(--muted); }
+.search .ico { width: 16px; height: 16px; }
+.search:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.search input[type=search] { flex: 1; min-width: 0; height: 32px; padding: 0; border: 0; background: none;
+  outline: none; }
 .stops { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 18px 12px; }
+.f-panel .stops { padding: 0; }
+.f-panel .addbar { padding: 0; border: 0; }
 /* (each a choice to press: tinted when it's on) */
-.filters button, .stops button, .at-once button { height: 28px; padding: 0 11px; font-size: 13px; border-radius: 999px;
+.filters button, .stops button { height: 28px; padding: 0 11px; font-size: 13px; border-radius: 999px;
   box-shadow: none; }
-.filters button[aria-pressed="true"], .stops button[aria-pressed="true"], .at-once button[aria-pressed="true"] {
+.filters button[aria-pressed="true"], .stops button[aria-pressed="true"] {
   background: var(--accent-bg); border-color: var(--accent-line); color: var(--accent-2); font-weight: 600; }
 .stop-hint { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 0 18px 12px; font-size: 13px;
   color: var(--muted); }
-/* My applications' groups: the openings bar's look, in a bar of its own (padding: under the card's head) */
-#app-groups { padding-top: 12px; }
+/* a choice row: a few short choices side by side in one box, the one chosen tinted */
+.seg { display: inline-flex; border: 1px solid var(--control-line); border-radius: 8px; overflow: hidden;
+  background: var(--panel); }
+.seg button { height: 30px; min-width: 38px; padding: 0 12px; border: 0; border-left: 1px solid var(--line);
+  border-radius: 0; background: none; box-shadow: none; color: var(--body); font-size: 13px; }
+.seg button:first-child { border-left: 0; }
+.seg button[aria-pressed="true"] { background: var(--accent-bg); color: var(--accent-2); font-weight: 700; }
+.seg button:focus-visible { outline-offset: -2px; }  /* (inside the box, which cuts off what's outside it) */
 .addbar { display: flex; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line-2);
   border-bottom: 1px solid var(--line-2); }
 .addbar input { flex: 1; min-width: 0; }
-.applybar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 12px 18px;
-  border-bottom: 1px solid var(--line-2); background: var(--row-sel); }
-.applybar label { display: flex; align-items: center; gap: 6px; color: var(--body); }
-.applybar .hint { color: var(--muted); font-size: 13px; }
-.at-once { display: inline-flex; align-items: center; gap: 4px; color: var(--body); }
-.at-once button { padding: 0 10px; }
+/* the apply bar: dark, floating over the foot of the page while an opening is ticked (--bar-bg), centred beside the
+   side menu at its own width, its hints in one small line along its top; the page gets 96px more room at its foot
+   then, so the bar never covers the last row */
+.applybar { position: fixed; left: 244px; right: 0; bottom: 24px; width: max-content; margin: 0 auto; z-index: 25;
+  display: grid; gap: 6px; max-width: calc(100vw - 284px); padding: 10px 10px 10px 18px; border-radius: 14px;
+  border: 1px solid var(--bar-line); background: var(--bar-bg); color: var(--bar-fg); box-shadow: var(--shadow-lg);
+  font-size: 13.5px; }
+body.applying[data-page="openings"] .content { padding-bottom: 120px; }
+/* (its width the row's: the hints wrap under it, never widen it) */
+.bar-hints { display: flex; flex-wrap: wrap; gap: 2px 14px; width: 0; min-width: 100%; margin: 0; font-size: 12px; }
+.bar-hints .hint { opacity: .75; }
+.bar-hints .hint:empty, .bar-hints:not(:has(.hint:not(:empty))) { display: none; }
+.bar-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; white-space: nowrap; }
+.applybar #apply-count { color: var(--bar-strong); font-weight: 600; }
+.applybar .div { width: 1px; height: 20px; background: currentColor; opacity: .3; }
+.applybar label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.applybar .btn.ghost { color: inherit; }
+.applybar .btn.ghost:hover { background: color-mix(in srgb, currentColor 14%, transparent); }
+.applybar #apply { height: 36px; padding: 0 16px; }
+.applybar :focus-visible { outline-color: var(--accent-line); }
+body.applying[data-page="openings"] .toast { bottom: 132px; }  /* (over the bar, not on it) */
 ul.rows { list-style: none; margin: 0; padding: 0; }
-.row { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 12px; padding: 13px 18px;
-  border-top: 1px solid var(--line-2); align-items: start; }
+/* the openings' table: the header row and each opening on one column template (CSS grid on the list's own rows, so
+   patch() and the tests keep the elements they know); a cell per column, each in its named area */
+.rows-head, .row { display: grid; align-items: center; column-gap: 12px;
+  grid-template-columns: 46px 62px minmax(0, 1fr) 150px 104px 168px 170px;
+  grid-template-areas: "pick fit job pay posted sys state"; padding: 0 18px 0 4px; }
+.rows-head { position: sticky; top: 0; z-index: 2; min-height: 40px; background: var(--side);
+  border-top: 1px solid var(--line-2); border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 600;
+  color: var(--muted); }
+.row { min-height: 60px; padding-top: 10px; padding-bottom: 10px; border-top: 1px solid var(--line-2); }
 .row:first-child { border-top: 0; }
-@media (max-width: 600px) { .row { grid-template-columns: auto auto minmax(0, 1fr); } .row > div:last-child { grid-column: 3; } }
+.rows-head > :nth-child(1), .row > .c-pick { grid-area: pick; justify-self: center; display: flex; }
+.rows-head > :nth-child(2), .row > .c-fit { grid-area: fit; }
+.rows-head > :nth-child(3), .row > .c-job { grid-area: job; min-width: 0; }
+.rows-head > :nth-child(4), .row > .c-pay { grid-area: pay; }
+.rows-head > :nth-child(5), .row > .c-posted { grid-area: posted; }
+.rows-head > :nth-child(6), .row > .c-sys { grid-area: sys; min-width: 0; }
+.rows-head > :nth-child(7), .row > .state { grid-area: state; }
+.row > .c-pay, .row > .c-posted { font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.row .dim { color: var(--muted); }
+.c-sys b { display: block; font-weight: 500; font-size: 13.5px; overflow-wrap: anywhere; }
+.c-sys .chip.handled { display: flex; align-items: center; gap: 4px; padding: 0; border-radius: 0; background: none;
+  color: var(--good); font-size: 12px; font-weight: 500; }
+.c-sys .chip.handled .ico { width: 13px; height: 13px; stroke-width: 2.4; }
+/* at 1100px and below: two lines, Pay, Posted and Applies on under the Job cell (the header the same) */
+@media (max-width: 1100px) {
+  .rows-head, .row { grid-template-columns: 46px 62px repeat(3, minmax(0, 1fr)) 150px; row-gap: 6px;
+    grid-template-areas: "pick fit job job job state" ". . pay posted sys sys"; }
+  .rows-head { padding-top: 6px; padding-bottom: 6px; }
+}
+/* a phone's width: the Status under the Job cell too, and Applies on under Pay and Posted */
+@media (max-width: 600px) {
+  .rows-head, .row { grid-template-columns: 34px 46px minmax(0, 1fr) minmax(0, 1fr); column-gap: 10px; padding-right: 12px;
+    grid-template-areas: "pick fit job job" ". . state state" ". . pay posted" ". . sys sys"; }
+}
 .row.done { opacity: .6; }
-.row.app, .row.app:first-child { grid-template-columns: minmax(0, 1fr) auto; }
-@media (max-width: 600px) { .row.app > div:last-child { grid-column: auto; } }
-.row input[type=checkbox] { margin-top: 5px; }
+.row.sel { background: var(--row-sel); }
+/* the Applications page's table: Job, Applied, Last heard, Status, and the row's buttons, on one column template (the
+   header row and each application's row alike); at 1100px and below, Applied and Last heard under the Job cell, and
+   at a phone's width every cell under the one before it */
+.apps-head, .row.app { grid-template-columns: minmax(0, 1fr) 112px 220px 220px 116px;
+  grid-template-areas: "job applied heard state acts"; padding: 0 18px; }
+.apps-head { display: grid; align-items: center; column-gap: 12px; position: sticky; top: 0; z-index: 2;
+  min-height: 40px; background: var(--side); border-top: 1px solid var(--line-2); border-bottom: 1px solid var(--line);
+  font-size: 12px; font-weight: 600; color: var(--muted); }
+.row.app { padding-top: 10px; padding-bottom: 10px; }
+.apps-head > :nth-child(1), .row.app > .c-job { grid-area: job; min-width: 0; }
+.apps-head > :nth-child(2), .row.app > .c-applied { grid-area: applied; }
+.apps-head > :nth-child(3), .row.app > .c-heard { grid-area: heard; min-width: 0; }
+.apps-head > :nth-child(4), .row.app > .state { grid-area: state; }
+.apps-head > :nth-child(5), .row.app > .c-acts { grid-area: acts; }
+.row.app > .c-applied, .row.app > .c-heard { font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.row.app > .c-heard { overflow-wrap: anywhere; }
+.c-acts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.c-acts button { height: 28px; padding: 0 10px; font-size: 13px; border-radius: 7px; }
+@media (max-width: 1100px) {
+  .apps-head, .row.app { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 190px 116px; row-gap: 6px;
+    grid-template-areas: "job job state acts" "applied heard state acts"; }
+  .apps-head { padding-top: 6px; padding-bottom: 6px; }
+}
+@media (max-width: 600px) {
+  .apps-head { display: none; }
+  .row.app { grid-template-columns: minmax(0, 1fr); grid-template-areas: "job" "applied" "heard" "state" "acts"; }
+  .c-acts { justify-content: flex-start; }
+}
 .row .state { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
-.row.app .state button { height: 28px; padding: 0 10px; font-size: 13px; }
+.row .state .ni { margin-left: auto; color: var(--muted); }
+.row .state .ni:hover { color: var(--text); }
 .state button.link { font-size: 13px; }
-.score { display: inline-block; min-width: 38px; text-align: center; font-weight: 700; font-size: 13px; line-height: 20px;
-  padding: 3px 0; border-radius: 8px; background: var(--chip); color: var(--body); font-variant-numeric: tabular-nums; }
-/* a score that can show how it adds up: pressed, its parts come up under the opening's tags */
-button.score { height: auto; border: 0; box-shadow: none; }
-button.score:hover { box-shadow: 0 0 0 1px var(--muted); }
-.score.s4 { background: var(--good-bg); color: var(--good); }
-.score.s3 { background: var(--info-bg); color: var(--info); }
-.score.s2 { background: var(--warn-bg); color: var(--warn); }
-.score.s1 { color: var(--muted); }
-button.score.s4:hover { background: var(--good-bg); }
-button.score.s3:hover { background: var(--info-bg); }
-button.score.s2:hover { background: var(--warn-bg); }
+/* the Fit ring: filled to the score, the number inside, its color the score's band */
+.score { --p: 0; --c: var(--muted); width: 38px; height: 38px; padding: 0; border: 0; border-radius: 50%;
+  display: grid; place-items: center; background: conic-gradient(var(--c) calc(var(--p) * 1%), var(--line) 0);
+  box-shadow: none; color: var(--text); position: relative; isolation: isolate;
+  font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+/* (the disc inside the ring, behind the number: the number stays the score's own text) */
+.score::before { content: ""; position: absolute; inset: 4px; z-index: -1; border-radius: 50%; background: var(--panel); }
+.row.sel .score::before { background: var(--row-sel); }
+/* a score that can show why and how it adds up: pressed, its reasons and parts come up under the Job cell */
+button.score, button.score:hover { height: 38px; background: conic-gradient(var(--c) calc(var(--p) * 1%), var(--line) 0); }
+button.score:hover { box-shadow: 0 0 0 2px var(--control-line); }
+.score.s4 { --c: var(--good); }
+.score.s3 { --c: var(--info); }
+.score.s2 { --c: var(--warn); }
+.score.s1 { --c: var(--muted); }
 .parts { font-size: 13px; color: var(--muted); margin-top: 6px; overflow-wrap: anywhere; }
 /* (the words wrap, so a long one, an employer's name, never widens the page; only the number stays whole) */
 .parts .n { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .title { font-weight: 600; color: var(--text); text-decoration: none; overflow-wrap: anywhere; }
 .title:hover { text-decoration: underline; }
 .meta { color: var(--muted); font-size: 13px; margin-top: 2px; }
-.chips { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 6px; }
+.chips, .reasons { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 6px; }
 .chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--chip); color: var(--muted); }
 .chip.plus { background: var(--good-bg); color: var(--good); }
 .chip.minus { background: var(--warn-bg); color: var(--warn); }
 .chip.stop { background: var(--bad-bg); color: var(--bad); }
-.chip.new { background: var(--info-bg); color: var(--info); font-weight: 600; }
-.chip.handled { background: var(--good-bg); color: var(--good); font-weight: 600; }
+.pill.chip { padding: 2px 9px; }  /* (the New pill: chip.new is the class the page has always marked a new one by) */
 .empty { padding: 28px 18px; text-align: center; color: var(--muted); }
 
 /* a job's card, under Needs you, Working on, or Ready and done */
@@ -460,6 +600,8 @@ body.stopped > :not(#stopped) { display: none; }
   #area-btn { max-width: 100%; }
   .content { padding: 16px; }
   .toast { left: calc(50% + 32px); max-width: calc(100vw - 96px); }
+  .applybar { left: 64px; max-width: calc(100vw - 96px); }
+  body.applying[data-page="openings"] .content { padding-bottom: 112px; }
 }
 @media (max-width: 760px) {
   .cols { grid-template-columns: minmax(0, 1fr); }
@@ -543,6 +685,8 @@ body.stopped > :not(#stopped) { display: none; }
       <span id="mode"></span>
       <span data-pages="home working"><button class="btn" id="week-btn" data-act="week" title="What the desk did in the last 7 days: jobs filled and sent, where it stopped for you, and how long each job took">This week</button></span>
       <span data-pages="home openings applications"><button class="btn" id="stop-search" data-act="stop-search" title="The search ends; the openings found before it stay" hidden>Stop search</button></span>
+      <!-- the search box: hides the openings whose title and company don't hold every word typed (kept in memory only) -->
+      <span data-pages="openings" hidden><label class="search"><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg><input type="search" id="q" placeholder="Search a title or company" aria-label="Search a title or company" autocomplete="off"></label></span>
       <span data-pages="home openings applications"><button class="btn" id="find" data-act="find">Find jobs</button></span>
       </div>
     </div>
@@ -577,72 +721,116 @@ body.stopped > :not(#stopped) { display: none; }
           </div>
         </div>
       </div>
-      <!-- Openings and Applications: one card for both, its My applications tab chosen on Applications (route) -->
-      <div class="page" data-pages="openings applications" hidden>
+      <!-- Openings: the tabs, the filters, the table, and the apply bar while an opening is ticked -->
+      <div class="page" data-pages="openings" hidden>
         <section class="card" aria-labelledby="list-h">
-          <div class="card-head">
-            <h2 id="list-h">Openings</h2>
+          <div class="card-head list-head">
+            <h2 id="list-h" class="vh">Openings</h2>
+            <!-- each tab with its number: the rows left after the filters and the search box, with Status at Any -->
             <div class="tabs" role="group" aria-label="Which openings">
-              <button data-filter="recommended" aria-pressed="true">Recommended</button>
-              <button data-filter="all" aria-pressed="false">All</button>
-              <button data-filter="mine" aria-pressed="false"><span>My applications <span id="mine-count"></span></span></button>
+              <button data-filter="recommended" aria-pressed="true">Recommended<span class="count" id="tab-recommended"></span></button>
+              <button data-filter="all" aria-pressed="false">All<span class="count" id="tab-all"></span></button>
+              <button data-filter="unwanted" aria-pressed="false" hidden>Not interested<span class="count" id="tab-unwanted"></span></button>
             </div>
-            <label class="openings-only handled-switch" title="Only the employers where, in the plugin's live check, the desk took a test applicant all the way to the application's review page. Bot checks, CAPTCHAs and steps it can't do yet are elsewhere."><input type="checkbox" id="handled-only"> Only where the desk goes all the way</label>
             <span class="spacer"></span>
-            <span class="openings-only links"><button class="link" data-act="select-recommended">Select recommended</button>
-            <button class="link" data-act="select-none">Clear</button></span>
-            <!-- the switches seldom changed, out of the way; each one on is said in a line under the head (switch-hint) -->
-            <details class="openings-only more" id="more"><summary>More</summary><div class="more-body">
-            <label class="handled-switch" title="To get the desk going at more employers: Find jobs searches every list's employers (yours, and HR jobs too), and only the openings where the desk doesn't go all the way yet show, whatever their fit. Nothing is sent while it's on."><input type="checkbox" id="troubleshoot"> Troubleshooting</label>
-            <label class="handled-switch" title="Off: the desk searches only when you press Find jobs. On: it also searches by itself when the openings are over 12 hours old (on opening, or on a page left open), but not while the queue is paused. The header says when a search is running, with Stop search beside it."><input type="checkbox" id="auto-search"> Search by itself every 12 hours</label>
-            </div></details>
-            <div class="switch-hint" id="switch-hint" hidden></div>
+            <span class="links"><button class="link" data-act="select-recommended">Select recommended</button></span>
+            <details class="f f-end" id="add-drop"><summary><span class="f-said">Add job links</span><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></summary>
+              <div class="f-panel">
+                <form class="addbar" id="add-form">
+                  <input type="text" id="add-links" placeholder="Paste job links: LinkedIn, Indeed or a company site" aria-label="Job links to add" autocomplete="off">
+                  <button type="submit" id="add-btn">Add</button>
+                </form>
+              </div></details>
           </div>
-          <div class="filters openings-only" id="filters">
-            <span class="group" role="group" aria-label="Sort the openings">Sort
-              <button data-sort="fit" aria-pressed="true" title="Best fit for your profile first">Fit</button><button data-sort="pay" aria-pressed="false" title="Best paid first (over a year), openings whose pay isn't listed last">Pay</button><button data-sort="newest" aria-pressed="false" title="Most recently posted first, openings without a date last">Newest</button></span>
-            <label class="group" title="Hides an opening whose posting gives its pay on its pay line (or in its own data) and the most it pays is below this (hourly pay counted as 2,080 hours a year). One that doesn't list its pay, or whose pay is only read from its text (≈), always stays.">Pay at least $<input type="text" id="min-pay" inputmode="numeric" placeholder="any" aria-label="Pay at least, dollars a year" autocomplete="off">/yr</label>
-            <span class="group" role="group" aria-label="Posted within" title="Hides an opening posted longer ago. One whose site gives no date always stays.">Posted
-              <button data-posted="" aria-pressed="true">Any</button><button data-posted="7" aria-pressed="false">7 days</button><button data-posted="14" aria-pressed="false">14 days</button><button data-posted="30" aria-pressed="false">30 days</button></span>
+          <!-- the filters: each a drop-down (details.f) whose summary says what's chosen (renderFilterLabels), its panel
+               holding the controls. A panel is never drawn again whole: its buttons are marked pressed in place, so an
+               open one stays open through the refresh -->
+          <div class="filters" id="filters">
+            <details class="f" data-f="sort"><summary><svg class="ico" aria-hidden="true"><use href="#i-sort"/></svg><span class="f-said">Best fit</span><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></summary>
+              <div class="f-panel"><span class="group" role="group" aria-label="Sort the openings">
+                <button data-sort="fit" aria-pressed="true" title="Best fit for your profile first">Best fit</button><button data-sort="pay" aria-pressed="false" title="Best paid first (over a year), openings whose pay isn't listed last">Best paid</button><button data-sort="newest" aria-pressed="false" title="Most recently posted first, openings without a date last">Newest</button></span></div></details>
+            <details class="f" data-f="pay"><summary><span class="f-said">Pay: any</span><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></summary>
+              <div class="f-panel"><label class="group">Pay at least $<input type="text" id="min-pay" inputmode="numeric" placeholder="any" aria-label="Pay at least, dollars a year" autocomplete="off">a year</label>
+                <p class="f-note">Hides a job only when its posting lists its pay and the most it pays is below this. A job that doesn't list its pay always stays.</p></div></details>
+            <details class="f" data-f="posted"><summary><span class="f-said">Posted: any time</span><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></summary>
+              <div class="f-panel"><span class="group" role="group" aria-label="Posted within">
+                <button data-posted="" aria-pressed="true">Any time</button><button data-posted="7" aria-pressed="false">Last 7 days</button><button data-posted="14" aria-pressed="false">Last 14 days</button><button data-posted="30" aria-pressed="false">Last 30 days</button></span>
+                <p class="f-note">A job whose site gives no date always stays.</p></div></details>
             <!-- miles from the person's home town (desk.json's within_miles; places.py): its title says from where, or why it's off -->
-            <span class="group" role="group" aria-label="Within miles of home" id="within-group">Within
-              <button data-within="" aria-pressed="true">Any</button><button data-within="10" aria-pressed="false">10 mi</button><button data-within="25" aria-pressed="false">25 mi</button><button data-within="50" aria-pressed="false">50 mi</button><button data-within="100" aria-pressed="false">100 mi</button>
-              <span class="hint" id="within-why" hidden>needs your home town</span></span>
-            <span class="group" role="group" aria-label="Workplace" title="Shows only the jobs done the ways pressed, and every job that doesn't say. One whose posting only mentions it in its text (likely remote) always stays.">Workplace
-              <button data-chip="workplace" data-value="remote" aria-pressed="false" title="Remote jobs, and every job that doesn't say where it's done">Remote</button><button data-chip="workplace" data-value="hybrid" aria-pressed="false" title="Hybrid jobs, and every job that doesn't say where it's done">Hybrid</button><button data-chip="workplace" data-value="onsite" aria-pressed="false" title="On-site jobs, and every job that doesn't say where it's done">On-site</button></span>
-            <span class="group" role="group" aria-label="Employment type" title="Shows only the jobs of the types pressed, and every job whose job system doesn't say its type. A job system may say a job's hours (full or part time), its kind (contract, temporary, internship, per diem), or both: only what it says is judged, so a full-time internship stays when Internship is pressed.">Type
+            <details class="f" data-f="within"><summary><span class="f-said">Within: any distance</span><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></summary>
+              <div class="f-panel"><span class="group" role="group" aria-label="Within miles of home" id="within-group">
+                <button data-within="" aria-pressed="true">Any distance</button><button data-within="10" aria-pressed="false">10 miles</button><button data-within="25" aria-pressed="false">25 miles</button><button data-within="50" aria-pressed="false">50 miles</button><button data-within="100" aria-pressed="false">100 miles</button>
+                <span class="hint" id="within-why" hidden>needs your home town</span></span></div></details>
+            <details class="f" data-f="workplace"><summary><span class="f-said">Workplace</span><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></summary>
+              <div class="f-panel"><span class="group" role="group" aria-label="Workplace">
+                <button data-chip="workplace" data-value="remote" aria-pressed="false" title="Remote jobs, and every job that doesn't say where it's done">Remote</button><button data-chip="workplace" data-value="hybrid" aria-pressed="false" title="Hybrid jobs, and every job that doesn't say where it's done">Hybrid</button><button data-chip="workplace" data-value="onsite" aria-pressed="false" title="On-site jobs, and every job that doesn't say where it's done">On-site</button></span>
+                <p class="f-note">A job that doesn't say where it is done always stays.</p></div></details>
+            <details class="f" data-f="more" id="more"><summary><svg class="ico" aria-hidden="true"><use href="#i-sliders"/></svg><span class="f-said">More filters</span><span class="count" id="more-count"></span></summary>
+              <div class="f-panel">
+              <div class="f-group" id="status-group" hidden><h3 class="f-h">Status</h3>
+                <div class="stops" id="stops" role="group" aria-label="Show the jobs by where they stand" hidden></div></div>
+              <div class="f-group"><h3 class="f-h">Type</h3>
+              <span class="group" role="group" aria-label="Employment type" title="Shows only the jobs of the types pressed, and every job whose job system doesn't say its type. A job system may say a job's hours (full or part time), its kind (contract, temporary, internship, per diem), or both: only what it says is judged, so a full-time internship stays when Internship is pressed.">
               <button data-chip="job_types" data-value="full_time" aria-pressed="false" title="Full-time jobs, and every job that doesn't say its type">Full-time</button><button data-chip="job_types" data-value="part_time" aria-pressed="false" title="Part-time jobs, and every job that doesn't say its type">Part-time</button><button data-chip="job_types" data-value="contract" aria-pressed="false" title="Contract jobs, and every job that doesn't say its type">Contract</button><button data-chip="job_types" data-value="temporary" aria-pressed="false" title="Temporary and seasonal jobs, and every job that doesn't say its type">Temporary</button><button data-chip="job_types" data-value="internship" aria-pressed="false" title="Internships and co-ops, and every job that doesn't say its type">Internship</button><button data-chip="job_types" data-value="per_diem" aria-pressed="false" title="Per diem (PRN) jobs, and every job that doesn't say its type">Per diem</button></span>
-            <span class="group" role="group" aria-label="Requirements" title="Each pressed one hides a job whose posting or title says it doesn't fit. A job that doesn't say, or whose posting isn't read yet, always stays.">Requirements
+              </div>
+              <div class="f-group"><h3 class="f-h">Requirements</h3>
+              <span class="group" role="group" aria-label="Requirements" title="Each pressed one hides a job whose posting or title says it doesn't fit. A job that doesn't say, or whose posting isn't read yet, always stays.">
               <button data-chip="requirements" data-value="no_clearance" aria-pressed="false" title="Hides a job whose posting has a line labelled with the clearance it asks and its level (Clearance Type: Secret), held now or to be obtained. One that only says it in its text (may need a security clearance), or isn't read yet, always stays.">No clearance needed</button><button data-chip="requirements" data-value="degree" aria-pressed="false" id="degree-chip" title="Hides a job whose posting has a line labelled with the education it requires (Minimum Education: Bachelor's Degree), with no way around it. One that only says it in its text, or isn't read yet, always stays.">No degree required</button><button data-chip="requirements" data-value="day_shift" aria-pressed="false" title="Hides a job whose posting's Shift or Schedule line says nights, evenings, swing, rotating, or a 2nd or 3rd shift. One that only mentions a shift in its text, or doesn't say, always stays.">Day shift</button><button data-chip="requirements" data-value="travel_25" aria-pressed="false" title="Hides a job whose posting says it travels more than 25% of the time. One that doesn't say, or isn't read yet, always stays.">Travel ≤ 25%</button><button data-chip="requirements" data-value="entry_level" aria-pressed="false" title="Hides a job whose title says senior, lead, staff, principal, manager, supervisor or director, or level II and up. One whose title doesn't say always stays.">Entry level</button><button data-chip="requirements" data-value="not_senior" aria-pressed="false" title="Hides a job whose title says senior, lead, staff, principal, manager, supervisor or director, or level III and up. One whose title doesn't say always stays.">Not senior</button></span>
-            <!-- the job systems of the openings listed (desk.system_of), drawn by renderSystems -->
-            <span class="group" role="group" aria-label="Job system" id="system-chips" title="Shows only the jobs applied for on the job systems pressed: the site you apply on, such as Workday or an employer's own site." hidden></span>
-            <!-- the companies chosen (desk.json's companies), drawn by renderCompanies; the box suggests the employers listed -->
-            <span class="group" role="group" aria-label="Company" id="company-group" title="Shows only the openings of the companies chosen. Type any part of a company's name, or pick one, and press Enter; press a company again to let go of it.">Company
+              </div>
+              <!-- the job systems of the openings listed (desk.system_of), drawn by renderSystems -->
+              <div class="f-group" id="system-group" hidden><h3 class="f-h">Job system</h3>
+              <span class="group" role="group" aria-label="Job system" id="system-chips" title="Shows only the jobs applied for on the job systems pressed: the site you apply on, such as Workday or an employer's own site." hidden></span></div>
+              <!-- the companies chosen (desk.json's companies), drawn by renderCompanies; the box suggests the employers listed -->
+              <div class="f-group"><h3 class="f-h">Company</h3>
+              <span class="group" role="group" aria-label="Company" id="company-group" title="Shows only the openings of the companies chosen. Type any part of a company's name, or pick one, and press Enter; press a company again to let go of it.">
               <span id="company-chips"></span><input type="text" id="company-add" list="company-names" placeholder="type a company" aria-label="Show only this company's openings" autocomplete="off"><datalist id="company-names"></datalist></span>
+              </div>
+              </div></details>
+            <label class="sw-label" title="Only the employers where, in the plugin's live check, the desk took a test applicant all the way to the application's review page. Bot checks, CAPTCHAs and steps it can't do yet are elsewhere."><input type="checkbox" class="switch" id="handled-only">Only where the desk goes all the way</label>
           </div>
-          <div class="stops openings-only" id="stops" role="group" aria-label="Show the jobs by where they stand" hidden></div>
-          <div class="stop-hint openings-only" id="stop-hint" hidden></div>
-          <div class="stops" id="app-groups" role="group" aria-label="Show my applications by where they stand" hidden></div>
-          <form class="addbar openings-only" id="add-form">
-            <input type="text" id="add-links" placeholder="Paste job links: LinkedIn, Indeed or a company site" aria-label="Job links to add" autocomplete="off">
-            <button type="submit" id="add-btn">Add</button>
-          </form>
-          <div class="applybar openings-only">
-            <button class="primary" id="apply" data-act="apply" disabled>Apply to selected</button>
-            <span class="hint" id="apply-hint"></span>
-            <label><input type="checkbox" id="auto"> Submit for me when nothing needs me</label>
-            <span class="hint" id="auto-hint"></span>
-            <span class="at-once" role="group" aria-label="Jobs at once" title="How many applications the desk fills at the same time, each in its own tab of the desk's browser window. Never two at one employer's site, and one at a time signs in, makes an account or waits on an emailed code. While a sign-in or code needs you, no other job starts and no other tab comes to the front, unless Don't wait for me is on (then only while the desk reads a code from your inbox, or Claude from your Gmail).">Jobs at once
-              <button data-at-once="1" aria-pressed="false">1</button><button data-at-once="2" aria-pressed="false">2</button><button data-at-once="3" aria-pressed="false">3</button><button data-at-once="4" aria-pressed="false">4</button><button data-at-once="5" aria-pressed="false">5</button></span>
-            <label title="For a desk left to go through the list: a sign-in, or an emailed code only you can read, waits on its card and the other jobs go on, as if you'd pressed Later on each (never another job at the same site). A code the desk reads itself (from your inbox, or Claude from your Gmail) still holds them while it's looked for, a minute as a rule: one code at a time, so it never goes to another job"><input type="checkbox" id="dont-wait"> Don't wait for me</label>
-            <span class="hint" id="dont-wait-hint"></span>
-            <label><input type="checkbox" id="tailor"> Tailor my resume for each job</label>
-            <span class="hint" id="tailor-hint"></span>
-            <label title="Claude writes each one through your own Claude Code sign-in (your Claude plan; no key needed), from your resume, your profile and the job's posting, using only what they say. The first one waits for your OK on its card."><input type="checkbox" id="letters"> Write a cover letter for each job</label>
-            <span class="hint" id="letters-hint"></span>
+          <!-- a line for each switch that's on (renderSwitchHint), and what to do with the Status picked (renderStops) -->
+          <div class="switch-hint" id="switch-hint" hidden></div>
+          <div class="stop-hint" id="stop-hint" hidden></div>
+          <!-- the openings' table: a header row that stays at the top while the list scrolls, then the list (CSS grid on
+               its rows, renderRows); #pick-all ticks what Select recommended would, or clears -->
+          <div class="rows-table" role="table" aria-label="Openings">
+            <div class="rows-head" role="row">
+              <div role="columnheader"><input type="checkbox" id="pick-all" aria-label="Select the recommended openings shown"></div>
+              <div role="columnheader">Fit</div><div role="columnheader">Job</div><div role="columnheader">Pay</div>
+              <div role="columnheader">Posted</div><div role="columnheader">Applies on</div><div role="columnheader">Status</div>
+            </div>
+            <ul class="rows" id="rows" role="rowgroup"></ul>
           </div>
-          <ul class="rows" id="rows"></ul>
-          <div id="skipped-sites" class="openings-only"></div>
+          <div id="skipped-sites"></div>
+          <!-- the apply bar: shown while an opening that can be applied to is ticked (renderRows), floating over the foot
+               of the page; its hints along its top, each only when it has words -->
+          <div class="applybar" role="group" aria-label="Apply to the selected openings" hidden>
+            <p class="bar-hints"><span class="hint" id="apply-hint"></span><span class="hint" id="auto-hint"></span><span class="hint" id="tailor-hint"></span><span class="hint" id="letters-hint"></span></p>
+            <div class="bar-row">
+              <b id="apply-count">0 selected</b><span class="div" aria-hidden="true"></span>
+              <label title="Submit for me when nothing needs me"><input type="checkbox" class="switch" id="auto">Submit for me</label>
+              <label title="Tailor my resume for each job"><input type="checkbox" class="switch" id="tailor">Tailor my resume</label>
+              <label title="Write a cover letter for each job"><input type="checkbox" class="switch" id="letters">Cover letter</label>
+              <button class="btn sm ghost" data-act="select-none">Clear</button>
+              <button class="btn primary" id="apply" data-act="apply" disabled>Apply to 0 jobs<svg class="ico" aria-hidden="true"><use href="#i-arrow"/></svg></button>
+            </div>
+          </div>
+        </section>
+      </div>
+      <!-- Applications: each application, under tabs by where it stands (renderApps, on every refresh) -->
+      <div class="page" data-pages="applications" hidden>
+        <section class="card" aria-labelledby="apps-h">
+          <div class="card-head list-head">
+            <h2 id="apps-h" class="vh">Applications</h2>
+            <div class="tabs" id="app-groups" role="group" aria-label="Show my applications by where they stand" hidden></div>
+          </div>
+          <div class="rows-table" role="table" aria-label="Applications">
+            <div class="apps-head" id="apps-head" role="row" hidden>
+              <div role="columnheader">Job</div><div role="columnheader">Applied</div><div role="columnheader">Last heard</div>
+              <div role="columnheader">Status</div><div role="columnheader"></div>
+            </div>
+            <ul class="rows" id="app-rows" role="rowgroup"></ul>
+          </div>
         </section>
       </div>
       <div class="page narrow" data-pages="answers" hidden>
@@ -679,6 +867,33 @@ body.stopped > :not(#stopped) { display: none; }
             <div><h2 class="t" id="safety-card-h">Safety</h2>
               <p class="s">What the desk may do for you and what it never does, as it is set now.</p></div>
             <div class="acts"><button class="btn" id="safety-btn" data-act="safety" title="What the desk does in your name, and what it never does: each setting as it is now, and where to change it">See your safety settings</button></div>
+          </div>
+        </section>
+        <!-- how the desk searches and applies: each row a name and a sentence, its control at the right (the controls
+             that were in the Openings card's apply options and under its More) -->
+        <section class="card" aria-labelledby="searching-h">
+          <div class="card-h"><h2 id="searching-h">Searching and applying</h2></div>
+          <div class="setrow">
+            <div><p class="t" id="at-once-name">Jobs at once</p>
+              <p class="s" id="at-once-said">How many applications the desk fills at the same time.</p></div>
+            <span class="seg" role="group" aria-labelledby="at-once-name" aria-describedby="at-once-said" title="Each in its own tab of the desk's browser window. Never two at one employer's site, and one at a time signs in, makes an account or waits on an emailed code. While a sign-in or code needs you, no other job starts and no other tab comes to the front, unless Don't wait for me is on (then only while the desk reads a code from your inbox, or Claude from your Gmail).">
+              <button data-at-once="1" aria-pressed="false">1</button><button data-at-once="2" aria-pressed="false">2</button><button data-at-once="3" aria-pressed="false">3</button><button data-at-once="4" aria-pressed="false">4</button><button data-at-once="5" aria-pressed="false">5</button></span>
+          </div>
+          <div class="setrow">
+            <div><p class="t" id="dont-wait-name">Don't wait for me</p>
+              <p class="s" id="dont-wait-said">A sign-in or an emailed code waits on its card, and the other jobs carry on.</p>
+              <p class="s" id="dont-wait-hint"></p></div>
+            <input type="checkbox" class="switch" id="dont-wait" aria-labelledby="dont-wait-name" aria-describedby="dont-wait-said dont-wait-hint" title="For a desk left to go through the list: a sign-in, or an emailed code only you can read, waits on its card and the other jobs go on, as if you'd pressed Later on each (never another job at the same site). A code the desk reads itself (from your inbox, or Claude from your Gmail) still holds them while it's looked for, a minute as a rule: one code at a time, so it never goes to another job">
+          </div>
+          <div class="setrow">
+            <div><p class="t" id="auto-search-name">Search by itself every 12 hours</p>
+              <p class="s" id="auto-search-said">The desk searches again when the openings are over 12 hours old. Never while the queue is paused.</p></div>
+            <input type="checkbox" class="switch" id="auto-search" aria-labelledby="auto-search-name" aria-describedby="auto-search-said">
+          </div>
+          <div class="setrow">
+            <div><p class="t" id="troubleshoot-name">Troubleshooting</p>
+              <p class="s" id="troubleshoot-said">For getting the desk going at more employers. It searches every list and shows only the openings where the desk doesn't go all the way yet. Nothing is submitted while it is on.</p></div>
+            <input type="checkbox" class="switch" id="troubleshoot" aria-labelledby="troubleshoot-name" aria-describedby="troubleshoot-said">
           </div>
         </section>
         <section class="card" aria-labelledby="pw-h">
@@ -790,7 +1005,7 @@ body.stopped > :not(#stopped) { display: none; }
           <div class="card-b">
             <ol>
               <li>Find jobs searches the career sites of the employers on your lists, and ranks what it finds against your profile.</li>
-              <li>You pick openings and press Apply to selected. The desk fills each application in the desk's browser window, up to its review page.</li>
+              <li>You pick openings and press Apply. The desk fills each application in the desk's browser window, up to its review page.</li>
               <li>When a site needs you (a question, a sign-in, a bot check), the job waits under Needs you on the Home page.</li>
               <li>Nothing is submitted until you press Submit, unless you turned on "Submit for me". LinkedIn and Indeed are always submitted by you.</li>
             </ol>
@@ -1181,7 +1396,14 @@ function patch(container, entries) {
     if (drawn.has(key)) continue;  // drawn once: a second copy would never be removed
     drawn.add(key);
     let el = existing.get(key);
-    if (el && el.dataset.html !== html) { el.remove(); el = null; }
+    let refocus = "";  // (a control focused in an entry drawn again: the same control in the new one gets the focus)
+    if (el && el.dataset.html !== html) {
+      const f = document.activeElement;
+      const name = f && f !== el && el.contains(f) ? f.getAttributeNames().find((n) => n.startsWith("data-")) : "";
+      if (name) refocus = `[${name}="${CSS.escape(f.getAttribute(name))}"]`;
+      el.remove();
+      el = null;
+    }
     if (!el) {
       const t = document.createElement("template");
       t.innerHTML = html.trim();
@@ -1192,6 +1414,7 @@ function patch(container, entries) {
     existing.delete(key);
     const ref = prev ? prev.nextSibling : container.firstChild;
     if (el !== ref) container.insertBefore(el, ref);
+    if (refocus) { const again = el.querySelector(refocus); if (again) again.focus(); }
     prev = el;
   }
   for (const el of existing.values()) el.remove();
@@ -1223,8 +1446,8 @@ const NEED_PILL = {
 const needPill = (r) => stopMark(r) ? [stopMark(r), "warn"]
   : [NEED_PILL[r.need] || "Waiting for you", STUCK_NEEDS.has(r.need) ? "bad" : "warn"];
 
-// The bar's groups, in its order: where each opening stands; and two more, New (first saved since your last visit, of
-// any of the others) and Not interested (the ones you hid: in no other group, Any's either)
+// The Status groups (under More filters), in their order: where each opening stands; and one more, New (first saved
+// since your last visit, of any of the others). The ones marked Not interested are in none: they have their own tab
 const STOPS = [
   ["any", "Any", "Every opening in the list"],
   ["fresh", "New", "First saved since your last visit, and not taken up yet"],
@@ -1232,10 +1455,9 @@ const STOPS = [
   ["working", "Working", "Being filled now, or waiting in the queue"],
   ["bot", "Bot checks", "Stopped at a bot check: yours to solve (the desk never does)"],
   ["you", "Questions and sign-ins", "Stopped for you: a question, a sign-in, an emailed code"],
-  ["stuck", "Stuck", "The desk couldn't get past something: these are the ones to tell Claude about"],
+  ["stuck", "Stuck", "The desk couldn't get past something. Each one's card has Report a problem."],
   ["ready", "Ready", "Filled to the review page"],
   ["done", "Done", "Submitted, applied, skipped or closed"],
-  ["unwanted", "Not interested", "The openings you said you're not interested in: never applied to. Undo by one brings it back"],
 ];
 const NI_WORDS = {title: "Title", company: "Company", location: "Location", pay: "Pay", other: "Other"};
 const STUCK_NEEDS = new Set(["stuck", "submit_failed"]);
@@ -1252,7 +1474,7 @@ function stopOf(row) {
   }
   return "done";  // submitted, skipped
 }
-const inStop = (r) => stopFilter === "unwanted" ? !!r.not_interested : !r.not_interested
+const inStop = (r) => !r.not_interested
   && (stopFilter === "any" || (stopFilter === "fresh" ? isNew(r) : stopOf(r) === stopFilter));
 
 function statusPill(row) {
@@ -1271,15 +1493,17 @@ const SENT = new Set(["ready_to_submit", "applied", "interviewing", "offer", "re
 
 const shownDay = (t) => String(t || "").slice(0, 10);
 
-// The bar over the list: each group with how many it holds (shown once any job has been tried), and under it what
-// to do with the group picked: bot checks are solved in one round, the stuck ones go to Claude in the Notes
+// The Status group, under More filters: each group with how many it holds (shown once any job has been tried), and
+// under the filters what to do with the group picked: bot checks are solved in one round, the stuck ones go in the Notes
 function renderStops(all) {
+  if (!STOPS.some(([key]) => key === stopFilter)) stopFilter = "any";  // (one kept from before that's gone: Any)
   const rows = all.filter((r) => !r.not_interested);
-  const count = {any: rows.length, fresh: rows.filter(isNew).length, unwanted: all.length - rows.length};
+  const count = {any: rows.length, fresh: rows.filter(isNew).length};
   for (const r of rows) count[stopOf(r)] = (count[stopOf(r)] || 0) + 1;
   const bar = $("stops"), hint = $("stop-hint");
   const tried = rows.some((r) => stopOf(r) !== "new");
-  bar.hidden = !tried && !count.fresh && !count.unwanted && stopFilter === "any";
+  bar.hidden = !tried && !count.fresh && stopFilter === "any";
+  $("status-group").hidden = bar.hidden;
   const buttons = bar.hidden ? "" : STOPS.filter(([key]) => key === "any" || key === stopFilter || count[key])
     .map(([key, label, tip]) => `<button data-stop="${key}" aria-pressed="${key === stopFilter}" title="${esc(tip)}">${esc(label)}
       ${count[key] || 0}</button>`).join("");
@@ -1289,7 +1513,7 @@ function renderStops(all) {
     ? `<span>${checks} to solve: the round brings each one up in the desk's browser window, and each job carries on by itself after.</span>
        ${botRound ? "" : `<button class="primary" data-act="bot-round">Solve them</button>`}`
     : stopFilter === "stuck" && count.stuck
-    ? `<span>The desk couldn't get past these. ${state.notes ? "It took a note on each: Notes files them together for Claude to fix." : "Each one's card has Report a problem, for Claude to fix."}</span>
+    ? `<span>The desk couldn't get past these. ${state.notes ? "It took a note on each. Notes, on the Help page, files them together." : "Each one's card has Report a problem."}</span>
        ${state.notes ? `<button data-act="notes">Notes</button>` : ""}`
     : "";
   hint.hidden = !html;
@@ -1310,7 +1534,8 @@ const HEARD_WORDS = {confirmation: "confirmation", assessment: "assessment", int
 const prepFor = (j) => j.group === "interviews" || (j.group === "heard" && (j.last_heard || {}).category === "assessment");
 const prepWhat = (j) => (j.last_heard || {}).category === "assessment" ? "assessment" : "interview";
 
-// The bar over My applications: each group with how many it holds, Waiting with how many are due a follow-up
+// The Applications page's tabs: each group with how many it holds (none said at 0), Waiting with how many are due a
+// follow-up
 function renderAppGroups(apps) {
   if (!APP_GROUPS.some(([key]) => key === appGroup)) appGroup = "all";
   const count = {all: apps.length};
@@ -1318,37 +1543,45 @@ function renderAppGroups(apps) {
   const due = apps.filter((j) => j.follow_up_due).length;
   const bar = $("app-groups");
   bar.hidden = !apps.length;
-  const html = bar.hidden ? "" : APP_GROUPS.map(([key, label, tip]) => `<button data-app-group="${key}" aria-pressed="${key === appGroup}" title="${esc(tip)}">${esc(label)}
-    ${count[key] || 0}${key === "waiting" && due ? `, ${due} to follow up` : ""}</button>`).join("");
+  const html = bar.hidden ? "" : APP_GROUPS.map(([key, label, tip]) => {
+    const n = count[key] || 0, follow = key === "waiting" && due;
+    return `<button data-app-group="${key}" aria-pressed="${key === appGroup}" title="${esc(tip)}">${esc(label)}<span class="count${follow ? " warn" : ""}">${n || ""}${follow ? `, ${due} to follow up` : ""}</span></button>`;
+  }).join("");
   if (bar.dataset.html !== html) { bar.innerHTML = html; bar.dataset.html = html; }  // (focus kept)
 }
 
-// My applications: each job sent in (or filled and waiting on its review page), newest first, with where it stands,
-// when the employer last wrote (the email's summary in its tooltip), and whether it's time to follow up
+// The Applications page: each job sent in (or filled and waiting on its review page), newest first, a row each: the
+// job and its company, the day it was applied for, when the employer last wrote (the email's summary in its tooltip),
+// where it stands and whether it's time to follow up, and its buttons. Drawn on every refresh, whatever page shows
 function renderApps() {
+  if (!state) return;
   const apps = state.applications || [];
   renderAppGroups(apps);
+  $("apps-head").hidden = !apps.length;
   const days = (state.settings || {}).follow_up_days;
   const entries = apps.filter((j) => appGroup === "all" || j.group === appGroup).map((j) => {
     const [text, cls] = STATUS[j.status] || [j.status, ""];
-    const when = j.applied_at ? `applied ${esc(shownDay(j.applied_at))}` : `updated ${esc(shownDay(j.updated_at))}`;
+    const when = j.applied_at ? esc(shownDay(j.applied_at)) : `Updated ${esc(shownDay(j.updated_at))}`;
     const h = j.last_heard;
-    const heard = h ? `<span class="nowrap heard" title="${esc((h.summary || "") + (j.emails > 1 ? ` (${j.emails} emails logged)` : ""))}">Heard
-      ${esc(h.day || shownDay(h.received_at))}: ${esc(HEARD_WORDS[h.category] || h.category)}</span>` : `<span class="nowrap heard">No reply yet</span>`;
+    const heard = h ? `<span class="heard" title="${esc((h.summary || "") + (j.emails > 1 ? ` (${j.emails} emails logged)` : ""))}">Heard
+      ${esc(h.day || shownDay(h.received_at))}: ${esc(HEARD_WORDS[h.category] || h.category)}</span>` : `<span class="heard">No reply yet</span>`;
     const dueTip = `No reply${days ? ` ${days} days` : ""} after you applied. Follow up copies a request for Claude to draft `
       + "a polite follow-up email (saved as a Gmail draft, for you to send): paste it to Claude. Nothing is sent anywhere.";
-    const due = j.follow_up_due ? `<span class="pill warn" title="${esc(dueTip)}">Follow-up due ${esc(j.follow_up_due)}</span>`
-      + `<button data-act="follow-up" data-job="${j.id}" title="${esc(dueTip)}">Follow up</button>` : "";
+    const due = j.follow_up_due ? `<span class="pill warn" title="${esc(dueTip)}">Follow-up due ${esc(j.follow_up_due)}</span>` : "";
+    const follow = j.follow_up_due ? `<button data-act="follow-up" data-job="${j.id}" title="${esc(dueTip)}">Follow up</button>` : "";
     const prepTip = `Copies a request for Claude to prep you for this ${prepWhat(j)}: paste it to Claude. Nothing is sent anywhere.`;
     const prep = prepFor(j) ? `<button data-act="prep" data-job="${j.id}" title="${esc(prepTip)}">Prep me</button>` : "";
-    return {key: "app" + j.id, html: `<li class="row app">
-      <div>${link(j.url, esc(j.title || "Untitled job"), "title")}<div class="meta">${esc(j.company || "")} · <span class="nowrap">${when}</span> · ${heard}</div></div>
-      <div class="state">${due}<span class="pill ${cls}">${esc(text)}</span>${prep}</div></li>`};
+    return {key: "app" + j.id, html: `<li class="row app" role="row">
+      <div class="c-job" role="cell">${link(j.url, esc(j.title || "Untitled job"), "title")}<div class="meta">${esc(j.company || "")}</div></div>
+      <div class="c-applied" role="cell">${when}</div>
+      <div class="c-heard" role="cell">${heard}</div>
+      <div class="state" role="cell"><span class="pill ${cls}">${esc(text)}</span>${due}</div>
+      <div class="c-acts" role="cell">${follow}${prep}</div></li>`};
   });
-  if (!entries.length) entries.push({key: "empty", html: apps.length
-    ? `<li class="empty">None here right now. Press All to see them all.</li>`
-    : `<li class="empty">No applications yet. Each one you send in shows up here with where it stands.</li>`});
-  patch($("rows"), entries);
+  if (!entries.length) entries.push({key: "empty", html: `<li class="empty" role="row"><span role="cell">${apps.length
+    ? "None here right now. Press All to see them all."
+    : "No applications yet. Each one you send in shows up here with where it stands."}</span></li>`});
+  patch($("app-rows"), entries);
 }
 
 // A word at the foot of the window for a few seconds; with `undo` (an opening's address), an Undo for its Not interested
@@ -1487,14 +1720,14 @@ async function forClaude(text) {
   else prompt("Couldn't copy it. Copy this, and paste it to Claude:", text);
 }
 
-// An opening's pay on its meta line ("$26–$28/hr (≈$54k–$58k/yr)", where it came from in the tooltip), or that it isn't
-// listed; and when it was posted, or that its site doesn't say
+// An opening's pay, in its Pay cell ("$26–$28/hr (≈$54k–$58k/yr)", where it came from in the tooltip), or that it isn't
+// listed (dimmed); and when it was posted, in its Posted cell, or that its site doesn't say (dimmed)
 const payText = (r) => r.pay && r.pay.shown
-  ? `<span class="nowrap pay" title="${esc(r.pay.from)}">${esc(r.pay.shown)}</span>`
-  : `<span class="nowrap pay none" title="The posting doesn't list its pay, or it hasn't been read yet">pay not listed</span>`;
+  ? `<span class="pay" title="${esc(r.pay.from)}">${esc(r.pay.shown)}</span>`
+  : `<span class="nowrap pay none dim" title="The posting doesn't list its pay, or it hasn't been read yet">Not listed</span>`;
 const postedText = (r) => !r.posted
-  ? `<span class="nowrap" title="This employer's site gives no posting date">date unknown</span>`
-  : `<span class="nowrap"${r.ats === "greenhouse" ? ` title="Greenhouse gives the day the posting was last updated, not the day it was posted"` : ""}>${esc(shownDate(r.posted))}</span>`;
+  ? `<span class="when dim" title="This employer's site gives no posting date">No date</span>`
+  : `<span class="when"${r.ats === "greenhouse" ? ` title="Greenhouse gives the day the posting was last updated, not the day it was posted"` : ""}>${esc(shownDate(r.posted))}</span>`;
 // Where it's done (Remote, Hybrid, On-site; "likely remote" when only its text says), where that came from in the
 // tooltip; nothing when it doesn't say
 const workplaceText = (r) => r.workplace && r.workplace.shown
@@ -1520,53 +1753,90 @@ function sorted(rows) {
   return by ? rows.map((r, i) => [by(r), i, r]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((x) => x[2]) : rows;
 }
 
-// Under the Openings head, a line for each switch that's on, saying what it does now (their tooltips aren't seen on a
-// phone, and two of them sit under More)
-function renderSwitchHint(mine, rows) {
+// Under the filters, a line for each switch that's on, saying what it does now (their tooltips aren't seen on a phone,
+// and two of them are on the Settings page): Troubleshooting's with a button that turns it off
+const TROUBLESHOOT_OFF = `<button data-act="troubleshoot-off">Turn it off</button>`;
+function renderSwitchHint(rows) {
   const s = state.settings || {};
   // (the employers among the openings the list shows now)
   const employers = new Set(rows.filter((r) => r.handled).map((r) => String(r.company || "").trim().toLowerCase())).size;
-  // Troubleshooting on: More stays open, so the box that turns it off is always in sight
-  if (s.troubleshoot && !$("more").open) $("more").open = true;
   const lines = [
-    s.handled_only ? `Only where the desk goes all the way: showing ${employers ? `the ${employers} employer${employers === 1 ? "" : "s"}` : "the employers"} where the plugin's live check reached the review page; bot checks and steps the desk can't do yet are elsewhere.` : "",
-    s.troubleshoot ? "Troubleshooting: nothing is submitted; Find jobs searches every list; only the employers where the desk doesn't go all the way yet are shown." : "",
-    s.auto_search ? "Search by itself: the desk searches again when the openings are over 12 hours old (not while the queue is paused)." : "",
+    s.handled_only ? esc(`Only where the desk goes all the way: showing ${employers ? `the ${employers} employer${employers === 1 ? "" : "s"}` : "the employers"} where the plugin's live check reached the review page; bot checks and steps the desk can't do yet are elsewhere.`) : "",
+    s.troubleshoot ? esc("Troubleshooting: nothing is submitted; Find jobs searches every list; only the employers where the desk doesn't go all the way yet are shown.") + " " + TROUBLESHOOT_OFF : "",
+    s.auto_search ? esc("Search by itself: the desk searches again when the openings are over 12 hours old (not while the queue is paused).") : "",
   ].filter(Boolean);
   const hint = $("switch-hint");
-  hint.hidden = mine || !lines.length;
-  const html = lines.map((line) => `<p>${esc(line)}</p>`).join("");
-  if (hint.dataset.html !== html) { hint.innerHTML = html; hint.dataset.html = html; }
+  hint.hidden = !lines.length;
+  const html = lines.map((line) => `<p>${line}</p>`).join("");
+  if (hint.dataset.html !== html) { hint.innerHTML = html; hint.dataset.html = html; }  // (focus kept)
+}
+
+// Each filter drop-down's summary says what's chosen in it, and the drop-down is marked (on) when that isn't its
+// default; More filters' number counts what's set in it: a Status other than Any, and each button pressed or company
+// chosen in its other four groups. Run wherever renderRows is (it runs it)
+const SORT_SAID = {fit: "Best fit", pay: "Best paid", newest: "Newest"};
+function renderFilterLabels() {
+  const s = state.settings || {};
+  const say = (f, words, on) => {
+    const d = document.querySelector(`#filters details[data-f="${f}"]`), el = d.querySelector(".f-said");
+    if (el.textContent !== words) el.textContent = words;
+    d.classList.toggle("on", !!on);
+  };
+  const named = (selector) => { const b = document.querySelector(selector); return b ? b.textContent.trim().toLowerCase() : ""; };
+  const sort = SORT_SAID[sortBy] ? sortBy : "fit";
+  say("sort", SORT_SAID[sort], sort !== "fit");
+  say("pay", s.min_pay ? `Pay: $${Number(s.min_pay).toLocaleString("en-US")}+` : "Pay: any", s.min_pay);
+  say("posted", s.posted_within ? `Posted: ${named(`[data-posted="${Number(s.posted_within)}"]`) || `last ${s.posted_within} days`}`
+    : "Posted: any time", s.posted_within);
+  say("within", s.within_miles ? `Within ${s.within_miles} miles` : "Within: any distance", s.within_miles);
+  const places = [...document.querySelectorAll("[data-chip=workplace]")].filter((b) => (s.workplace || []).includes(b.dataset.value))
+    .map((b) => b.textContent.trim().toLowerCase());
+  say("workplace", places.length ? `Workplace: ${places.join(", ")}` : "Workplace", places.length);
+  const more = (stopFilter !== "any" ? 1 : 0)
+    + ["job_types", "requirements", "systems", "companies"].reduce((n, name) => n + (s[name] || []).length, 0);
+  say("more", "More filters", more);
+  const count = $("more-count"), n = more ? String(more) : "";
+  if (count.textContent !== n) count.textContent = n;
+}
+
+// The tabs' numbers: the rows each would list after the filters and the search box, with Status at Any; Not
+// interested's, every one marked so that the search box leaves (the filters don't apply to it), hidden at none
+function renderTabs(counts) {
+  for (const [key, n] of Object.entries(counts)) {
+    const el = $("tab-" + key), said = n ? String(n) : "";
+    if (el.textContent !== said) el.textContent = said;
+  }
+  document.querySelector("[data-filter=unwanted]").hidden = !counts.unwanted && filter !== "unwanted";
+  document.querySelectorAll("[data-filter]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.filter === filter)));
 }
 
 function renderRows() {
   if (!state) return;
-  const mine = filter === "mine";
-  document.querySelectorAll(".openings-only").forEach((el) => { el.hidden = mine; });
-  if (mine) renderSwitchHint(true, []);
-  $("mine-count").textContent = (state.applications || []).length ? `(${state.applications.length})` : "";
-  if (mine) { renderApps(); return; }
-  $("app-groups").hidden = true;
+  renderFilterLabels();
   renderSystems();
   renderCompanies();
   // links the person added (here, or through Claude) always show: they picked those themselves
   const onlyHandled = !!(state.settings && state.settings.handled_only);
   const troubleshooting = !!(state.settings && state.settings.troubleshoot);
-  // (troubleshooting: every opening tried, whatever its fit; and the ones hidden as Not interested, for their group)
-  const listed = (state.listings || []).filter((r) => filter === "all" || troubleshooting || r.added || (r.fit && r.fit.recommended) || r.run
-    || r.not_interested);
-  renderStops(listed.filter(shown));
-  const rows = sorted(listed.filter(shown).filter(inStop));
-  renderSwitchHint(false, rows);
+  // Recommended and All leave out the ones marked Not interested: those are the Not interested tab's, which the
+  // filters and Status don't touch (the search box does). (troubleshooting: every opening tried, whatever its fit)
+  const all = state.listings || [];
+  const recommended = all.filter((r) => !r.not_interested && (troubleshooting || r.added || (r.fit && r.fit.recommended) || r.run));
+  const everyOne = all.filter((r) => !r.not_interested);
+  const unwanted = all.filter((r) => r.not_interested && typed(r));
+  if (filter === "unwanted" && !all.some((r) => r.not_interested)) filter = "recommended";  // (none left: back)
+  renderTabs({recommended: recommended.filter(shown).length, all: everyOne.filter(shown).length, unwanted: unwanted.length});
+  const listed = filter === "unwanted" ? unwanted : filter === "all" ? everyOne : recommended;
+  renderStops((filter === "unwanted" ? recommended : listed).filter(shown));
+  const rows = filter === "unwanted" ? unwanted : sorted(listed.filter(shown).filter(inStop));
+  renderSwitchHint(rows);
   const entries = rows.map((r) => {
     const fit = r.fit || {score: 0, reasons: [], concerns: []};
     const done = DONE.has(r.status) || (r.run && UNDER_WAY.has(r.run.status)) || !!r.not_interested;
     const unwanted = r.not_interested;
+    // the Job cell's third line: only the chips that warn (the green reasons come up with the score's parts)
     const chips = [
-      ...(isNew(r) ? [`<span class="chip new">New</span>`] : []),
       ...(unwanted ? [`<span class="chip stop">Not interested${NI_WORDS[unwanted.reason] ? `: ${esc(NI_WORDS[unwanted.reason])}` : ""}</span>`] : []),
-      ...(r.handled ? [`<span class="chip handled" title="In the plugin's live check, the desk took a test applicant at this employer all the way to the review page.">Desk goes all the way</span>`] : []),
-      ...fit.reasons.map((x) => `<span class="chip plus">${esc(x)}</span>`),
       ...fit.concerns.map((x) => `<span class="chip ${fit.blocked || fit.avoided ? "stop" : "minus"}">${esc(x)}</span>`),
       // a clearance read from the posting's words, not said surely: shown, never hidden by No clearance needed
       ...(maybeClearance(fit) ? [`<span class="chip" title="Read from the posting's text: No clearance needed never hides this job for it">may need a security clearance</span>`] : []),
@@ -1580,40 +1850,53 @@ function renderRows() {
       ? `<button class="link" data-job="${r.job_id}" data-job-act="unskip" title="Put this job back where it was before you skipped it">Undo</button>` : "";
     // Not interested: on an opening the desk hasn't a card for (begun or skipped there: Skip job is for those) and that
     // isn't sent in; hidden, it has Undo
-    const ni = unwanted ? `<button class="link" data-ni-undo="${esc(r.url)}" title="Show this opening again">Undo</button>`
-      : !r.run && !SENT.has(r.status) ? `<button class="link" data-ni="${esc(r.url)}" title="Hide this opening: it's never applied to, and Undo brings it back">Not interested</button>` : "";
+    const ni = unwanted ? `<button class="btn sm" data-ni-undo="${esc(r.url)}" title="Show this opening again">Undo</button>`
+      : !r.run && !SENT.has(r.status) ? `<button class="btn ghost icon sm ni" data-ni="${esc(r.url)}" title="Not interested" aria-label="Not interested: ${esc(r.title)}"><svg class="ico" aria-hidden="true"><use href="#i-x"/></svg></button>` : "";
     // the same posting saved from a job board too: one row, applied for on the employer's site; the board's link here
     const also = (r.also_on || []).map((a) => link(a.url, `Also on ${esc(a.site)}`, "also")).join(" · ");
     // how the score adds up (recommend.py's own parts, which sum to it): on the score's tooltip, and under the tags
     // once the score is pressed. A score saved before scores had parts has none
     const parts = (fit.parts || []).map((p) => `${p.why} ${points(p.points, p.why === "start")}`);
+    const reasons = fit.reasons || [];
     const tip = `How well it fits your profile, out of 100 (${RECOMMEND_AT} or more is recommended).`
-      + (parts.length ? ` ${parts.join(", ")} = ${fit.score}. Press to see it under the tags.` : " The tags below say why.")
+      + (parts.length ? ` ${parts.join(", ")} = ${fit.score}. Press to see it under the job.` : reasons.length ? " Press to see why." : "")
       + (fit.placed ? ` ${fit.placed}.` : "");  // (what worked before: its place in the list, not its score)
-    const score = parts.length
-      ? `<button class="score ${scoreClass(fit.score)}" data-parts="${esc(r.url)}" aria-expanded="${partsOpen.has(r.url)}" title="${esc(tip)}">${esc(fit.score)}</button>`
-      : `<span class="score ${scoreClass(fit.score)}" title="${esc(tip)}">${esc(fit.score)}</span>`;
-    const sum = parts.length && partsOpen.has(r.url) ? `<div class="parts">${(fit.parts || []).map((p) =>
+    const ring = `class="score ${scoreClass(fit.score)}" style="--p: ${Math.max(0, Math.min(100, Number(fit.score) || 0))}" title="${esc(tip)}"`;
+    const score = parts.length || reasons.length
+      ? `<button ${ring} data-parts="${esc(r.url)}" aria-expanded="${partsOpen.has(r.url)}">${esc(fit.score)}</button>`
+      : `<span ${ring}>${esc(fit.score)}</span>`;
+    // pressed: the green reasons, then how the score adds up
+    const sum = !partsOpen.has(r.url) ? "" : (reasons.length ? `<div class="reasons">${reasons.map((x) => `<span class="chip plus">${esc(x)}</span>`).join("")}</div>` : "")
+      + (parts.length ? `<div class="parts">${(fit.parts || []).map((p) =>
       `<span class="pt">${esc(p.why)} <span class="n">${esc(points(p.points, p.why === "start"))}</span></span>`).join(" · ")}
-      = <span class="n">${esc(fit.score)}</span></div>${fit.placed ? `<div class="parts placed">${esc(fit.placed)}.</div>` : ""}` : "";
-    return {key: r.url, html: `<li class="row ${DONE.has(r.status) || unwanted ? "done" : ""}">
-      <input type="checkbox" data-pick="${esc(r.url)}" ${checked} ${done ? "disabled" : ""} aria-label="Select ${esc(r.title)}">
-      ${score}
-      <div>${link(r.url, esc(r.title), "title")}
+      = <span class="n">${esc(fit.score)}</span></div>${fit.placed ? `<div class="parts placed">${esc(fit.placed)}.</div>` : ""}` : "");
+    // Applies on: the job system, and under it whether the desk goes all the way there
+    const system = `<b>${esc((r.system && r.system.name) || "")}</b>${r.handled ? `<span class="chip handled" title="In the plugin's live check, the desk took a test applicant at this employer all the way to the review page."><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg>Goes all the way</span>` : ""}`;
+    const pill = statusPill(r) || (isNew(r) ? `<span class="pill new chip">New</span>` : "");
+    const rowClass = ["row", DONE.has(r.status) || unwanted ? "done" : "", checked ? "sel" : ""].filter(Boolean).join(" ");
+    return {key: r.url, html: `<li class="${rowClass}" role="row">
+      <div class="c-pick" role="cell"><input type="checkbox" data-pick="${esc(r.url)}" ${checked} ${done ? "disabled" : ""} aria-label="Select ${esc(r.title)}"></div>
+      <div class="c-fit" role="cell">${score}</div>
+      <div class="c-job" role="cell">${link(r.url, esc(r.title), "title")}
         <div class="meta">${[esc(r.company), r.location ? `<span title="${esc(r.location)}">${esc(places(r.location))}</span>` : "",
-          milesText(r), postedText(r), payText(r), workplaceText(r), jobTypesText(r)].filter(Boolean).join(" · ")}</div>
-        ${also ? `<div class="meta also-on" title="The same posting, saved from a job board too. It's applied for on the employer's site.">${also}</div>` : ""}
-        <div class="chips">${chips}</div>${sum}</div>
-      <div class="state">${statusPill(r)}${undo}${ni}</div></li>`};
+          milesText(r), workplaceText(r), jobTypesText(r)].filter(Boolean).join(" · ")}</div>
+        <div class="chips"${chips ? "" : " hidden"}>${chips}</div>
+        ${also ? `<div class="meta also-on" title="The same posting, saved from a job board too. It's applied for on the employer's site.">${also}</div>` : ""}${sum}</div>
+      <div class="c-pay" role="cell">${payText(r)}</div>
+      <div class="c-posted" role="cell">${postedText(r)}</div>
+      <div class="c-sys" role="cell">${system}</div>
+      <div class="state" role="cell">${pill}${undo}${ni}</div></li>`};
   });
   if (!entries.length) {
-    const msg = stopFilter !== "any" && listed.some(shown) ? "None here right now. Press Any to see them all."
+    const msg = query.trim() && (filter === "unwanted" ? all.some((r) => r.not_interested)
+        : listed.filter(filtered).filter(inStop).length) ? "Nothing matches what you typed. Empty the search box to see the rest."
+      : stopFilter !== "any" && listed.some(shown) ? "None here right now. Set Status to Any, under More filters, to see them all."
       : state.search.status === "running" ? "Searching employers' career sites…"
       : onlyHandled && listed.length ? "Nothing here from the employers where the desk goes all the way. Turn off that switch to see the rest."
       : (state.settings.min_pay || state.settings.posted_within) && !state.settings.within_miles && !chipsOn() && !companiesOn() && listed.length
-        ? "Nothing here at that pay or posting date. Empty Pay at least, or press Posted: Any, to see the rest."
+        ? "Nothing here at that pay or posting date. Empty Pay at least, or set Posted to Any time, to see the rest."
       : state.settings.within_miles && !state.settings.min_pay && !state.settings.posted_within && !chipsOn() && !companiesOn() && listed.length
-        ? "Nothing here that near your home. Press Within: Any, or a farther one, to see the rest."
+        ? "Nothing here that near your home. Set Within to Any distance, or a farther one, to see the rest."
       : companiesOn() && !state.settings.min_pay && !state.settings.posted_within && !state.settings.within_miles && !chipsOn() && listed.length
         ? "Nothing here from the companies chosen. Press a company to let go of it, or press Find jobs to search again."
       : (state.settings.min_pay || state.settings.posted_within || state.settings.within_miles || chipsOn() || companiesOn()) && listed.length
@@ -1621,12 +1904,28 @@ function renderRows() {
       : troubleshooting ? "Nothing here yet from the employers where the desk doesn't go all the way. Press Find jobs: troubleshooting searches every list's employers."
       : (state.listings || []).length ? "Nothing recommended. Switch to All to see every opening."
       : "Press Find jobs to search every employer's career site for openings that fit your profile.";
-    entries.push({key: "empty", html: `<li class="empty">${esc(msg)}</li>`});
+    entries.push({key: "empty", html: `<li class="empty" role="row"><span role="cell">${esc(msg)}</span></li>`});
   }
   patch($("rows"), entries);
   const n = [...selected].filter(selectable).length;
-  $("apply").disabled = n === 0;
-  $("apply").textContent = n ? `Apply to ${n} selected` : "Apply to selected";
+  // the header's box: unticked with nothing ticked, ticked when Select recommended would tick nothing more, half otherwise
+  const pickAll = $("pick-all"), whole = n > 0 && !toRecommend().length;
+  if (pickAll.checked !== whole) pickAll.checked = whole;
+  if (pickAll.indeterminate !== (n > 0 && !whole)) pickAll.indeterminate = n > 0 && !whole;
+  // the apply bar: only while an opening that can be applied to is ticked, with how many, and the page's foot made
+  // room for it. Hidden with the focus in it (Clear pressed), the focus goes to the header's box
+  const bar = document.querySelector(".applybar");
+  if (!n && !bar.hidden && bar.contains(document.activeElement)) pickAll.focus({preventScroll: true});
+  bar.hidden = n === 0;
+  document.body.classList.toggle("applying", n > 0);
+  const count = `${n} selected`;
+  if ($("apply-count").textContent !== count) $("apply-count").textContent = count;
+  const apply = $("apply"), words = `Apply to ${n} job${n === 1 ? "" : "s"}`;
+  apply.disabled = n === 0;
+  if (apply.dataset.words !== words) {
+    apply.innerHTML = `${esc(words)}<svg class="ico" aria-hidden="true"><use href="#i-arrow"/></svg>`;
+    apply.dataset.words = words;
+  }
   $("apply-hint").textContent = n || !rows.some((r) => selectable(r.url)) ? "" : "Tick the jobs to apply to.";
 }
 
@@ -2107,7 +2406,8 @@ function renderHeader() {
        <span>Go through them one by one: each review page comes up in the desk's browser window to check${toSend.some((r) => r.need !== "check_submit") ? " before you send it" : ""}.</span>
        <button class="primary" data-act="review-round">Review them</button>`});
   if (s.troubleshoot) notes.push({cls: "notice info", html: `<strong>Troubleshooting is on: no application is submitted.</strong>
-    <span>Find jobs searches every list's employers, and only the openings where the desk doesn't go all the way yet show. The desk still makes accounts and fills each step, which the sites keep. Turn it off (under Openings, More) to apply for real.</span>`});
+    <span>Find jobs searches every list's employers, and only the openings where the desk doesn't go all the way yet show. The desk still makes accounts and fills each step, which the sites keep. Turn it off to apply for real.</span>
+    ${TROUBLESHOOT_OFF}`});
   const needing = allRuns().filter((r) => r.status === "needs_you").length;
   document.title = needing ? `(${needing}) Needs you · Job Desk` : "Job Desk";
   // the jobs back in the queue after a restart of the desk wait for the person's Carry on with the queue; and why the queue isn't
@@ -2645,8 +2945,7 @@ $("setup-form").addEventListener("submit", (e) => {
 
 // The pages of the side menu, by the address's "#name", each with its heading in the top bar. route shows the page
 // named (Home for none, or a name that isn't one): everything with data-pages shows on the pages it lists, and the
-// menu's link for the page is marked as the current one. Openings and Applications share the Openings card: on
-// Applications its My applications tab is chosen, and going to Openings while that tab is chosen chooses Recommended
+// menu's link for the page is marked as the current one. The Openings tab chosen stays as it was left
 const PAGES = {home: "Home", openings: "Openings", applications: "Applications", answers: "Your answers",
                working: "What's working", settings: "Settings", help: "Help"};
 function route() {
@@ -2659,8 +2958,6 @@ function route() {
   for (const a of document.querySelectorAll(".nav a")) {
     if (a.getAttribute("href") === "#" + page) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   }
-  if (page === "applications") filter = "mine"; else if (page === "openings" && filter === "mine") filter = "recommended";
-  document.querySelectorAll("[data-filter]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.filter === filter)));
   if (moved) $("content").scrollTop = 0;  // (a page starts at its top, not where the last one was left)
   if (state) render();
 }
@@ -2677,6 +2974,7 @@ function render() {
   reviewStep();
   renderHeader();
   renderRows();
+  renderApps();
   renderSide();
   renderWorking();
   renderBank();
@@ -2754,6 +3052,31 @@ async function act(fn, hold = true) {
 // filled and waiting on its review page, or on the person, has its own buttons: Apply would
 // start it over. A failed one can be tried again.
 const UNDER_WAY = new Set(["submitted", "running", "queued", "ready", "needs_you"]);
+// What Select recommended (and the table's header box) would tick: the recommended openings shown that can be applied
+// to and aren't ticked yet; troubleshooting, one opening per employer (the best fit), since its others most likely stop
+// where it does (an employer with one ticked already, or one tried, has its one)
+function toRecommend() {
+  const s = state.settings || {};
+  const employerOf = (r) => String(r.company || "").trim().toLowerCase();
+  const picked = new Set((state.listings || []).filter((r) => r.run || (selected.has(r.url) && selectable(r.url)))
+    .map(employerOf));
+  const rank = (r) => (r.fit || {}).rank ?? (r.fit || {}).score ?? 0;  // (the order what worked before gives)
+  const urls = [];
+  [...(state.listings || [])].sort((x, y) => rank(y) - rank(x)).forEach((r) => {
+    if (!((s.troubleshoot || r.fit && r.fit.recommended) && !DONE.has(r.status) && !r.run && selectable(r.url)
+          && (s.handled_only ? r.handled : s.troubleshoot ? !r.handled : true))) return;
+    const employer = employerOf(r);
+    if (selected.has(r.url) || (s.troubleshoot && employer && picked.has(employer))) return;
+    picked.add(employer);
+    urls.push(r.url);
+  });
+  return urls;
+}
+function selectRecommended() {
+  toRecommend().forEach((url) => selected.add(url));
+  renderRows();
+}
+
 function selectable(url) {
   const r = (state.listings || []).find((x) => x.url === url);
   return !!r && shown(r) && inStop(r) && !DONE.has(r.status) && !(r.run && UNDER_WAY.has(r.run.status)) && !r.not_interested;
@@ -2763,8 +3086,16 @@ function selectable(url) {
 // already had to do with (a link they added, a job under way or tracked); "Troubleshooting", the other employers'
 // openings, and the same. Nothing hidden is ever applied to
 // The filter row's "Pay at least" and "Posted" hide only an opening that says it's below or older: one whose pay isn't
-// listed, or whose site gives no date, always stays (as does what the person already had to do with)
-function shown(r) {
+// listed, or whose site gives no date, always stays (as does what the person already had to do with). And the top
+// bar's search box hides each one whose title and company together don't hold every word typed, whatever the case
+const shown = (r) => typed(r) && filtered(r);
+let query = "";  // what's typed in the search box (kept in memory only: a reload empties it)
+function typed(r) {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const said = `${r.title || ""} ${r.company || ""}`.toLowerCase();
+  return words.every((w) => said.includes(w));
+}
+function filtered(r) {
   const s = state.settings || {};
   return (s.handled_only ? kept(r) : s.troubleshoot ? keptElse(r) : true)
     && (theirs(r) || (paysEnough(r, s.min_pay) && postedWithin(r, s.posted_within) && withinMiles(r, s.within_miles)
@@ -2838,9 +3169,10 @@ function renderSystems() {
   const drawn = JSON.stringify(keys.map((k) => [k, names[k] || k]));
   if (drawn !== systemsDrawn && !box.contains(document.activeElement)) {
     systemsDrawn = drawn;
-    box.innerHTML = "System" + keys.map((k) => `<button data-chip="systems" data-value="${esc(k)}" aria-pressed="false">${esc(names[k] || k)}</button>`).join("");
+    box.innerHTML = keys.map((k) => `<button data-chip="systems" data-value="${esc(k)}" aria-pressed="false">${esc(names[k] || k)}</button>`).join("");
   }
   box.hidden = keys.length < 2 && !pressed.length && !box.contains(document.activeElement);
+  $("system-group").hidden = box.hidden;  // (its heading, Job system, with it)
   box.querySelectorAll("[data-chip]").forEach((b) => {
     const n = counts.get(b.dataset.value) || 0, name = names[b.dataset.value] || b.dataset.value;
     b.title = `${n} opening${n === 1 ? "" : "s"} listed on ${name}`;
@@ -2986,6 +3318,7 @@ document.addEventListener("click", (e) => {
     sortBy = t.dataset.sort;
     try { localStorage.setItem(SORT_KEY, sortBy); } catch (err) {}
     document.querySelectorAll("[data-sort]").forEach((b) => b.setAttribute("aria-pressed", String(b === t)));
+    closeFilter(t);
     renderRows();
     return;
   }
@@ -2993,6 +3326,7 @@ document.addEventListener("click", (e) => {
     if (!state) return;
     const days = t.dataset.posted ? Number(t.dataset.posted) : null;
     document.querySelectorAll("[data-posted]").forEach((b) => b.setAttribute("aria-pressed", String(b === t)));
+    closeFilter(t);
     state.settings.posted_within = days;  // (shown at once; kept in desk.json)
     renderRows();
     act(() => api("/api/settings", {posted_within: days}));
@@ -3002,6 +3336,7 @@ document.addEventListener("click", (e) => {
     if (!state) return;
     const most = t.dataset.within ? Number(t.dataset.within) : null;
     document.querySelectorAll("[data-within]").forEach((b) => b.setAttribute("aria-pressed", String(b === t)));
+    closeFilter(t);
     state.settings.within_miles = most;  // (shown at once; kept in desk.json)
     renderRows();
     act(() => api("/api/settings", {within_miles: most}));
@@ -3023,13 +3358,12 @@ document.addEventListener("click", (e) => {
   if (t.dataset.appGroup) {
     appGroup = t.dataset.appGroup;
     try { localStorage.setItem(APP_GROUP_KEY, appGroup); } catch (err) {}
-    renderRows();
+    renderApps();
     return;
   }
-  if (t.dataset.filter) {
-    // (the address follows the tab: My applications is the Applications page, the other two the Openings page)
+  if (t.dataset.filter) {  // a tab: Recommended, All or Not interested, on the Openings page
     filter = t.dataset.filter;
-    goTo(filter === "mine" ? "applications" : "openings");
+    goTo("openings");
     return;
   }
   const a = t.dataset.act, job = t.dataset.job, jobAct = t.dataset.jobAct;
@@ -3141,25 +3475,13 @@ document.addEventListener("click", (e) => {
       });
     }
   }
-  if (a === "select-recommended") {
-    const s = state.settings || {};
-    // troubleshooting: one opening per employer (the best fit), since its others most likely stop where it does;
-    // an employer with one ticked already, or one tried, has its one
-    const employerOf = (r) => String(r.company || "").trim().toLowerCase();
-    const picked = new Set((state.listings || []).filter((r) => r.run || (selected.has(r.url) && selectable(r.url)))
-      .map(employerOf));
-    const rank = (r) => (r.fit || {}).rank ?? (r.fit || {}).score ?? 0;  // (the order what worked before gives)
-    [...(state.listings || [])].sort((x, y) => rank(y) - rank(x)).forEach((r) => {
-      if (!((s.troubleshoot || r.fit && r.fit.recommended) && !DONE.has(r.status) && !r.run && selectable(r.url)
-            && (s.handled_only ? r.handled : s.troubleshoot ? !r.handled : true))) return;
-      const employer = employerOf(r);
-      if (s.troubleshoot && employer && picked.has(employer)) return;
-      picked.add(employer);
-      selected.add(r.url);
-    });
-    renderRows();
-  }
+  if (a === "select-recommended") selectRecommended();
   if (a === "select-none") { selected.clear(); renderRows(); }
+  if (a === "troubleshoot-off") {  // (the hint's and the notice's button: as the switch on the Settings page, turned off)
+    selected.clear();
+    $("troubleshoot").checked = false;
+    act(() => api("/api/settings", {troubleshoot: false}));
+  }
   if (a === "apply") {
     const urls = [...selected].filter(selectable);
     // (one Apply at a time: a second quick press would ask the pre-flight twice and open its window over itself)
@@ -3295,6 +3617,9 @@ document.addEventListener("change", (e) => {
   const t = e.target;
   if (t.id === "company-add" && state) addCompany(t);
   if (t.dataset.pick) { t.checked ? selected.add(t.dataset.pick) : selected.delete(t.dataset.pick); renderRows(); }
+  if (t.id === "pick-all" && state) {  // (the header's box: unticked, as Select recommended; otherwise, as Clear)
+    if ([...selected].some(selectable)) { selected.clear(); renderRows(); } else selectRecommended();
+  }
   if (t.id === "auto") {
     if (t.checked && !confirm("Submit complete applications without asking you first? You can turn this off any time.")) { t.checked = false; return; }
     act(() => api("/api/settings", {auto_submit: t.checked}));
@@ -3346,6 +3671,30 @@ $("phone-summary").addEventListener("keydown", (e) => { if (e.key === "Enter") e
 
 // the link opens GitHub in a new tab; without one (a report being made) it does nothing
 $("report-open").addEventListener("click", (e) => { if (e.currentTarget.href) $("report").close(); });
+
+// The filter drop-downs (details.f): one open at a time. A click outside an open one closes it; Escape closes it and puts
+// the focus back on its summary; a choice in Sort, Posted or Within closes it (closeFilter), the others stay open for
+// another press
+function closeFilter(inside) {
+  const d = inside.closest("details.f");
+  if (!d || !d.open) return;
+  d.open = false;
+  d.querySelector("summary").focus();
+}
+// (on the way down, before the page's own handlers: one of them may draw again what was pressed, the Status buttons)
+document.addEventListener("click", (e) => {
+  for (const d of document.querySelectorAll("details.f[open]")) if (!d.contains(e.target)) d.open = false;
+}, true);
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || document.querySelector("dialog[open]")) return;
+  const d = (document.activeElement && document.activeElement.closest("details.f[open]")) || document.querySelector("details.f[open]");
+  if (!d) return;
+  e.preventDefault();
+  d.open = false;
+  d.querySelector("summary").focus();
+});
+// the search box: the rows it leaves drawn as it's typed in
+$("q").addEventListener("input", (e) => { query = e.target.value; renderRows(); });
 
 route();  // (before the first state: the page the address names)
 (async function poll() {

@@ -100,6 +100,7 @@
    "posted_days": 8,
    "pay": null,
    "ats": "workday",
+   "system": {"key": "workday", "name": "Workday"},
    "fit": {
     "score": 72,
     "reasons": [
@@ -191,6 +192,7 @@
    "posted_days": 8,
    "pay": null,
    "ats": "workday",
+   "system": {"key": "workday", "name": "Workday"},
    "fit": {
     "score": 72,
     "reasons": [
@@ -245,6 +247,7 @@
    "posted_days": 8,
    "pay": null,
    "ats": "workday",
+   "system": {"key": "workday", "name": "Workday"},
    "fit": {
     "score": 72,
     "reasons": [
@@ -299,6 +302,7 @@
    "posted_days": 8,
    "pay": null,
    "ats": "workday",
+   "system": {"key": "workday", "name": "Workday"},
    "fit": {
     "score": 72,
     "reasons": [
@@ -353,6 +357,7 @@
    "posted_days": 8,
    "pay": null,
    "ats": "workday",
+   "system": {"key": "workday", "name": "Workday"},
    "fit": {
     "score": 72,
     "reasons": [
@@ -415,6 +420,7 @@
    "posted_days": 8,
    "pay": null,
    "ats": "workday",
+   "system": {"key": "workday", "name": "Workday"},
    "fit": {
     "score": 72,
     "reasons": [
@@ -469,6 +475,7 @@
    "posted_days": 8,
    "pay": null,
    "ats": "workday",
+   "system": {"key": "workday", "name": "Workday"},
    "fit": {
     "score": 72,
     "reasons": [

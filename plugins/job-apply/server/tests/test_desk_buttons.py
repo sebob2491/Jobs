@@ -225,8 +225,8 @@ def test_show_me_brings_the_jobs_tab_up_or_says_its_closed(srv):
 
 
 def test_clear_unticks_every_opening_and_calls_nothing(srv):
-    """Clear, beside Select recommended: every ticked opening unticked, Apply disabled again, and nothing sent to the
-    desk (ticking is the page's own)."""
+    """Clear, in the apply bar: every ticked opening unticked, Apply disabled again (the bar hidden), and nothing sent
+    to the desk (ticking is the page's own)."""
     desk = _idle_desk(srv)
     fit = {"score": 80, "reasons": ["title matches"], "concerns": [], "blocked": False, "recommended": True}
     desk.listings = [{"company": f"Example {name}", "title": "Technician", "url": f"https://careers.example.com/{i}",
@@ -235,10 +235,10 @@ def test_clear_unticks_every_opening_and_calls_nothing(srv):
     async def go():
         async with _desk_page(desk, at="openings") as (page, calls):
             await page.click("[data-act=select-recommended]")
-            await page.wait_for_selector("#apply:text-is('Apply to 3 selected')")
+            await page.wait_for_selector("#apply:text-is('Apply to 3 jobs')")
             ticked = await page.locator("[data-pick]:checked").count()
             await page.click("[data-act=select-none]")
-            await page.wait_for_selector("#apply:text-is('Apply to selected')")
+            await page.wait_for_selector("#apply", state="hidden")  # (the apply bar, hidden with nothing ticked)
             await page.wait_for_timeout(1700)  # (a refresh: nothing comes back ticked)
             return (calls, ticked, await page.locator("[data-pick]:checked").count(), await page.is_disabled("#apply"),
                     await page.inner_text("#apply-hint"))

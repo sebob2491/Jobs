@@ -52,7 +52,7 @@ stop.
 4. **Record** each one with `log_email(job_id, thread_id, category, summary, received_at)`.
    `summary` is one line, e.g. "Phone screen request from recruiter, reply with availability".
    `received_at` is the message's date (`YYYY-MM-DD`, or its ISO time). The Job Desk's
-   My applications shows it as "Heard <date>: <category>", with the summary as its tooltip.
+   Applications page shows it as "Heard <date>: <category>", with the summary as its tooltip.
    For a thread with several messages, classify and record its newest one. The tool
    never moves a status backwards and ignores a message it has already seen.
 

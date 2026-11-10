@@ -192,7 +192,7 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
 > **Your first application**
 > 1. Press **Find jobs**.
 > 2. Tick the openings you want (or press **Select recommended**).
-> 3. Press **Apply to selected**: the desk fills each one in the desk's browser window.
+> 3. Press **Apply** in the bar that appears: the desk fills each one in the desk's browser window.
 > 4. Answer what it asks under **Needs you**.
 > 5. Check each review page and press **Submit**: nothing is sent before you do (unless you turn on **Submit for me**).
 >
@@ -208,24 +208,24 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
    on the page, and the bar over the list has a **New** group. Ones listed only as "US -
    Multiple Locations", "Remote - US (Field Based)" and the like are kept and marked
    "check the posting": you may be able to do them from your area.
-   **Not interested** on an opening hides it, with a reason if you give one (Title,
-   Company, Location, Pay or Other). It's never applied to, not even by **Apply to
-   selected**; **Undo** (at the foot of the window, or by its row under the bar's **Not
-   interested** group) brings it back. The mark is the job's, so the same posting found on
+   **Not interested** (the ✕ at the end of an opening's row) hides it, with a reason if you
+   give one (Title, Company, Location, Pay or Other). It's never applied to, not even by
+   **Apply**; **Undo** (at the foot of the window, or by its row under the **Not
+   interested** tab) brings it back. The mark is the job's, so the same posting found on
    Indeed and on the employer's site stays hidden on both, and Claude asks you before
    applying to it. For Company, that employer's other openings score 10 lower, said in their
    score's breakdown.
    It searches only when you press it, unless you turn on **Search by itself every 12
-   hours** (under **More**, at the end of the Openings head; off by default; it waits while
+   hours** (in Settings, under Searching and applying; off by default; it waits while
    the queue is paused). Each switch that's on is said in a line under the head. A search running is
    shown in the header, with **Stop search** beside it.
-2. Tick the ones you want, or press **Select recommended**, then **Apply to
-   selected**. **Select recommended** leaves out openings whose posting asks for a
+2. Tick the ones you want, or press **Select recommended**, then **Apply** in the bar
+   that appears. **Select recommended** leaves out openings whose posting asks for a
    degree you don't have (unless it says "or equivalent experience"), and ones the
    desk couldn't open to check, or whose posting puts the job in another state.
    They're under **All**, with the reason, so you can still tick them yourself.
    The desk works through them in the desk's browser window, two at a time, each in its own
-   tab (**Jobs at once**, beside Submit for me, sets 1, 2 or 3), the ones most likely to
+   tab (**Jobs at once**, in Settings under Searching and applying, sets 1 to 5), the ones most likely to
    go all the way first: employers where the plugin's live check reached the review page,
    then job systems it usually gets through, then the rest, and last LinkedIn's and Indeed's
    (their Submit is always yours) and employers where the desk met bot checks more often
@@ -316,7 +316,7 @@ The desk's **Phone alerts** card sends a push to your phone through
 
 #### Cover letters
 
-Turn on **Write a cover letter for each job** (beside Submit for me) and each job you
+Turn on **Cover letter** (beside Submit for me, in the bar that shows once a job is ticked) and each job you
 apply to gets a cover letter of its own, written while the job waits in the queue and
 uploaded wherever its application has a cover letter box:
 
@@ -436,7 +436,7 @@ Claude to open the job desk): its key is new each time the desk starts.
 begun, after asking: they go back to the openings, not skipped, to apply to again. Jobs it had
 begun keep their cards, and a Submit you pressed still goes. **Find jobs** searches again
 whether or not a queue is waiting. To leave the desk going through a long list, turn on
-**Don't wait for me** (beside Jobs at once, now up to 5): a sign-in, or an emailed code only you
+**Don't wait for me** (in Settings, beside Jobs at once): a sign-in, or an emailed code only you
 can read, then waits on its card while the other jobs go on (never another job at the same
 site). A code the desk reads itself (from your inbox, or Claude from your Gmail) still holds
 them while it's looked for, usually a minute: one code at a time, so it never goes to another job. The **Company** box above
@@ -466,7 +466,7 @@ saved since its last call (or since a day or time you give), best score first. I
 search by itself, so for fresh ones, have it search first (or turn on Search by itself every
 12 hours). Claude can offer to do both each morning.
 
-**My applications** (beside Recommended and All) lists each application you sent in,
+**Applications** (its own page in the side menu) lists each application you sent in,
 newest first, with where it stands and when the employer last wrote: "Heard 2026-10-03:
 confirmation" (point at it for the email's one-line summary), or "No reply yet". The bar
 over it groups them: **Waiting**, **Heard back**, **Interviews** (interviewing or an offer)
@@ -538,7 +538,7 @@ Settings in `profile.yaml`:
 | `accept_notices` | `true` | The Job Desk agrees for you to an employer's notice about AI screening of your application and to its privacy notice and terms of use (never a newsletter, job alerts or a talent community, texts or automated calls, a legal waiver, or the terms of your employment), and picks an application's attestation that its information is true (or your consent to its background check), noting each in the job's log. Never in practice mode. `false` leaves them to you. |
 | `accept_cookies` | `false` | The Job Desk declines cookie banners. One with no way to decline (TI's "Agree and Proceed") waits for you, unless this is `true`: then the desk accepts it for you. |
 | `manage_accounts` | `true` | The Job Desk creates your account at a job system with the password you saved on the desk for it (ticking the site's terms, never a newsletter), resets a password the site refuses through its "Forgot password" email, and presses "Resend Account Verification" for an account never verified. A form's security questions are asked on the desk's card and never remembered; a picture code stays yours. Never in practice mode. `false`: the desk fills in Create Account for you to finish. |
-| `jobs_at_once` | `2` | How many applications the Job Desk fills at the same time (1 to 3), each in its own tab of the desk's browser window. Never two at one employer's site or job-system tenant; one at a time signs in, makes an account, resets a password or waits on an emailed code; while a sign-in or code needs you, no other job starts and no other tab comes to the front. `1` fills them one after another. The desk's **Jobs at once** buttons change it there (kept in `desk.json` until this setting changes). |
+| `jobs_at_once` | `2` | How many applications the Job Desk fills at the same time (1 to 5), each in its own tab of the desk's browser window. Never two at one employer's site or job-system tenant; one at a time signs in, makes an account, resets a password or waits on an emailed code; while a sign-in or code needs you, no other job starts and no other tab comes to the front. `1` fills them one after another. The desk's **Jobs at once** buttons change it there (kept in `desk.json` until this setting changes). |
 | `follow_up_days` | `10` | The days an application you sent in waits with no reply (not even a "we received it" email) before the Job Desk's My applications marks it for a follow-up (1 to 90). |
 | `auto_submit_ats` | `[]` | With `submit_mode: auto`, the job systems Claude may submit on without asking (`workday`, `greenhouse`, `lever`, `eightfold`, `successfactors`). The Job Desk has its own switch, **Submit for me**. |
 | `phone_alert_details` | `false` | [Phone alerts](#phone-alerts) name the employer and the job too (they pass through ntfy's servers). The desk's **Say which employer and job** changes it. |

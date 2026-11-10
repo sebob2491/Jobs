@@ -24,9 +24,9 @@ PAGES = {"home": "Home", "openings": "Openings", "applications": "Applications",
          "working": "What's working", "settings": "Settings", "help": "Help"}
 # The cards each page shows (each by its heading's id, in the page's order) on a desk with a job stopped for the person
 # and nothing sent in yet: Home's three cards (not the idle one), no What's working card
-CARDS = {"home": ["needs-h", "done-h", "work-h"], "openings": ["list-h"], "applications": ["list-h"],
+CARDS = {"home": ["needs-h", "done-h", "work-h"], "openings": ["list-h"], "applications": ["apps-h"],
          "answers": ["bank-h"], "working": [],
-         "settings": ["profile-h", "safety-card-h", "pw-h", "phone-h", "alerts-h", "program-h"],
+         "settings": ["profile-h", "safety-card-h", "searching-h", "pw-h", "phone-h", "alerts-h", "program-h"],
          "help": ["how-h", "notes-card-h"]}
 # And the top bar's controls it shows while a search runs (Stop search shows only then, on the pages that have it)
 SEARCH = ["searched", "stop-search", "find"]
@@ -126,7 +126,7 @@ def test_the_page_opens_on_home_and_each_menu_link_shows_its_pages_cards(srv):
         assert seen[unknown] == shown("home", f"#{unknown}"), (unknown, seen[unknown])
     assert seen["frame"] == {"stopped": True, "sprite": "svg", "old": 0, "frame": ["side", "main"],
                              "notices": "content",
-                             "pages": ["home", "openings applications", "answers", "working", "settings", "help"],
+                             "pages": ["home", "openings", "applications", "answers", "working", "settings", "help"],
                              "headings": ["page-title"]}, seen["frame"]
 
 
@@ -154,10 +154,11 @@ def test_a_search_that_isnt_running_shows_no_stop_search_on_any_page(srv):
 
 
 def test_applications_chooses_my_applications_and_recommended_leads_back_to_openings(srv):
-    """The design's A8, test 7. Openings and Applications share the Openings card, and its tab and the address stay
-    in step: #applications chooses My applications; pressing Recommended (or All) leads back to #openings; pressing
-    My applications leads to #applications; and the menu's Openings link, while My applications is chosen, chooses
-    Recommended."""
+    """The design's A8, test 7, as Version B has it: the Applications page lists the applications in its own list
+    (B6's #app-rows) with no Openings tab in sight, and the Openings tabs and the address stay in step: pressing All,
+    then Recommended, on Openings stays on #openings; the menu's Applications link (Version B's My applications, no
+    longer a tab) leads to #applications; and the menu's Openings link leads back to Recommended (the tab as it was
+    left: B2's route() no longer sets it). An opening is ticked on Openings, so the apply bar (B5) shows there."""
     desk = _idle_desk(srv)
     desk.listings = [{"company": "Example Fab", "title": "Field Service Engineer", "location": "Phoenix, AZ",
                       "url": "https://careers.example.com/fab/1", "fit": _fit(80)},
@@ -166,10 +167,13 @@ def test_applications_chooses_my_applications_and_recommended_leads_back_to_open
     sent = srv.add_job(url="https://careers.example.com/etch/3", title="Process Technician",
                        company="Example Etch")["job"]
     srv.update_job(sent["id"], status="applied")
+    # (the tabs and the list in sight: the Openings page's #rows, or the Applications page's #app-rows)
     read = """() => ({
         hash: location.hash, title: document.getElementById('page-title').textContent,
-        pressed: [...document.querySelectorAll('[data-filter][aria-pressed=true]')].map((b) => b.dataset.filter),
-        rows: [...document.querySelectorAll('#rows .title')].map((t) => t.textContent),
+        pressed: [...document.querySelectorAll('[data-filter][aria-pressed=true]')]
+          .filter((b) => b.getClientRects().length > 0).map((b) => b.dataset.filter),
+        rows: [...document.querySelectorAll('#rows .title, #app-rows .title')]
+          .filter((t) => t.getClientRects().length > 0).map((t) => t.textContent),
         apply: document.getElementById('apply').getClientRects().length > 0,
     })"""
 
@@ -179,19 +183,24 @@ def test_applications_chooses_my_applications_and_recommended_leads_back_to_open
             async with person_browser() as browser:
                 page = await browser.new_page()
                 await open_desk(page, desk, "applications")
-                await page.wait_for_selector("#rows li.row.app")
+                await page.wait_for_selector("#app-rows li.row.app")
                 seen = {"applications": await page.evaluate(read)}
                 # (an application's row is .row.app: a row of the list, not the page's frame, which is .app too)
-                seen["row"] = await page.evaluate("document.querySelector('#rows li.row.app').offsetHeight")
-                await page.click("[data-filter=recommended]")
-                await page.wait_for_function("location.hash === '#openings'")
+                seen["row"] = await page.evaluate("document.querySelector('#app-rows li.row.app').offsetHeight")
+                await page.click('.nav a[href="#openings"]')  # (the Openings tabs are on the Openings page)
                 await page.wait_for_selector("#rows [data-pick]")
-                seen["recommended"] = await page.evaluate(read)
+                await page.check("[data-pick='https://careers.example.com/fab/1']")  # (the apply bar shows)
                 await page.click("[data-filter=all]")
                 await page.wait_for_selector("#rows li.row >> nth=1")
                 seen["all"] = await page.evaluate(read)
-                await page.click("[data-filter=mine]")
-                await page.wait_for_function("location.hash === '#applications'")
+                await page.click("[data-filter=recommended]")
+                await page.wait_for_function("location.hash === '#openings'")
+                await page.wait_for_selector("#rows li.row >> nth=1", state="detached")
+                seen["recommended"] = await page.evaluate(read)
+                await page.click('.nav a[href="#applications"]')  # (My applications is the Applications page)
+                # (the address changes at once; the page is switched a moment after, when the browser says it changed)
+                await page.wait_for_function(
+                    "location.hash === '#applications' && document.body.dataset.page === 'applications'")
                 seen["mine"] = await page.evaluate(read)
                 await page.wait_for_timeout(1700)  # (a refresh: the tab and the address stay as they are)
                 seen["later"] = await page.evaluate(read)
@@ -199,7 +208,7 @@ def test_applications_chooses_my_applications_and_recommended_leads_back_to_open
                 await page.wait_for_selector("#rows [data-pick]")
                 seen["menu"] = await page.evaluate(read)
                 await page.go_back()
-                await page.wait_for_selector("#rows li.row.app")
+                await page.wait_for_selector("#app-rows li.row.app")
                 seen["back"] = await page.evaluate(read)
                 await browser.close()
                 return seen
@@ -207,7 +216,8 @@ def test_applications_chooses_my_applications_and_recommended_leads_back_to_open
             await desk.stop()
 
     seen = run(go())
-    mine = {"hash": "#applications", "title": "Applications", "pressed": ["mine"], "rows": ["Process Technician"],
+    # (Version B: no My applications tab, so no tab is pressed on Applications)
+    mine = {"hash": "#applications", "title": "Applications", "pressed": [], "rows": ["Process Technician"],
             "apply": False}
     recommended = {"hash": "#openings", "title": "Openings", "pressed": ["recommended"],
                    "rows": ["Field Service Engineer"], "apply": True}
@@ -270,11 +280,13 @@ def test_the_menus_numbers_match_the_cards(srv, job_apply_home):
                 numbers = await page.evaluate(_NUMBERS)
                 cards = {"home": await page.inner_text("#needs-count")}
                 await _at(page, "openings")
+                await page.click("#more > summary")  # (Status is under More filters)
                 cards["openings bar"] = " ".join((await page.inner_text("[data-stop=new]")).split())
                 await page.click("[data-stop=new]")
                 await page.wait_for_selector("[data-stop=new][aria-pressed=true]")
                 cards["openings"] = await page.locator("#rows li.row").count()
-                cards["applications"] = await page.inner_text("#mine-count")
+                await _at(page, "applications")  # (My applications is the Applications page)
+                cards["applications"] = " ".join((await page.inner_text("[data-app-group=all]")).split())
                 await _at(page, "answers")
                 cards["answers"] = await page.inner_text("#bank-count")
                 await _at(page, "help")
@@ -291,7 +303,7 @@ def test_the_menus_numbers_match_the_cards(srv, job_apply_home):
                        "help": [str(want["help"]), "count"]}, numbers
     answered, total = (int(n) for n in cards["answers"].removesuffix(" answered").split(" of "))
     assert cards == {"home": str(want["home"]), "openings bar": f"Not started {want['openings']}",
-                     "openings": want["openings"], "applications": f"({want['applications']})",
+                     "openings": want["openings"], "applications": f"All {want['applications']}",
                      "answers": f"{total - want['answers']} of {total} answered",
                      "help": f"Notes ({want['help']})"}, cards
     assert answered == total - want["answers"]
@@ -624,7 +636,7 @@ def test_the_new_settings_and_help_cards_say_the_designs_words(srv):
     assert [" ".join(line.split()) for line in seen["how"]] == [
         "Find jobs searches the career sites of the employers on your lists, and ranks what it finds against your "
         "profile.",
-        "You pick openings and press Apply to selected. The desk fills each application in the desk's browser window, "
+        "You pick openings and press Apply. The desk fills each application in the desk's browser window, "
         "up to its review page.",
         "When a site needs you (a question, a sign-in, a bot check), the job waits under Needs you on the Home page.",
         'Nothing is submitted until you press Submit, unless you turned on "Submit for me". LinkedIn and Indeed are '

@@ -17,22 +17,22 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   Openings first saved since the user's last visit (the desk keeps when they last looked
   at the page, `last_seen` in `desk.json`, and the look before this visit; a look 30 minutes
   after the last begins a new visit) carry a **New** mark all visit long, and make the bar's
-  **New** group. **Not interested** on an opening hides it, with an optional reason (Title,
-  Company, Location, Pay, Other), kept in the tracker: it's never queued, by Apply to
-  selected or otherwise, until its **Undo** (in the word at the foot of the window, or by its
-  row in the bar's **Not interested** group). For Company, that employer's other openings
+  **New** group. **Not interested** (the ✕ at the end of an opening's row) hides it, with an
+  optional reason (Title, Company, Location, Pay, Other), kept in the tracker: it's never
+  queued, by Apply or otherwise, until its **Undo** (in the word at the foot of the window, or
+  by its row under the **Not interested** tab). For Company, that employer's other openings
   score 10 lower ("you said not interested in Acme −10"). It isn't offered on a job the desk
   has a card for (Skip job is for those) or one sent in. The mark is the job's, whichever
   site its posting is read from (Indeed's, or the employer's once they're one job).
   `list_jobs` and `get_job` say `not_interested: true` with the reason, `open_application`
   warns, and `submit_application` presses nothing for it without `user_confirmed`: ask the
   user before applying to one.
-  It searches only when pressed. **Search by itself every 12 hours** (under the Openings
-  head's **More**, off unless the user turns it on) also searches when the openings are
+  It searches only when pressed. **Search by itself every 12 hours** (in Settings, under
+  Searching and applying; off unless the user turns it on) also searches when the openings are
   over 12 hours old, but not while the queue is paused. While a search runs, the header
   says so (by itself, or pressed) with **Stop search** beside it: the search ends and the
   openings found before it stay.
-- **Apply to selected** works through the picked jobs in the desk's browser window, two at a
+- **Apply** (the bar that shows on Openings once a job is ticked: "Apply to 3 jobs") works through the picked jobs in the desk's browser window, two at a
   time by default, each in its own tab. Two or more picked together go the likeliest to go
   all the way first (the page says so once): employers in `data/desk_handled.yaml`, then job
   systems most of whose listed employers are there (Workday, say), then the rest, and last
@@ -169,7 +169,7 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   the answers there instead of reading every review page again. It never shows a password,
   an emailed code or a security answer, and it's on the desk page only (never in the job's
   log, a note or a problem report).
-- **Jobs at once** (1 to 5, beside Submit for me; `settings.jobs_at_once` in profile.yaml,
+- **Jobs at once** (1 to 5, in Settings, under Searching and applying; `settings.jobs_at_once` in profile.yaml,
   default 2) is how many applications the desk fills at the same time, each in its own tab.
   Never two at one employer's site or job-system tenant; one at a time signs in, makes an
   account, resets a password or waits on an emailed code (the inbox is one); unless **Don't wait for
@@ -247,7 +247,7 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   plugin's live check took a test applicant to the review page (a chip marks them in
   the list either way). Bot checks, CAPTCHAs and steps it can't do yet are elsewhere.
   Each of the Openings head's switches that's on is said in a muted line under the head.
-- **Troubleshooting** (under the head's **More**, with Search by itself) is for getting the desk going at more employers: Find jobs
+- **Troubleshooting** (in Settings, under Searching and applying) is for getting the desk going at more employers: Find jobs
   searches every list's employers (the user's own lists, and the HR list too), only the
   openings where the desk doesn't go all the way yet show, whatever their fit, every one is
   tried, and nothing is submitted while it's on (the header says so; the desk still makes
@@ -269,7 +269,7 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   most asked (each entry's `seen`), with **Show all** for the rest. Answered once, each goes to `answers.yaml` and fills that question at every employer from then on;
   **Your answers** under it shows the ones given. Claude can ask them in chat too
   (`common_questions`, as setup does).
-- **My applications** (a tab beside Recommended and All) lists each job sent in, or filled
+- **Applications** (its own page in the side menu) lists each job sent in, or filled
   and waiting on its review page, newest first, with where it stands in the tracker and
   when the employer last wrote ("Heard 2026-10-03: confirmation", with the email's
   one-line summary as its tooltip; "No reply yet" before any). A bar over it groups them:
@@ -291,7 +291,7 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
 - **Tailor my resume for each job** holds each picked job, before its browser tab
   opens, until Claude has written a resume for it (see Tailoring resumes). The page
   says how many are waiting. **Use my usual resume** sends one on without.
-- **Write a cover letter for each job** has the desk write each picked job's cover letter by
+- **Cover letter** (a switch in the apply bar: "Write a cover letter for each job") has the desk write each picked job's cover letter by
   itself, in the background, through the user's own Claude Code sign-in (see Cover letters).
 
 ## The desk's wording
@@ -324,7 +324,7 @@ Use the desk's own words when you talk about it, and keep to them when you chang
 2. Call `open_job_desk()`. It opens the page in the user's browser and returns its
    address. The address carries a private key, so don't post it anywhere.
 3. In two or three sentences, tell the user what to press: **Find jobs**, tick the
-   openings they want (or **Select recommended**), then **Apply to selected**. Say
+   openings they want (or **Select recommended**), then **Apply** in the bar that appears. Say
    that it stops at each review page unless they turn on **Submit for me**. Then see
    **Emailed codes through Gmail** below: with the Gmail connector here, start its watch
    (or ask its one question) before you finish your reply.

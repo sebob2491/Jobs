@@ -142,36 +142,45 @@ Idle.
 ## list-h
 Openings
 Recommended
+15
 All
-My applications
-Only where the desk goes all the way
+15
 Select recommended
-Clear
-More
-Troubleshooting
-Search by itself every 12 hours
-Sort
-Fit
-Pay
+Add job links
+Add
+Best fit
+Best fit
+Best paid
 Newest
+Pay: any
 Pay at least $
-/yr
-Posted
-Any
-7 days
-14 days
-30 days
-Within
-Any
-10 mi
-25 mi
-50 mi
-100 mi
+a year
+Hides a job only when its posting lists its pay and the most it pays is below this. A job that doesn't list its pay always stays.
+Posted: any time
+Any time
+Last 7 days
+Last 14 days
+Last 30 days
+A job whose site gives no date always stays.
+Within: any distance
+Any distance
+10 miles
+25 miles
+50 miles
+100 miles
 needs your home town
 Workplace
 Remote
 Hybrid
 On-site
+A job that doesn't say where it is done always stays.
+More filters
+Status
+Any 15
+Bot checks 1
+Questions and sign-ins 8
+Stuck 3
+Ready 3
 Type
 Full-time
 Part-time
@@ -187,102 +196,121 @@ Travel ≤ 25%
 Entry level
 Not senior
 Company
-Any 15
-Bot checks 1
-Questions and sign-ins 8
-Stuck 3
-Ready 3
-Add
-Apply to selected
-Submit for me when nothing needs me
-Off: you press Submit for each one.
-Jobs at once
-1
-2
-3
-4
-5
-Don't wait for me
-Off: a sign-in or emailed code holds the other jobs until you're done, or 5 minutes pass.
-Tailor my resume for each job
-Off: your usual resume goes with every application.
-Write a cover letter for each job
-On: Claude writes one for each job, with your Claude login; the first waits for your OK.
+Only where the desk goes all the way
+Fit
+Job
+Pay
+Posted
+Applies on
+Status
 72
 Equipment Technician
-Example Questions · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Questions · Phoenix, AZ
+Not listed
+YYYY-MM-DD
+Workday
 Questions
 72
 Equipment Technician
-Example Sign In · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Sign In · Phoenix, AZ
+Not listed
+YYYY-MM-DD
+Workday
 Sign in
 72
 Equipment Technician
-Example Code · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Code · Phoenix, AZ
+Not listed
+YYYY-MM-DD
+Workday
 Emailed code
 72
 Process Technician
-Example Code · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Code · Phoenix, AZ
+Not listed
+YYYY-MM-DD
+Workday
 Emailed code
 72
 Equipment Technician
-Example Bot · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Bot · Phoenix, AZ
+Not listed
+YYYY-MM-DD
+Workday
 Bot check
 72
 Equipment Technician
-Example Captcha · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Captcha · Phoenix, AZ
+Not listed
+YYYY-MM-DD
+Workday
 CAPTCHA
 72
 Equipment Technician
-Example Stuck · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Stuck · Phoenix, AZ
+Not listed
+YYYY-MM-DD
+Workday
 Stuck
 72
 Equipment Technician
-Example Site Error · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Site Error · Phoenix, AZ
+Not listed
+YYYY-MM-DD
+Workday
 Stuck
 72
 Equipment Technician
-Example Not Sent · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Not Sent · Phoenix, AZ
+Not listed
+YYYY-MM-DD
+Workday
 Stuck
 72
 Equipment Technician
-Example Own Submit · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Own Submit · Phoenix, AZ
+Not listed
+YYYY-MM-DD
+Workday
 Your Submit
 72
 Equipment Technician
-Example Check · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Check · Phoenix, AZ
+Not listed
+YYYY-MM-DD
+Workday
 Check if it went in
 72
 Equipment Technician
-Example Tailor · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Tailor · Phoenix, AZ
+Not listed
+YYYY-MM-DD
+Workday
 Waiting for a resume
 72
 Equipment Technician
-Example Twice · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Twice · Phoenix, AZ
+Not listed
+YYYY-MM-DD
+Workday
 Already begun?
 72
 Equipment Technician
-Example Restart · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Restart · Phoenix, AZ
+Not listed
+YYYY-MM-DD
+Workday
 Restarted
 72
 Equipment Technician
-Example Letter · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Letter · Phoenix, AZ
+Not listed
+YYYY-MM-DD
+Workday
 Cover letter to check
+
+## apps-h
+(hidden)
 
 ## bank-h
 Common questions
@@ -314,6 +342,23 @@ Edit your profile
 Safety
 What the desk may do for you and what it never does, as it is set now.
 See your safety settings
+
+## searching-h
+Searching and applying
+Jobs at once
+How many applications the desk fills at the same time.
+1
+2
+3
+4
+5
+Don't wait for me
+A sign-in or an emailed code waits on its card, and the other jobs carry on.
+Off: a sign-in or emailed code holds the other jobs until you're done, or 5 minutes pass.
+Search by itself every 12 hours
+The desk searches again when the openings are over 12 hours old. Never while the queue is paused.
+Troubleshooting
+For getting the desk going at more employers. It searches every list and shows only the openings where the desk doesn't go all the way yet. Nothing is submitted while it is on.
 
 ## pw-h
 Site passwords
@@ -355,7 +400,7 @@ The desk runs inside Claude here. It stops when you close Claude.
 ## how-h
 How the desk works
 Find jobs searches the career sites of the employers on your lists, and ranks what it finds against your profile.
-You pick openings and press Apply to selected. The desk fills each application in the desk's browser window, up to its review page.
+You pick openings and press Apply. The desk fills each application in the desk's browser window, up to its review page.
 When a site needs you (a question, a sign-in, a bot check), the job waits under Needs you on the Home page.
 Nothing is submitted until you press Submit, unless you turned on "Submit for me". LinkedIn and Indeed are always submitted by you.
 Answers you give here are saved in ~/.job-apply/answers.yaml unless you untick "remember".

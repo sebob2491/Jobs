@@ -1767,7 +1767,8 @@ class Desk:
                     f"that's complete without asking on these job systems: {auto}. Never LinkedIn or Indeed, and the "
                     "desk itself still waits for your Submit or Submit for me." if s.submit_mode == "auto" else ""),
                  f"{profile} submit_mode (dry_run is practice mode: nothing is sent)")
-        submit_box = "The Submit for me box under Openings (kept in desk.json)"
+        submit_box = ("The Submit for me switch, in the bar that shows on Openings once a job is ticked "
+                      "(kept in desk.json)")
         if dry:
             line("auto_submit", "Submit for me", "off in practice mode",
                  "Practice mode sends nothing: the desk stops at each review page.", submit_box)
@@ -1886,7 +1887,7 @@ class Desk:
               f"The desk fills up to {n} applications at the same time, each in its own tab.")
              + " Never two at one employer's site, and only one at a time signs in, makes an account or waits on an "
                "emailed code.",
-             "The Jobs at once buttons under Openings"
+             "The Jobs at once buttons in Settings, under Searching and applying"
              + (" (your choice there is in force)" if a.jobs_at_once is not None
                 else f", or {profile} jobs_at_once"))
         if a.hold_submits:
@@ -1898,8 +1899,9 @@ class Desk:
             said = ("Practice mode sends nothing either way." if dry else
                     "Nothing is sent while your profile can't be read." if unread else "The desk applies for real.")
         line("troubleshoot", "Troubleshooting", "on" if a.hold_submits else "off", said,
-             "The Troubleshooting box under Openings, More")
-        letters_box = "The Write a cover letter for each job box under Openings (kept in desk.json)"
+             "The Troubleshooting switch in Settings, under Searching and applying")
+        letters_box = ("The Cover letter switch, in the bar that shows on Openings once a job is ticked "
+                       "(kept in desk.json)")
         if a.letters:
             line("cover_letters", "Cover letters", "on" if a.letters_approved else "on (the first waits for your OK)",
                  "Claude writes a cover letter for each job you apply to, through your own Claude Code sign-in (your "

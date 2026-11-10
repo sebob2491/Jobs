@@ -14,22 +14,33 @@ Applied: 1
 Interviewing: 1
 
 ## list-h
-Openings
-Recommended
+(hidden)
+
+## apps-h
+Applications
 All
-My applications (2)
-All 2
-Waiting 1, 1 to follow up
-Heard back 0
-Interviews 1
-Closed 0
+2
+Waiting
+1, 1 to follow up
+Heard back
+Interviews
+1
+Closed
+Job
+Applied
+Last heard
+Status
 Equipment Technician
-Example Etch · applied YYYY-MM-DD · No reply yet
+Example Etch
+YYYY-MM-DD
+No reply yet
+Applied
 Follow-up due YYYY-MM-DD
 Follow up
-Applied
 Field Service Engineer
-Example Optics · applied YYYY-MM-DD · Heard YYYY-MM-DD: interview
+Example Optics
+YYYY-MM-DD
+Heard YYYY-MM-DD: interview
 Interviewing
 Prep me
 
@@ -77,6 +88,23 @@ Safety
 What the desk may do for you and what it never does, as it is set now.
 See your safety settings
 
+## searching-h
+Searching and applying
+Jobs at once
+How many applications the desk fills at the same time.
+1
+2
+3
+4
+5
+Don't wait for me
+A sign-in or an emailed code waits on its card, and the other jobs carry on.
+Off: a sign-in or emailed code holds the other jobs until you're done, or 5 minutes pass.
+Search by itself every 12 hours
+The desk searches again when the openings are over 12 hours old. Never while the queue is paused.
+Troubleshooting
+For getting the desk going at more employers. It searches every list and shows only the openings where the desk doesn't go all the way yet. Nothing is submitted while it is on.
+
 ## pw-h
 Site passwords
 1 of 8 saved
@@ -118,7 +146,7 @@ The desk runs inside Claude here. It stops when you close Claude.
 ## how-h
 How the desk works
 Find jobs searches the career sites of the employers on your lists, and ranks what it finds against your profile.
-You pick openings and press Apply to selected. The desk fills each application in the desk's browser window, up to its review page.
+You pick openings and press Apply. The desk fills each application in the desk's browser window, up to its review page.
 When a site needs you (a question, a sign-in, a bot check), the job waits under Needs you on the Home page.
 Nothing is submitted until you press Submit, unless you turned on "Submit for me". LinkedIn and Indeed are always submitted by you.
 Answers you give here are saved in ~/.job-apply/answers.yaml unless you untick "remember".
