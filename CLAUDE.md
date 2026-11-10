@@ -36,7 +36,8 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   - `history.py`: the desk's run history (`runs.jsonl`, the This week window);
   - `render.py`: a resume or cover letter as a PDF;
   - `doctor.py`: the setup check (`job-apply-doctor`, the `doctor` tool);
-  - `updates.py`: whether a newer version is out, for the desk to say;
+  - `updates.py`: whether a newer version is out, and the desk's Update button (the installed copy's download, checksum
+    and installer; the plugin copy's two `claude` commands);
   - `fixtures.py`: the scrubber.
 - `data/companies.yaml` is the default employer list (`semiconductor-az`), and
   `data/lists/*.yaml` holds the others (`phoenix-metro`, `las-vegas`). A person's own
@@ -284,12 +285,22 @@ this file says otherwise, it wins.
   - a saved password goes only onto its own system's sites;
   - the inbox app password only reads sign-up codes (and, with `manage_accounts`, the reset
     email a site was just asked for, from that site);
+  - the desk's "Test it now" (Settings, Email codes) signs in to the inbox with that password and out again: it opens
+    no mailbox and reads no message, and neither the password nor the address is in its answer or a log;
   - with `settings.email_codes` on (and no app password the desk can use), Claude reads through the Gmail
     connector only the messages a desk request names (that job's own senders, since its wait began: the
     request's query, never wider, never `in:anywhere`), and the desk applies the same checks to them as to
     the inbox's (`mailbox.pick`) and types the code itself; Claude never sends, deletes, labels or marks mail,
     and a password reset's email is never asked of it (resets stay with the app password: the owner's call, Oct 21);
   - never ask for a password in chat (the desk page holds them).
+- **Updating:** the desk's Update button fetches only this repository's own Release (the repository named in the
+  installed `plugin.json`; nothing the page or the network's answer says changes where from), over https, and runs the
+  installer only after its SHA-256 matches the Release's checksum file. It runs with the person's own rights, never
+  through a shell, and never while a job is being filled. A plugin copy runs Claude's two update commands and nothing
+  else. The routes read nothing from the page.
+- **Settings on the page:** `POST /api/profile/settings` writes only the keys and values in its table (never
+  `auto_submit_ats`, `headless` or `submit_mode: auto`); "Open the folder" opens the desk's own folder and takes no path;
+  a remembered answer the desk treats as an ID leaves the desk only when its Show is pressed.
 - **Answers come only from the profile or the person.** Never overstate education or
   experience: coursework is not a degree. Where the profile supports the answer, the desk
   answers by itself (as automatic as possible: the owner's call, Oct 21; e.g. "Can you provide
