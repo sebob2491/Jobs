@@ -16,7 +16,7 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 import keyring.errors
 import pytest
-from conftest import MemoryVault, run
+from conftest import MemoryVault, browser_available, run
 
 from job_apply import config, pipeline, vault
 from job_apply import desk as desk_module
@@ -642,6 +642,155 @@ def test_a_password_typed_while_the_desk_makes_its_passwords_is_never_written_ov
     days = {name: "2026-11-10" for name in SITE[:-1]}
     assert state["passwords_made"] == days and made_days(job_apply_home) == days
     assert state["passwords"][last.removesuffix("_password")] is True
+
+
+# ------------------------------------------------------------------ typed only on its own sites (E7's test 12)
+# The existing sign-in tests, run once more with passwords made by /api/password/make: test_pipeline's
+# test_the_saved_password_goes_into_its_systems_own_frame_on_an_employers_page and
+# test_a_frame_from_another_site_gets_no_password_and_no_press_on_its_systems_page (the desk's driver), and
+# test_server_tools' test_a_saved_password_goes_only_into_a_password_box_on_its_own_site (the tool that types one, for
+# the driver and for Claude). Made-up employers at made-up addresses, answered here: nothing leaves the machine.
+needs_browser = pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")
+SIGNED_IN_AS = "sam.rivera@example.com"  # (conftest's profile)
+PRESSED = "pressed “Sign In” with your saved password"  # the driver's log line, as it says it today
+SENT = "() => window.sent ? window.sent() : JSON.parse(localStorage.getItem('sent'))"
+TYPED = "() => [...document.querySelectorAll('input')].map((box) => box.value)"
+
+
+async def typed_anywhere(page) -> list:
+    """What every box of a tab holds, in the page and each of its frames."""
+    return [value for frame in page.frames for value in await frame.evaluate(TYPED)]
+
+
+@needs_browser
+def test_a_made_password_is_typed_into_its_own_systems_sign_in_each_systems_own(srv, job_apply_home, memory_vault):
+    """The desk makes its passwords, and its own driver signs in with them: iCIMS' in iCIMS' frame on an employer's
+    careers page, and Workday's on Workday's own sign-in page. Each job system's sign-in gets its own, never
+    another's."""
+    from test_pipeline import FRAMED_SIGN_IN, FRAMING_PAGE, ICIMS_HOST, _framed_site, state, until
+
+    careers, icims = "https://careers.examplefab.example/jobs/2002", ICIMS_HOST + "/jobs/2002/login"
+    workday = "https://examplelitho.wd1.myworkdayjobs.com/External/login"
+    jobs = {icims: srv.add_job(url=careers, title="FSE", company="Example Fab")["job"],
+            workday: srv.add_job(url=workday, title="Technician", company="Example Litho")["job"]}
+    desk = Desk(srv)
+
+    async def signed_in(at: str) -> tuple:
+        r = desk.applier.enqueue(jobs[at]["id"])
+        await until(lambda: PRESSED in r.log or r.status not in ("queued", "running"), about=state(r))
+        frame = next(f for f in r.page.frames if f.url.startswith(at))
+        sent, log = await frame.evaluate(SENT), list(r.log)
+        await desk.applier.skip(r.job_id)  # (out of the queue's way: the next job's turn)
+        return sent, log
+
+    async def go():
+        frame = f'<iframe src="{icims}?in_iframe=1" width="600" height="300"></iframe>'
+        await _framed_site(srv, {careers: FRAMING_PAGE.format(frames=frame), icims: FRAMED_SIGN_IN,
+                                 workday: FRAMED_SIGN_IN})
+        async with serving(desk) as (c, h):
+            assert (await ask(c, h, MAKE, {})).json() == {"made": SITE}
+            return {at: await signed_in(at) for at in jobs}
+
+    sent = run(go())
+    made = {name: config.get_secret(name) for name in SITE}
+    assert all(keeps_the_rules(password) for password in made.values()) and len(set(made.values())) == len(SITE)
+    for at, name in ((icims, "icims_password"), (workday, "workday_password")):
+        said, log = sent[at]
+        assert said == [SIGNED_IN_AS, made[name]], (at, log)
+        assert PRESSED in log, (at, log)
+        assert not any(password in line for line in log for password in made.values()), at
+
+
+@needs_browser
+def test_a_made_password_is_typed_on_no_other_site(srv, job_apply_home, memory_vault):
+    """With every job system's password made: a sign-in in a frame from another site, and one at an address that only
+    begins like iCIMS', on iCIMS' own page; then a sign-in page of an employer's own. None gets the email or a
+    password, nor has its Sign In pressed: each sign-in is the person's."""
+    from test_pipeline import FRAMED_SIGN_IN, FRAMING_PAGE, ICIMS_HOST, _framed_site, state, until
+
+    page = ICIMS_HOST + "/jobs/2002/job"
+    widget, lookalike = "https://widgets.examplead.example/signin", ICIMS_HOST + ".evil.example/login"
+    employer = "https://careers.examplelitho.example/jobs/7/login"
+    jobs = {page: srv.add_job(url=page, title="FSE", company="Example Fab")["job"],
+            employer: srv.add_job(url=employer, title="Technician", company="Example Litho")["job"]}
+    desk = Desk(srv)
+
+    async def left_to_the_person(at: str, sign_ins: tuple) -> tuple:
+        r = desk.applier.enqueue(jobs[at]["id"])
+        await until(lambda: r.status == "needs_you", about=state(r))
+        await asyncio.sleep(1)  # (a press would have shown by now)
+        seen = []
+        for url in sign_ins:
+            frame = next(f for f in r.page.frames if f.url == url)
+            seen.append(await frame.evaluate("() => [window.sent(), document.getElementById('em')?.value, "
+                                             "document.getElementById('pw')?.value]"))
+        out = (r.need, seen, await typed_anywhere(r.page), list(r.log))
+        await desk.applier.skip(r.job_id)  # (out of the queue's way: the next job's turn)
+        return out
+
+    async def go():
+        frames = "".join(f'<iframe src="{u}" width="600" height="300"></iframe>' for u in (widget, lookalike))
+        await _framed_site(srv, {page: FRAMING_PAGE.format(frames=frames), widget: FRAMED_SIGN_IN,
+                                 lookalike: FRAMED_SIGN_IN, employer: FRAMED_SIGN_IN})
+        async with serving(desk) as (c, h):
+            assert (await ask(c, h, MAKE, {})).json() == {"made": SITE}
+            return [await left_to_the_person(page, (widget, lookalike)),
+                    await left_to_the_person(employer, (employer,))]
+
+    framed, own = run(go())
+    made = {config.get_secret(name) for name in SITE}
+    assert len(made) == len(SITE) and all(keeps_the_rules(password) for password in made)
+    for need, seen, typed, log in (framed, own):
+        assert need == "sign_in", log
+        assert all(sign_in == [None, "", ""] for sign_in in seen), (seen, log)
+        assert not made & set(typed) and not any(typed), log
+        assert not any("saved password" in line or line.startswith("pressed") for line in log), log
+    assert len(framed[1]) == 2 and len(own[1]) == 1
+
+
+@needs_browser
+def test_the_tool_that_types_a_made_password_types_it_only_into_a_password_box_on_its_own_site(srv, job_apply_home,
+                                                                                              memory_vault):
+    """fill_secret, which the desk's driver and Claude both type a saved password with: a made one goes into a
+    password box on its own job system's site, and is refused on an employer's own site and on another job system's
+    (which gets its own made one). It's never read back from the page."""
+    from test_server_tools import routed
+
+    routed(srv)
+    desk = idle_desk(srv)
+
+    async def make():
+        async with serving(desk) as (c, h):
+            return (await ask(c, h, MAKE, {})).json()
+
+    assert run(make()) == {"made": SITE}
+    workday, neogov = config.get_secret("workday_password"), config.get_secret("neogov_password")
+    assert keeps_the_rules(workday) and keeps_the_rules(neogov) and workday != neogov
+
+    def boxes(url: str) -> dict:
+        run(srv.browser.goto(url))
+        return {f["label"]: f["id"] for f in run(srv.inspect_form(False))["fields"]}
+
+    def held() -> str:
+        return run(run(srv.browser.page()).evaluate("() => document.getElementById('pw').value"))
+
+    fields = boxes("https://careers.example.com/a")  # an employer's own site
+    out = run(srv.fill_secret(fields["Email"], "workday_password"))
+    assert out["ok"] is False and "password box" in out["error"]
+    for name in ("workday_password", "neogov_password"):
+        out = run(srv.fill_secret(fields["Password"], name))
+        assert out["ok"] is False and "another site" in out["error"], name
+    assert held() == ""
+    fields = boxes("https://www.governmentjobs.com/app/signin")  # another job system's: its own alone
+    out = run(srv.fill_secret(fields["Password"], "workday_password"))
+    assert out["ok"] is False and "another site" in out["error"] and held() == ""
+    assert run(srv.fill_secret(fields["Password"], "neogov_password")) == {"ok": True} and held() == neogov
+    fields = boxes("https://acme.wd1.myworkdayjobs.com/en-US/External/login")  # its own
+    out = run(srv.fill_secret(fields["Password"], "neogov_password"))
+    assert out["ok"] is False and "another site" in out["error"] and held() == ""
+    assert run(srv.fill_secret(fields["Password"], "workday_password")) == {"ok": True} and held() == workday
+    read = str(run(srv.inspect_form(False)))
+    assert workday not in read and neogov not in read
 
 
 # ------------------------------------------------------------------ what the review asks of all three
