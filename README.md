@@ -235,6 +235,9 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
    education blocks, and stops at each review page. It never works on two jobs at
    one employer's site at once, and only one job at a time signs in, makes an account or
    waits on an emailed code. **Working on** shows each job under way.
+   **Home** shows what to do now: what needs you first, then what's ready to submit, then what
+   was done this visit, beside the jobs being worked on and the week so far. With two or more
+   jobs waiting, **Go through them** takes you through them one at a time.
 3. **Needs you** lists what it can't do alone:
    - Questions your profile doesn't answer. You answer them on the page, and they're
      remembered for later applications unless you untick that. A remembered answer
@@ -415,7 +418,7 @@ gone in, its tab stays open for you to see the confirmation while it's among the
 that did; older ones are closed, so a long queue doesn't leave dozens of tabs open. A job
 waiting on you, or that failed, keeps its tab. Jobs already marked applied are never queued
 again. If Submit doesn't bring up a confirmation, the job
-waits in **Needs you** with **I submitted it myself** rather than being counted as sent, and
+waits under **Ready to submit** with **I submitted it myself** rather than being counted as sent, and
 **Submit for me** never presses that job's Submit again (even after a restart): picked
 again, it stops at the review page for you. A job-alerts or newsletter box with its own
 Submit (in a site's footer, say) is never taken for the application's.
@@ -477,7 +480,10 @@ to paste to Claude, which drafts a polite follow-up as a Gmail draft, for you to
 ("Prep me for my interview: job 12, ...") for you to paste to Claude, which then prepares
 you for it. The replies come from `/job-apply:track-responses`, which reads them through
 the Gmail connector with `email_tracking` on, never with the desk's email app password, and
-can offer to run that check every day as a scheduled task.
+can offer to run that check every day as a scheduled task. **Change status** (the ⋯ at the end of
+a row) sets an application you sent to Applied, Interviewing, Offer, Rejected or Withdrawn by
+hand. A Job Desk started on its own, without Claude, shows no Follow up, Prep me or Tailor my
+resume: those need Claude.
 
 To add jobs from anywhere else, paste their links (LinkedIn, Indeed or any company
 site) into the box above the list. The desk reads each posting, scores it and ticks it

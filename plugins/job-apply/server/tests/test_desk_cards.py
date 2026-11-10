@@ -8,6 +8,7 @@ import difflib
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 import pytest
@@ -45,9 +46,11 @@ CASES = {
     "notes": {"state": "state-notes.json", "golden": "cards-notes.txt", "storage": {"desk-stop-filter": "stuck"}},
 }
 
-# what changes from one run or computer to another: times of day, dates, and "5 min ago"
+# what changes from one run or computer to another: times of day, dates, "5 min ago", and This week's day names (a
+# bar's, on a line of its own: the 7 days end today)
 _MASKS = [(re.compile(r"\b\d{4}-\d{2}-\d{2}\b"), "YYYY-MM-DD"), (re.compile(r"(?<!\d)\d{1,2}:\d{2}(?!\d)"), "HH:MM"),
-          (re.compile(r"\b(just now|\d+ (min|h|days) ago)\b"), "<ago>")]
+          (re.compile(r"\b(just now|\d+ (min|h|days) ago)\b"), "<ago>"),
+          (re.compile(r"^(Sun|Mon|Tue|Wed|Thu|Fri|Sat)$"), "<day>")]
 
 _READ_CARDS = """() => [...document.querySelectorAll('section.card')].map((card) => [
   card.getAttribute('aria-labelledby'), card.getClientRects().length ? card.innerText : null])"""
@@ -79,6 +82,23 @@ def _cards(srv, monkeypatch, state: dict, storage: dict | None = None, press: li
            list_page: str = "openings") -> str:
     """The desk's page drawn from `state` (Desk.state replaced by it), each section.card's words as _snapshot says
     them, each read on its own page (the Openings card on `list_page`, where `press` is pressed)."""
+    # A stopped job's row says how long it has waited (the design's C3: from its paused_at, by the page's clock). So
+    # that it says the same every run, the page's clock is held at the time the cards are drawn (`now`), and each job
+    # stopped is drawn as stopped 12 and a half minutes before it (its wait, in whole seconds, says "12 min" still),
+    # in the fixture's order (a second apart, as there)
+    now = time.time()
+    state = copy.deepcopy(state)
+    stopped = [row["run"] for row in [*state.get("listings", []), *state.get("others", [])]
+               if (row.get("run") or {}).get("paused_at")]
+    latest = max((r["paused_at"] for r in stopped), default=0)
+    for r in stopped:
+        r["paused_at"] = now - 12 * 60 - 30 - (latest - r["paused_at"])
+    # (and a running job's row says how long it has run, from its first log line's time (C5): its log is drawn as begun
+    # 3 and a half minutes before `now`, its lines as far apart as in the fixture, so it says "3 min" still)
+    for r in [row["run"] for row in [*state.get("listings", []), *state.get("others", [])] if row.get("run")]:
+        began = next((t for t in r.get("log_at") or [] if t), 0)
+        if began:
+            r["log_at"] = [t and now - 3 * 60 - 30 + (t - began) for t in r["log_at"]]
     monkeypatch.setattr(Desk, "state", lambda self: copy.deepcopy(state))
     desk = Desk(srv)
     desk.applier.start = lambda: None  # (nothing is worked: the page shows only the canned state)
@@ -88,6 +108,7 @@ def _cards(srv, monkeypatch, state: dict, storage: dict | None = None, press: li
         try:
             async with person_browser() as browser:
                 page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                await page.clock.set_fixed_time(now)
                 # The Alerts on this computer card's button says what the browser allows ("Alert me", "Alerts
                 # blocked"), and the tests' browsers differ in that (CI's headless shell blocks notifications, a
                 # full Chromium hasn't been asked): the cards are read as on a browser not asked yet
@@ -107,6 +128,10 @@ def _cards(srv, monkeypatch, state: dict, storage: dict | None = None, press: li
                         for selector in press:
                             await page.click(selector)
                     await page.evaluate("() => document.querySelectorAll('details').forEach((d) => { d.open = true; })")
+                    # (and every job's card opened, as a person would, by its chevron: four or more in a list start
+                    # closed, the design's C3)
+                    await page.evaluate("""() => document.querySelectorAll('[data-open][aria-expanded=false]')
+                        .forEach((b) => b.click())""")
                     await page.wait_for_timeout(100)
                     for card, text in await page.evaluate(_READ_CARDS):  # (in the page's order; null when not shown)
                         if cards.get(card) is None:
@@ -155,9 +180,10 @@ def test_the_desks_cards_say_what_they_said(srv, job_apply_home, monkeypatch, ca
     how = CASES[case]
     seen = _cards(srv, monkeypatch, _state(how["state"]), how.get("storage"), how.get("press", []),
                   how.get("list", "openings"))
-    # (every card: Home's four, the Openings card, the Applications card (Version B's B6), Your answers' and What's
-    # working's, Settings' seven (Version B's Searching and applying among them), Help's two)
-    assert seen.count("\n## ") + 1 == 17, seen
+    # (every card: Home's six (Version C's This week and Getting started among them), the Openings card, the
+    # Applications card (Version B's B6), Your answers' and What's working's, Settings' seven (Version B's Searching and
+    # applying among them), Help's two)
+    assert seen.count("\n## ") + 1 == 19, seen
     _compare(how["golden"], seen)
 
 
@@ -173,8 +199,8 @@ def test_a_changed_card_fails_with_a_diff_naming_the_line(srv, job_apply_home, m
     with pytest.raises(AssertionError) as said:
         _compare("cards-stops.txt", seen)
     message = str(said.value)
-    assert "--- tests/fixtures/desk/cards-stops.txt, card needs-h\n" in message, message
-    assert "+++ the page now, card needs-h\n" in message and "card list-h" not in message, message
+    assert "--- tests/fixtures/desk/cards-stops.txt, card done-h\n" in message, message
+    assert "+++ the page now, card done-h\n" in message and "card list-h" not in message, message
     assert "\n-Submit was pressed and no confirmation showed.\n" in message, message
     assert "\n+Submit was pressed and a made-up change showed.\n" in message, message
     changed = [line for line in message.splitlines() if line[:1] in "+-" and line[:3] not in ("+++", "---")]

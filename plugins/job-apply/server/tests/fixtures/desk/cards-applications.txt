@@ -1,17 +1,57 @@
+## start-h
+Getting started
+4 of 7 done
+Hide this
+Set up your profile
+Your details, your work history and your resume.
+Choose what to look for, and where
+The job titles and the places Find jobs searches.
+Choose
+Save your site passwords
+The desk signs in with them and makes your accounts. 1 of 7 saved.
+Let the desk read emailed codes
+Optional. Many sites email a code when you sign in. With this, the desk enters it for you.
+Open Settings
+Answer the common questions
+1 of 12 answered. Each answer is one stop fewer.
+Answer them
+Find jobs
+Search the employers on your lists.
+Apply to your first job
+Tick an opening and press Apply. Nothing is sent until you press Submit.
+
 ## needs-h
-(hidden)
+Needs you
+0
+Nothing needs you right now.
 
 ## done-h
 (hidden)
 
-## work-h
+## finished-h
 (hidden)
 
-## idle-h
-Nothing needs you
-The desk is idle. Tick openings and press Apply, and what it's working on and what needs you show up here.
-Applied: 1
-Interviewing: 1
+## work-h
+Working on
+Nothing is being filled. Tick openings and press Apply.
+Go to Openings
+
+## thisweek-h
+This week
+What's working
+<day>
+<day>
+<day>
+<day>
+<day>
+<day>
+<day>
+0
+sent
+0
+answers
+1
+interviews
 
 ## list-h
 (hidden)
@@ -37,6 +77,11 @@ No reply yet
 Applied
 Follow-up due YYYY-MM-DD
 Follow up
+Applied
+Interviewing
+Offer
+Rejected
+Withdrawn
 Field Service Engineer
 Example Optics
 YYYY-MM-DD

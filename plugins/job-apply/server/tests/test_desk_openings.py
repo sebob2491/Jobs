@@ -612,3 +612,199 @@ def test_the_applications_page_lists_the_applications_in_its_own_list_and_its_ta
     assert seen["later"] == seen["waiting"], seen
     assert [t[2] for t in seen["waiting"]["tabs"]] == ["false", "true", "false", "false", "false"], seen
     assert seen["back to all"]["companies"] == every["companies"], seen
+
+
+# The Applications page's rows, each by its company: its status pill's words, and its Change status menu (or None): its
+# button's label and icon, whether it's open and its panel shown, the statuses it lists and the one ticked
+_MENUS = """() => Object.fromEntries([...document.querySelectorAll('#app-rows li.row')].map((r) => {
+  const menu = r.querySelector('.c-acts details.menu'), summary = menu && menu.querySelector('summary');
+  return [r.querySelector('.meta').innerText.trim(), {pill: r.querySelector('.state .pill').innerText.trim(),
+    menu: menu ? {label: summary.getAttribute('aria-label'), icon: summary.querySelector('use').getAttribute('href'),
+      open: menu.open, shown: menu.querySelector('.menu-panel').checkVisibility(),
+      choices: [...menu.querySelectorAll('.menu-panel button')].map((b) => b.textContent.trim()),
+      ticked: [...menu.querySelectorAll('.menu-panel [aria-pressed=true]')].map((b) => b.dataset.status)} : null}];
+}))"""
+_PILL_IS = """([company, words]) => [...document.querySelectorAll('#app-rows li.row')].some((r) =>
+  r.querySelector('.meta').innerText.trim() === company
+  && r.querySelector('.state .pill').innerText.trim() === words)"""
+_HEARD_IS = """([company, words]) => [...document.querySelectorAll('#app-rows li.row')].some((r) =>
+  r.querySelector('.meta').innerText.trim() === company
+  && r.querySelector('.c-heard').innerText.replace(/\\s+/g, ' ').trim() === words)"""
+# the control in focus: its tag, the job of the menu it's in, and which of the five it is (none for the menu's button)
+_FOCUS = """() => { const f = document.activeElement, d = f && f.closest('details.menu');
+  return [f.tagName, d ? d.dataset.menu : null, ...(f.dataset.status ? [f.dataset.status] : [])]; }"""
+
+
+def test_change_status_sets_each_of_the_five_through_the_route_and_closes_as_the_drop_downs_do(
+        srv, job_apply_home, monkeypatch):
+    """C8 through the page. Each application sent in or further along has, in its row's last cell, the i-more button
+    labelled Change status, opening a menu of the five statuses with the one it's at ticked; the one filled and never
+    sent (Ready Fab, which the route refuses) has none. Each of the five pressed reaches /api/job/{id}/status, the
+    tracker holds it, the menu closes, and the row is drawn again with it (its pill, its tick). The menu stays open
+    through two refreshes; one opened closes another; Escape closes it with the focus back on its button, and so does a
+    click outside it. An error from the route is said as the page says other errors (an alert)."""
+    from test_desk import _after_submit_jobs
+
+    ids = _after_submit_jobs(srv, monkeypatch)
+    desk = _idle_desk(srv)
+    quiet, offer = ids["Quiet Fab"], ids["Offer Fab"]
+    menu = "#app-rows details[data-menu='{}']"
+    posted: list = []
+    alerts: list[str] = []
+
+    async def on_dialog(d):
+        alerts.append(d.message)
+        await d.dismiss()
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1440, "height": 900})
+                page.on("request", lambda r: posted.append(r.post_data_json) if r.url.endswith("/status") else None)
+                page.on("dialog", on_dialog)
+                await open_desk(page, desk, "applications")
+                await page.wait_for_selector("#app-rows li.row >> nth=9")
+                seen = {"first": await page.evaluate(_MENUS)}
+                await page.click(menu.format(quiet) + " > summary")
+                seen["opened"] = (await page.evaluate(_MENUS))["Quiet Fab"]["menu"]
+                await page.wait_for_timeout(3200)  # (two refreshes)
+                seen["after two refreshes"] = (await page.evaluate(_MENUS))["Quiet Fab"]["menu"]
+                # (the row's own HTML changes while its menu is open, a reply logged: the row is drawn anew, its menu
+                # still open, the focus on the control it was on, the menu's button and then one of its five)
+                seen["redrawn"] = []
+                for focus, category, day in ((None, "confirmation", "2026-10-14"), ("offer", "other", "2026-10-15")):
+                    if focus:
+                        await page.focus(menu.format(quiet) + f" [data-status={focus}]")
+                    before = await page.evaluate(_FOCUS)
+                    srv.log_email(quiet, f"quiet-{category}", category, "A reply", day)
+                    words = f"Heard {day}: " + {"confirmation": "confirmation", "other": "other email"}[category]
+                    await page.wait_for_function(_HEARD_IS, arg=["Quiet Fab", words])
+                    row = (await page.evaluate(_MENUS))["Quiet Fab"]
+                    seen["redrawn"].append((before, row["menu"]["open"], row["menu"]["shown"],
+                                            await page.evaluate(_FOCUS)))
+                await page.keyboard.press("Escape")
+                seen["after escape"] = (await page.evaluate(_MENUS))["Quiet Fab"]["menu"]["open"]
+                seen["focus"] = await page.evaluate("() => [document.activeElement.tagName, "
+                                                    "document.activeElement.parentElement.dataset.menu]")
+                await page.click(menu.format(quiet) + " > summary")
+                await page.mouse.click(700, 880)  # (outside it: the page below the list)
+                seen["after a click outside"] = (await page.evaluate(_MENUS))["Quiet Fab"]["menu"]["open"]
+                await page.click(menu.format(quiet) + " > summary")
+                # (one at a time. By the keyboard: the open menu's choices may lie over the next row's button, where
+                # a press of the mouse would choose one of them)
+                await page.focus(menu.format(ids["Talk Fab"]) + " > summary")
+                await page.keyboard.press("Enter")
+                await page.wait_for_selector(menu.format(ids["Talk Fab"]) + "[open]")
+                seen["another"] = sorted(c for c, m in (await page.evaluate(_MENUS)).items()
+                                         if m["menu"] and m["menu"]["open"])
+                await page.keyboard.press("Escape")
+                seen["set"] = []
+                for status, words in (("interviewing", "Interviewing"), ("offer", "Offer"), ("rejected", "Rejected"),
+                                      ("withdrawn", "Withdrawn"), ("applied", "Applied")):
+                    await page.click(menu.format(quiet) + " > summary")
+                    async with page.expect_response(f"**/api/job/{quiet}/status"):
+                        await page.click(menu.format(quiet) + f" [data-status={status}]")
+                    await page.wait_for_function(_PILL_IS, arg=["Quiet Fab", words])
+                    shut = not (await page.evaluate(_MENUS))["Quiet Fab"]["menu"]["open"]
+                    await page.click(menu.format(quiet) + " > summary")
+                    row = (await page.evaluate(_MENUS))["Quiet Fab"]
+                    await page.keyboard.press("Escape")
+                    seen["set"].append((status, shut, row["pill"], row["menu"]["ticked"],
+                                        srv.tracker().get(quiet)["status"]))
+                # (the route refuses: Offer Fab was put back to filled and never sent since its row was drawn, the
+                # page's refreshes held off meanwhile so its row stays as it was)
+                await page.route("**/api/state", lambda route: route.abort())
+                await page.wait_for_timeout(1700)  # (a refresh under way when it began has landed)
+                srv.update_job(offer, status="ready_to_submit")
+                await page.click(menu.format(offer) + " > summary")
+                async with page.expect_response(f"**/api/job/{offer}/status"):
+                    await page.click(menu.format(offer) + " [data-status=rejected]")
+                await page.unroute("**/api/state")
+                await page.wait_for_function(_PILL_IS, arg=["Offer Fab", "Ready to submit"])  # (drawn again)
+                seen["refused"] = (await page.evaluate(_MENUS))["Offer Fab"]
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    five = ["Applied", "Interviewing", "Offer", "Rejected", "Withdrawn"]
+    first = seen["first"]
+    assert first["Ready Fab"] == {"pill": "Ready to submit", "menu": None}, first
+    for company, (pill, status) in {"Quiet Fab": ("Applied", "applied"), "Talk Fab": ("Interviewing", "interviewing"),
+                                    "Offer Fab": ("Offer", "offer"), "No Fab": ("Rejected", "rejected"),
+                                    "Gone Fab": ("Withdrawn", "withdrawn")}.items():
+        assert first[company] == {"pill": pill, "menu": {"label": "Change status", "icon": "#i-more", "open": False,
+                                                         "shown": False, "choices": five, "ticked": [status]}}, first
+    assert sum(1 for row in first.values() if row["menu"]) == 9, first  # (every application but Ready Fab)
+    assert seen["opened"] == {**first["Quiet Fab"]["menu"], "open": True, "shown": True}, seen
+    assert seen["after two refreshes"] == seen["opened"], seen
+    assert seen["redrawn"] == [(["SUMMARY", str(quiet)], True, True, ["SUMMARY", str(quiet)]),
+                               (["BUTTON", str(quiet), "offer"], True, True, ["BUTTON", str(quiet), "offer"])], seen
+    assert seen["after escape"] is False and seen["focus"] == ["SUMMARY", str(quiet)], seen
+    assert seen["after a click outside"] is False and seen["another"] == ["Talk Fab"], seen
+    assert seen["set"] == [(status, True, words, [status], status) for status, words in (
+        ("interviewing", "Interviewing"), ("offer", "Offer"), ("rejected", "Rejected"), ("withdrawn", "Withdrawn"),
+        ("applied", "Applied"))], seen["set"]
+    assert posted == [{"status": s} for s in ("interviewing", "offer", "rejected", "withdrawn", "applied", "rejected")]
+    assert alerts == ["That job hasn't been sent yet. If you sent it on the site yourself, press I submitted it myself "
+                      "on its card on Home."], alerts
+    assert seen["refused"] == {"pill": "Ready to submit", "menu": None}, seen["refused"]
+    assert srv.tracker().get(offer)["status"] == "ready_to_submit"
+
+
+@pytest.mark.parametrize("standalone", [True, False])
+def test_a_desk_without_claude_offers_no_tailoring_prep_me_or_follow_up(srv, job_apply_home, monkeypatch, standalone):
+    """C9's test 10, the page's part. On a desk run on its own (state.standalone) the apply bar has no Tailor my resume
+    switch and no word on tailoring, and the Applications page has no Prep me and no Follow up (each copies a request
+    to paste to Claude); inside Claude all three are there. The Follow-up due pill stays, its tooltip naming Claude only
+    inside Claude; Change status is there either way."""
+    from test_desk import _after_submit_jobs
+
+    _after_submit_jobs(srv, monkeypatch)
+    desk = _idle_desk(srv)
+    desk.standalone = standalone
+    desk.listings = [_opening(1, "Example Fab", "Field Service Engineer")]
+    bar = """() => ({
+      tailor: document.getElementById('tailor').getClientRects().length > 0,
+      hint: document.getElementById('tailor-hint').innerText,
+      switches: [...document.querySelectorAll('.applybar input.switch')].filter((s) => s.getClientRects().length)
+        .map((s) => s.id),
+    })"""
+    apps = """() => ({
+      prep: document.querySelectorAll('#app-rows [data-act=prep]').length,
+      follow: document.querySelectorAll('#app-rows [data-act=follow-up]').length,
+      due: [...document.querySelectorAll('#app-rows .state .pill.warn')].map((p) => [p.innerText, p.title]),
+      menus: document.querySelectorAll('#app-rows details.menu').length,
+    })"""
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1440, "height": 900})
+                await open_desk(page, desk, "openings")
+                await page.check("[data-pick='https://careers.example.com/1']")
+                await page.wait_for_selector(".applybar", state="visible")
+                seen = {"bar": await page.evaluate(bar)}
+                await page.click(".nav a[href='#applications']")
+                await page.wait_for_selector("#app-rows li.row >> nth=9")
+                seen["apps"] = await page.evaluate(apps)
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    tip = "No reply 10 days after you applied."
+    if standalone:
+        assert seen["bar"] == {"tailor": False, "hint": "", "switches": ["auto", "letters"]}, seen
+        assert seen["apps"] == {"prep": 0, "follow": 0, "due": [["Follow-up due 2026-10-11", tip]], "menus": 9}, seen
+    else:
+        assert seen["bar"] == {"tailor": True, "hint": "Off: your usual resume goes with every application.",
+                               "switches": ["auto", "tailor", "letters"]}, seen
+        assert seen["apps"] == {"prep": 4, "follow": 1, "menus": 9, "due": [[
+            "Follow-up due 2026-10-11",
+            tip + " Follow up copies a request for Claude to draft a polite follow-up email (saved as a Gmail draft, "
+                  "for you to send): paste it to Claude. Nothing is sent anywhere."]]}, seen

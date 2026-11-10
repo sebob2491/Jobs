@@ -957,7 +957,7 @@
     "company": "Example Letter",
     "status": "needs_you",
     "need": "cover_letter",
-    "reason": "This is the first cover letter the desk wrote for you (with your Claude login), and this job waits for your say. If it's right, press Use it: from then on each job's letter goes in without asking. To change how they're written, tell Claude in the chat what to change, or press Turn cover letters off.",
+    "reason": "This is the first cover letter the desk wrote for you, and this job waits for your say. If it's right, press Use it: from then on each job's letter goes in without asking. If it isn't, press Turn cover letters off. Or tell Claude in the chat what to change.",
     "code": "cover_letter",
     "blocking": false,
     "paused_at": 1009.0,

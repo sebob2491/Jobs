@@ -460,8 +460,9 @@ def test_try_now_on_a_job_the_sites_error_stopped_tries_it_again_at_once(srv):
             card = page.locator("#needs .task", has_text="Example Fab")
             await card.locator("[data-job-act=retry]").wait_for()
             others = await page.locator(f"#needs [data-job='{litho}'][data-job-act=retry]").count()
-            buttons = await card.locator("button").all_inner_texts()
-            sent = await page.locator("#needs .task", has_text="Example Sent").locator("button").all_inner_texts()
+            buttons = await card.locator("button[data-job-act]").all_inner_texts()
+            sent = await (page.locator("#needs .task", has_text="Example Sent").locator("button[data-job-act]")
+                          .all_inner_texts())
             await card.locator("[data-job-act=retry]").click()
             await card.wait_for(state="detached")
             stale = await page.evaluate(f"""async () => {{

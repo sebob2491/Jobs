@@ -9,6 +9,7 @@ each is saved there as <case>-<page>-<look>-<width>x<height>.png:
 A picture is the window as the person sees it: what's below the fold of a long page isn't in it."""
 
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -108,6 +109,141 @@ def test_a_picture_of_the_openings_with_jobs_ticked(srv, job_apply_home, monkeyp
                 await open_desk(page, desk, "openings")
                 await page.click("[data-act=select-recommended]")
                 await page.wait_for_selector(".applybar", state="visible")
+                await page.wait_for_timeout(150)
+                await page.screenshot(path=str(path))
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert path.stat().st_size > 2000
+
+
+@pytest.mark.parametrize("window", WINDOWS, ids=lambda w: f"{w[0]}x{w[1]}")
+@pytest.mark.parametrize("look", LOOKS)
+@pytest.mark.parametrize("cards", ["closed", "open", "pass"])
+def test_a_picture_of_home_with_many_jobs(srv, job_apply_home, monkeypatch, cards, look, window):
+    """Home (the stops state: more than three jobs in Needs you and in Ready to submit, so their cards start closed, the
+    design's C3), as its cards start, with every one opened, or going through them (C4: the header's words, the card
+    it's on open and marked now), in each look and window size, each job stopped some minutes before; saved as
+    stops-home-<closed, open or pass>-<look>-<w>x<h>.png."""
+    folder = Path(SHOTS)
+    folder.mkdir(parents=True, exist_ok=True)
+    state = _state("state-stops.json")
+    now = time.time()
+    for row in [*state.get("listings", []), *state.get("others", [])]:
+        if (row.get("run") or {}).get("paused_at"):  # (the fixture's 1000 to 1011: 10 to 21 minutes ago)
+            row["run"]["paused_at"] = now - 60 * (row["run"]["paused_at"] - 990)
+    desk = _canned(srv, monkeypatch, state)
+    path = folder / f"stops-home-{cards}-{look}-{window[0]}x{window[1]}.png"
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": window[0], "height": window[1]}, color_scheme=look)
+                await open_desk(page, desk, "home")
+                await page.wait_for_selector("#needs .task [data-open][aria-expanded]")
+                if cards == "open":
+                    await page.evaluate("() => document.querySelectorAll('[data-open][aria-expanded=false]')"
+                                        ".forEach((b) => b.click())")
+                if cards == "pass":
+                    await page.click("#needs-pass [data-act=pass-start]")
+                    await page.wait_for_selector("#needs > .task.now")
+                # (the tiles and the lists at the window's top, the page's own top padding above them as when it isn't
+                # scrolled: the notices over them fill most of it)
+                await page.evaluate("""() => { const content = document.getElementById('content');
+                  content.scrollTop += document.getElementById('tiles').getBoundingClientRect().top
+                    - content.getBoundingClientRect().top - parseFloat(getComputedStyle(content).paddingTop); }""")
+                await page.wait_for_timeout(150)
+                await page.screenshot(path=str(path))
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert path.stat().st_size > 2000
+
+
+@pytest.mark.parametrize("look", LOOKS)
+def test_a_picture_of_the_applications_with_change_status_open(srv, job_apply_home, monkeypatch, look):
+    """The Applications page (the openings state) with the first row's Change status menu open (the design's C8), in
+    each look, in a window of 1440 by 900; saved as openings-applications-status-<look>.png."""
+    folder = Path(SHOTS)
+    folder.mkdir(parents=True, exist_ok=True)
+    desk = _canned(srv, monkeypatch, _state("state-openings.json"))
+    path = folder / f"openings-applications-status-{look}.png"
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1440, "height": 900}, color_scheme=look)
+                await open_desk(page, desk, "applications")
+                await page.click("#app-rows details.menu > summary >> nth=0")
+                await page.wait_for_selector("#app-rows details.menu[open] .menu-panel", state="visible")
+                await page.wait_for_timeout(150)
+                await page.screenshot(path=str(path))
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert path.stat().st_size > 2000
+
+
+@pytest.mark.parametrize("page_name", ["home", "openings"])
+@pytest.mark.parametrize("look", LOOKS)
+def test_a_picture_of_a_desk_without_claude(srv, job_apply_home, monkeypatch, look, page_name):
+    """Home and Openings of a desk run on its own (the design's C7: state.standalone), drawn from the openings state,
+    on Openings with the recommended openings ticked so the apply bar shows (without Tailor my resume), in each look, in
+    a window of 1440 by 900; saved as standalone-<page>-<look>.png."""
+    folder = Path(SHOTS)
+    folder.mkdir(parents=True, exist_ok=True)
+    desk = _canned(srv, monkeypatch, {**_state("state-openings.json"), "standalone": True})
+    path = folder / f"standalone-{page_name}-{look}.png"
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1440, "height": 900}, color_scheme=look)
+                await open_desk(page, desk, page_name)
+                if page_name == "openings":
+                    await page.click("[data-act=select-recommended]")
+                    await page.wait_for_selector(".applybar", state="visible")
+                await page.wait_for_timeout(150)
+                await page.screenshot(path=str(path))
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert path.stat().st_size > 2000
+
+
+@pytest.mark.parametrize("window", WINDOWS, ids=lambda w: f"{w[0]}x{w[1]}")
+@pytest.mark.parametrize("look", LOOKS)
+def test_a_picture_of_a_new_persons_home(srv, job_apply_home, monkeypatch, look, window):
+    """Home for someone new (the design's C6): Getting started at the top with a few of its lines done (the profile,
+    what and where, the inbox's password and one of the common questions answered; never searched, nothing found or
+    applied for), in each look and window size; saved as new-home-<look>-<w>x<h>.png."""
+    folder = Path(SHOTS)
+    folder.mkdir(parents=True, exist_ok=True)
+    state = _state("state-openings.json")
+    state.update(listings=[], others=[], applications=[], search={**state["search"], "status": "idle", "at": None},
+                 area={**state["area"], "titles": ["Technician"], "places": ["Phoenix, AZ"]})
+    state["profile"]["missing"] = []
+    desk = _canned(srv, monkeypatch, state)
+    path = folder / f"new-home-{look}-{window[0]}x{window[1]}.png"
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": window[0], "height": window[1]}, color_scheme=look)
+                await open_desk(page, desk, "home")
+                await page.wait_for_selector("#start-lines > .item")
                 await page.wait_for_timeout(150)
                 await page.screenshot(path=str(path))
                 await browser.close()

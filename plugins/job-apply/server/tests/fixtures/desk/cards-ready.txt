@@ -1,12 +1,42 @@
+## start-h
+Getting started
+3 of 7 done
+Hide this
+Set up your profile
+Your details, your work history and your resume.
+Choose what to look for, and where
+The job titles and the places Find jobs searches.
+Choose
+Save your site passwords
+The desk signs in with them and makes your accounts. 0 of 7 saved.
+Open Settings
+Let the desk read emailed codes
+Optional. Many sites email a code when you sign in. With this, the desk enters it for you.
+Open Settings
+Answer the common questions
+0 of 12 answered. Each answer is one stop fewer.
+Answer them
+Find jobs
+Search the employers on your lists.
+Apply to your first job
+Tick an opening and press Apply. Nothing is sent until you press Submit.
+
 ## needs-h
 Needs you
-0
-Nothing right now.
+1
+Technician · Example Failed Didn't finish
+Carry on
+The page didn't load: TimeoutError.
+Show me
+Skip job
+I submitted it myself
+Report a problem
 
 ## done-h
-Ready and done
+Ready to submit
 1 to submit
 Field Service Engineer · Example Ready Ready to submit
+Submit
 Filled and waiting on the review page.
 What went in (2 answers, 1 file, 1 agreement, 1 account made, 1 left empty)
 My Information
@@ -23,38 +53,54 @@ created your account on Example Ready's site with your saved password
 Left empty (optional)
 Middle Name (your profile doesn't answer it)
 Show me
-Submit
 Skip job
 I submitted it myself
 Cover letter
 Report a problem
-Technician · Example Failed Didn't finish
-The page didn't load: TimeoutError.
-Show me
-Carry on
-Skip job
-I submitted it myself
-Report a problem
+
+## finished-h
+Done this visit
 Technician · Example Sent Submitted
 Submitted: the site said thank you.
 Report a problem
 Technician · Example Skipped Skipped
-Skipped.
 Undo
+Skipped.
 Report a problem
-Applied: 1
 
 ## work-h
 Working on
-Process Technician · Example Running
+Process Technician
+Example Running
+3 min
+Opened
+Account
+Form
+Review
 HH:MMopened the posting
 HH:MMclicked “Apply”
 HH:MMfilled 4 field(s) on “My Information”
 Report a problem
-2 more queued.
+2 more waiting their turn
+Technician · Example Queued
+Technician · Example Queued Too
 
-## idle-h
-(hidden)
+## thisweek-h
+This week
+What's working
+<day>
+<day>
+<day>
+<day>
+<day>
+<day>
+<day>
+0
+sent
+0
+answers
+0
+interviews
 
 ## list-h
 Openings

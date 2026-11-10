@@ -236,9 +236,10 @@ RESTART_BEGUN = ("The desk restarted before this application was finished. If yo
 RESTART_CHECK = ("Submit was pressed for this job before the desk restarted, and it may have gone in, so the desk "
                  "didn't queue it again. Check your email or the site: if it went in, press I submitted it myself; if "
                  "it didn't, press Carry on and it's filled again up to its review page (nothing is sent).")
-# said on a desk that another one (another Claude session's) keeps the queue for (looked at again about this often,
-# seconds: once that one has ended, this one keeps it, and picks up what it kept), or that can't keep one at all
-QUEUE_ELSEWHERE = ("Another Job Desk is running (another Claude Code session's), and the queue is kept there: this "
+# said on a desk that another one (another Claude session's, or one started on its own) keeps the queue for (looked at
+# again about this often, seconds: once that one has ended, this one keeps it, and picks up what it kept), or that
+# can't keep one at all
+QUEUE_ELSEWHERE = ("Another Job Desk is already running on this computer, and the queue is kept there: this "
                    "one's queue isn't picked up again after a restart.")
 QUEUE_LOCK_RETRY = 60
 QUEUE_NO_LOCK = "The desk can't keep its queue across a restart here (its folder doesn't allow a lock)."
@@ -1635,8 +1636,10 @@ def _fingerprint(page: dict[str, Any]) -> tuple:
     return _steady_url(page.get("url")), _step_headings(page), count, actions, questions
 
 
-_TAILOR_SAYS = ("Waiting for a resume written for this job. In Claude Code, say \u201ctailor my resumes\u201d; the "
-                "desk carries on with this job as soon as its resume is ready. Or press Use my usual resume.")
+# (said only with Claude beside the desk: a desk run on its own never holds a job for a resume, Applier.tailoring_on)
+_TAILOR_SAYS = ("Waiting for a resume written for this job. In your chat with Claude, say \u201ctailor my "
+                "resumes\u201d; the desk carries on with this job as soon as its resume is ready. Or press Use my "
+                "usual resume.")
 _BOT_CHECK_SAYS = ("The site is checking that you're a person (a bot check or CAPTCHA). Pass it in the desk's browser "
                    "window: the desk then carries on with this job by itself, and the other jobs go on meanwhile (the "
                    "desk's Bot checks round takes you to each one waiting).")
@@ -1757,7 +1760,12 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         # the openings the desk lists (set by the desk): one marked Not interested before its job was saved is that
         # job's only when nothing listed makes it ambiguous (Tracker.not_interested_marks)
         self.listed: Callable[[], list[dict[str, Any]]] = lambda: []
-        self.tailor = False  # hold each job until Claude has written a resume for it
+        # "Tailor my resume for each job" as the person chose it (kept in desk.json): hold each job until Claude has
+        # written a resume for it. Whether a job waits is tailoring_on()'s to say, never this alone
+        self.tailor = False
+        # a desk run on its own (Desk.standalone: job-apply-desk), with no Claude beside it to write a resume or to be
+        # asked anything: its words leave Claude out, and no job waits for a resume (set_standalone)
+        self.standalone = False
         # "Write a cover letter for each job" (pipeline_letters, kept in desk.json): on; the person's OK of the first
         # one given; what stops every letter now, said on the desk (and since when: tried again LETTER_RETRY seconds
         # on); each job's letter being written; how many at a time; and the jobs whose first letter waits for the
@@ -2106,12 +2114,26 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         """A job queued again after a restart (or from a desk that has ended), waiting for the person's Resume queue."""
         return task[0] == "apply" and task[1] in self._restored_ids and task[1] not in self.pressed
 
+    def tailoring_on(self) -> bool:
+        """Whether a job waits for a resume written for it: the person's "Tailor my resume" on, and Claude there to
+        write one. A desk run on its own never holds a job for a resume, whatever desk.json says (the design's C7)."""
+        return self.tailor and not self.standalone
+
     def set_tailor(self, on: bool) -> None:
         self.tailor = on
-        if not on:  # nothing to wait for any more
-            for run in [r for r in self.runs.values() if r.status == "needs_you" and r.need == "tailor"]:
-                with contextlib.suppress(KeyError, ValueError):
-                    self.enqueue(run.job_id, submit=run.submit)
+        self._release_tailoring()
+
+    def set_standalone(self, on: bool) -> None:
+        self.standalone = on
+        self._release_tailoring()
+
+    def _release_tailoring(self) -> None:
+        """With tailoring off now, each job waiting for a resume goes on: nothing to wait for any more."""
+        if self.tailoring_on():
+            return
+        for run in self.tailoring():
+            with contextlib.suppress(KeyError, ValueError):
+                self.enqueue(run.job_id, submit=run.submit)
 
     def use_usual_resume(self, job_id: int) -> Run:
         """Go ahead with this job without a tailored resume."""
@@ -2651,7 +2673,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             # (never begun: queued again, Submit for me only if it had it and it's still on; held for Resume queue)
             submit = entry.get("submit") is True and self.auto_submit and not self.hold_submits
             self._restored_ids.add(job_id)
-            if entry.get("tailor") is True and self.tailor and not tailored_ready(job):
+            if entry.get("tailor") is True and self.tailoring_on() and not tailored_ready(job):
                 # (waiting for its tailored resume still: listed for Claude to write it, queued once it's there)
                 run = Run(job_id, job.get("title") or "", job.get("company") or "", status="needs_you", need="tailor",
                           reason=_TAILOR_SAYS, code="tailor", submit=submit, paused_at=time.time())
@@ -3768,7 +3790,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         if not run.asked_once:  # (and the questions its cards asked that the person left empty: never asked again)
             _restore_asked_once(srv, run)
         run.status, run.need, run.reason = "running", "", "Working on it"
-        if self.tailor and not run.usual_resume:
+        if self.tailoring_on() and not run.usual_resume:
             job = srv.tracker().get(run.job_id, with_description=False) or {}
             if not tailored_ready(job):  # before its tab opens: nothing to keep waiting
                 return self._pause(run, "tailor", _TAILOR_SAYS, code="tailor")

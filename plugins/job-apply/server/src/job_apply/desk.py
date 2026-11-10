@@ -72,6 +72,11 @@ _clock = time.monotonic  # the clock the codes' age is told by (the tests move i
 SENT = frozenset(APPLICATION_STATUSES)
 # and once it's done with on the desk (the page's DONE): sent in, closed, or skipped. An opening in one is no news
 DONE = frozenset({"applied", "interviewing", "offer", "rejected", "withdrawn", "skipped"})
+# the statuses the person may set on one of their applications themselves (its Change status: /api/job/{id}/status)
+MARKED_STATUSES = ("applied", "interviewing", "offer", "rejected", "withdrawn")
+# and so the only ones a job's status is changed from there: one filled but never sent isn't the menu's
+NOT_SENT_YET = ("That job hasn't been sent yet. If you sent it on the site yourself, press I submitted it myself on "
+                "its card on Home.")
 
 
 def _recommendations_path() -> Path:
@@ -214,9 +219,9 @@ class Desk:
         # Find jobs searches when the person presses it. With this on (off unless they turn it on: issue #112, note
         # 44), the page also searches by itself once the openings are 12 hours old, but not while the queue is paused
         self.auto_search = False
-        # run on its own (job-apply-desk: main sets it), not inside Claude's plugin. Only then can the page stop the
-        # desk (its Quit the Job Desk: /api/quit sets `quitting`, which main waits on); inside Claude it stops with
-        # Claude
+        # run on its own (job-apply-desk: main sets it), not inside Claude's plugin (the `standalone` property, kept on
+        # the applier). Only then can the page stop the desk (its Quit the Job Desk: /api/quit sets `quitting`, which
+        # main waits on); inside Claude it stops with Claude
         self.standalone = False
         self.quitting = asyncio.Event()
         self.search: dict[str, Any] = {"status": "idle", "at": None, "error": None, "query": "", "location": None,
@@ -240,6 +245,16 @@ class Desk:
         self.phone = phone.PhoneAlerts(self.applier, self.srv.tracker, saved=self._save_settings_quietly)
         self._phone_task: asyncio.Task | None = None
         self._load()
+
+    @property
+    def standalone(self) -> bool:
+        return self.applier.standalone
+
+    @standalone.setter
+    def standalone(self, on: bool) -> None:
+        """Run on its own or not, kept on the applier (the driver reads it there): on its own, no job waits for a
+        resume, whatever desk.json says (Applier.tailoring_on), and one waiting already goes on."""
+        self.applier.set_standalone(on)
 
     # ------------------------------------------------------------- persistence
     def _load(self) -> None:
@@ -378,6 +393,7 @@ class Desk:
             r("/api/preflight", self.preflight_view, methods=["POST"]),
             r("/api/answer", self.answer_view, methods=["POST"]),
             r("/api/job/{job_id:int}/letter", self.letter_view, methods=["GET"]),
+            r("/api/job/{job_id:int}/status", self.status_view, methods=["POST"]),
             r("/api/job/{job_id:int}/{action}", self.job_view, methods=["POST"]),
             r("/api/notes/{action}", self.notes_view, methods=["POST"]),
             r("/api/queue/{action}", self.queue_view, methods=["POST"]),
@@ -811,6 +827,30 @@ class Desk:
             return self._bad(e)
         return JSONResponse({"ok": True})
 
+    async def status_view(self, request: Request) -> Response:
+        """An application's Change status, on the Applications page (the design's C8): one of MARKED_STATUSES, for a
+        job the tracker holds as sent or further along (one of MARKED_STATUSES too; not one filled and never sent,
+        ready_to_submit) alone, written to the tracker as the person's own. Only the tracker's status changes: nothing
+        is filled, pressed or sent. Anything else is a 400."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        job_id = request.path_params["job_id"]
+        try:
+            status = (await self._body(request)).get("status")
+            if not isinstance(status, str) or status not in MARKED_STATUSES:
+                raise ValueError(f"The status should be one of {', '.join(MARKED_STATUSES)}.")
+            t = self.srv.tracker()
+            job = t.get(job_id, with_description=False) if job_id < 2 ** 63 else None
+            if job is not None and job.get("status") == "ready_to_submit":
+                # (filled, never sent: marked applied it would have a time it went in, its card waiting for Submit)
+                raise ValueError(NOT_SENT_YET)
+            if job is None or job.get("status") not in MARKED_STATUSES:  # (sent, or further along)
+                raise ValueError("That job isn't one of your applications.")
+            t.update(job_id, status=status, note="set on the Job Desk")
+        except (KeyError, ValueError) as e:
+            return self._bad(e)
+        return JSONResponse({"ok": True, "status": status})
+
     async def letter_view(self, request: Request) -> Response:
         """The cover letter the desk wrote for a job (its card's Cover letter), from the job's folder: a PDF there
         alone, behind the page's key like the rest."""
@@ -923,7 +963,7 @@ class Desk:
                                    "auto_search", "dont_wait", "jobs_at_once", "min_pay", "posted_within",
                                    "within_miles", "companies", *CHIP_FILTERS)):
             self._save_settings()
-        return JSONResponse({"auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor,
+        return JSONResponse({"auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailoring_on(),
                              "cover_letters": self.applier.letters,
                              "handled_only": self.handled_only, "troubleshoot": self.troubleshoot,
                              "min_pay": self.min_pay, "posted_within": self.posted_within,
@@ -1643,7 +1683,8 @@ class Desk:
             "settings": {"submit_mode": settings.submit_mode, "dry_run": settings.dry_run,
                          "manage_accounts": settings.may_manage_accounts,
                          "manage_accounts_chosen": settings.manage_accounts_chosen,
-                         "auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailor,
+                         # (as it works here: off on a desk run on its own, whatever desk.json says)
+                         "auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailoring_on(),
                          "cover_letters": self.applier.letters,
                          "cover_letters_approved": self.applier.letters_approved,
                          "handled_only": self.handled_only, "troubleshoot": self.troubleshoot,
