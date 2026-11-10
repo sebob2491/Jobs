@@ -1,17 +1,18 @@
 ## needs-h
-(hidden)
+Needs you
+0
+Nothing needs you right now.
 
 ## done-h
 (hidden)
 
-## work-h
+## finished-h
 (hidden)
 
-## idle-h
-Nothing needs you
-The desk is idle. Tick openings and press Apply, and what it's working on and what needs you show up here.
-Applied: 1
-Interviewing: 1
+## work-h
+Working on
+Nothing is being filled. Tick openings and press Apply.
+Go to Openings
 
 ## list-h
 (hidden)

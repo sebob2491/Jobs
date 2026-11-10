@@ -22,8 +22,8 @@ DESK_FIXTURES = Path(__file__).parent / "fixtures" / "desk"
 # The side menu's pages, in its order, each with its heading in the top bar
 PAGES = {"home": "Home", "openings": "Openings", "applications": "Applications", "answers": "Your answers",
          "working": "What's working", "settings": "Settings", "help": "Help"}
-# The cards each page shows (each by its heading's id, in the page's order) on a desk with a job stopped for the person
-# and nothing sent in yet: Home's three cards (not the idle one), no What's working card
+# The cards each page shows (each by its heading's id, in the page's order) on a desk with a job stopped for the person,
+# one ready to submit and nothing sent in yet: Home's three cards (not Done this visit), no What's working card
 CARDS = {"home": ["needs-h", "done-h", "work-h"], "openings": ["list-h"], "applications": ["apps-h"],
          "answers": ["bank-h"], "working": [],
          "settings": ["profile-h", "safety-card-h", "searching-h", "pw-h", "phone-h", "alerts-h", "program-h"],
@@ -74,7 +74,9 @@ def test_the_page_opens_on_home_and_each_menu_link_shows_its_pages_cards(srv):
     """The design's A8, test 6. With no page in its address the desk opens on Home. Each of the menu's seven links
     shows its page: its heading in the top bar, its cards and no other page's, its top bar controls, its own address,
     and itself marked as the current page. An address that names no page shows Home. The address survives a reload."""
-    desk, _ = _stopped_desk(srv, {"Example Fab": dict(status="needs_you", need="stuck")})
+    # (and one ready to submit: Home's Ready to submit card shows only with a job in it, the design's C2)
+    desk, _ = _stopped_desk(srv, {"Example Fab": dict(status="needs_you", need="stuck"),
+                                  "Example Ready": dict(status="ready")})
     desk.search.update(status="running", started=time.time())  # (said by the top bar; nothing is searched here)
 
     async def go():

@@ -1,15 +1,18 @@
 ## needs-h
 Needs you
-15
+11
 Equipment Technician · Example Sign In Sign in
-Sign in on Example Sign In's site in the desk's browser window, then press Carry on.
+12 min
 Show me
+Sign in on Example Sign In's site in the desk's browser window, then press Carry on.
 Carry on
 Later
 Skip job
 I submitted it myself
 Report a problem
 Equipment Technician · Example Questions Questions
+12 min
+Answer
 2 questions your profile doesn't answer.
 What went in (1 answer)
 My Information
@@ -35,86 +38,57 @@ Skip job
 I submitted it myself
 Report a problem
 Equipment Technician · Example Code Emailed code
+12 min
+Show me
 The site emailed a code: type it in the desk's browser window, then press Carry on.
 Claude is looking in your Gmail for the code. You can still enter it yourself: whichever comes first goes in.
-Show me
 Carry on
 Skip job
 I submitted it myself
 Report a problem
 Process Technician · Example Code Emailed code
+12 min
+Show me
 The site emailed a code: type it in the desk's browser window, then press Carry on.
 Claude can't tell this job's code from another job's in your Gmail (one sender emails both, and the other began its own email step after this one paused), so it's yours to enter in the desk's browser window.
-Show me
 Carry on
 Skip job
 I submitted it myself
 Report a problem
 Equipment Technician · Example Bot Bot check
-A bot check: solve it in the desk's browser window. The desk never does.
+12 min
 Show me
+A bot check: solve it in the desk's browser window. The desk never does.
 Carry on
 Skip job
 I submitted it myself
 Report a problem
-Equipment Technician · Example Captcha CAPTCHA
-A CAPTCHA before Submit: tick it, then press Submit here.
-Show me
-Submit
-I submitted it myself
-Skip job
-Report a problem
 Equipment Technician · Example Stuck Stuck
-I couldn't find the button that moves this application on.
+12 min
 Show me
+I couldn't find the button that moves this application on.
 Carry on
 Skip job
 I submitted it myself
 Report a problem
 Equipment Technician · Example Site Error Stuck
-Example Site Error's site said “Something went wrong” again and asked for the page to be refreshed, and I had reloaded once already for this application. That's the site's own trouble: reload the page in the desk's browser window (now, or later if it still says so), then press Carry on. The site had an error, so I'll try this job again by itself at HH:MM PM (once), or press Try now.
+12 min
 Show me
+Example Site Error's site said “Something went wrong” again and asked for the page to be refreshed, and I had reloaded once already for this application. That's the site's own trouble: reload the page in the desk's browser window (now, or later if it still says so), then press Carry on. The site had an error, so I'll try this job again by itself at HH:MM PM (once), or press Try now.
 Carry on
 Try now
 Skip job
 I submitted it myself
 Report a problem
-Equipment Technician · Example Not Sent Stuck
-Submit was pressed and the form is still there.
-Show me
-Submit
-I submitted it myself
-Skip job
-Report a problem
-Equipment Technician · Example Own Submit Your Submit
-Its send button reads Apply: yours to press.
-Show me
-I submitted it myself
-Skip job
-Report a problem
-Equipment Technician · Example Check Check if it went in
-Submit was pressed and no confirmation showed.
-Show me
-I submitted it myself
-Skip job
-Report a problem
 Equipment Technician · Example Tailor Waiting for a resume
-Waiting for Claude to write a resume for this job.
+12 min
 Use my usual resume
+Waiting for Claude to write a resume for this job.
 Skip job
-Report a problem
-Equipment Technician · Example Twice Already begun?
-This may be a job you began or applied to on Indeed.
-Apply anyway
-Skip job
-Report a problem
-Equipment Technician · Example Restart Restarted
-Begun before the desk restarted.
-Carry on
-Skip job
-I submitted it myself
 Report a problem
 Equipment Technician · Example Letter Cover letter to check
+12 min
+Read it
 This is the first cover letter the desk wrote for you (with your Claude login), and this job waits for your say. If it's right, press Use it: from then on each job's letter goes in without asking. To change how they're written, tell Claude in the chat what to change, or press Turn cover letters off.
 # Sam Rivera
 sam.rivera@example.com · 480-555-0123 · Chandler, AZ
@@ -126,18 +100,62 @@ Use it
 Turn cover letters off
 Skip job
 Report a problem
+Equipment Technician · Example Twice Already begun?
+12 min
+Decide
+This may be a job you began or applied to on Indeed.
+Apply anyway
+Skip job
+Report a problem
+Equipment Technician · Example Restart Restarted
+12 min
+Carry on
+Begun before the desk restarted.
+Skip job
+I submitted it myself
+Report a problem
 
 ## done-h
-Ready and done
-Nothing yet.
-No applications tracked yet.
+Ready to submit
+4 to submit
+Equipment Technician · Example Captcha CAPTCHA
+12 min
+Submit
+A CAPTCHA before Submit: tick it, then press Submit here.
+Show me
+I submitted it myself
+Skip job
+Report a problem
+Equipment Technician · Example Not Sent Stuck
+12 min
+Submit
+Submit was pressed and the form is still there.
+Show me
+I submitted it myself
+Skip job
+Report a problem
+Equipment Technician · Example Own Submit Your Submit
+12 min
+Show me
+Its send button reads Apply: yours to press.
+I submitted it myself
+Skip job
+Report a problem
+Equipment Technician · Example Check Check if it went in
+12 min
+Show me
+Submit was pressed and no confirmation showed.
+I submitted it myself
+Skip job
+Report a problem
+
+## finished-h
+(hidden)
 
 ## work-h
 Working on
-Idle.
-
-## idle-h
-(hidden)
+Nothing is being filled. Tick openings and press Apply.
+Go to Openings
 
 ## list-h
 Openings

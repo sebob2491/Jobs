@@ -9,6 +9,7 @@ each is saved there as <case>-<page>-<look>-<width>x<height>.png:
 A picture is the window as the person sees it: what's below the fold of a long page isn't in it."""
 
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -108,6 +109,45 @@ def test_a_picture_of_the_openings_with_jobs_ticked(srv, job_apply_home, monkeyp
                 await open_desk(page, desk, "openings")
                 await page.click("[data-act=select-recommended]")
                 await page.wait_for_selector(".applybar", state="visible")
+                await page.wait_for_timeout(150)
+                await page.screenshot(path=str(path))
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert path.stat().st_size > 2000
+
+
+@pytest.mark.parametrize("window", WINDOWS, ids=lambda w: f"{w[0]}x{w[1]}")
+@pytest.mark.parametrize("look", LOOKS)
+@pytest.mark.parametrize("cards", ["closed", "open"])
+def test_a_picture_of_home_with_many_jobs(srv, job_apply_home, monkeypatch, cards, look, window):
+    """Home (the stops state: more than three jobs in Needs you and in Ready to submit, so their cards start closed, the
+    design's C3), as its cards start or with every one opened, in each look and window size, each job stopped some
+    minutes before; saved as stops-home-<closed or open>-<look>-<w>x<h>.png."""
+    folder = Path(SHOTS)
+    folder.mkdir(parents=True, exist_ok=True)
+    state = _state("state-stops.json")
+    now = time.time()
+    for row in [*state.get("listings", []), *state.get("others", [])]:
+        if (row.get("run") or {}).get("paused_at"):  # (the fixture's 1000 to 1011: 10 to 21 minutes ago)
+            row["run"]["paused_at"] = now - 60 * (row["run"]["paused_at"] - 990)
+    desk = _canned(srv, monkeypatch, state)
+    path = folder / f"stops-home-{cards}-{look}-{window[0]}x{window[1]}.png"
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": window[0], "height": window[1]}, color_scheme=look)
+                await open_desk(page, desk, "home")
+                await page.wait_for_selector("#needs .task [data-open][aria-expanded]")
+                if cards == "open":
+                    await page.evaluate("() => document.querySelectorAll('[data-open][aria-expanded=false]')"
+                                        ".forEach((b) => b.click())")
+                # (the lists at the window's top: the notices over them fill most of it)
+                await page.evaluate("() => document.getElementById('home-cols').scrollIntoView()")
                 await page.wait_for_timeout(150)
                 await page.screenshot(path=str(path))
                 await browser.close()

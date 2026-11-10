@@ -1,12 +1,19 @@
 ## needs-h
 Needs you
-0
-Nothing right now.
+1
+Technician · Example Failed Didn't finish
+Carry on
+The page didn't load: TimeoutError.
+Show me
+Skip job
+I submitted it myself
+Report a problem
 
 ## done-h
-Ready and done
+Ready to submit
 1 to submit
 Field Service Engineer · Example Ready Ready to submit
+Submit
 Filled and waiting on the review page.
 What went in (2 answers, 1 file, 1 agreement, 1 account made, 1 left empty)
 My Information
@@ -23,26 +30,20 @@ created your account on Example Ready's site with your saved password
 Left empty (optional)
 Middle Name (your profile doesn't answer it)
 Show me
-Submit
 Skip job
 I submitted it myself
 Cover letter
 Report a problem
-Technician · Example Failed Didn't finish
-The page didn't load: TimeoutError.
-Show me
-Carry on
-Skip job
-I submitted it myself
-Report a problem
+
+## finished-h
+Done this visit
 Technician · Example Sent Submitted
 Submitted: the site said thank you.
 Report a problem
 Technician · Example Skipped Skipped
-Skipped.
 Undo
+Skipped.
 Report a problem
-Applied: 1
 
 ## work-h
 Working on
@@ -52,9 +53,6 @@ HH:MMclicked “Apply”
 HH:MMfilled 4 field(s) on “My Information”
 Report a problem
 2 more queued.
-
-## idle-h
-(hidden)
 
 ## list-h
 Openings

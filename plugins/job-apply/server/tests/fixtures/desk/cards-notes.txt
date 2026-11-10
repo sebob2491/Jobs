@@ -1,31 +1,30 @@
 ## needs-h
 Needs you
-1
+2
 Technician · Example Stuck Stuck
-I couldn't find the button that moves this application on.
 Show me
+I couldn't find the button that moves this application on.
 Carry on
+Skip job
+I submitted it myself
+Report a problem
+Technician · Example Failed Didn't finish
+Carry on
+The page didn't load: TimeoutError.
+Show me
 Skip job
 I submitted it myself
 Report a problem
 
 ## done-h
-Ready and done
-Technician · Example Failed Didn't finish
-The page didn't load: TimeoutError.
-Show me
-Carry on
-Skip job
-I submitted it myself
-Report a problem
-No applications tracked yet.
+(hidden)
+
+## finished-h
+(hidden)
 
 ## work-h
 Working on
 Paused: 1 waiting. Press Carry on with the queue.
-
-## idle-h
-(hidden)
 
 ## list-h
 Openings

@@ -8,6 +8,7 @@ import difflib
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 import pytest
@@ -79,6 +80,16 @@ def _cards(srv, monkeypatch, state: dict, storage: dict | None = None, press: li
            list_page: str = "openings") -> str:
     """The desk's page drawn from `state` (Desk.state replaced by it), each section.card's words as _snapshot says
     them, each read on its own page (the Openings card on `list_page`, where `press` is pressed)."""
+    # A stopped job's row says how long it has waited (the design's C3: from its paused_at, by the page's clock). So
+    # that it says the same every run, the page's clock is held at the time the cards are drawn (`now`), and each job
+    # stopped is drawn as stopped 12 minutes before it, in the fixture's order (a second apart, as there)
+    now = time.time()
+    state = copy.deepcopy(state)
+    stopped = [row["run"] for row in [*state.get("listings", []), *state.get("others", [])]
+               if (row.get("run") or {}).get("paused_at")]
+    latest = max((r["paused_at"] for r in stopped), default=0)
+    for r in stopped:
+        r["paused_at"] = now - 12 * 60 - (latest - r["paused_at"])
     monkeypatch.setattr(Desk, "state", lambda self: copy.deepcopy(state))
     desk = Desk(srv)
     desk.applier.start = lambda: None  # (nothing is worked: the page shows only the canned state)
@@ -88,6 +99,7 @@ def _cards(srv, monkeypatch, state: dict, storage: dict | None = None, press: li
         try:
             async with person_browser() as browser:
                 page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                await page.clock.set_fixed_time(now)
                 # The Alerts on this computer card's button says what the browser allows ("Alert me", "Alerts
                 # blocked"), and the tests' browsers differ in that (CI's headless shell blocks notifications, a
                 # full Chromium hasn't been asked): the cards are read as on a browser not asked yet
@@ -107,6 +119,10 @@ def _cards(srv, monkeypatch, state: dict, storage: dict | None = None, press: li
                         for selector in press:
                             await page.click(selector)
                     await page.evaluate("() => document.querySelectorAll('details').forEach((d) => { d.open = true; })")
+                    # (and every job's card opened, as a person would, by its chevron: four or more in a list start
+                    # closed, the design's C3)
+                    await page.evaluate("""() => document.querySelectorAll('[data-open][aria-expanded=false]')
+                        .forEach((b) => b.click())""")
                     await page.wait_for_timeout(100)
                     for card, text in await page.evaluate(_READ_CARDS):  # (in the page's order; null when not shown)
                         if cards.get(card) is None:
@@ -173,8 +189,8 @@ def test_a_changed_card_fails_with_a_diff_naming_the_line(srv, job_apply_home, m
     with pytest.raises(AssertionError) as said:
         _compare("cards-stops.txt", seen)
     message = str(said.value)
-    assert "--- tests/fixtures/desk/cards-stops.txt, card needs-h\n" in message, message
-    assert "+++ the page now, card needs-h\n" in message and "card list-h" not in message, message
+    assert "--- tests/fixtures/desk/cards-stops.txt, card done-h\n" in message, message
+    assert "+++ the page now, card done-h\n" in message and "card list-h" not in message, message
     assert "\n-Submit was pressed and no confirmation showed.\n" in message, message
     assert "\n+Submit was pressed and a made-up change showed.\n" in message, message
     changed = [line for line in message.splitlines() if line[:1] in "+-" and line[:3] not in ("+++", "---")]

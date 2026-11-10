@@ -3215,7 +3215,7 @@ def test_undo_on_the_page_puts_a_skipped_job_back(srv, width):
                 page = await browser.new_page(viewport={"width": width, "height": 900})
                 await open_desk(page, desk, "home")
                 await page.click(f"#needs button[data-job='{begun['id']}'][data-job-act=skip]")
-                await page.wait_for_selector(f"#done {undo}[data-job='{begun['id']}']")
+                await page.wait_for_selector(f"#finished {undo}[data-job='{begun['id']}']")
                 assert desk.applier.runs[begun["id"]].status == "skipped"
                 assert srv.get_job(begun["id"])["job"]["status"] == "skipped"
                 await press_menu(page, "openings")
@@ -3225,8 +3225,8 @@ def test_undo_on_the_page_puts_a_skipped_job_back(srv, width):
                 assert sizes[0] <= sizes[1], sizes
 
                 await press_menu(page, "home")
-                await page.click(f"#done {undo}[data-job='{begun['id']}']")
-                await page.wait_for_selector(f"#done {undo}", state="detached")
+                await page.click(f"#finished {undo}[data-job='{begun['id']}']")
+                await page.wait_for_selector(f"#finished {undo}", state="detached")
                 await press_menu(page, "openings")
                 row = page.locator("li.row", has_text="Field Service Engineer")
                 await row.locator(".pill:text('Queued')").wait_for()
@@ -3316,7 +3316,7 @@ def test_the_page_lists_my_applications_folds_an_idle_side_and_closes_a_tip(srv,
                 page = await browser.new_page()
                 await open_desk(page, desk, "home")
                 await page.wait_for_selector("#idle-card:not([hidden])")
-                assert await page.locator("#needs").is_hidden() and await page.locator("#work").is_hidden()
+                assert await page.inner_text("#needs #idle-card") == "Nothing needs you right now."
                 await press_menu(page, "openings")
                 assert "location not given" not in await page.inner_text("#rows")
                 assert await page.inner_text("#nav-applications") == "2"  # (the menu's number for Applications)
@@ -3540,13 +3540,16 @@ def test_jobs_stopped_on_a_bot_check_or_captcha_are_marked_and_a_forms_captcha_i
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("#needs .task h3 .pill")
-                marks = await page.eval_on_selector_all("#needs .task h3", "hs => hs.map((h) => h.innerText)")
+                await page.wait_for_selector("#done .task h3 .pill")  # (a CAPTCHA before Submit: Ready to submit)
+                marks = await page.eval_on_selector_all("#needs .task h3, #done .task h3",
+                                                        "hs => hs.map((h) => h.innerText)")
                 marked = {n: m for m in marks for n in names if n in m}
                 assert "Bot check" in marked["Example Fab"] and "CAPTCHA" in marked["Example Litho"], marks
                 assert "CAPTCHA" in marked["Example Etch"], marks
                 assert "CAPTCHA" not in marked["Example Optics"] and "Bot check" not in marked["Example Optics"], marks
                 # each card says its stop's code (T1, the review of Oct 18: nothing shown, for a test or a look)
-                codes = await page.eval_on_selector_all("#needs .task", "ts => ts.map((t) => t.dataset.code)")
+                codes = await page.eval_on_selector_all("#needs .task, #done .task",
+                                                        "ts => ts.map((t) => t.dataset.code)")
                 assert sorted(codes) == ["account_captcha", "bot_check", "captcha", "questions"], codes
                 assert ("1 application ready for your Submit (1 with a CAPTCHA to tick "
                         "first)" in await page.inner_text("#notices"))
@@ -3557,7 +3560,7 @@ def test_jobs_stopped_on_a_bot_check_or_captcha_are_marked_and_a_forms_captcha_i
                 assert "Tick its CAPTCHA" in await page.inner_text("#notices")
                 # (or ticked, and the site's own Submit pressed: theirs to say, on its card and in the round)
                 assert await page.locator("#notices [data-act=review-applied]").count() == 1
-                assert await page.locator(f"#needs [data-job='{jobs[2]['id']}'][data-job-act=applied]").count() == 1
+                assert await page.locator(f"#done [data-job='{jobs[2]['id']}'][data-job-act=applied]").count() == 1
                 await page.click("#notices [data-act=review-submit]")
                 for _ in range(40):
                     if sent:
@@ -4156,7 +4159,7 @@ def test_after_a_restart_the_jobs_never_begun_are_queued_again_paused_and_the_be
                 assert ("The desk restarted before this application was finished. If you sent it yourself on the site, "
                         "press I submitted it myself. Otherwise Carry on fills it again up to its review page (nothing "
                         "is sent), or Skip job.") in said, said
-                buttons = await card.locator("button").all_inner_texts()
+                buttons = await card.locator("button[data-job-act]").all_inner_texts()
                 assert buttons == ["Carry on", "Skip job", "I submitted it myself", "Report a problem"], buttons
                 await asyncio.sleep(1)
                 assert passes == [a, b]  # (paused: nothing restored has started)
@@ -4211,10 +4214,10 @@ def test_a_job_whose_submit_may_have_gone_in_isnt_queued_again_after_a_restart(s
             async with person_browser() as browser:  # its card on the page: no tab to show, Resume to fill it again
                 page = await browser.new_page()
                 await page.goto(after.url)
-                card = page.locator("#needs .task", has_text="Technician 0")
+                card = page.locator("#done .task", has_text="Technician 0")
                 await card.wait_for()
                 assert "may have gone in" in await card.inner_text()
-                buttons = await card.locator("button").all_inner_texts()
+                buttons = await card.locator("button[data-job-act]").all_inner_texts()
                 assert buttons == ["I submitted it myself", "Carry on", "Skip job", "Report a problem"], buttons
                 await card.locator("button", has_text="Carry on").click()  # filled again, never sent
                 await _until(lambda: q.runs[recorded].status == "ready")
@@ -4344,7 +4347,7 @@ def test_a_job_that_may_be_one_begun_or_applied_to_on_indeed_waits_for_the_perso
                 await page.goto(desk.url)
                 card = page.locator("#needs .task", has_text="Lam Research")
                 await card.wait_for()
-                assert (await card.locator("button").all_inner_texts()
+                assert (await card.locator("button[data-job-act]").all_inner_texts()
                         == ["Apply anyway", "Skip job", "Report a problem"])
                 await card.locator("button", has_text="Skip job").click()
                 await _until(lambda: srv.tracker().get(lam["id"])["status"] == "skipped")
@@ -5894,7 +5897,8 @@ def test_the_needs_you_count_is_the_bars_groups_added_up(srv, job_apply_home):
                 await open_filter(page, "more")  # (Status, under More filters)
                 await page.wait_for_selector("#stops:not([hidden]) [data-stop='you']")
                 await press_menu(page, "home")
-                card = int(await page.inner_text("#needs-count"))
+                # (what waits on the person, Needs you and Ready to submit together: Home's number, the design's C2)
+                card = int(await page.inner_text("#nav-home"))
                 await press_menu(page, "openings")
                 await open_filter(page, "more")  # (Status, under More filters)
                 bar = {await b.get_attribute("data-stop"): " ".join((await b.inner_text()).split())
@@ -5903,7 +5907,7 @@ def test_the_needs_you_count_is_the_bars_groups_added_up(srv, job_apply_home):
                     r.querySelector('.meta').innerText, r.querySelector('.state .pill').innerText,
                     r.querySelector('.state .pill').className])""")
                 await press_menu(page, "home")
-                cards = await page.eval_on_selector_all("#needs .task h3", """hs => hs.map((h) => [
+                cards = await page.eval_on_selector_all("#needs .task h3, #done .task h3", """hs => hs.map((h) => [
                     h.innerText, h.querySelector('.pill').innerText])""")
                 await browser.close()
                 return card, bar, rows, cards
@@ -5993,7 +5997,8 @@ def test_a_job_ready_to_submit_is_listed_first(srv, job_apply_home):
                 page = await browser.new_page()
                 await open_desk(page, desk, "home")
                 await page.wait_for_selector("#done-count:not([hidden])")
-                order = await page.eval_on_selector_all("#done .task h3 .pill", "ps => ps.map((p) => p.innerText)")
+                order = [await page.eval_on_selector_all(f"#{at} .task h3 .pill", "ps => ps.map((p) => p.innerText)")
+                         for at in ("done", "needs", "finished")]
                 count = await page.eval_on_selector("#done-count", """p => [p.innerText, p.className,
                     getComputedStyle(p).color]""")
                 await browser.close()
@@ -6002,7 +6007,7 @@ def test_a_job_ready_to_submit_is_listed_first(srv, job_apply_home):
             await desk.stop()
 
     order, count = run(go())
-    assert order == ["Ready to submit", "Didn't finish", "Submitted", "Skipped"], order
+    assert order == [["Ready to submit"], ["Didn't finish"], ["Submitted", "Skipped"]], order
     assert count == ["1 to submit", "pill info", "rgb(29, 78, 216)"], count
 
 
@@ -6072,7 +6077,7 @@ def test_a_submit_with_no_confirmation_is_one_to_check_never_one_to_press_again(
                 page = await browser.new_page()
                 await page.goto(desk.url)
                 await page.wait_for_selector("#notices [data-act=review-round]")
-                pills = await page.eval_on_selector_all("#needs .task h3", """hs => hs.map((h) => [
+                pills = await page.eval_on_selector_all("#done .task h3", """hs => hs.map((h) => [
                     h.innerText, h.querySelector('.pill').innerText])""")
                 rows = await page.eval_on_selector_all("#rows .row", """rs => rs.map((r) => [
                     r.querySelector('.meta').innerText, r.querySelector('.state .pill').innerText])""")
@@ -6163,10 +6168,10 @@ def test_the_job_button_is_carry_on_and_the_queues_is_carry_on_with_the_queue(sr
                 await page.goto(desk.url)
                 card = page.locator("#needs .task", has_text="Example Fab")
                 await card.wait_for()
-                buttons = await card.locator("button").all_inner_texts()
-                acts = await card.locator("button").evaluate_all("bs => bs.map((b) => b.dataset.jobAct)")
+                buttons = await card.locator("button[data-job-act]").all_inner_texts()
+                acts = await card.locator("button[data-job-act]").evaluate_all("bs => bs.map((b) => b.dataset.jobAct)")
                 tailor = await page.locator("#needs .task",
-                                            has_text="Example Tailor").locator("button").all_inner_texts()
+                                            has_text="Example Tailor").locator("button[data-job-act]").all_inner_texts()
                 await page.wait_for_selector("#pause-btn:not([hidden])")
                 queue = (await page.inner_text("#pause-btn"), await page.get_attribute("#pause-btn", "data-act"))
                 await card.locator("button", has_text="Carry on").click()

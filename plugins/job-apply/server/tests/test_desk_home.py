@@ -9,20 +9,22 @@ from test_desk import _stopped_desk
 
 pytestmark = pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")
 
-# Each list's cards, in its order, by employer (the card's heading's words after the "·")
-_LISTS = """() => Object.fromEntries(['needs', 'done', 'finished'].map((id) => [id,
-  [...document.querySelectorAll(`#${id} > .task`)].map((t) => t.querySelector('h3 .small').innerText.replace('·', '').trim())]))"""
+# A card's employer (its heading's words after the "·")
+_WHO = "(t) => t.querySelector('h3 .small').innerText.replace('·', '').trim()"
+# Each list's cards, in its order, by employer
+_LISTS = f"""() => Object.fromEntries(['needs', 'done', 'finished'].map((id) => [id,
+  [...document.querySelectorAll(`#${{id}} > .task`)].map({_WHO})]))"""
 # Each card's body: shown or not, and its open button's aria-expanded, by employer
-_OPEN = """() => Object.fromEntries([...document.querySelectorAll('#needs > .task, #done > .task, #finished > .task')].map((t) =>
-  [t.querySelector('h3 .small').innerText.replace('·', '').trim(),
-   [!t.querySelector('[data-body]').hidden, t.querySelector('[data-open]').getAttribute('aria-expanded')]]))"""
+_OPEN = f"""() => Object.fromEntries([...document.querySelectorAll('#needs > .task, #done > .task, #finished > .task')]
+  .map((t) => [({_WHO})(t), [!t.querySelector('[data-body]').hidden,
+                              t.querySelector('[data-open]').getAttribute('aria-expanded')]]))"""
 
 
 def test_each_list_holds_exactly_its_states_and_the_title_counts_the_first_two(srv, job_apply_home):
-    """C9's test 1. Needs you: the jobs stopped for the person on anything but a Submit (the one holding the queue first,
-    then the longest waiting), then the ones that didn't finish. Ready to submit: the ready ones, then the ones stopped on
-    a CAPTCHA, the person's own Submit, a check whether it went in, or a Submit that didn't go. Done this visit: sent and
-    skipped. The page's title and the Home menu item count the first two lists together."""
+    """C9's test 1. Needs you: the jobs stopped for the person on anything but a Submit (the one holding the queue
+    first, then the longest waiting), then the ones that didn't finish. Ready to submit: the ready ones, then the ones
+    stopped on a CAPTCHA, the person's own Submit, a check whether it went in, or a Submit that didn't go. Done this
+    visit: sent and skipped. The page's title and the Home menu item count the first two lists together."""
     desk, jobs = _stopped_desk(srv, {
         "Example Failed": dict(status="failed"),
         "Example Questions": dict(status="needs_you", need="questions"),
@@ -68,8 +70,8 @@ def test_each_list_holds_exactly_its_states_and_the_title_counts_the_first_two(s
 
 
 def test_empty_lists_say_so_or_hide(srv, job_apply_home):
-    """C2's empty cards: Needs you says "Nothing needs you right now." (the old idle card's id), Ready to submit and Done
-    this visit are hidden, and Working on says what to do, with a link to Openings. The old counts are gone."""
+    """C2's empty cards: Needs you says "Nothing needs you right now." (the old idle card's id), Ready to submit and
+    Done this visit are hidden, and Working on says what to do, with a link to Openings. The old counts are gone."""
     desk, _ = _stopped_desk(srv, {})
 
     async def go():
@@ -121,7 +123,8 @@ def test_three_cards_start_open_and_four_closed_but_the_one_holding_the_queue(sr
                 await open_desk(page, desk, "home")
                 await page.wait_for_selector("#needs > .task [data-open][aria-expanded]")
                 seen = {"open": await page.evaluate(_OPEN)}
-                seen["rows"] = await page.evaluate("""() => [...document.querySelectorAll('#needs > .task')].map((t) => {
+                seen["rows"] = await page.evaluate("""() => [...document.querySelectorAll('#needs > .task')]
+                  .map((t) => {
                     const row = t.querySelector('.trow');
                     return [row.querySelector('.itico').className, row.querySelector('.itico use').getAttribute('href'),
                             row.querySelector('.acts button:not([data-open])').innerText,
@@ -140,7 +143,8 @@ def test_three_cards_start_open_and_four_closed_but_the_one_holding_the_queue(sr
 
     seen3 = run(look(three))
     seen4 = run(look(four, jobs["Example C"]))
-    assert seen3["open"] == {"Example A": [True, "true"], "Example B": [True, "true"], "Example C": [True, "true"]}, seen3
+    assert seen3["open"] == {"Example A": [True, "true"], "Example B": [True, "true"],
+                             "Example C": [True, "true"]}, seen3
     assert seen4["open"] == {"Example A": [False, "false"], "Example B": [True, "true"], "Example C": [False, "false"],
                              "Example D": [False, "false"]}, seen4
     assert seen4["after"] == {"Example A": [False, "false"], "Example B": [False, "false"],
@@ -196,8 +200,8 @@ def test_the_wait_is_written_by_the_clock_and_the_card_stays_the_same(srv, job_a
     now = time.time()
     for name, ago in (("Example Now", 10), ("Example Twelve", 12 * 60 + 5), ("Example Hour", 65 * 60 + 5)):
         desk.applier.runs[jobs[name]].paused_at = now - ago
-    waits = """() => Object.fromEntries([...document.querySelectorAll('#needs > .task')].map((t) =>
-      [t.querySelector('h3 .small').innerText.replace('·', '').trim(), t.querySelector('.wait[data-since]').innerText]))"""
+    waits = f"""() => Object.fromEntries([...document.querySelectorAll('#needs > .task')].map((t) =>
+      [({_WHO})(t), t.querySelector('.wait[data-since]').innerText]))"""
     marks = """() => [...document.querySelectorAll('#needs > .task')].map((t) => {
       t.__seen = t.__seen || Math.random(); return [t.__seen, t.dataset.html]; })"""
 
@@ -209,7 +213,8 @@ def test_the_wait_is_written_by_the_clock_and_the_card_stays_the_same(srv, job_a
                 await page.clock.set_fixed_time(now)
                 await open_desk(page, desk, "home")
                 await page.wait_for_function("() => document.querySelectorAll('#needs .wait[data-since]').length === 3")
-                await page.wait_for_function("() => [...document.querySelectorAll('#needs .wait')].every((w) => w.innerText)")
+                await page.wait_for_function(
+                    "() => [...document.querySelectorAll('#needs .wait')].every((w) => w.innerText)")
                 first = await page.evaluate(waits)
                 before = await page.evaluate(marks)
                 await page.clock.set_fixed_time(now + 60)
