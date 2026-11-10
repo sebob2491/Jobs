@@ -953,12 +953,13 @@ def test_the_switch_and_the_first_letters_ok_are_kept_and_said_in_safety(srv, mo
     assert again.applier.letters is True and again.applier.letters_approved is True
     assert off["value"] == "off" and "usual one" in off["said"]
     assert waiting["value"] == "on (the first waits for your OK)"
-    for said in ("your own Claude Code sign-in", "no key needed", "using only what they say", "no tools",
+    for said in ("Written through your own Claude sign-in.", "using only what they say", "no tools",
                  "the first one waits on its job's card for your Use it", "usual cover letter"):
         assert said in waiting["said"], said
     desk.applier.letters_approved = True
     assert safety()["value"] == "on" and "first one waits" not in safety()["said"]
-    assert "cover_letter_model" in safety()["where"]
+    assert safety()["where"] == ("Settings, Resume and cover letters: Write a cover letter for each job, and Which "
+                                 "model writes the letters")
 
 
 @pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")

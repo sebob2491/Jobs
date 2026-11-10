@@ -93,7 +93,12 @@ _URL = re.compile(r"https?://[^\s\"'<>)\]]+", re.I)
 
 
 class MailboxError(Exception):
-    """The inbox couldn't be read (a refused app password, no IMAP for the address, a network fault)."""
+    """The inbox couldn't be read (a refused app password, no IMAP for the address, a network fault). `kind` says
+    which: "refused", "address", or "unreachable" for any other (the Email codes panel's Test it says it so)."""
+
+    def __init__(self, said: str, kind: str = "unreachable"):
+        super().__init__(said)
+        self.kind = kind
 
 
 @dataclass
@@ -223,14 +228,15 @@ def find_link(text: str, links: list[str], allowed_link: Callable[[str], bool],
     return None
 
 
-def connect(address: str, password: str) -> tuple[imaplib.IMAP4, str]:
+def connect(address: str, password: str, timeout: float = 20) -> tuple[imaplib.IMAP4, str]:
     """The address's IMAP server, signed in with the app password, and its host. MailboxError for a
-    refused app password, an address the desk can't read mail for, and a network fault."""
+    refused app password, an address the desk can't read mail for, and a network fault. `timeout`: the most each
+    step waits on the server, in seconds."""
     host = imap_host(address)
     if host is None:
-        raise MailboxError(f"the desk can't read mail for {address.rsplit('@', 1)[-1]} addresses")
+        raise MailboxError(f"the desk can't read mail for {address.rsplit('@', 1)[-1]} addresses", "address")
     try:
-        box = imaplib.IMAP4_SSL(host, timeout=20, ssl_context=_tls())
+        box = imaplib.IMAP4_SSL(host, timeout=timeout, ssl_context=_tls())
     except ssl.SSLCertVerificationError as e:
         # (something between here and the mail service, or no root certificates: said without the words of a
         # refused app password, which would retire the saved one until a new one is saved)
@@ -247,14 +253,38 @@ def connect(address: str, password: str) -> tuple[imaplib.IMAP4, str]:
         except imaplib.IMAP4.error as e:
             if _BUSY.search(str(e)) and not _REFUSED.search(str(e)):  # Gmail's "[UNAVAILABLE] Temporary System Problem"
                 raise MailboxError(f"{host} is busy just now") from e
-            raise MailboxError(f"{host} didn't accept the email app password") from e
+            raise MailboxError(f"{host} didn't accept the email app password", "refused") from e
         except UnicodeError as e:  # app passwords are plain letters and digits
             raise MailboxError("the email app password has characters an app password never has; "
-                               "copy it again from your email account's app-password page") from e
+                               "copy it again from your email account's app-password page", "refused") from e
     except MailboxError:
         logout(box)
         raise
     return box, host
+
+
+# The Email codes panel's Test it (Version D): the most it waits, in seconds, and what it says when it didn't work
+SIGN_IN_TEST_WAIT = 10.0
+SIGN_IN_SAID = {"refused": "your email provider refused the password",
+                "address": "the desk can't read that kind of address",
+                "unreachable": "your email provider didn't answer"}
+
+
+def try_sign_in(address: str, password: str, wait: float = SIGN_IN_TEST_WAIT) -> str | None:
+    """Sign in to the address's inbox with the app password and straight out again: no folder opened, no message read
+    or marked. None when it worked, else which of SIGN_IN_SAID's sentences says why. Neither the address nor the
+    password is in what it says (nor in anything it logs: it logs nothing). Blocking, `wait` seconds at most for each
+    step: the desk's route runs it in a thread and stops waiting for it at `wait` in all."""
+    if "@" not in address:
+        return SIGN_IN_SAID["address"]
+    try:
+        box, _ = connect(login_address(address), password, timeout=wait)
+    except MailboxError as e:
+        return SIGN_IN_SAID.get(e.kind, SIGN_IN_SAID["unreachable"])
+    except Exception:  # (anything else on the way, a server gone quiet mid-way: said as no answer, never in its words)
+        return SIGN_IN_SAID["unreachable"]
+    logout(box)
+    return None
 
 
 @functools.lru_cache(maxsize=1)

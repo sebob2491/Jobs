@@ -272,8 +272,10 @@ def _jobs_at_once(raw: Any) -> tuple[int, str]:
     return _whole_number(raw, "jobs_at_once", JOBS_AT_ONCE_DEFAULT, JOBS_AT_ONCE_MAX)
 
 
-# A model's name as Claude Code's --model takes it: an alias ("sonnet") or a full name ("claude-sonnet-5-5")
-_MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-\[\]]{1,80}$")
+# A model's name as Claude Code's --model takes it: an alias ("sonnet") or a full name ("claude-sonnet-5-5"), 1 to 80
+# of letters, digits and . _ : [ ] - (the Settings page's box: Version D), never beginning with one that isn't a letter
+# or a digit (a "-" first would read as a switch of the claude command's)
+_MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\-\[\]]{0,79}$")
 
 
 def _cover_letter_model(raw: Any) -> tuple[str, str]:
@@ -1331,3 +1333,67 @@ def save_answer(label: str, answer: Any, source: str = "", at: str = "") -> dict
     entries.insert(0, entry)
     _write_answers(data, entries)
     return entry
+
+
+def answer_id(entry: dict[str, Any]) -> str:
+    """An answers.yaml entry's id on the Your answers page: its pattern and its employer together, which is what
+    save_answer treats as one entry."""
+    return f"{entry.get('match') or ''}\n{str(entry.get('at') or '').strip()}"
+
+
+def _remembered(data: dict[str, Any]) -> tuple[list[Any], list[int]]:
+    """answers.yaml's entries as written, and where in them the remembered answers are: each with a pattern, and none
+    of the common questions' (their own card has them)."""
+    old = data.get("answers")
+    entries = list(old) if isinstance(old, list) else []
+    return entries, [i for i, a in enumerate(entries) if isinstance(a, dict) and a.get("match") and not a.get("bank")]
+
+
+def remembered_answers() -> list[dict[str, Any]]:
+    """The answers the person gave on a job's card with "remember" ticked, newest first (as answers.yaml keeps them),
+    for the Your answers page: each with its id, question, answer (None for one left empty), the employer it's kept
+    for ("" for every one), and whether it's an ID (autofill.remembered_ids: the page hides it until Show). A file
+    that doesn't parse is a ValueError."""
+    from .autofill import remembered_ids  # (autofill reads this module)
+
+    entries, at = _remembered(_answers_file())
+    out = []
+    for i in at:
+        a = entries[i]
+        answer = a.get("answer")
+        out.append({"id": answer_id(a), "question": str(a.get("question") or a.get("match")),
+                    "answer": answer if answer is None or isinstance(answer, (str, list)) else str(answer),
+                    "at": str(a.get("at") or "").strip(),
+                    "private": bool(remembered_ids(Profile({"answers": [a]})))})
+    return out
+
+
+def _named_answer(entry_id: Any) -> tuple[dict[str, Any], list[Any], int]:
+    """answers.yaml, its entries, and where the remembered answer with this id is in them: a LookupError for an id
+    that names none (a common question's among them), a ValueError for a file that doesn't parse."""
+    data = _answers_file()
+    entries, at = _remembered(data)
+    i = next((i for i in at if isinstance(entry_id, str) and answer_id(entries[i]) == entry_id), None)
+    if i is None:
+        raise LookupError("That answer isn't remembered any more.")
+    return data, entries, i
+
+
+def change_answer(entry_id: Any, answer: Any) -> dict[str, Any]:
+    """The remembered answer with this id given a new answer, for the same question and the same employer, and kept
+    as the newest (as save_answer keeps one given again). Only that entry changes: every other stays as written."""
+    if not isinstance(answer, str) or not answer.strip():
+        raise ValueError("Type an answer, or press Forget.")
+    data, entries, i = _named_answer(entry_id)
+    entry = {**entries.pop(i), "answer": answer.strip()}
+    entries.insert(0, entry)
+    _write_answers(data, entries)
+    return entry
+
+
+def forget_answer(entry_id: Any) -> None:
+    """The remembered answer with this id taken out of answers.yaml (the question is asked again the next time a site
+    asks it). Every other entry stays as written."""
+    data, entries, i = _named_answer(entry_id)
+    del entries[i]
+    _write_answers(data, entries)

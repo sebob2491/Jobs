@@ -85,3 +85,26 @@ def open_window(url: str, mode: str) -> str:
             pass  # (found, but it won't start: a tab instead)
     webbrowser.open(url)
     return "tab"
+
+
+def _folder_opener() -> list[str]:
+    """The program that shows a folder in the system's file manager, outside Windows (which has os.startfile)."""
+    return ["open"] if _system() == "macos" else ["xdg-open"]
+
+
+def open_folder(folder: Path) -> bool:
+    """Show `folder` in the system's file manager: Windows' own (os.startfile, which opens a folder in Explorer), or
+    macOS' open and Linux's xdg-open, given the folder's whole path as their one argument. Never through a shell.
+    Whether it started."""
+    target = folder.resolve()
+    if not target.is_dir():
+        return False
+    try:
+        if sys.platform == "win32":
+            os.startfile(str(target))  # (Windows alone has it: Explorer opens the folder)
+        else:
+            subprocess.Popen([*_folder_opener(), str(target)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        return False
+    return True

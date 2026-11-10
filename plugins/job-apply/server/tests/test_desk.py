@@ -5249,7 +5249,7 @@ def test_the_safety_window_says_each_setting_as_the_desk_acts_on_it(srv, job_app
     notices = s["accept_notices"]
     assert notices["value"] == "on" and "notice about AI screening" in notices["said"]
     assert "Never a newsletter, job alerts, a talent community or marketing" in notices["said"]
-    assert "accept_notices" in notices["where"]
+    assert notices["where"] == "Settings, Applying: Agree to required notices"
     assert s["manage_accounts"]["value"] == "off" and "never creates an account" in s["manage_accounts"]["said"]
     assert s["accept_cookies"]["value"] == "off" and "never accepted" in s["accept_cookies"]["said"]
     assert (s["email_codes"]["value"], s["email_tracking"]["value"], s["email_password"]["value"]) == (
@@ -5311,17 +5311,30 @@ def test_the_safety_window_says_each_setting_as_the_desk_acts_on_it(srv, job_app
 
 
 def test_the_safety_window_says_where_each_switch_is_since_the_openings_table(srv, job_apply_home):
-    """Version B moved four switches: Jobs at once and Troubleshooting to Settings (Searching and applying), Submit for
-    me and Cover letter into the bar that shows on Openings once a job is ticked. The Safety window's "where" says where
-    each is now (it still said "under Openings" and "under Openings, More")."""
+    """Version B moved four switches: Jobs at once and Troubleshooting to Settings, Submit for me and Cover letter into
+    the bar that shows on Openings once a job is ticked; Version D gives each its row on the Settings page (D3). The
+    Safety window's "where" names that page's panel and row (D4), never a place the control no longer is: "under
+    Openings", the bar, Searching and applying, or a file (profile.yaml, desk.json)."""
     desk = Desk(srv)
     desk.applier.start = lambda: None
     where = {line["key"]: line["where"] for line in desk.safety()["lines"]}
-    assert not [key for key, said in where.items() if "under Openings" in said], where
-    assert where["jobs_at_once"].startswith("The Jobs at once buttons in Settings, under Searching and applying")
-    assert where["troubleshoot"] == "The Troubleshooting switch in Settings, under Searching and applying"
-    bar = "in the bar that shows on Openings once a job is ticked"
-    assert bar in where["auto_submit"] and bar in where["cover_letters"], where
+    gone = ("under Openings", "in the bar", "Searching and applying", "profile.yaml", "desk.json", "settings:")
+    assert not [key for key, said in where.items() if any(g in said for g in gone)], where
+    assert where["practice"] == "Settings, Applying: Practice mode"
+    assert where["auto_submit"] == "Settings, Applying: Submit for me"
+    assert where["accept_notices"] == "Settings, Applying: Agree to required notices"
+    assert where["manage_accounts"] == "Settings, Applying: Make my accounts"
+    assert where["accept_cookies"] == "Settings, Applying: Cookie banners"
+    assert where["email_codes"] == where["email_password"] == "Settings, Email codes"
+    assert where["jobs_at_once"] == "Settings, Applying: Jobs at once"
+    assert where["troubleshoot"] == "Settings, Applying: For fixing the desk"
+    assert where["cover_letters"] == "Settings, Resume and cover letters: Write a cover letter for each job"
+    assert where["boards"] == where["bot_checks"] == where["passwords"] == "Not a setting: always so"
+    # (each that isn't "Not a setting" names a panel of the Settings page, which the page links to)
+    panels = ("Your profile", "Job search", "Applying", "Accounts and passwords", "Email codes", "Phone alerts",
+              "Resume and cover letters", "Updates and about")
+    assert all(said == "Not a setting: always so" or said.startswith(tuple(f"Settings, {p}" for p in panels))
+               for said in where.values()), where
 
 
 def test_the_page_marks_new_openings_hides_one_not_wanted_with_undo_and_shows_safety(srv, job_apply_home):
