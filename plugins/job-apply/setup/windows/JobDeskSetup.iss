@@ -79,8 +79,10 @@ Name: "{autodesktop}\Job Desk"; Filename: "{app}\bin\uvw.exe"; Parameters: "run 
 [Run]
 ; Claude Code, when its box was ticked: the one-step PowerShell installer (Git, Claude Code, the plugin), in a
 ; window of its own that stays open to read
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "{code:ClaudeCodeParams}"; StatusMsg: "Starting the Claude Code setup in its own window..."; Tasks: claudecode; Flags: nowait
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "{code:ClaudeCodeParams}"; StatusMsg: "Starting the Claude Code setup in its own window..."; Tasks: claudecode; Check: not Relaunch; Flags: nowait
 Filename: "{app}\bin\uvw.exe"; Parameters: "run --frozen --python {#Python} --project ""{app}\plugin\server"" job-apply-desk"; WorkingDir: "{app}\plugin\server"; Description: "Open the Job Desk now"; Flags: postinstall nowait skipifsilent
+; (an update from the desk's Update button, /RELAUNCH=1, opens the desk again from [Code], at ssPostInstall once SetUp
+; has installed its packages and browser: a [Run] line would run before that)
 
 [UninstallDelete]
 ; what uv made here (the Python environment) and what ran from here wrote (caches): this program's folders alone
@@ -91,6 +93,20 @@ Type: dirifempty; Name: "{app}"
 [Code]
 var
   Problems: String;
+  { (true once the install has finished: DeinitializeSetup tells a finished update from one that stopped) }
+  Installed: Boolean;
+  { (true once the files have begun to be copied, at ssInstall: an update that stops after that may have left a copy
+    that won't open, so DeinitializeSetup opens nothing then, and says so) }
+  CopyBegan: Boolean;
+  { (true once an update has opened the desk again, at ssPostInstall) }
+  Reopened: Boolean;
+
+{ Started by the desk's Update button (updates.py: /RELAUNCH=1): open the desk again once installed, and never run
+  the Claude Code setup, whatever box was ticked last time }
+function Relaunch(): Boolean;
+begin
+  Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
+end;
 
 function SetEnvironmentVariable(lpName, lpValue: String): BOOL;
   external 'SetEnvironmentVariableW@kernel32.dll stdcall';
@@ -233,14 +249,78 @@ begin
   end;
 end;
 
+{ The desk installed in App, started as the Start menu's shortcut starts it, and not waited for }
+function OpenDesk(const App: String): Boolean;
+var
+  Code: Integer;
+begin
+  Result := Exec(App + '\bin\uvw.exe', 'run --frozen --python {#Python} --project "' + App +
+    '\plugin\server" job-apply-desk', App + '\plugin\server', SW_SHOWNORMAL, ewNoWait, Code);
+  if not Result then
+    Log('Job Desk: the desk could not be opened: ' + SysErrorMessage(Code));
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
+  if CurStep = ssInstall then
+  begin
+    CopyBegan := True;
+    Log('Job Desk: copying the files.');
+  end;
   if CurStep = ssPostInstall then
   begin
     SetUp();
     if Problems <> '' then
       SuppressibleMsgBox('The Job Desk is installed, but:' + Problems, mbError, MB_OK, IDOK);
+    { an update from the desk's Update button: the desk opens again, now that its packages and browser are set up }
+    if Relaunch() then
+    begin
+      Log('Job Desk: opening the updated desk.');
+      Reopened := OpenDesk(ExpandConstant('{app}'));
+      { (it wouldn't start: the update is done all the same, and the person is told where to open it) }
+      if not Reopened then
+      begin
+        Log('Job Desk: the update finished, but the desk could not be opened.');
+        SuppressibleMsgBox('The Job Desk was updated. Open it from the Start menu.', mbInformation, MB_OK, IDOK);
+      end;
+    end;
   end;
+  if CurStep = ssDone then
+  begin
+    Installed := True;
+    Log('Job Desk: the install finished.');
+  end;
+end;
+
+{ An update from the desk's Update button (Relaunch) that didn't finish. The desk stopped for it (PrepareToInstall).
+  Stopped before its files began to be copied (it ran into something before ssInstall): the desk still installed
+  opens again, as the Start menu's shortcut opens it, and the person is back where they were on the version they had.
+  Nothing starts when that desk isn't there, or when Setup stopped before it knew where the program is. Stopped once
+  the copy had begun (it failed part-way: [InstallDelete] had taken the older code, and a rollback doesn't bring it
+  back): nothing is opened, and the person is told to run the installer again (a message a silent install shows,
+  unless /SUPPRESSMSGBOXES). }
+procedure DeinitializeSetup();
+var
+  App: String;
+begin
+  if Installed or Reopened or not Relaunch() then
+    Exit;
+  if CopyBegan then
+  begin
+    Log('Job Desk: the update did not finish after its files began to change; nothing was opened.');
+    SuppressibleMsgBox('The Job Desk''s update didn''t finish, and the Job Desk may not open. Run the Job Desk''s ' +
+      'installer again to put it right.', mbError, MB_OK, IDOK);
+    Exit;
+  end;
+  try
+    App := ExpandConstant('{app}');
+  except
+    Exit;
+  end;
+  if not FileExists(App + '\bin\uvw.exe') or not FileExists(App + '\plugin\server\src\job_apply\desk.py') then
+    Exit;
+  Log('Job Desk: the update did not finish; opening the desk that is still installed.');
+  OpenDesk(App);
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

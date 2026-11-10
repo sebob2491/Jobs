@@ -317,7 +317,7 @@ def test_safety_opens_with_each_setting_as_the_desk_acts_on_it(srv, job_apply_ho
     lines = desk.safety()["lines"]
 
     async def go():
-        async with _desk_page(desk, at="settings") as (page, calls):
+        async with _desk_page(desk, at="settings/applying") as (page, calls):  # (Safety: Settings, Applying)
             await page.click("#safety-btn")
             await page.wait_for_selector("#safety[open] #safety-body li")
             keys = await page.eval_on_selector_all("#safety-body li", "ls => ls.map((l) => l.dataset.safety)")

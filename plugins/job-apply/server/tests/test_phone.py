@@ -558,7 +558,7 @@ def test_the_phone_alerts_card_turns_them_on_and_sends_a_test(srv):
                 def accept(d):
                     asyncio.ensure_future(d.accept())
                 page.on("dialog", accept)
-                await open_desk(page, desk, "settings")
+                await open_desk(page, desk, "settings/phone")  # (the Phone alerts card: Settings, Phone alerts)
                 await page.wait_for_selector("#plugin-version:not(:empty)")
                 assert await page.inner_text("#phone-pill") == "Off"
                 await page.click("[data-act=phone-make]")

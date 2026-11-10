@@ -64,6 +64,67 @@ def test_a_picture_of_each_page(srv, job_apply_home, monkeypatch, case, look, wi
     assert all(path.stat().st_size > 2000 for path in written), [(path.name, path.stat().st_size) for path in written]
 
 
+SETTINGS_PANELS = ("profile", "search", "applying", "passwords", "email", "phone", "documents", "about")
+
+
+@pytest.mark.parametrize("window", (*WINDOWS, (900, 700)), ids=lambda w: f"{w[0]}x{w[1]}")
+@pytest.mark.parametrize("look", LOOKS)
+def test_a_picture_of_each_settings_panel(srv, job_apply_home, monkeypatch, look, window):
+    """Each of the Settings page's eight panels (the design's D1), each opened by its address, drawn from the openings
+    state, in each look and window size (and a narrow one, where the panels' menu is a row above the panel); saved as
+    settings-<panel>-<look>-<w>x<h>.png."""
+    folder = Path(SHOTS)
+    folder.mkdir(parents=True, exist_ok=True)
+    desk = _canned(srv, monkeypatch, _state("state-openings.json"))
+    names = [f"settings-{panel}-{look}-{window[0]}x{window[1]}.png" for panel in SETTINGS_PANELS]
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": window[0], "height": window[1]}, color_scheme=look)
+                for panel, name in zip(SETTINGS_PANELS, names):
+                    await open_desk(page, desk, f"settings/{panel}")
+                    await page.wait_for_timeout(150)
+                    await page.screenshot(path=str(folder / name))
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert all((folder / name).stat().st_size > 2000 for name in names)
+
+
+@pytest.mark.parametrize("look", LOOKS)
+def test_a_picture_of_applying_in_the_look_chosen_in_settings(srv, job_apply_home, monkeypatch, look):
+    """Settings' Applying panel (the openings state) in the look chosen by Look (the design's D3), on a computer set to
+    the other look, in a window of 1440 by 900; saved as settings-applying-chosen-<look>.png."""
+    folder = Path(SHOTS)
+    folder.mkdir(parents=True, exist_ok=True)
+    desk = _canned(srv, monkeypatch, _state("state-openings.json"))
+    path = folder / f"settings-applying-chosen-{look}.png"
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                other = "light" if look == "dark" else "dark"
+                page = await browser.new_page(viewport={"width": 1440, "height": 900}, color_scheme=other)
+                await open_desk(page, desk, "settings/about")
+                await page.click(f"[data-look={look}]")
+                await open_desk(page, desk, "settings/applying")
+                await page.wait_for_timeout(150)
+                await page.screenshot(path=str(path))
+                theme = await page.evaluate("() => document.documentElement.dataset.theme")
+                await browser.close()
+                return theme
+        finally:
+            await desk.stop()
+
+    assert run(go()) == look
+    assert path.stat().st_size > 2000
+
+
 @pytest.mark.parametrize("dropdown", ["pay", "more", "add"])
 @pytest.mark.parametrize("look", LOOKS)
 def test_a_picture_of_the_openings_with_a_drop_down_open(srv, job_apply_home, monkeypatch, look, dropdown):
@@ -252,3 +313,112 @@ def test_a_picture_of_a_new_persons_home(srv, job_apply_home, monkeypatch, look,
 
     run(go())
     assert path.stat().st_size > 2000
+
+
+@pytest.mark.parametrize("window", WINDOWS, ids=lambda w: f"{w[0]}x{w[1]}")
+@pytest.mark.parametrize("look", LOOKS)
+def test_a_picture_of_your_answers_with_remembered_answers(srv, job_apply_home, monkeypatch, look, window):
+    """Your answers (the openings state) with answers the desk remembers (the design's D5): an ID kept for one
+    employer (dots), one answered everywhere being changed (its box, Save and Cancel), one left empty at another
+    employer, and a second ID; scrolled to the card, in each look and window size; saved as
+    answers-remembered-<look>-<w>x<h>.png. Made-up values only."""
+    from test_desk_answers import _write
+
+    folder = Path(SHOTS)
+    folder.mkdir(parents=True, exist_ok=True)
+    _write(job_apply_home)
+    desk = _canned(srv, monkeypatch, _state("state-openings.json"))
+    path = folder / f"answers-remembered-{look}-{window[0]}x{window[1]}.png"
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": window[0], "height": window[1]}, color_scheme=look)
+                await open_desk(page, desk, "answers")
+                await page.wait_for_selector("#remembered-card[data-loaded]", state="attached")
+                row = page.locator("#remembered > .setrow").nth(1)
+                await row.locator("button", has_text="Change").click()
+                await row.locator("input[type=text]").fill("Yes, any weekend")
+                await page.evaluate("() => document.getElementById('remembered-card').scrollIntoView()")
+                await page.wait_for_timeout(150)
+                await page.screenshot(path=str(path))
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert path.stat().st_size > 2000
+
+
+@pytest.mark.parametrize("window", WINDOWS, ids=lambda w: f"{w[0]}x{w[1]}")
+@pytest.mark.parametrize("look", LOOKS)
+def test_a_picture_of_the_safety_window(srv, job_apply_home, monkeypatch, look, window):
+    """Settings' Applying panel with the Safety window open, each "where" that names a panel a link to it (the
+    design's D4), in each look and window size; saved as settings-safety-<look>-<w>x<h>.png."""
+    from test_desk_buttons import _idle_desk
+
+    folder = Path(SHOTS)
+    folder.mkdir(parents=True, exist_ok=True)
+    desk = _idle_desk(srv)
+    path = folder / f"settings-safety-{look}-{window[0]}x{window[1]}.png"
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": window[0], "height": window[1]}, color_scheme=look)
+                await open_desk(page, desk, "settings/applying")
+                await page.click("#safety-btn")
+                await page.wait_for_selector("#safety[open] #safety-body li")
+                await page.wait_for_timeout(150)
+                await page.screenshot(path=str(path))
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert path.stat().st_size > 2000
+
+
+# The update card (the design's F2), each drawn in Settings, under Updates and about; and Home with the blue notice of a
+# newer version out (the side menu's "update ready" with it)
+UPDATE_SHOTS = {
+    "newer": {"latest": "0.4.4", "newer": True, "kind": "installed"},
+    "under-way": {"latest": "0.4.4", "newer": True, "kind": "installed", "progress": "downloading"},
+    "failed": {"latest": "0.4.4", "newer": True, "kind": "plugin", "progress": "failed",
+               "error": "Claude couldn't update the plugin."},
+}
+
+
+@pytest.mark.parametrize("window", WINDOWS, ids=lambda w: f"{w[0]}x{w[1]}")
+@pytest.mark.parametrize("look", LOOKS)
+def test_a_picture_of_the_update_card_and_the_notice(srv, job_apply_home, monkeypatch, look, window):
+    """Updates and about with a newer version out, with an update under way, and with one that didn't go through; and
+    Home with the notice (the openings state, version 0.4.3), in each look and window size; saved as
+    update-<case>-<look>-<w>x<h>.png and update-home-<look>-<w>x<h>.png."""
+    folder = Path(SHOTS)
+    folder.mkdir(parents=True, exist_ok=True)
+    state = _state("state-openings.json")
+    state["version"] = "0.4.3"
+    desk = _canned(srv, monkeypatch, state)
+    size = f"{look}-{window[0]}x{window[1]}"
+    names = [*(f"update-{case}-{size}.png" for case in UPDATE_SHOTS), f"update-home-{size}.png"]
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": window[0], "height": window[1]}, color_scheme=look)
+                for (case, update), name in zip([*UPDATE_SHOTS.items(), ("home", UPDATE_SHOTS["newer"])], names):
+                    state["update"] = {**state["update"], "current": "0.4.3", **update}
+                    await page.goto("about:blank")
+                    await open_desk(page, desk, "home" if case == "home" else "settings/about")
+                    await page.wait_for_timeout(150)
+                    await page.screenshot(path=str(folder / name))
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert all((folder / name).stat().st_size > 2000 for name in names)

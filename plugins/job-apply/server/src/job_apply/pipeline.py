@@ -115,6 +115,8 @@ HANDS_ON_TIMEOUT = 45 * 60  # the longest it holds the queue, even for someone a
 NOTED = {"stuck", "sign_in", "submit_failed", "check_submit"}
 STOP = "stop"  # the page a job stopped on, saved for a problem report: its folder's debug/<time>-stop
 POLL_SECONDS = 3.0
+# A start asked for while an installed copy's update holds the applier (Applier.updating): refused with this
+UPDATING = "The Job Desk is updating. Try again when it is back."
 # A tab waiting on the person that hasn't changed (nor paused) for STILL_SECONDS is looked at this often instead: each
 # look reads every frame of it, every few seconds for up to 45 minutes (the review of Oct 15)
 SLOW_POLL_SECONDS = 10.0
@@ -1784,6 +1786,10 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         # but those they pressed Resume on, or answered on their card (pressed)
         self.paused = False
         self.pressed: set[int] = set()
+        # An installed copy's update holds the applier (set with its pause, before the installer starts: the desk is
+        # about to quit for it; cleared should the update fail): nothing starts, not a queued job, nor one the person
+        # pressed, nor their Submit, nor a round (refuse_while_updating)
+        self.updating = False
         # (paused only by a restart's jobs back in the queue, not by the person's Pause queue: Clear the queue ends it)
         self._restore_held = False
         # "Don't wait for me" (desk.json, the owner, Oct 24: the desk left to go through the whole list): no sign-in or
@@ -1964,6 +1970,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         press: they may have reset the password to it by hand, as the card asks. One for each such Resume;
         none for a Resume on any other card (a question, a stuck page), nor when the queue carries on with
         the job by itself."""
+        self.refuse_while_updating()
         run = self.runs.get(job_id)
         signing_in = run is not None and run.need == "sign_in"  # (before enqueue clears it)
         if run is not None and run.status == "needs_you":
@@ -2012,8 +2019,14 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             self._log(other, "the queue went on: you pressed Carry on for (or answered) another job. This one's tab is "
                       "watched between jobs, and the desk carries on with it once it's past this step.")
 
+    def refuse_while_updating(self) -> None:
+        """A start the person asked for, refused while an update holds the applier (updating): ValueError, with why."""
+        if self.updating:
+            raise ValueError(UPDATING)
+
     def submit_now(self, job_id: int) -> Run:
         """The person pressed Submit for a job that's waiting on its review page."""
+        self.refuse_while_updating()
         run = self.runs[job_id]
         if self.hold_submits:
             raise ValueError("Troubleshooting is on, so nothing is sent. Turn it off on the desk to send this one.")
@@ -2137,6 +2150,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
 
     def use_usual_resume(self, job_id: int) -> Run:
         """Go ahead with this job without a tailored resume."""
+        self.refuse_while_updating()
         run = self.runs[job_id]
         run.usual_resume = True
         return self.enqueue(job_id, submit=run.submit, front=True)
@@ -2144,6 +2158,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
     def apply_anyway(self, job_id: int) -> Run:
         """The person's Apply anyway on a job that may be one they began or applied to on another site
         (_maybe_done_elsewhere): it isn't, for this job only (the other is still asked about), and it goes on now."""
+        self.refuse_while_updating()
         run = self.runs.get(job_id)
         if run is None or run.status != "needs_you" or run.need != "maybe_duplicate":
             raise ValueError("That job isn't waiting on that question any more.")
@@ -2158,6 +2173,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
     def retry_now(self, job_id: int) -> Run:
         """The person's Try now on a job waiting to be tried again by itself after the site's error (_retry_later): it
         goes now, opened afresh, as the one try (even while the queue is paused: their own press)."""
+        self.refuse_while_updating()
         run = self.runs.get(job_id)
         if run is None or run.status != "needs_you" or not run.retry_at:
             raise ValueError("That job isn't waiting to be tried again any more.")
@@ -2449,8 +2465,12 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         waits."""
         now = time.time()
         for run in [r for r in self.runs.values() if r.retry_at and r.retry_at <= now and r.job_id not in self._slots]:
+            if self.updating:  # (an update's hold: nothing looked at or queued again)
+                return
             try:
                 why = await self._touched_since_stop(run)
+                if self.updating:
+                    return
                 if not run.retry_at:  # (ended meanwhile: Skip, Carry on)
                     continue
                 if why:
@@ -2487,6 +2507,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         """Between jobs: carry on with any the queue went on without whose tab the person has
         since got past its sign-in, check or code. A closed tab waits for Resume."""
         for run in [r for r in self.runs.values() if r.left and r.status == "needs_you" and not r.blocking]:
+            if self.updating:  # (an update's hold, set before or during a look: nothing typed in or carried on)
+                return
             if run.page is None or self.srv.browser.lost(run.page):
                 continue
             if run.job_id in self._slots:  # (its pass isn't over: the page it stopped on is being saved in its tab)
@@ -2501,6 +2523,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                     moved = await self._past_pause(run)
                 except Exception:  # a tab mid-way through loading: looked at again next time, not holding the rest
                     continue
+            if self.updating:
+                return
             if moved and run.left and run.status == "needs_you":
                 # (carried on by itself: the person may have changed later pages of a saved draft by hand in its tab,
                 # or put a file of their own in its upload)
@@ -2779,6 +2803,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
     def start_round(self, job_id: int) -> None:
         """The person is at this job's tab in one of the desk's rounds (focus() brought it up): its bot check, or
         its review page to check before they press Submit."""
+        self.refuse_while_updating()
         if self.round_job != job_id and job_id in self.runs:
             self.runs[job_id].rounds += 1  # (for its lines in the desk's history)
         self.round_job, self.round_at = job_id, time.time()
@@ -2799,6 +2824,10 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         return True
 
     async def _tick(self) -> None:
+        if self.updating:  # (the desk is about to quit for its installer: nothing starts, nor is looked at, meanwhile)
+            self._wake.clear()
+            await self._sleep(POLL_SECONDS)
+            return
         self._site_holds_said()
         if self._full() and not (self._slots.keys() <= self._waiting) and not self._may_go_beside():
             # as many jobs under way as go at once: nothing else is begun or looked at until one is done (with one at
@@ -2810,11 +2839,18 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         self._resume_tailored()
         self._letters_retry()
         await self._retry_due()  # (a job stopped on the site's error, its try by itself due: back in the queue)
+        # (and after every await below: an update's hold set meanwhile ends the tick there, nothing begun or put in)
+        if self.updating:
+            return
         await self._front_next()
+        if self.updating:
+            return
         # the person at a job in a round (a bot check, a review page): nothing else started over it, a solved check
         # noticed; a Submit they pressed (the round's own "Submit this one") still goes
         if self._in_round() and not any(t[0] == "submit" for t in self.tasks):
             await self._pick_up_left()
+            if self.updating:
+                return
             self._wake.clear()
             await self._sleep(POLL_SECONDS)
             return
@@ -2832,6 +2868,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                 # paused for the person while they were at another job's tab: theirs now, its tab brought up (once
                 # they're done there), and the wait for them in it begins then
                 await self._bring_forward(blocker)
+                if self.updating:
+                    return
                 if blocker.job_id not in self._behind:
                     blocker.active_at = time.time()
             if blocker.need == "email_code":
@@ -2840,6 +2878,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                 moved = await self._strict(self._moved_on(blocker))
             except Exception:  # a tab that can't be read just now (mid-load, crashed): not past it, and the
                 moved = False  # idle and long-wait releases below still apply
+            if self.updating:
+                return
             if not moved and self._reset_overdue(blocker):
                 blocker.reset_no_mail = moved = True  # (none it could use: as above)
             if time.time() - blocker.paused_at > HANDS_ON_TIMEOUT:
@@ -2871,6 +2911,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                 await self._sleep(self._poll_for([blocker]))
                 return
         await self._pick_up_left()
+        if self.updating:
+            return
         if not self.tasks:
             self._wake.clear()
             # with a job left waiting on the person, look at its tab again soon
@@ -2905,6 +2947,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         if task is None:  # each waits for a job under way on its site
             self._wake.clear()
             await self._sleep(POLL_SECONDS)
+            return
+        if self.updating:  # (the point of no return: no await since the last look, but said here too)
             return
         self.pressed.discard(task[1])
         self._first.discard(task[1])
@@ -3325,10 +3369,10 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         noplace = "a file the desk doesn't attach by itself" if held else "a file your profile has no place for"
         if missing_files:
             self._pause(run, "stuck", ("The form wants a file (" + ", ".join(f["label"] for f in documents)
-                                       + ") and the profile doesn't say where yours is: ask Claude to set "
-                                       "documents.resume (or documents.cover_letter) in profile.yaml, then press Carry "
-                                       "on." + (f" It also wants {_slots_said(slotted, False, folder)}." if slotted
-                                                else "")
+                                       + ") and your profile doesn't have one. Add it in Settings, under "
+                                       "Resume and cover letters, then press Carry on."
+                                       + (f" It also wants {_slots_said(slotted, False, folder)}." if slotted
+                                          else "")
                                        + (f" It also wants {noplace}: {named}: {attach}." if others else "")
                                        if documents else
                                        f"The form wants {_slots_said(slotted, True, folder)}"
@@ -3868,9 +3912,9 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                 await self._bring_forward(run)
                 return self._pause(run, "stuck", f"{_site(run, data)} shows a cookie banner over the page that the "
                                    "desk can't decline for you. Choose in the banner in the desk's browser window, "
-                                   "then press Carry on." + ("" if _cookie_setting() else " (To let the desk accept "
-                                   "banners with no way to decline for you, set accept_cookies: true under "
-                                   "settings: in profile.yaml.)"), code="cookie_banner")
+                                   "then press Carry on." + ("" if _cookie_setting() else " To have the desk accept "
+                                   "banners that have no way to decline, choose that in Settings, under Applying."),
+                                   code="cookie_banner")
             if cookies:
                 data, text = await self._look()
                 run.page_info = _page_info(data)
@@ -4365,8 +4409,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                 asks = ("It asks you to read and accept its data privacy statement, which agrees to something "
                         "in your name, so it's yours: open it in the desk's browser window and accept it if "
                         "you're happy to, then create the account (then verify your email if they ask)")
-                first += (" (The desk accepts an employer's privacy notice for you with accept_notices: true "
-                          "under settings: in profile.yaml, outside practice mode.)" if not _may_accept_notices()
+                first += (" (The desk accepts an employer's privacy notice for you outside practice mode: turn on "
+                          "Agree to required notices in Settings, under Applying.)" if not _may_accept_notices()
                           else " I tried to open it and accept it for you, and couldn't." if lap.manage else "")
                 # (the statement it opened for them is open still: paused on)
                 lap.data, _ = await self._look(text=False)
@@ -5817,7 +5861,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                     f"“{_short(heading)}”. Read it and press its button in the desk's browser window, then press "
                     "Carry on; the desk fills the form in after that." + (
                         " (The desk agrees to an employer's notice about AI screening, its privacy notice or terms for "
-                        "you with accept_notices: true under settings: in profile.yaml, outside practice mode.)"
+                        "you outside practice mode: turn on Agree to required notices in Settings, under Applying.)"
                         if ai and agree is not None
                         and not allowed else ""), code="notice_theirs")
         return "paused"
@@ -5945,7 +5989,10 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
     async def _bring_forward(self, run: Run) -> None:
         """Bring the job's tab to the front for the person: never over another job's tab they're at for the desk (a
         round, a pause that needs their hands, or a sign-in they're still at work in after the queue went on): this one
-        is brought up after that (_front_next, or as it holds the queue in turn)."""
+        is brought up after that (_front_next, or as it holds the queue in turn). Never while an update holds the
+        applier."""
+        if self.updating:
+            return
         if self._person_at(run) is not None:
             self._behind.add(run.job_id)
             return
@@ -8584,8 +8631,8 @@ def _went_left(run: Run, result: dict[str, Any], *pages: dict[str, Any]) -> None
         if q.get("employer_id") and not theirs:
             continue  # (asked on its card: theirs to answer, not left)
         # (left empty at this employer on an earlier job's card: said with how it's undone, the third review's LOW 1)
-        why = (f"you left it empty at {run.company or 'this employer'} before (to be asked again, ask Claude to clear "
-               "it from answers.yaml, or set history.employee_ids)" if q.get("left_here")
+        why = (f"you left it empty at {run.company or 'this employer'} before (to be asked there again, forget it on "
+               "the Your answers page)" if q.get("left_here")
                else "you left it empty" if theirs
                else f"your profile's answer “{q['unmatched']}” isn't one of its choices" if q.get("unmatched")
                else "it wouldn't take your profile's answer" if q.get("error") else "your profile doesn't answer it")

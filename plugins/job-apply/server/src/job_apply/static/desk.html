@@ -6,6 +6,9 @@
 <!-- (the page's address carries its access token: no link out of it takes the address along, the review of Oct 15) -->
 <meta name="referrer" content="no-referrer">
 <title>Job Desk</title>
+<!-- Look (Settings, Updates and about): Light or Dark, kept in this browser (localStorage's desk-theme), set on <html>
+     here, before the page draws, so it never shows the wrong colors first; Match my computer keeps none -->
+<script>try { const look = localStorage.getItem("desk-theme"); if (look === "light" || look === "dark") document.documentElement.dataset.theme = look; } catch (e) {}</script>
 <!-- (the tab's icon, and the taskbar's for the desk in a window of its own: the logo, held in the page itself, so
      nothing is fetched for it) -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22g%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%221%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%236366f1%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%234338ca%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22url%28%23g%29%22%2F%3E%3Cpath%20d%3D%22M9%2016.5l4.5%204.5L23%2011%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%223%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3C%2Fsvg%3E">
@@ -98,9 +101,12 @@ body > .app { display: grid; grid-template-columns: 244px minmax(0, 1fr); height
   line-height: 1.25; text-align: center; }
 .queue .btn.sm + .btn.sm { margin-top: 4px; }
 #pause-btn .ico { display: none; }
-/* the person: one button, for their profile */
+/* the person: one button, for their profile; and under their name the version, laid over the button's second line
+   (its own element, outside the button: with a newer version out it is a link to Updates and about, F2, and a link
+   can't be inside a button) */
+.me-row { position: relative; margin-top: 6px; flex: none; }
 button.me { display: flex; align-items: center; justify-content: flex-start; gap: 10px; width: 100%; height: auto;
-  margin-top: 6px; padding: 8px; border: 0; border-radius: 8px; background: none; box-shadow: none; color: var(--text);
+  margin: 0; padding: 8px; border: 0; border-radius: 8px; background: none; box-shadow: none; color: var(--text);
   text-align: left; white-space: normal; flex: none; }
 button.me:hover { background: var(--hover); }
 .avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--accent-bg); color: var(--accent-2);
@@ -109,6 +115,11 @@ button.me:hover { background: var(--hover); }
 .me b { display: block; font-size: 13px; font-weight: 600; line-height: 1.25; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; }
 .me small { display: block; color: var(--muted); font-size: 11.5px; font-weight: 400; }
+.me .me-room { visibility: hidden; }
+#plugin-version { position: absolute; left: 44px; right: 4px; top: 22px; margin: 0; padding: 2px 4px; color: var(--muted);
+  font-size: 11.5px; font-weight: 400; line-height: 1.45; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+#plugin-version a { pointer-events: auto; }
+#plugin-version a:focus-visible { outline-offset: 0; }  /* (its ring inside the line's room: none is cut off) */
 
 .main { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); min-width: 0;
   min-height: 0; }
@@ -130,6 +141,20 @@ body[data-page="openings"] .top, body[data-page="applications"] .top { grid-temp
 .content { padding: 22px 28px 24px; min-height: 0; overflow-y: auto; }
 .page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; align-content: start; }
 .page.narrow { max-width: 820px; }
+/* Settings (D1): the menu of its eight panels at the left, the one chosen at its right (820px at most); each panel its
+   heading, a sentence under it where it has one, and its cards */
+.settings { display: grid; grid-template-columns: 216px minmax(0, 1fr); gap: 30px; align-items: start; }
+.snav { display: flex; flex-direction: column; gap: 2px; }
+.snav a { height: 34px; display: flex; align-items: center; flex: none; padding: 0 12px; border-radius: 8px;
+  border: 1px solid transparent; color: var(--body); text-decoration: none; font-weight: 500; font-size: 13.5px;
+  white-space: nowrap; }
+.snav a:hover { background: var(--hover); }
+.snav a[aria-current="page"] { background: var(--panel); border-color: var(--line); box-shadow: var(--shadow);
+  color: var(--text); font-weight: 600; }
+.spanel { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; align-content: start; max-width: 820px;
+  min-width: 0; }
+.spanel-h h2 { margin: 0; font-size: 17px; font-weight: 700; }
+.spanel-h p { margin: 3px 0 0; color: var(--muted); font-size: 13.5px; }
 /* Home: two columns, what waits for the person at the left */
 .cols { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 18px; align-items: start; }
 .stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
@@ -175,7 +200,7 @@ button.link:hover { background: none; text-decoration: underline; }
 .count.warn { background: var(--warn-bg); color: var(--warn); }
 .count.good { background: var(--good-bg); color: var(--good); }
 /* boxes to type or pick in, and tick boxes */
-input[type=text], input[type=password], input[type=time], input[type=search], select { height: 34px; padding: 0 10px;
+input[type=text], input[type=password], input[type=time], input[type=search], input[type=number], select { height: 34px; padding: 0 10px;
   font: inherit; font-size: 13.5px; border: 1px solid var(--control-line); border-radius: 8px; background: var(--panel);
   color: var(--text); }
 input::placeholder { color: var(--faint); }
@@ -225,6 +250,42 @@ input[type=checkbox]:disabled { opacity: .5; cursor: default; }
 .card-h + .setrow { border-top: 0; }
 .setrow .t { margin: 0; font-size: 14px; font-weight: 600; }
 .setrow .s { margin: 1px 0 0; color: var(--muted); font-size: 13px; }
+/* (a control that takes words or a number, beside its name; and a save the desk refused: its sentence under the row,
+   in red) */
+.setrow .box { display: flex; align-items: center; gap: 8px; color: var(--body); font-size: 13px; }
+.setrow input[type=number] { width: 72px; }
+.setrow input[type=text] { width: 260px; max-width: 100%; }
+.setrow input[type=password] { width: 200px; max-width: 100%; }
+/* (a row's controls that are disabled together while it saves: the email's app password and its Save) */
+.setrow fieldset.box { margin: 0; padding: 0; border: 0; min-width: 0; }
+.setrow .acts { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+/* (a row whose control is wide, the app password's: under its words where the panel beside Settings' menu is narrow) */
+@media (max-width: 1280px) {
+  .setrow.stack { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .setrow.stack > form { justify-self: start; }
+}
+.set-err { grid-column: 1 / -1; margin: -6px 0 0; color: var(--bad); font-size: 13px; }
+/* the update card (Version F, the mockup's .update): the program's mark, what the update is doing, its buttons */
+.setrow.update { grid-template-columns: 38px minmax(0, 1fr) auto; gap: 14px; padding: 15px 18px; }
+.setrow.update > .logo { width: 38px; height: 38px; }
+.setrow.update .s { overflow-wrap: anywhere; }
+.setrow.update .s code { font-size: 12.5px; }
+.setrow.update .acts:empty { display: none; }
+/* under a card's rows, a button of its own (the Safety window's) */
+.setfoot { padding: 13px 18px; border-top: 1px solid var(--line-2); }
+/* under a card's rows: a closed <details> holding rows seldom needed */
+details.setmore { padding: 0; color: inherit; font-size: inherit; }
+details.setmore > summary { padding: 10px 18px; font-size: 13px; }
+details.setmore > .setmore-b { margin: 0; padding: 0 18px 13px; color: var(--muted); font-size: 13px; }
+/* Your answers' Answers the desk remembers (D5): a row each, the question, the employer it's kept for, the answer (dots
+   for an ID until Show), Change and Forget at the right; a row being changed has its box and Save and Cancel there */
+#remembered > .setrow:first-child { border-top: 0; }
+#remembered .ans { margin: 4px 0 0; color: var(--text); font-size: 14px; overflow-wrap: anywhere; white-space: pre-wrap; }
+#remembered .ans.left { color: var(--muted); font-style: italic; }
+#remembered .ans .dots { letter-spacing: 2px; }
+#remembered .setrow input[type=text] { width: 100%; margin-top: 6px; }
+#remembered-problem { margin: 12px 18px; }
+#remembered-none { margin: 0; padding: 16px 18px; color: var(--muted); }
 #alerts[aria-pressed="true"] { background: var(--accent-bg); border-color: var(--accent-line); color: var(--accent-2);
   font-weight: 600; }
 
@@ -668,7 +729,8 @@ body.stopped > :not(#stopped) { display: none; }
     line-height: 15px; }
   .nav .sep { margin: 10px 4px; }
   button.me { justify-content: center; padding: 6px 0; position: relative; }
-  .me-words { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .me-words, #plugin-version { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%);
+    white-space: nowrap; }
   .top, body[data-page] .top { grid-template-columns: minmax(0, 1fr); padding: 10px 16px; }
   .top-l { flex-wrap: wrap; }
   .top-r { justify-content: flex-start; }
@@ -677,6 +739,9 @@ body.stopped > :not(#stopped) { display: none; }
   .toast { left: calc(50% + 32px); max-width: calc(100vw - 96px); }
   .applybar { left: 64px; max-width: calc(100vw - 96px); }
   body.applying[data-page="openings"] .content { padding-bottom: 112px; }
+  /* (Settings' menu above its panel, one row that scrolls sideways; room around it for a link's focus ring) */
+  .settings { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .snav { flex-direction: row; overflow-x: auto; padding: 4px; margin: -4px; scrollbar-width: thin; }
 }
 @media (max-width: 760px) {
   .cols { grid-template-columns: minmax(0, 1fr); }
@@ -686,6 +751,11 @@ body.stopped > :not(#stopped) { display: none; }
   .item .acts .btn { white-space: normal; height: auto; min-height: 34px; padding-top: 5px; padding-bottom: 5px; }
   .trow { grid-template-columns: 38px minmax(0, 1fr); }
   .trow .acts { grid-column: 2; flex-wrap: wrap; }
+  .setrow { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .setrow > .seg, .setrow > .switch, .setrow > .btn { justify-self: start; }
+  .setrow > .acts { justify-content: flex-start; }
+  .setrow.update { grid-template-columns: 38px minmax(0, 1fr); }
+  .setrow.update > .acts { grid-column: 2; }
   .tbody { margin-left: 0; }
 }
 </style>
@@ -750,7 +820,10 @@ body.stopped > :not(#stopped) { display: none; }
       <button class="btn sm" id="pause-btn" data-act="pause" title="The job under way finishes what it is doing; no other job starts until you press Carry on with the queue" hidden><svg class="ico" aria-hidden="true"><use href="#i-pause"/></svg>Pause queue</button>
       <button class="btn sm ghost" id="clear-queue-btn" data-act="clear-queue" title="Take the jobs not started yet out of the queue, back to the openings (not skipped); jobs already begun keep their cards" hidden>Clear the queue</button>
     </div>
-    <button class="me" data-act="setup" title="Your profile"><span class="avatar" id="me-avatar" aria-hidden="true"><svg class="ico" aria-hidden="true"><use href="#i-user"/></svg></span><span class="me-words"><b id="who"></b><small id="plugin-version"></small></span></button>
+    <div class="me-row">
+      <button class="me" data-act="setup" title="Your profile"><span class="avatar" id="me-avatar" aria-hidden="true"><svg class="ico" aria-hidden="true"><use href="#i-user"/></svg></span><span class="me-words"><b id="who"></b><small class="me-room" aria-hidden="true">&nbsp;</small></span></button>
+      <small id="plugin-version"></small>
+    </div>
   </aside>
   <div class="main">
     <!-- the top bar, one for all pages: each control in a wrapper that route shows on its pages (data-pages), so the
@@ -926,11 +999,20 @@ body.stopped > :not(#stopped) { display: none; }
         <section class="card" aria-labelledby="bank-h" id="bank-card" hidden>
           <div class="card-head"><h2 id="bank-h">Common questions</h2><span class="pill" id="bank-count"></span></div>
           <p class="small" style="margin: 12px 18px 0">Most applications ask these, and your profile doesn't say. Answer once:
-            the desk fills them in at every employer from then on (kept in <code>~/.job-apply/answers.yaml</code>).</p>
+            the desk fills them in at every employer from then on (kept with your other answers, lower on this page).</p>
           <div id="bank"></div>
           <details id="bank-done" hidden><summary>Your answers</summary><div id="bank-given"></div></details>
         </section>
         <p class="page-none" id="bank-none" hidden>No common questions to show yet.</p>
+        <!-- (D5: every answer given on a job's card with "remember" ticked. Asked of the desk (/api/answers) when this
+             page opens and after each change, never part of the state; an ID's value is put in the page only once Show
+             is pressed, and goes back to dots when the page is left. Drawn by renderRemembered, not by the refresh) -->
+        <section class="card" aria-labelledby="remembered-h" id="remembered-card">
+          <div class="card-head"><h2 id="remembered-h">Answers the desk remembers</h2></div>
+          <p class="notice bad" id="remembered-problem" role="alert" hidden></p>
+          <div id="remembered"></div>
+          <p class="small" id="remembered-none" hidden>Nothing remembered yet. An answer you give on a job's card is kept here when "remember" is ticked.</p>
+        </section>
       </div>
       <div class="page narrow" data-pages="working" hidden>
         <!-- what's worked: the person's own applications' outcomes by group (outcomes.py), counted on this computer only -->
@@ -940,152 +1022,361 @@ body.stopped > :not(#stopped) { display: none; }
         </section>
         <p class="page-none" id="working-none" hidden>Nothing sent yet. Once you have applied, this page says what is working for you.</p>
       </div>
-      <div class="page narrow" data-pages="settings" hidden>
-        <section class="card" aria-labelledby="profile-h">
-          <div class="item">
-            <span class="itico gray"><svg class="ico" aria-hidden="true"><use href="#i-user"/></svg></span>
-            <div><h2 class="t" id="profile-h">Your profile</h2>
-              <p class="s">Your details, work history and education, and the answers that go on every application.</p></div>
-            <div class="acts"><button class="btn" id="setup-btn" data-act="setup" title="Your resume, contact details, work authorization, jobs and schools, and what the desk may do for you">Edit your profile</button></div>
+      <!-- Settings (the design's D1): a menu of eight panels, the one chosen at its right. Each panel has an address of its
+           own (#settings/<panel>, route), so a message elsewhere can link straight to it; #settings alone, or a panel
+           that isn't one, is Your profile. A panel not shown is still in the page (hidden) -->
+      <div class="page" data-pages="settings" hidden>
+        <div class="settings">
+          <nav class="snav" aria-label="Settings">
+            <a href="#settings/profile">Your profile</a>
+            <a href="#settings/search">Job search</a>
+            <a href="#settings/applying">Applying</a>
+            <a href="#settings/passwords">Accounts and passwords</a>
+            <a href="#settings/email">Email codes</a>
+            <a href="#settings/phone">Phone alerts</a>
+            <a href="#settings/documents">Resume and cover letters</a>
+            <a href="#settings/about">Updates and about</a>
+          </nav>
+          <div class="spanel" id="panel-profile" data-panel="profile">
+            <div class="spanel-h"><h2 id="panel-profile-h">Your profile</h2></div>
+            <!-- (D3: the person's name, what the profile still needs while it needs something, the common questions;
+                 drawn by renderSettingsRows) -->
+            <section class="card" aria-labelledby="profile-h">
+              <div class="setrow">
+                <div><h3 class="t" id="profile-h">Your profile</h3>
+                  <p class="s">Your details, work history and education, and the answers that go on every application.</p></div>
+                <button class="btn" id="setup-btn" data-act="setup" title="Your resume, contact details, work authorization, jobs and schools, and what the desk may do for you">Edit your profile</button>
+              </div>
+              <div class="setrow" id="still-row" hidden>
+                <div><p class="t">Still needed</p>
+                  <p class="s" id="still-said"></p></div>
+                <button class="btn" data-act="setup">Finish your profile</button>
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="bank-row-name">Common questions</p>
+                  <p class="s" id="bank-row-said"></p></div>
+                <a class="btn" href="#answers" aria-describedby="bank-row-name">Answer them</a>
+              </div>
+            </section>
           </div>
-        </section>
-        <section class="card" aria-labelledby="safety-card-h">
-          <div class="item">
-            <span class="itico gray"><svg class="ico" aria-hidden="true"><use href="#i-shield"/></svg></span>
-            <div><h2 class="t" id="safety-card-h">Safety</h2>
-              <p class="s">What the desk may do for you and what it never does, as it is set now.</p></div>
-            <div class="acts"><button class="btn" id="safety-btn" data-act="safety" title="What the desk does in your name, and what it never does: each setting as it is now, and where to change it">See your safety settings</button></div>
+          <div class="spanel" id="panel-search" data-panel="search" hidden>
+            <div class="spanel-h"><h2 id="panel-search-h">Job search</h2></div>
+            <!-- (D3; a control with data-setting is a profile setting, saved the moment it changes: saveSetting) -->
+            <section class="card" aria-labelledby="panel-search-h">
+              <div class="setrow">
+                <div><p class="t" id="area-row-name">What and where</p>
+                  <p class="s" id="area-row-said"></p></div>
+                <button class="btn" data-act="area" aria-describedby="area-row-name area-row-said">Change</button>
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="auto-search-name">Search by itself every 12 hours</p>
+                  <p class="s" id="auto-search-said">The desk searches again when the openings are over 12 hours old. Never while the queue is paused.</p></div>
+                <input type="checkbox" class="switch" id="auto-search" aria-labelledby="auto-search-name" aria-describedby="auto-search-said">
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="set-learn-name">Learn from what worked</p>
+                  <p class="s" id="set-learn-said">Once enough of your applications have had an answer, openings like the ones that got answers are listed higher. A job's fit number doesn't change.</p></div>
+                <input type="checkbox" class="switch" id="set-learn" data-setting="learn_from_responses" aria-labelledby="set-learn-name" aria-describedby="set-learn-said">
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="set-follow-up-name">Remind me to follow up</p>
+                  <p class="s" id="set-follow-up-said">Days without a reply before an application is marked for a follow-up.</p></div>
+                <label class="box"><input type="number" id="set-follow-up" data-setting="follow_up_days" min="1" max="90" step="1" inputmode="numeric" aria-labelledby="set-follow-up-name" aria-describedby="set-follow-up-said">days</label>
+              </div>
+              <div class="setrow" id="set-email-tracking-row">
+                <div><p class="t" id="set-email-tracking-name">Let Claude look for replies in my email</p>
+                  <p class="s" id="set-email-tracking-said">Claude reads replies to your applications through its Gmail connector, and records where each one stands.</p></div>
+                <input type="checkbox" class="switch" id="set-email-tracking" data-setting="email_tracking" aria-labelledby="set-email-tracking-name" aria-describedby="set-email-tracking-said">
+              </div>
+            </section>
           </div>
-        </section>
-        <!-- how the desk searches and applies: each row a name and a sentence, its control at the right (the controls
-             that were in the Openings card's apply options and under its More) -->
-        <section class="card" aria-labelledby="searching-h">
-          <div class="card-h"><h2 id="searching-h">Searching and applying</h2></div>
-          <div class="setrow">
-            <div><p class="t" id="at-once-name">Jobs at once</p>
-              <p class="s" id="at-once-said">How many applications the desk fills at the same time.</p></div>
-            <span class="seg" role="group" aria-labelledby="at-once-name" aria-describedby="at-once-said" title="Each in its own tab of the desk's browser window. Never two at one employer's site, and one at a time signs in, makes an account or waits on an emailed code. While a sign-in or code needs you, no other job starts and no other tab comes to the front, unless Don't wait for me is on (then only while the desk reads a code from your inbox, or Claude from your Gmail).">
-              <button data-at-once="1" aria-pressed="false">1</button><button data-at-once="2" aria-pressed="false">2</button><button data-at-once="3" aria-pressed="false">3</button><button data-at-once="4" aria-pressed="false">4</button><button data-at-once="5" aria-pressed="false">5</button></span>
+          <!-- what the desk may do in your name: each row a name and a sentence, its control at the right (the controls
+               that were in the Openings card's apply options and under its More); the Safety window's button under
+               them, and Troubleshooting, closed, under For fixing the desk -->
+          <div class="spanel" id="panel-applying" data-panel="applying" hidden>
+            <div class="spanel-h"><h2 id="panel-applying-h">Applying</h2>
+              <p>What the desk may do in your name. It never solves a CAPTCHA, and never signs you up for a newsletter or job alerts.</p></div>
+            <section class="card" aria-labelledby="panel-applying-h">
+              <!-- (Submit for me: the twin of the apply bar's #auto, both drawn from the same state, the same question
+                   asked before either turns it on) -->
+              <div class="setrow">
+                <div><p class="t" id="set-auto-name">Submit for me</p>
+                  <p class="s" id="set-auto-said">Off: the desk stops at every review page, and you press Submit. On: complete applications are submitted without asking.</p></div>
+                <input type="checkbox" class="switch" id="set-auto" aria-labelledby="set-auto-name" aria-describedby="set-auto-said">
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="set-practice-name">Practice mode</p>
+                  <p class="s" id="set-practice-said">The desk fills everything in and sends nothing. It makes no accounts and agrees to nothing while this is on. Good for a first try.</p></div>
+                <input type="checkbox" class="switch" id="set-practice" data-setting="submit_mode" data-on="dry_run" data-off="review" aria-labelledby="set-practice-name" aria-describedby="set-practice-said">
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="set-accounts-name">Make my accounts</p>
+                  <p class="s" id="set-accounts-said">The desk creates your account at each employer with that job system's password, ticking only the site's terms. When a site refuses your password, it resets it through the site's own Forgot password email.</p></div>
+                <input type="checkbox" class="switch" id="set-accounts" data-setting="manage_accounts" data-state="manage_accounts_setting" aria-labelledby="set-accounts-name" aria-describedby="set-accounts-said">
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="set-notices-name">Agree to required notices</p>
+                  <p class="s" id="set-notices-said">The privacy notice, the terms of use and the notice about AI screening that an application can't go on without, and its statement that your information is true. Each one is written in the job's log.</p></div>
+                <input type="checkbox" class="switch" id="set-notices" data-setting="accept_notices" aria-labelledby="set-notices-name" aria-describedby="set-notices-said">
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="set-cookies-name">Cookie banners</p>
+                  <p class="s" id="set-cookies-said">Declined wherever the site lets you. A banner with no way to decline waits for you, unless you choose to accept those.</p></div>
+                <span class="seg" id="set-cookies" data-setting="accept_cookies" role="group" aria-labelledby="set-cookies-name" aria-describedby="set-cookies-said">
+                  <button data-value="false" aria-pressed="false">Decline</button><button data-value="true" aria-pressed="false">Accept if there is no other way</button></span>
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="at-once-name">Jobs at once</p>
+                  <p class="s" id="at-once-said">How many applications the desk fills at the same time.</p></div>
+                <span class="seg" role="group" aria-labelledby="at-once-name" aria-describedby="at-once-said" title="Each in its own tab of the desk's browser window. Never two at one employer's site, and one at a time signs in, makes an account or waits on an emailed code. While a sign-in or code needs you, no other job starts and no other tab comes to the front, unless Don't wait for me is on (then only while the desk reads a code from your inbox, or Claude from your Gmail).">
+                  <button data-at-once="1" aria-pressed="false">1</button><button data-at-once="2" aria-pressed="false">2</button><button data-at-once="3" aria-pressed="false">3</button><button data-at-once="4" aria-pressed="false">4</button><button data-at-once="5" aria-pressed="false">5</button></span>
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="dont-wait-name">Don't wait for me</p>
+                  <p class="s" id="dont-wait-said">A sign-in or an emailed code waits on its card, and the other jobs carry on.</p>
+                  <p class="s" id="dont-wait-hint"></p></div>
+                <input type="checkbox" class="switch" id="dont-wait" aria-labelledby="dont-wait-name" aria-describedby="dont-wait-said dont-wait-hint" title="For a desk left to go through the list: a sign-in, or an emailed code only you can read, waits on its card and the other jobs go on, as if you'd pressed Later on each (never another job at the same site). A code the desk reads itself (from your inbox, or Claude from your Gmail) still holds them while it's looked for, a minute as a rule: one code at a time, so it never goes to another job">
+              </div>
+              <div class="setfoot"><button class="btn" id="safety-btn" data-act="safety" title="What the desk does in your name, and what it never does: each setting as it is now, and where to change it">See everything the desk may and may not do</button></div>
+              <details class="setmore"><summary>For fixing the desk</summary>
+                <div class="setrow">
+                  <div><p class="t" id="troubleshoot-name">Troubleshooting</p>
+                    <p class="s" id="troubleshoot-said">For getting the desk going at more employers. It searches every list and shows only the openings where the desk doesn't go all the way yet. Nothing is submitted while it is on.</p></div>
+                  <input type="checkbox" class="switch" id="troubleshoot" aria-labelledby="troubleshoot-name" aria-describedby="troubleshoot-said">
+                </div>
+              </details>
+            </section>
           </div>
-          <div class="setrow">
-            <div><p class="t" id="dont-wait-name">Don't wait for me</p>
-              <p class="s" id="dont-wait-said">A sign-in or an emailed code waits on its card, and the other jobs carry on.</p>
-              <p class="s" id="dont-wait-hint"></p></div>
-            <input type="checkbox" class="switch" id="dont-wait" aria-labelledby="dont-wait-name" aria-describedby="dont-wait-said dont-wait-hint" title="For a desk left to go through the list: a sign-in, or an emailed code only you can read, waits on its card and the other jobs go on, as if you'd pressed Later on each (never another job at the same site). A code the desk reads itself (from your inbox, or Claude from your Gmail) still holds them while it's looked for, a minute as a rule: one code at a time, so it never goes to another job">
+          <div class="spanel" id="panel-passwords" data-panel="passwords" hidden>
+            <div class="spanel-h"><h2 id="panel-passwords-h">Accounts and passwords</h2></div>
+            <section class="card" aria-labelledby="pw-h">
+              <div class="card-head"><h2 id="pw-h">Site passwords</h2><span class="pill" id="pw-count"></span></div>
+              <form class="pw" id="pw-form" autocomplete="off">
+                <p class="small">One password per job system: the desk makes your account at each of its employers and signs
+                  you in. It stays on this computer<span id="pw-claude">; Claude never sees it</span>.</p>
+                <div class="pw-row">
+                  <select id="pw-site" aria-label="Job system">
+                    <option value="workday">Workday: Intel, Applied, KLA and 10 more</option>
+                    <option value="successfactors">SuccessFactors: Edwards, Qorvo, Amkor</option>
+                    <option value="icims">iCIMS: Daifuku</option>
+                    <option value="applicantstack">ApplicantStack: SCREEN</option>
+                    <option value="ukg">UKG Pro: Nikon Precision</option>
+                    <option value="infor">Infor: Benchmark</option>
+                    <option value="taleo">Taleo</option>
+                    <option value="neogov">NEOGOV: Clark County, City of Las Vegas, City of Henderson and 1 more</option>
+                    <option value="email">Your email: an app password, to read sign-up codes and password resets</option>
+                    <option value="anthropic">Anthropic API key: for cover letters, instead of your Claude login</option>
+                  </select>
+                </div>
+                <div class="pw-row"><input type="password" id="pw" autocomplete="new-password" aria-label="Password">
+                  <button class="primary" type="submit">Save</button></div>
+                <p class="pills" id="pw-state"></p>
+                <details><summary>How this works</summary>
+                <p>Each employer has its own account on its job site. Save one password for a job system and the
+                  desk creates your account at each of that system's employers (agreeing to its terms for you) and signs you in,
+                  on that system's own sites only; when a site turns the password down, it resets that account's password to this
+                  one through the site's "Forgot password" email (unless Make my accounts is off in Settings).
+                  It stays on this computer, in its password vault (Windows Credential Manager, the macOS Keychain or your
+                  desktop's keyring), or in a file only you can read where it has none.
+                  Use passwords you don't use anywhere else.</p>
+                <p>An Anthropic API key (make one in the Claude Console,
+                  <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>,
+                  and add some credit under Billing): with Write a cover letter for each job on, Claude writes each letter
+                  through Anthropic's API with it (about 10 to 20 cents a letter, written and checked).</p>
+                </details>
+              </form>
+            </section>
           </div>
-          <div class="setrow">
-            <div><p class="t" id="auto-search-name">Search by itself every 12 hours</p>
-              <p class="s" id="auto-search-said">The desk searches again when the openings are over 12 hours old. Never while the queue is paused.</p></div>
-            <input type="checkbox" class="switch" id="auto-search" aria-labelledby="auto-search-name" aria-describedby="auto-search-said">
+          <div class="spanel" id="panel-email" data-panel="email" hidden>
+            <div class="spanel-h"><h2 id="panel-email-h">Email codes</h2>
+              <p>Many job sites email a code or a link when you sign in or make an account. The desk can read it and put it in for you.</p></div>
+            <!-- (D3: the email's app password, saved by the same /api/password call as the Site passwords card's, and
+                 never drawn back: the box is emptied once it's saved, and only "Saved" or "Not saved" comes from the
+                 state; Test it signs in and out again, /api/mail/test; Claude's Gmail only inside Claude) -->
+            <section class="card" aria-labelledby="panel-email-h">
+              <div class="setrow stack">
+                <div><p class="t" id="mail-pw-name">Your email's app password</p>
+                  <p class="s" id="mail-pw-said">A separate password your email provider gives to one program. With it, the desk reads only mail from the job's own site that arrived after the job began waiting, and marks nothing as read. Works with Gmail, Yahoo, iCloud and AOL addresses.</p>
+                  <p class="s"><a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">How to make one for Gmail</a></p></div>
+                <form id="mail-pw-form" autocomplete="off">
+                  <fieldset class="box" id="mail-pw-set">
+                    <span class="pill" id="mail-pw-state">Not saved</span>
+                    <input type="password" id="mail-pw" autocomplete="new-password" aria-labelledby="mail-pw-name" aria-describedby="mail-pw-said">
+                    <button class="btn" type="submit" id="mail-pw-save">Save</button>
+                  </fieldset>
+                </form>
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="mail-test-name">Test it</p>
+                  <p class="s" id="mail-test-said" aria-live="polite"></p></div>
+                <button class="btn" id="mail-test" data-act="mail-test" aria-describedby="mail-test-name mail-test-said" disabled>Test it now</button>
+              </div>
+              <div class="setrow" id="set-email-codes-row">
+                <div><p class="t" id="set-email-codes-name">Let Claude read codes through Gmail</p>
+                  <p class="s" id="set-email-codes-said">Without an app password, Claude reads the code through its Gmail connector while your chat is open, and the desk puts it in.</p></div>
+                <input type="checkbox" class="switch" id="set-email-codes" data-setting="email_codes" aria-labelledby="set-email-codes-name" aria-describedby="set-email-codes-said">
+              </div>
+              <!-- (the Site passwords card's paragraph about email, moved here: Plain wording, Version D) -->
+              <details class="setmore"><summary>How this works</summary>
+                <p class="setmore-b">Your email: with an app password for the address in your profile (for Gmail, make one at
+                  <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a>;
+                  it needs 2-Step Verification), a job waiting on an emailed code or link gets it from your inbox: only mail from
+                  that job's site that arrived after it began waiting, read without marking anything read.<span id="mail-claude"> Without one,
+                  with Let Claude read codes through Gmail on and the Gmail connector in Claude, Claude reads it through Gmail
+                  while the desk's chat is open (only that job's own mail), and the desk puts it in.</span></p>
+              </details>
+            </section>
           </div>
-          <div class="setrow">
-            <div><p class="t" id="troubleshoot-name">Troubleshooting</p>
-              <p class="s" id="troubleshoot-said">For getting the desk going at more employers. It searches every list and shows only the openings where the desk doesn't go all the way yet. Nothing is submitted while it is on.</p></div>
-            <input type="checkbox" class="switch" id="troubleshoot" aria-labelledby="troubleshoot-name" aria-describedby="troubleshoot-said">
+          <div class="spanel" id="panel-phone" data-panel="phone" hidden>
+            <div class="spanel-h"><h2 id="panel-phone-h">Phone alerts</h2></div>
+            <!-- phone alerts through ntfy (phone.py): the topic is shown only right after it's made, or on Show the topic, never
+                 kept in the page's state -->
+            <section class="card" aria-labelledby="phone-h">
+              <div class="card-head"><h2 id="phone-h">Phone alerts</h2><span class="pill" id="phone-pill" aria-live="polite">Off</span></div>
+              <div class="pw">
+                <p class="small">A push on your phone when a job needs you or is ready for your Submit, and a summary of the day,
+                  with this page closed too (while the desk runs). Free, through the ntfy app.</p>
+                <div class="pw-row" id="phone-off"><button class="primary" data-act="phone-make">Turn on phone alerts</button></div>
+                <div id="phone-topic" hidden>
+                  <ol class="small">
+                    <li>Install the ntfy app on your phone (<a href="https://ntfy.sh" target="_blank" rel="noopener">ntfy.sh</a>:
+                      App Store or Google Play).</li>
+                    <li>In the app, press + and subscribe to this topic<span id="phone-server-said"></span>:
+                      <code id="phone-topic-name"></code></li>
+                    <li>Press Send a test.</li>
+                  </ol>
+                  <p class="small">Keep the topic to yourself: anyone who knows it can read your alerts.</p>
+                </div>
+                <div id="phone-on" hidden>
+                  <div class="pw-row"><button data-act="phone-test">Send a test</button>
+                    <button class="link" data-act="phone-show">Show the topic</button>
+                    <button class="link" data-act="phone-make" title="Make a new topic, for when someone else may know this one">New topic</button>
+                    <button class="link" data-act="phone-off">Turn off</button></div>
+                  <p class="small"><label><input type="checkbox" id="phone-details"> Say which employer and job</label></p>
+                  <p class="small"><label>Summary of the day at <input type="time" id="phone-summary"></label></p>
+                </div>
+                <p class="small" id="phone-held" aria-live="polite" hidden></p>
+                <details><summary>How this works</summary>
+                <p>The alerts go through ntfy's servers to the topic your phone subscribes to. So they say only counts and
+                  kinds ("A job needs you: a bot check", "2 applications are ready for your Submit"), never an employer, a job or
+                  anything about you, unless you turn on Say which employer and job. The topic is a long random name kept on
+                  this computer, with your passwords; Turn off forgets it (a new one is made next time).
+                  One alert a job a stop, those that come together in one; the summary at the time you pick (empty: none). To
+                  use your own alert server, open Your own alert server, below.</p>
+                </details>
+              </div>
+            </section>
+            <!-- alerts on this computer's own screen (announce), while this page is open -->
+            <section class="card" aria-labelledby="alerts-h">
+              <div class="item">
+                <span class="itico gray"><svg class="ico" aria-hidden="true"><use href="#i-inbox"/></svg></span>
+                <div><h2 class="t" id="alerts-h">Alerts on this computer</h2>
+                  <p class="s">A note on your screen when a job needs you.</p></div>
+                <div class="acts"><button class="btn" id="alerts" data-act="alerts" hidden>Alert me</button></div>
+              </div>
+            </section>
+            <!-- (D3: the server the phone alerts go through, closed; saved when its box is left) -->
+            <section class="card" aria-labelledby="alert-server-h">
+              <details class="setmore"><summary id="alert-server-h">Your own alert server</summary>
+                <div class="setrow">
+                  <div><p class="s" id="alert-server-said">Leave this empty to use ntfy.sh.</p></div>
+                  <input type="text" id="set-alert-server" data-setting="phone_alerts_server" autocomplete="off" spellcheck="false" placeholder="https://ntfy.example.com" aria-labelledby="alert-server-h" aria-describedby="alert-server-said">
+                </div>
+              </details>
+            </section>
           </div>
-        </section>
-        <section class="card" aria-labelledby="pw-h">
-          <div class="card-head"><h2 id="pw-h">Site passwords</h2><span class="pill" id="pw-count"></span></div>
-          <form class="pw" id="pw-form" autocomplete="off">
-            <p class="small">One password per job system: the desk makes your account at each of its employers and signs
-              you in. It stays on this computer; Claude never sees it.</p>
-            <div class="pw-row">
-              <select id="pw-site" aria-label="Job system">
-                <option value="workday">Workday: Intel, Applied, KLA and 10 more</option>
-                <option value="successfactors">SuccessFactors: Edwards, Qorvo, Amkor</option>
-                <option value="icims">iCIMS: Daifuku</option>
-                <option value="applicantstack">ApplicantStack: SCREEN</option>
-                <option value="ukg">UKG Pro: Nikon Precision</option>
-                <option value="infor">Infor: Benchmark</option>
-                <option value="taleo">Taleo</option>
-                <option value="neogov">NEOGOV: Clark County, City of Las Vegas, City of Henderson and 1 more</option>
-                <option value="email">Your email: an app password, to read sign-up codes and password resets</option>
-                <option value="anthropic">Anthropic API key: for cover letters, instead of your Claude login</option>
-              </select>
-            </div>
-            <div class="pw-row"><input type="password" id="pw" autocomplete="new-password" aria-label="Password">
-              <button class="primary" type="submit">Save</button></div>
-            <p class="pills" id="pw-state"></p>
-            <details><summary>How this works</summary>
-            <p>Each employer has its own account on its job site. Save one password for a job system and the
-              desk creates your account at each of that system's employers (agreeing to its terms for you) and signs you in,
-              on that system's own sites only; when a site turns the password down, it resets that account's password to this
-              one through the site's "Forgot password" email (unless your profile says <code>manage_accounts: false</code>).
-              It stays on this computer, in its password vault (Windows Credential Manager, the macOS Keychain or your
-              desktop's keyring; <code>~/.job-apply/secrets.yaml</code> where there's none), and Claude never sees it.
-              Use passwords you don't use anywhere else.</p>
-            <p>Your email: with an app password for the address in your profile (for Gmail, make one at
-              <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a>;
-              it needs 2-Step Verification), a job waiting on an emailed code or link gets it from your inbox: only mail from
-              that job's site that arrived after it began waiting, read without marking anything read. Without one, with
-              <code>email_codes: true</code> in your profile and the Gmail connector in Claude, Claude reads it through Gmail
-              while the desk's chat is open (only that job's own mail), and the desk puts it in.</p>
-            <p>An Anthropic API key (make one in the Claude Console,
-              <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>,
-              and add some credit under Billing): with Write a cover letter for each job on, Claude writes each letter
-              through Anthropic's API with it (about 10 to 20 cents a letter, written and checked), so the desk doesn't need Claude Code or your Claude login
-              for them. Each letter is checked against your resume and profile the same way.</p>
-            </details>
-          </form>
-        </section>
-        <!-- phone alerts through ntfy (phone.py): the topic is shown only right after it's made, or on Show the topic, never
-             kept in the page's state -->
-        <section class="card" aria-labelledby="phone-h">
-          <div class="card-head"><h2 id="phone-h">Phone alerts</h2><span class="pill" id="phone-pill" aria-live="polite">Off</span></div>
-          <div class="pw">
-            <p class="small">A push on your phone when a job needs you or is ready for your Submit, and a summary of the day,
-              with this page closed too (while the desk runs). Free, through the ntfy app.</p>
-            <div class="pw-row" id="phone-off"><button class="primary" data-act="phone-make">Turn on phone alerts</button></div>
-            <div id="phone-topic" hidden>
-              <ol class="small">
-                <li>Install the ntfy app on your phone (<a href="https://ntfy.sh" target="_blank" rel="noopener">ntfy.sh</a>:
-                  App Store or Google Play).</li>
-                <li>In the app, press + and subscribe to this topic<span id="phone-server-said"></span>:
-                  <code id="phone-topic-name"></code></li>
-                <li>Press Send a test.</li>
-              </ol>
-              <p class="small">Keep the topic to yourself: anyone who knows it can read your alerts.</p>
-            </div>
-            <div id="phone-on" hidden>
-              <div class="pw-row"><button data-act="phone-test">Send a test</button>
-                <button class="link" data-act="phone-show">Show the topic</button>
-                <button class="link" data-act="phone-make" title="Make a new topic, for when someone else may know this one">New topic</button>
-                <button class="link" data-act="phone-off">Turn off</button></div>
-              <p class="small"><label><input type="checkbox" id="phone-details"> Say which employer and job</label></p>
-              <p class="small"><label>Summary of the day at <input type="time" id="phone-summary"></label></p>
-            </div>
-            <p class="small" id="phone-held" aria-live="polite" hidden></p>
-            <details><summary>How this works</summary>
-            <p>The alerts go through ntfy's servers to the topic your phone subscribes to. So they say only counts and
-              kinds ("A job needs you: a bot check", "2 applications are ready for your Submit"), never an employer, a job or
-              anything about you, unless you turn on Say which employer and job. The topic is a long random name kept on
-              this computer, with your passwords; Turn off forgets it (a new one is made next time).
-              One alert a job a stop, those that come together in one; the summary at the time you pick (empty: none). To
-              use your own ntfy server, set <code>phone_alerts_server</code> under <code>settings:</code> in your profile.</p>
-            </details>
+          <div class="spanel" id="panel-documents" data-panel="documents" hidden>
+            <div class="spanel-h"><h2 id="panel-documents-h">Resume and cover letters</h2></div>
+            <!-- (D3: the files' names from the state, never their paths; a file picked is sent as the profile window
+                 sends the resume (/api/profile/resume; the usual cover letter, /api/profile/document). Tailor and
+                 Write a cover letter are the twins of the apply bar's #tailor and #letters, drawn from the same state;
+                 Tailor only inside Claude) -->
+            <section class="card" aria-labelledby="panel-documents-h">
+              <div class="setrow">
+                <div><p class="t" id="set-resume-name">Your resume</p>
+                  <p class="s" id="set-resume-said">None yet.</p></div>
+                <div class="acts"><input type="file" id="set-resume-file" accept=".pdf,.docx" hidden>
+                  <button class="btn" id="set-resume" data-act="set-resume" aria-describedby="set-resume-name set-resume-said">Choose a file</button></div>
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="set-letter-name">Your usual cover letter</p>
+                  <p class="s" id="set-letter-said">Optional. It goes in where a site asks for one and no letter was written for the job.</p>
+                  <p class="s" id="set-letter-file" hidden></p></div>
+                <div class="acts"><input type="file" id="set-letter-pick" accept=".pdf,.docx" hidden>
+                  <button class="btn" id="set-letter" data-act="set-letter" aria-describedby="set-letter-name set-letter-file">Choose a file</button>
+                  <button class="btn" id="set-letter-remove" data-act="set-letter-remove" aria-describedby="set-letter-name set-letter-file" hidden>Remove</button></div>
+              </div>
+              <div class="setrow" id="set-tailor-row">
+                <div><p class="t" id="set-tailor-name">Tailor my resume for each job</p>
+                  <p class="s" id="set-tailor-said">Each job waits for Claude to write a resume for it.</p></div>
+                <input type="checkbox" class="switch" id="set-tailor" aria-labelledby="set-tailor-name" aria-describedby="set-tailor-said">
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="set-letters-name">Write a cover letter for each job</p>
+                  <p class="s" id="set-letters-said"></p></div>
+                <input type="checkbox" class="switch" id="set-letters" aria-labelledby="set-letters-name" aria-describedby="set-letters-said">
+              </div>
+              <details class="setmore"><summary id="letter-model-h">Which model writes the letters</summary>
+                <div class="setrow">
+                  <div><p class="s" id="letter-model-said">Leave this empty for the usual one.</p></div>
+                  <input type="text" id="set-letter-model" data-setting="cover_letter_model" autocomplete="off" spellcheck="false" aria-labelledby="letter-model-h" aria-describedby="letter-model-said">
+                </div>
+              </details>
+            </section>
           </div>
-        </section>
-        <!-- alerts on this computer's own screen (announce), while this page is open -->
-        <section class="card" aria-labelledby="alerts-h">
-          <div class="item">
-            <span class="itico gray"><svg class="ico" aria-hidden="true"><use href="#i-inbox"/></svg></span>
-            <div><h2 class="t" id="alerts-h">Alerts on this computer</h2>
-              <p class="s">A note on your screen when a job needs you.</p></div>
-            <div class="acts"><button class="btn" id="alerts" data-act="alerts" hidden>Alert me</button></div>
+          <div class="spanel" id="panel-about" data-panel="about" hidden>
+            <div class="spanel-h"><h2 id="panel-about-h">Updates and about</h2></div>
+            <!-- the update card (the design's F2): this version, a newer one and Update now, an update under way, or why
+                 one didn't go through; drawn by renderUpdate from the state's update -->
+            <section class="card" id="update-card" aria-labelledby="update-h" hidden>
+              <div class="setrow update" id="update-row">
+                <svg class="logo" aria-hidden="true"><use href="#logo"/></svg>
+                <div><h2 class="t" id="update-h"></h2>
+                  <p class="s" id="update-said"></p>
+                  <div id="update-more"></div></div>
+                <div class="acts" id="update-acts"></div>
+              </div>
+            </section>
+            <!-- (D3: where the desk opens, its look (this browser's only), the browser it fills forms in, its folder) -->
+            <section class="card" aria-labelledby="panel-about-h">
+              <div class="setrow">
+                <div><p class="t" id="set-window-name">Open the desk in</p>
+                  <p class="s" id="set-window-said">This applies the next time the desk opens.</p></div>
+                <span class="seg" id="set-window" data-setting="desk_window" role="group" aria-labelledby="set-window-name" aria-describedby="set-window-said">
+                  <button data-value='"app"' aria-pressed="false">Its own window</button><button data-value='"tab"' aria-pressed="false">A browser tab</button></span>
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="set-look-name">Look</p>
+                  <p class="s" id="set-look-said">Light, dark, or whatever your computer is set to.</p></div>
+                <span class="seg" id="set-look" role="group" aria-labelledby="set-look-name" aria-describedby="set-look-said">
+                  <button data-look="" aria-pressed="false">Match my computer</button><button data-look="light" aria-pressed="false">Light</button><button data-look="dark" aria-pressed="false">Dark</button></span>
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="set-browser-name">The browser the desk fills forms in</p>
+                  <p class="s" id="set-browser-said">The desk uses the first it finds, starting with the one chosen. This applies the next time the desk starts.</p></div>
+                <span class="seg" id="set-browser" data-setting="browser_channel" role="group" aria-labelledby="set-browser-name" aria-describedby="set-browser-said">
+                  <button data-value='"chrome"' aria-pressed="false">Chrome</button><button data-value='"msedge"' aria-pressed="false">Edge</button><button data-value='"chromium"' aria-pressed="false">Its own</button></span>
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="files-name">Your files</p>
+                  <p class="s" id="files-said"></p></div>
+                <button class="btn" id="open-home" data-act="open-home" aria-describedby="files-name files-said">Open the folder</button>
+              </div>
+            </section>
+            <!-- the version, and what closing the window does: a desk run on its own (state.standalone) carries on in the
+                 background, and Quit the Job Desk stops it (/api/quit); one inside Claude stops with Claude (renderProgram) -->
+            <section class="card" aria-labelledby="program-h">
+              <div class="item">
+                <svg class="logo" aria-hidden="true"><use href="#logo"/></svg>
+                <div><h2 class="t" id="program-h">This program</h2>
+                  <p class="s" id="program-version"></p>
+                  <p class="s" id="program-own" hidden>Closing the window doesn't stop the desk. Jobs it is working on carry on, and opening Job Desk again shows the window.</p>
+                  <p class="s" id="program-claude" hidden>The desk runs inside Claude here. It stops when you close Claude.</p></div>
+                <div class="acts"><button class="btn" id="quit-btn" data-act="quit" hidden>Quit the Job Desk</button></div>
+              </div>
+            </section>
           </div>
-        </section>
-        <!-- the version, and what closing the window does: a desk run on its own (state.standalone) carries on in the
-             background, and Quit the Job Desk stops it (/api/quit); one inside Claude stops with Claude (renderProgram) -->
-        <section class="card" aria-labelledby="program-h">
-          <div class="item">
-            <svg class="logo" aria-hidden="true"><use href="#logo"/></svg>
-            <div><h2 class="t" id="program-h">This program</h2>
-              <p class="s" id="program-version"></p>
-              <p class="s" id="program-own" hidden>Closing the window doesn't stop the desk. Jobs it is working on carry on, and opening Job Desk again shows the window.</p>
-              <p class="s" id="program-claude" hidden>The desk runs inside Claude here. It stops when you close Claude.</p></div>
-            <div class="acts"><button class="btn" id="quit-btn" data-act="quit" hidden>Quit the Job Desk</button></div>
-          </div>
-        </section>
+        </div>
       </div>
       <div class="page narrow" data-pages="help" hidden>
         <section class="card" aria-labelledby="how-h">
@@ -1097,7 +1388,7 @@ body.stopped > :not(#stopped) { display: none; }
               <li>When a site needs you (a question, a sign-in, a bot check), the job waits under Needs you on the Home page.</li>
               <li>Nothing is submitted until you press Submit, unless you turned on "Submit for me". LinkedIn and Indeed are always submitted by you.</li>
             </ol>
-            <p class="small">Answers you give here are saved in <code>~/.job-apply/answers.yaml</code> unless you untick "remember".</p>
+            <p class="small">The desk remembers the answers you give, unless you untick "remember". The Your answers page lists them.</p>
           </div>
         </section>
         <!-- the notes the desk took on its stops, filed by the person (renderNotes): the button shows with notes to file -->
@@ -1728,9 +2019,23 @@ function renderSafety(s) {
     li.dataset.safety = l.key;
     add(li, "strong", `${l.name}: ${l.value}.`);
     li.appendChild(document.createTextNode(" " + l.said));
-    add(li, "span", `Where: ${l.where}.`, "where");
+    // (a "where" that begins "Settings, " is a link to that panel, named as Settings' own menu names it: D4. Its words
+    // stay the words; a name that's no panel's stays plain words)
+    const where = add(li, "span", undefined, "where");
+    const panel = /^Settings, ([^:]+)/.exec(l.where);
+    const to = panel && [...document.querySelectorAll(".snav a")].find((a) => a.textContent.trim() === panel[1].trim());
+    if (to) {
+      const a = document.createElement("a");
+      a.href = to.getAttribute("href");
+      a.textContent = l.where;
+      where.append("Where: ", a, ".");
+    } else {
+      where.textContent = `Where: ${l.where}.`;
+    }
   }
 }
+// (a "where" pressed: the window closes, and its address opens the panel)
+$("safety-body").addEventListener("click", (e) => { if (e.target.closest("a[href^='#settings/']")) $("safety").close(); });
 
 // Not interested: the opening picked, and its window asking why (optional)
 let niUrl = null;
@@ -1781,8 +2086,9 @@ async function applyTicked(urls, auto) {
     + out.not_interested.join(", ") + ". Undo on it (under Not interested) brings it back.");
 }
 
-// See to these first: the card for the first thing said (the Common questions card, or Site passwords with that
-// job system picked), on its own page (Your answers, Settings), scrolled to
+// See to these first: the card for the first thing said (the Common questions card, the email's app password, or Site
+// passwords with that job system picked), on its own page (Your answers, or Settings' Email codes or Accounts and
+// passwords), scrolled to
 function seeToFirst(line) {
   if (/common question/i.test(line) && !$("bank-card").hidden) {
     bankAll = true;  // (every one unanswered, not only the most asked four: each stops a job)
@@ -1791,11 +2097,15 @@ function seeToFirst(line) {
     $("bank-card").scrollIntoView({block: "start"});
     return;
   }
+  if (/email app password/i.test(line)) {  // (the email's app password: on Settings' Email codes)
+    goTo("settings/email");
+    $("mail-pw").focus();
+    return;
+  }
   const pick = $("pw-site");
-  const system = /email app password/i.test(line) ? [...pick.options].find((o) => o.value === "email")
-    : [...pick.options].find((o) => line.startsWith(o.label.split(":")[0] + ":"));
+  const system = [...pick.options].find((o) => line.startsWith(o.label.split(":")[0] + ":"));
   if (system) pick.value = system.value;
-  goTo("settings");  // (its card's page)
+  goTo("settings/passwords");  // (its card's page and panel)
   $("pw-form").closest("section").scrollIntoView({block: "start"});
   $("pw").focus({preventScroll: true});
 }
@@ -2086,8 +2396,7 @@ function question(jobId, q, i, repeated = false, company = "") {
   // how that's undone. Any answer to their ID here is remembered for this employer alone; one whose words may name
   // another organization's ID, "id_unsure", is for this application only, with no Remember)
   const here = company && q.own_id ? ` Left empty with Remember ticked and Fill these in, it isn't asked at `
-    + `${esc(company)} again either (to be asked there again, ask Claude to clear it from answers.yaml, or put your ID `
-    + `in your profile's history.employee_ids).` : "";
+    + `${esc(company)} again either (to be asked there again, forget it on the Your answers page).` : "";
   const once = q.id_unsure ? " For this application only." : "";
   const about = q.about ? `<span class="small">“${esc(q.about)}”</span>`
     : q.account ? `<span class="small">For this account only: never remembered.</span>`
@@ -2530,7 +2839,7 @@ function renderWorking() {
       are placed a little higher in the list, and ones like those that didn't a little lower (as much as ${o.cap} points
       would move them; “Placed higher” or “Placed lower” under a score says why). Scores, and which openings are
       recommended, don't change. Counted on this computer only.`
-      : `Off in your profile (settings.learn_from_responses: false): the openings' order doesn't use these.`}</p>`;
+      : `Off in Settings, under Job search: the openings' order doesn't use these.`}</p>`;
   }
   if ($("working").dataset.html !== html) { $("working").innerHTML = html; $("working").dataset.html = html; }
 }
@@ -2555,7 +2864,9 @@ const pwSaid = () => { const pws = Object.values(state.passwords || {}); return 
 const START_TIP = "checklist", OWN_PASSWORDS = new Set(["email", "anthropic"]);
 function startLines() {
   const p = state.profile || {}, area = state.area || {}, pws = state.passwords || {}, sr = state.search || {};
-  const settings = {href: "#settings", button: "Open Settings"};
+  // (to the Settings panel that holds them: the job systems' passwords are under Accounts and passwords, the inbox's
+  // app password under Email codes)
+  const settings = {href: "#settings/passwords", button: "Open Settings"};
   const systems = Object.entries(pws).filter(([site]) => !OWN_PASSWORDS.has(site));
   return [
     {name: "Set up your profile", said: "Your details, your work history and your resume.",
@@ -2567,7 +2878,7 @@ function startLines() {
       ...settings, done: systems.some(([, saved]) => saved)},
     {name: "Let the desk read emailed codes",
       said: "Optional. Many sites email a code when you sign in. With this, the desk enters it for you.",
-      ...settings, done: !!pws.email},
+      ...settings, href: "#settings/email", done: !!pws.email},
     {name: "Answer the common questions", said: `${bankSaid()}. Each answer is one stop fewer.`,
       href: "#answers", button: "Answer them", done: !(state.bank || []).some(unanswered)},
     {name: "Find jobs", said: "Search the employers on your lists.",
@@ -2612,6 +2923,129 @@ function renderBank() {
   $("bank-done").hidden = !given.length;
   patch($("bank-given"), given.map(bankQuestion));
 }
+
+// Your answers' Answers the desk remembers (D5): every answer given on a job's card with "remember" ticked, as the
+// desk lists them (/api/answers), asked when the page opens and after each change, never from the state (the refresh
+// doesn't draw this card, so a row being changed keeps its words and the keyboard's place). An ID's value (`private`)
+// isn't in the list: Show asks the desk for it (/api/answers/show), and it is kept (rememberedShown) only until Hide,
+// the page left, or the list asked again, each of which lets it go
+let remembered = null, rememberedAsked = 0, rememberedEdit = null, rememberedBusy = "";
+const rememberedShown = new Map(), rememberedErr = new Map();  // (an ID shown: its id, its value)
+const FORGET_ASK = "Forget this answer? The desk asks you again the next time a site asks it.";
+const answerWords = (a) => Array.isArray(a) ? a.join(", ") : a == null ? "" : String(a);
+async function loadRemembered() {
+  const asked = ++rememberedAsked;
+  rememberedShown.clear();  // (an ID's value let go: the new list is drawn with dots)
+  let got = null, problem = "";
+  try { got = (await api("/api/answers")).answers || []; } catch (e) { problem = e.message || "the desk didn't answer"; }
+  if (asked !== rememberedAsked) return;  // (an older ask's answer, come after a newer one's)
+  remembered = got;
+  if (rememberedEdit && !(got || []).some((a) => a.id === rememberedEdit.id)) rememberedEdit = null;
+  $("remembered-problem").textContent = problem ? `Problem: your remembered answers can't be shown: ${problem}` : "";
+  $("remembered-problem").hidden = !problem;
+  renderRemembered();
+  $("remembered-card").dataset.loaded = "1";
+}
+function rememberedRow(a, i) {
+  const id = esc(a.id), q = `ans-q-${i}`, busy = rememberedBusy === a.id ? " disabled" : "";
+  const shown = !a.private || rememberedShown.has(a.id);
+  const words = a.private ? rememberedShown.get(a.id) || "" : answerWords(a.answer);
+  const at = a.at ? `<p class="s">Only at ${esc(a.at)}</p>` : "";
+  let value, acts;
+  if (rememberedEdit && rememberedEdit.id === a.id) {
+    value = `<input type="text" data-ans-box="${id}" autocomplete="off" spellcheck="false" aria-labelledby="${q}"${busy}>`;
+    acts = `<button class="btn sm primary" data-ans-save="${id}"${busy}>Save</button>`
+      + `<button class="btn sm" data-ans-cancel="${id}"${busy}>Cancel</button>`;
+  } else {
+    value = a.empty ? `<p class="ans left">Left empty</p>` : shown ? `<p class="ans">${esc(words)}</p>`
+      : `<p class="ans"><span class="dots" role="img" aria-label="Hidden">••••••••</span></p>`;
+    acts = (a.private && !a.empty ? `<button class="btn sm ghost" data-ans-show="${id}" aria-describedby="${q}">${shown ? "Hide" : "Show"}</button>` : "")
+      + `<button class="btn sm" data-ans-change="${id}" aria-describedby="${q}"${busy}>Change</button>`
+      + `<button class="btn sm danger" data-ans-forget="${id}" aria-describedby="${q}"${busy}>Forget</button>`;
+  }
+  const err = rememberedErr.get(a.id);
+  return {key: a.id, html: `<div class="setrow" data-answer="${id}"><div><p class="t" id="${q}">${esc(a.question)}</p>${at}${value}</div>
+    <div class="acts">${acts}</div>${err ? `<p class="set-err" role="alert">${esc(err)}</p>` : ""}</div>`};
+}
+function renderRemembered() {
+  const list = remembered || [];
+  patch($("remembered"), list.map(rememberedRow));
+  $("remembered-none").hidden = remembered === null || list.length > 0;
+  // (the box of the row being changed: its words put back where it was drawn anew, never from the desk's list)
+  const box = rememberedEdit && $("remembered").querySelector("[data-ans-box]");
+  if (box && !box.dataset.filled) { box.value = rememberedEdit.draft; box.dataset.filled = "1"; }
+}
+// (the control named, in the row of the answer `id`)
+const rememberedControl = (name, id) => $("remembered").querySelector(`[data-ans-${name}="${CSS.escape(id)}"]`);
+async function rememberedSend(id, path, body) {
+  rememberedBusy = id;
+  rememberedErr.delete(id);
+  renderRemembered();
+  let ok = true;
+  try { await api(path, body); } catch (e) { ok = false; rememberedErr.set(id, e.message || "That wasn't saved."); }
+  rememberedBusy = "";
+  if (ok && rememberedEdit && rememberedEdit.id === id) rememberedEdit = null;
+  await loadRemembered();
+  return ok;
+}
+$("remembered").addEventListener("input", (e) => {
+  if (e.target.dataset.ansBox !== undefined && rememberedEdit) rememberedEdit.draft = e.target.value;
+});
+$("remembered").addEventListener("keydown", (e) => {
+  const box = e.target.dataset.ansBox;
+  if (box === undefined) return;
+  if (e.key === "Enter") { e.preventDefault(); rememberedControl("save", box).click(); }
+  if (e.key === "Escape") { e.preventDefault(); rememberedControl("cancel", box).click(); }
+});
+$("remembered").addEventListener("click", async (e) => {
+  const b = e.target.closest("button");
+  if (!b || b.disabled) return;
+  const d = b.dataset;
+  if (d.ansShow !== undefined) {
+    const id = d.ansShow;
+    if (rememberedShown.has(id)) {  // Hide: the value let go, not only undrawn
+      rememberedShown.delete(id);
+    } else {
+      const asked = rememberedAsked;
+      rememberedErr.delete(id);
+      let said = null;
+      try { said = (await api("/api/answers/show", {id})).answer; } catch (e) { rememberedErr.set(id, e.message || "It couldn't be shown."); }
+      // (kept only while the list it was asked for is still the one drawn, on this page)
+      if (said != null && asked === rememberedAsked && document.body.dataset.page === "answers") rememberedShown.set(id, String(said));
+      said = null;
+    }
+    renderRemembered();  // (the focus kept on it: patch)
+  } else if (d.ansChange !== undefined) {
+    const a = (remembered || []).find((x) => x.id === d.ansChange);
+    if (!a) return;
+    // (an ID not shown starts empty: its value isn't put in the page for a Change)
+    rememberedEdit = {id: a.id, draft: a.private ? rememberedShown.get(a.id) || "" : answerWords(a.answer)};
+    rememberedErr.delete(a.id);
+    renderRemembered();
+    const box = rememberedControl("box", a.id);
+    if (box) box.focus();
+  } else if (d.ansCancel !== undefined) {
+    rememberedEdit = null;
+    rememberedErr.delete(d.ansCancel);
+    renderRemembered();
+    const back = rememberedControl("change", d.ansCancel);
+    if (back) back.focus();
+  } else if (d.ansSave !== undefined) {
+    const id = d.ansSave, box = rememberedControl("box", id);
+    if (box && rememberedEdit) rememberedEdit.draft = box.value;
+    const ok = await rememberedSend(id, "/api/answers/change", {id, answer: box ? box.value : ""});
+    const next = rememberedControl(ok ? "change" : "box", id);
+    if (next) next.focus();
+  } else if (d.ansForget !== undefined) {
+    if (!confirm(FORGET_ASK)) return;
+    const id = d.ansForget, at = (remembered || []).findIndex((x) => x.id === id);
+    const ok = await rememberedSend(id, "/api/answers/forget", {id});
+    // (the keyboard on to the row that took its place, or the one before)
+    const rows = remembered || [], now = ok ? rows[Math.min(at, rows.length - 1)] : rows[at];
+    const next = now && rememberedControl("change", now.id);
+    if (next) next.focus();
+  }
+});
 
 // a problem the desk says in a sentence of its own ("The desk couldn't read your email: ..."): "Problem: the desk ..."
 const problemSaid = (html) => "Problem: " + String(html).replace(/^(The|Your|A|This) /, (w) => w.toLowerCase());
@@ -2666,7 +3100,7 @@ function renderHeader() {
   const auto = $("auto");
   if (document.activeElement !== auto) auto.checked = !!s.auto_submit;
   auto.disabled = s.dry_run;
-  $("auto-hint").textContent = s.dry_run ? "Off in practice mode (settings.submit_mode: dry_run)." : s.auto_submit ? "On: complete applications are submitted without asking." : "Off: you press Submit for each one.";
+  $("auto-hint").textContent = s.dry_run ? "Off while Practice mode is on." : s.auto_submit ? "On: complete applications are submitted without asking." : "Off: you press Submit for each one.";
   document.querySelectorAll("[data-at-once]").forEach((b) => b.setAttribute("aria-pressed", String(Number(b.dataset.atOnce) === s.jobs_at_once)));
   const dontWait = $("dont-wait");
   if (document.activeElement !== dontWait) dontWait.checked = !!s.dont_wait;
@@ -2709,7 +3143,14 @@ function renderHeader() {
     : "Hides a job whose posting has a line labelled with the education it requires (Minimum Education: Bachelor's Degree), with no way around it. One that only says it in its text, or isn't read yet, always stays.";
   const troubleshootOn = $("troubleshoot");
   if (document.activeElement !== troubleshootOn) troubleshootOn.checked = !!s.troubleshoot;
-  $("plugin-version").textContent = state.version ? `Version ${state.version}` : "";
+  // (under the person's name: the version, and with a newer one out "update ready", a link to Updates and about, F2)
+  const ready = (state.update || {}).newer && state.version;
+  const version = !state.version ? "" : ready ? `<a href="#settings/about">Version ${esc(state.version)} · update ready</a>`
+    : `Version ${esc(state.version)}`;
+  if ($("plugin-version").dataset.html !== version) {
+    $("plugin-version").innerHTML = version;
+    $("plugin-version").dataset.html = version;
+  }
   $("tailor-hint").textContent = state.standalone ? "" : s.tailor_resumes ? "On: each job waits for Claude to write a resume for it." : "Off: your usual resume goes with every application.";
   const writer = state.letters_by || "your Claude login";
   $("letters-hint").textContent = !s.cover_letters ? "Off: your usual cover letter, if you have one, goes in."
@@ -2777,14 +3218,15 @@ function renderHeader() {
   if (p.gaps && p.gaps.length) notes.push({cls: "notice info", tip: "gaps:" + p.gaps.join(","), html: `Fewer stops: your profile could also hold ${esc(inWords(p.gaps.map(profileField)))}.`});
   // on by default since 0.3.67: said until the profile says either way
   if (s.manage_accounts && !s.manage_accounts_chosen) notes.push({cls: "notice info", tip: "accounts", html: `The desk now handles your job-site
-    accounts: with a password saved below, it creates the account at each employer (agreeing to its terms for you) and, when
-    a site turns your saved password down, resets it to that one through the site's "Forgot password" email. To keep doing
-    these yourself, add <code>manage_accounts: false</code> under <code>settings:</code> in <code>${esc(p.path)}</code>;
-    <code>manage_accounts: true</code> keeps them and hides this note.`});
+    accounts: with a password saved in Settings, under Accounts and passwords, it creates the account at each employer
+    (agreeing to its terms for you) and, when a site turns your saved password down, resets it to that one through the
+    site's "Forgot password" email. To keep doing these yourself, turn off Make my accounts in Settings, under Applying.
+    <button class="link" data-act="accounts-keep">Keep it on</button>`});
+  // a newer version out (F2): said, with a link to its card in Settings (Updates and about), which updates it; not while
+  // an update is under way or done (the card says so)
   const up = state.update;
-  if (up) notes.push({cls: "notice info", html: `job-apply ${esc(up.latest)} is out (you have ${esc(up.current)}). Between runs, `
-    + `in a terminal (PowerShell on Windows) run ${up.commands.map((c) => `<code>${esc(c)}</code>`).join(", then ")}, then `
-    + `restart the Claude app.`});
+  if (up && up.newer && !UPDATING.includes(up.progress) && up.progress !== "done") notes.push({cls: "notice info",
+    html: `Version ${esc(up.latest)} is ready (you have ${esc(up.current)}). <a href="#settings/about">Update</a>`});
   // problems: red, each said "Problem: ..." (yellow is only for what waits for you now)
   if (sr.status === "failed") notes.push({cls: "notice bad", html: `Problem: the search failed: <span title="${esc(sr.error || "")}">`
     + `${esc(searchWords(sr.error, "something went wrong in it"))}</span>. Press Find jobs to try again.`});
@@ -3058,6 +3500,70 @@ function renderProgram() {
   $("program-claude").hidden = !!state.standalone;
 }
 
+// Settings' update card (F2), from the state's update: this version and Check now; a newer one, with Update now where
+// this copy can update itself (disabled while a job is being filled); an update under way, step by step; or why one
+// didn't go through, with the server's sentence. A button being pressed (saveRow) is left as it is until it's done
+const UPDATING = ["downloading", "installing", "updating"];  // (an update under way: updates.UNDER_WAY)
+function agoWords(t) {
+  const s = Math.max(0, Date.now() / 1000 - t), n = (k, unit) => `${k} ${unit}${k === 1 ? "" : "s"} ago`;
+  return s < 60 ? "just now" : s < 3600 ? n(Math.round(s / 60), "minute") : s < 86400 ? n(Math.round(s / 3600), "hour")
+    : n(Math.round(s / 86400), "day");
+}
+function renderUpdate() {
+  const up = state.update;
+  $("update-card").hidden = !up;
+  if (!up || $("update-acts").querySelector("[data-saving]")) return;
+  const latest = esc(up.latest || ""), current = esc(up.current || "");
+  const filling = state.current != null || allRuns().some((r) => r.status === "running");
+  const fillingSaid = filling ? " Wait for the jobs being filled to finish, or pause the queue." : "";
+  const updateNow = `<button class="btn sm primary" data-act="update-start"${filling ? " disabled" : ""}>Update now</button>`;
+  const checkNow = `<button class="btn sm" data-act="update-check">Check now</button>`;
+  const canUpdate = up.newer && up.kind !== "manual";
+  // (What's new: the newer version's Release page, a link like any other: the desk's own window hands it to the
+  // person's usual browser)
+  const whatsNew = up.newer && webUrl(up.notes)
+    ? `<a class="btn sm" href="${esc(up.notes)}" target="_blank" rel="noopener">What's new</a>` : "";
+  let title, said, more = "", buttons = "";
+  if (up.progress === "downloading") [title, said] = [`Downloading version ${latest}`, "This takes a moment."];
+  else if (up.progress === "installing") [title, said] = [`Installing version ${latest}`, "This window closes, and the Job Desk opens again by itself."];
+  else if (up.progress === "updating") [title, said] = ["Updating the plugin", "This takes a moment."];
+  else if (up.progress === "done") [title, said] = [`Updated to ${latest}`, "Restart Claude to use it."];
+  else if (up.progress === "failed") {
+    [title, said] = ["The update didn't go through", `${esc(up.error || "")} Nothing was changed.${canUpdate ? fillingSaid : ""}`];
+    if (up.kind === "plugin") more = `<p class="s">You can also run these in a terminal:</p>`
+      + `<p class="s">${(up.commands || []).map((c) => `<code>${esc(c)}</code>`).join("<br>")}</p>`;
+    // (What's new too: where the installer can be downloaded by hand, as a failure may say)
+    buttons = canUpdate ? whatsNew + updateNow : checkNow;
+  } else if (!up.newer) {
+    [title, said] = up.checked_at ? ["You have the newest version", `Version ${current}. Checked ${agoWords(up.checked_at)}.`]
+      : [`Version ${current}`, "The desk couldn't look for a newer one. It needs the internet for that."];
+    buttons = checkNow;
+  } else if (up.kind === "manual") {
+    [title, said] = [`Version ${latest} is out`, `You have ${current}. This copy isn't one the desk can update by itself.`];
+    buttons = whatsNew;
+  } else {
+    title = `Version ${latest} is ready`;
+    said = `You have ${current}. ` + (up.kind === "installed"
+      ? "Updating takes about a minute. The desk closes, installs, and opens again. Your queue is kept."
+      : "The desk updates the plugin. Then restart Claude to use it.") + fillingSaid;
+    buttons = whatsNew + updateNow;
+  }
+  $("update-h").textContent = title;
+  for (const [id, html] of [["update-said", said], ["update-more", more], ["update-acts", buttons]]) {
+    if ($(id).dataset.html !== html) { $(id).innerHTML = html; $(id).dataset.html = html; }
+  }
+}
+// Update now (F2), and its Try again: an installed copy's update closes the desk's browser window, so with jobs waiting
+// on the person there (their pages filled in, maybe typed into) it asks first
+function updateNow(t) {
+  const waiting = (state.update || {}).kind === "installed"
+    ? allRuns().filter((r) => r.status === "needs_you" || r.status === "ready").length : 0;
+  if (waiting && !confirm("Updating closes the desk's browser window. " + (waiting === 1
+    ? "1 job is waiting on you there, and what you have typed into its page will be lost."
+    : `${waiting} jobs are waiting on you there, and what you have typed into their pages will be lost.`) + " Update now?")) return;
+  saveRow(t, () => api("/api/update/start", {}));
+}
+
 async function copyNotes() {
   try {
     await navigator.clipboard.writeText($("notes-text").textContent);
@@ -3083,7 +3589,9 @@ function renderArea() {
   const titles = areaTitles(area), places = area.places || [];
   const short = (xs, none) => !xs.length ? none : xs.length === 1 ? xs[0] : `${xs[0]} +${xs.length - 1}`;
   const btn = $("area-btn");
-  btn.textContent = `What and where: ${short(titles, "jobs")} · ${short(places, (area.states || []).join(", ") || "your state")}`;
+  const said = `${short(titles, "jobs")} · ${short(places, (area.states || []).join(", ") || "your state")}`;
+  btn.textContent = `What and where: ${said}`;
+  $("area-row-said").textContent = said;  // (Settings, Job search: What and where, worded as the button words it)
   const avoid = area.avoid_titles || [];
   btn.title = `Find jobs looks for ${titles.join(", ") || "the plugin's equipment roles"}`
     + ` in ${places.join("; ") || "your home state"}`
@@ -3136,7 +3644,7 @@ function renderAreaDraft() {
     employers)</span></span></label>`).join("");
   const own = $("area-own");
   own.hidden = !area.own;
-  own.textContent = area.own ? `And ${area.own} employer${area.own === 1 ? "" : "s"} of your own (companies.yaml).` : "";
+  own.textContent = area.own ? `And ${area.own} employer${area.own === 1 ? "" : "s"} of your own.` : "";
 }
 function areaAdd(kind, value) {
   // (a title to leave out typed as several, "Senior, Call Center", is each of them)
@@ -3182,7 +3690,7 @@ const SETUP_CONSENTS = [
    "The desk declines cookie banners. One with no way to decline (TI's “Agree and Proceed”) waits for you, "
    + "unless you tick this. Off unless you turn it on."],
   ["manage_accounts", "Make my accounts on job sites (default: on)",
-   "Many employers' job sites need an account. With a password saved under Site passwords, the desk makes yours, "
+   "Many employers' job sites need an account. With a password saved in Settings, under Accounts and passwords, the desk makes yours, "
    + "agreeing to each site's terms in your name (and to being considered for other open positions where a site won't "
    + "make the account without it; never job alerts or a newsletter), and when a site turns your saved password down, "
    + "it resets it through that site's “Forgot password” email. Security questions come to you on the "
@@ -3225,7 +3733,7 @@ function renderSetup() {
     ? `<button type="button" data-act="setup-read" ${r.found ? "" : "disabled"}>Read my resume</button>
        <span class="small">Claude reads it with your Anthropic API key and fills in the boxes on the next steps that
        are empty, for you to check.</span>`
-    : `<p class="small">Type your details on the next steps, or save an Anthropic API key under Site passwords to have
+    : `<p class="small">Type your details on the next steps, or save an Anthropic API key in Settings, under Accounts and passwords, to have
        your resume read for you.</p>`;
   $("setup-personal").innerHTML = SETUP_PERSONAL.map(([k, label, auto]) => `<label class="q"><span>${label}</span>
     <input type="text" data-sf="${k}" autocomplete="${auto}" value="${esc(f.personal[k] || "")}"></label>`).join("");
@@ -3357,17 +3865,41 @@ $("setup-form").addEventListener("submit", (e) => {
 // menu's link for the page is marked as the current one. The Openings tab chosen stays as it was left
 const PAGES = {home: "Home", openings: "Openings", applications: "Applications", answers: "Your answers",
                working: "What's working", settings: "Settings", help: "Help"};
+// The Settings page's panels (D1), by the address's "#settings/name": the one named shows (Your profile for none, or a
+// name that isn't one), and its link in Settings' own menu is marked as the current one
+const PANELS = ["profile", "search", "applying", "passwords", "email", "phone", "documents", "about"];
 function route() {
-  let page = location.hash.slice(1);
+  let [page, panel] = location.hash.slice(1).split("/");
   if (!Object.prototype.hasOwnProperty.call(PAGES, page)) page = "home";
-  const moved = document.body.dataset.page !== page;
+  if (page !== "settings") panel = "";
+  else if (!PANELS.includes(panel)) panel = "profile";
+  const moved = document.body.dataset.page !== page || (document.body.dataset.panel || "") !== panel;
   document.body.dataset.page = page;
+  if (panel) document.body.dataset.panel = panel; else delete document.body.dataset.panel;
+  for (const el of document.querySelectorAll(".spanel")) el.hidden = el.dataset.panel !== (panel || "profile");
+  for (const a of document.querySelectorAll(".snav a")) {
+    if (a.getAttribute("href") === "#settings/" + panel) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+  }
   $("page-title").textContent = PAGES[page];
   for (const el of document.querySelectorAll("[data-pages]")) el.hidden = !el.dataset.pages.split(" ").includes(page);
   for (const a of document.querySelectorAll(".nav a")) {
     if (a.getAttribute("href") === "#" + page) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   }
   if (moved) $("content").scrollTop = 0;  // (a page starts at its top, not where the last one was left)
+  // (Your answers' remembered answers: asked of the desk each time the page opens; left, an ID shown is dots again and
+  // a change not saved is let go)
+  if (moved && page === "answers") loadRemembered();
+  if (page !== "answers" && (rememberedShown.size || rememberedEdit)) {
+    rememberedShown.clear();
+    rememberedEdit = null;
+    renderRemembered();
+  }
+  // (in a narrow window Settings' menu is one row that scrolls sideways: the panel's link brought into it)
+  const on = document.querySelector(".snav a[aria-current]");
+  if (panel && on) {
+    const nav = on.parentElement, r = on.getBoundingClientRect(), n = nav.getBoundingClientRect();
+    if (r.left < n.left || r.right > n.right) nav.scrollLeft += r.left - n.left - 4;
+  }
   if (state) render();
 }
 // A page shown now, the address with it (the address's own change is heard a moment later, and changes nothing more)
@@ -3394,6 +3926,8 @@ function render() {
   renderNotes();
   renderMenu();
   renderProgram();
+  renderUpdate();
+  renderSettingsRows();
   announce();
   // (a profile that lacks what an application needs: Set up your profile, once a visit, over no other window)
   const missing = (state.profile || {}).missing || [];
@@ -3429,12 +3963,21 @@ function refresh() {
   return mine;
 }
 
+// The desk gone while an update was under way (the brief's item 6): an installed copy's desk stops for its installer,
+// and opens again by itself. The page says so in place of "the desk isn't answering", closes its window where the
+// browser lets it (F2: installing). The desk the installer opens again has a key of its own and a window of its own,
+// so when a desk answers again and refuses this window's key, the page says the desk opened again (updated, or the
+// version before after an update that didn't finish) and that this window can be closed (and stops asking); a desk that answers any other way is this one again, and the page reloads. A desk
+// that hasn't answered UPDATE_LONG seconds on says how to open it
+let updateDown = false, updateDownAt = 0;
+const UPDATE_LONG = 180;
 async function load(at = changes) {
   try {
     // (the first look told before the first state, whose New marks go from it; then now and then while in front)
     if (!seenSent) await sawOpenings();
     else if (document.visibilityState === "visible" && document.hasFocus()) sawOpenings(SEEN_STAYING);
     const fresh = await api("/api/state");
+    if (updateDown) { location.reload(); return; }  // (back: the page as the desk now serves it)
     if (at !== changes) return;  // (a change made on the page since it was asked: the next refresh asks again)
     state = fresh;
     render();
@@ -3446,6 +3989,25 @@ async function load(at = changes) {
       await api("/api/search", {auto: true});
     }
   } catch (e) {
+    const up = (state || {}).update;
+    if (updateDown || (e.status === undefined && up && UPDATING.includes(up.progress))) {
+      if (e.status === 403) {  // (the updated desk, with its own key and window)
+        stopped = true;
+        $("notices").innerHTML = `<p class="notice info">The Job Desk opened again in a window of its own. You can close this one.</p>`;
+        window.close();
+        return;
+      }
+      if (e.status !== undefined) { location.reload(); return; }  // (this desk again, whatever it says)
+      if (!updateDown) {
+        updateDownAt = Date.now();
+        if (up.progress === "installing") window.close();
+      }
+      updateDown = true;
+      $("notices").innerHTML = Date.now() - updateDownAt < UPDATE_LONG * 1000
+        ? `<p class="notice info">The Job Desk is updating. This window will show it again when it is back.</p>`
+        : `<p class="notice bad">Problem: the Job Desk hasn't come back from its update yet. Open the Job Desk again.</p>`;
+      return;
+    }
     $("notices").innerHTML = e.status === 403
       ? `<p class="notice bad">Problem: the desk was restarted, and this window's key is out of date. Close it and open the Job Desk again.</p>`
       : `<p class="notice bad">Problem: the desk isn't answering (${esc(e.message)}). It may have been closed. Open the Job Desk again.</p>`;
@@ -3456,6 +4018,116 @@ async function act(fn, hold = true) {
   changes += 1;  // (any state asked before it is out of date: load)
   if (hold) busy = true;  // a long one (reading pasted links) lets the page keep refreshing
   try { await fn(); } catch (e) { alert(e.message); } finally { if (hold) busy = false; await refresh(); }
+}
+
+// The Settings page's saving rule (the design's D1), for every row: a control saves the moment it is changed (`send`,
+// which posts it). While the save is under way the control is disabled (a choice row's buttons, all of them), and the
+// page's refresh doesn't draw it. If the save fails, `undo` puts it back as it was, and the desk's sentence shows
+// under its row in red (.set-err), until a save of that row goes through
+async function saveRow(control, send, undo = () => {}) {
+  const row = control.closest(".setrow");
+  const parts = control.matches(".seg") ? [...control.querySelectorAll("button")] : [control];
+  const focused = parts.includes(document.activeElement) ? document.activeElement : null;
+  control.dataset.saving = "1";
+  parts.forEach((p) => { p.disabled = true; });
+  changes += 1;  // (a state asked before this save is out of date when it comes: load)
+  busy = true;
+  let said = "";
+  try { await send(); } catch (e) { undo(); said = e.message || "That wasn't saved."; } finally {
+    delete control.dataset.saving;
+    parts.forEach((p) => { p.disabled = false; });
+    let err = row && row.querySelector(":scope > .set-err");
+    if (said && row && !err) {
+      err = document.createElement("p");
+      err.className = "set-err";
+      err.setAttribute("role", "alert");
+      row.append(err);
+    }
+    if (err) { err.textContent = said; err.hidden = !said; }
+    if (focused && document.activeElement === document.body) focused.focus();  // (the keyboard stays where it was)
+    busy = false;
+    await refresh();
+  }
+}
+// A setting kept in the profile (the control's data-setting names it) saved through /api/profile/settings, by saveRow
+function saveSetting(control, value, undo) {
+  return saveRow(control, () => api("/api/profile/settings", {key: control.dataset.setting, value}), undo);
+}
+// A POST with no body (Open the folder's: the route reads nothing from the page)
+async function postEmpty(path) {
+  const res = await fetch(path, {method: "POST", headers: {"x-desk-token": token}});
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), {status: res.status, data});
+  return data;
+}
+
+// Look (Updates and about): "light" or "dark" on <html> and kept in this browser, or "" (Match my computer) for none
+const LOOK_KEY = "desk-theme";
+function lookNow() { return document.documentElement.dataset.theme || ""; }
+function setLook(look) {
+  if (look) document.documentElement.dataset.theme = look; else delete document.documentElement.dataset.theme;
+  try { if (look) localStorage.setItem(LOOK_KEY, look); else localStorage.removeItem(LOOK_KEY); } catch (e) {}
+  document.querySelectorAll("[data-look]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.look === look)));
+}
+
+// The Settings page's rows (D3) as the state has them: each profile setting's control (data-setting; data-state when
+// the state names it otherwise), the twin of Submit for me, Your profile's rows, Your files. A control being saved, or
+// one in the person's hands (focused), is left as it is
+function renderSettingsRows() {
+  const s = state.settings || {}, p = state.profile || {};
+  const leave = (el) => el.dataset.saving || el.contains(document.activeElement) && el.matches("input");
+  for (const el of document.querySelectorAll("[data-setting]")) {
+    if (leave(el)) continue;
+    const v = s[el.dataset.state || el.dataset.setting];
+    if (el.matches(".seg")) el.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(JSON.stringify(v) === b.dataset.value)));
+    else if (el.type === "checkbox") el.checked = el.dataset.on ? v === el.dataset.on : !!v;
+    else el.value = v == null ? "" : String(v);
+  }
+  const twin = $("set-auto");
+  if (!twin.dataset.saving) {
+    if (document.activeElement !== twin) twin.checked = !!s.auto_submit;
+    twin.disabled = !!s.dry_run;
+  }
+  $("set-email-tracking-row").hidden = !!state.standalone;  // (only Claude reads the person's email: C7)
+  // Email codes: whether the app password is saved (never what it is: the box is never drawn from the state), Test it
+  // only with one saved, and Claude's Gmail only inside Claude
+  const mailSaved = !!(state.passwords || {}).email;
+  $("mail-pw-state").textContent = mailSaved ? "Saved" : "Not saved";
+  $("mail-pw-state").className = mailSaved ? "pill good" : "pill";
+  if (!$("mail-test").dataset.saving) $("mail-test").disabled = !mailSaved;
+  $("set-email-codes-row").hidden = !!state.standalone;
+  $("mail-claude").hidden = !!state.standalone;  // (Claude reads codes through Gmail only inside Claude)
+  $("pw-claude").hidden = !!state.standalone;  // ("Claude never sees it": only where Claude is)
+  // Resume and cover letters: the files' names (never their paths), and the twins of the apply bar's Tailor my resume
+  // and Cover letter, from the same state as theirs
+  const docs = p.documents || {};
+  $("set-resume-said").textContent = docs.resume || "None yet.";
+  $("set-resume").textContent = docs.resume ? "Replace" : "Choose a file";
+  $("set-letter-file").textContent = docs.cover_letter || "";
+  $("set-letter-file").hidden = !docs.cover_letter;
+  $("set-letter-remove").hidden = !docs.cover_letter;
+  $("set-tailor-row").hidden = !!state.standalone;  // (only Claude writes a tailored resume: C7)
+  const byKey = state.letters_by === "your Anthropic API key";  // (letters.BY_KEY: what would write the letters)
+  $("set-letters-said").textContent = byKey
+    ? "Written through Anthropic's API with your key, about 10 to 20 cents a letter. The first one waits for your OK."
+    : !state.standalone ? "Written through your own Claude sign-in. The first one waits for your OK."
+    : "This needs an Anthropic API key. Save one under Accounts and passwords.";
+  for (const [id, key, off] of [["set-tailor", "tailor_resumes", false], ["set-letters", "cover_letters", !byKey && !!state.standalone]]) {
+    const el = $(id);
+    if (el.dataset.saving) continue;
+    if (document.activeElement !== el) el.checked = !!s[key];
+    el.disabled = off;
+  }
+  document.querySelectorAll("[data-look]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.look === lookNow())));
+  $("profile-h").textContent = String(p.name || "").trim() || "Your profile";
+  const missing = p.missing || [];
+  $("still-row").hidden = !missing.length;
+  const still = inWords(missing.map(profileField));
+  $("still-said").textContent = still ? still[0].toUpperCase() + still.slice(1) + "." : "";
+  $("bank-row-said").textContent = bankSaid() + ".";
+  // (the desk's folder: where its profile is kept, from the state; a path is data, never the page's own words)
+  const folder = String(p.path || "").replace(/[\\/][^\\/]*$/, "");
+  $("files-said").textContent = folder ? `Everything is kept on this computer, in ${folder}.` : "";
 }
 
 // Jobs that can still be applied to: in the list, not finished, not already under way. One
@@ -3778,9 +4450,23 @@ document.addEventListener("click", (e) => {
   }
   const a = t.dataset.act, job = t.dataset.job, jobAct = t.dataset.jobAct;
   if (!state && (a || jobAct || t.dataset.atOnce)) return;  // the page hasn't loaded yet
+  const seg = t.closest(".seg[data-setting]");
+  if (seg) {  // a choice of a profile setting's (Cookie banners, Open the desk in, the browser): saved at once
+    if (!state || t.getAttribute("aria-pressed") === "true") return;
+    const buttons = [...seg.querySelectorAll("button")];
+    const was = buttons.find((b) => b.getAttribute("aria-pressed") === "true");
+    const press = (on) => buttons.forEach((b) => b.setAttribute("aria-pressed", String(b === on)));
+    press(t);
+    saveSetting(seg, JSON.parse(t.dataset.value), () => press(was));
+    return;
+  }
+  if (t.dataset.look !== undefined) { setLook(t.dataset.look); return; }  // (this browser's alone: nothing to save)
   if (t.dataset.atOnce) {
-    document.querySelectorAll("[data-at-once]").forEach((b) => b.setAttribute("aria-pressed", String(b === t)));
-    act(() => api("/api/settings", {jobs_at_once: Number(t.dataset.atOnce)}));
+    const buttons = [...document.querySelectorAll("[data-at-once]")];
+    const was = buttons.find((b) => b.getAttribute("aria-pressed") === "true");
+    const press = (on) => buttons.forEach((b) => b.setAttribute("aria-pressed", String(b === on)));
+    press(t);
+    saveRow(t.closest(".seg"), () => api("/api/settings", {jobs_at_once: Number(t.dataset.atOnce)}), () => press(was));
     return;
   }
   if (a === "find") act(() => api("/api/search", {}));
@@ -3804,6 +4490,13 @@ document.addEventListener("click", (e) => {
   if (a === "area-place-add") { areaAdd("places", $("area-place-new").value); $("area-place-new").value = ""; }
   if (a === "area-avoid-add") { areaAdd("avoid_titles", $("area-avoid-new").value); $("area-avoid-new").value = ""; }
   if (a === "pause" || a === "resume") act(() => api(`/api/queue/${a}`, {}));
+  if (a === "open-home") saveRow(t, () => postEmpty("/api/open/home"));  // (the desk's own folder, and only it)
+  if (a === "update-check") saveRow(t, () => api("/api/update/check", {}));  // (Check now: the server keeps its pace)
+  if (a === "update-start") updateNow(t);
+  if (a === "mail-test") mailTest(t);
+  if (a === "set-resume") $("set-resume-file").click();  // (the file picked: documentPicked)
+  if (a === "set-letter") $("set-letter-pick").click();
+  if (a === "set-letter-remove") saveRow(t, () => api("/api/profile/document", {kind: "cover_letter", remove: true}));
   if (a === "quit" && confirm("Quit the Job Desk? Jobs it is working on stop where they are. The queue is kept for next time.")) {
     act(async () => { await api("/api/quit", {}); stopPage(); });
   }
@@ -3835,6 +4528,8 @@ document.addEventListener("click", (e) => {
   if (a === "week-close") $("week").close();
   if (a === "safety") act(async () => { renderSafety(await api("/api/safety")); if (!$("safety").open) $("safety").showModal(); }, false);
   if (a === "safety-close") $("safety").close();
+  // (the blue note about accounts: Make my accounts kept on, said in the profile, so the note is done)
+  if (a === "accounts-keep") act(() => api("/api/profile/settings", {key: "manage_accounts", value: true}));
   if (a === "ni-close") { niUrl = null; $("ni").close(); }
   if (a === "notes") {
     act(async () => {
@@ -4019,6 +4714,49 @@ $("pw-form").addEventListener("submit", (e) => {
   act(async () => { await api("/api/password", {name, value}); box.value = ""; });
 });
 
+// Email codes: the email's app password, saved by the same call as the Site passwords card's (/api/password, to the
+// password vault). What's typed goes to that call alone: never into the page's state, never drawn back, and the box is
+// emptied once it's saved. The box and Save are held while it saves (their fieldset: saveRow)
+$("mail-pw-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const box = $("mail-pw");
+  saveRow($("mail-pw-set"), async () => {
+    if (!box.value.trim()) throw new Error("Type the app password first.");
+    await api("/api/password", {name: "email_password", value: box.value});
+    box.value = "";
+    $("mail-test-said").textContent = "";  // (a test of the password before says nothing of this one)
+  });
+});
+// Test it: a sign-in to the inbox with the saved app password and out again (/api/mail/test), and what came of it in
+// the row's sentence; a refusal (none saved) under the row, as any row's
+function mailTest(btn) {
+  const said = $("mail-test-said");
+  said.textContent = "";
+  saveRow(btn, async () => {
+    const out = await api("/api/mail/test", {});
+    said.textContent = out.ok ? "It works. The desk signed in to your inbox and read nothing."
+      : `It didn't work: ${out.why}.`;
+  });
+}
+// Resume and cover letters: a file picked for the resume (/api/profile/resume, as the profile window sends it) or the
+// usual cover letter (/api/profile/document), its bytes in base64; what the desk refuses said under the row
+function documentPicked(input) {
+  const file = input.files[0];
+  input.value = "";  // (the same file picked again is a change too)
+  if (!file) return;
+  const resume = input.id === "set-resume-file";
+  saveRow($(resume ? "set-resume" : "set-letter"), async () => {
+    const data = await new Promise((done, failed) => {
+      const reader = new FileReader();
+      reader.onload = () => done(String(reader.result).split(",")[1] || "");
+      reader.onerror = () => failed(new Error("That file couldn't be read."));
+      reader.readAsDataURL(file);
+    });
+    await (resume ? api("/api/profile/resume", {name: file.name, data})
+      : api("/api/profile/document", {kind: "cover_letter", name: file.name, data}));
+  });
+}
+
 // a company typed into the Company box (Enter, or leaving it) or picked from its suggestions: chosen, once
 function addCompany(box) {
   const said = box.value.split(/\s+/).filter(Boolean).join(" ");
@@ -4038,14 +4776,39 @@ document.addEventListener("change", (e) => {
   if (t.id === "pick-all" && state) {  // (the header's box: unticked, as Select recommended; otherwise, as Clear)
     if ([...selected].some(selectable)) { selected.clear(); renderRows(); } else selectRecommended();
   }
-  if (t.id === "auto") {
+  if (t.id === "auto" || t.id === "set-auto") {  // (Submit for me, the apply bar's or its twin in Settings: either asks)
     if (t.checked && !confirm("Submit complete applications without asking you first? You can turn this off any time.")) { t.checked = false; return; }
-    act(() => api("/api/settings", {auto_submit: t.checked}));
+    const on = t.checked, twin = $(t.id === "auto" ? "set-auto" : "auto");
+    twin.checked = on;  // (both show it at once)
+    if (t.id === "auto") act(() => api("/api/settings", {auto_submit: on}));
+    else saveRow(t, () => api("/api/settings", {auto_submit: on}), () => { t.checked = twin.checked = !on; });
   }
-  if (t.id === "tailor") act(() => api("/api/settings", {tailor_resumes: t.checked}));
-  if (t.id === "letters") act(() => api("/api/settings", {cover_letters: t.checked}));
-  if (t.id === "auto-search") act(() => api("/api/settings", {auto_search: t.checked}));
-  if (t.id === "dont-wait") act(() => api("/api/settings", {dont_wait: t.checked}));
+  // a profile setting's switch (Practice mode's writes its data-on and data-off) or its number box: saved at once
+  if (t.dataset.setting && t.type === "checkbox" && state) {
+    const on = t.checked;
+    saveSetting(t, t.dataset.on ? (on ? t.dataset.on : t.dataset.off) : on, () => { t.checked = !on; });
+  }
+  if (t.dataset.setting && t.type === "number" && state) {
+    const was = state.settings[t.dataset.setting], said = t.value.trim();
+    // (a whole number as one; anything else as typed, for the desk to say what it takes)
+    saveSetting(t, /^\d+$/.test(said) ? Number(said) : said, () => { t.value = was == null ? "" : String(was); });
+  }
+  // Tailor my resume and Cover letter, the apply bar's or their twins in Settings (Resume and cover letters): both show
+  // a press at once
+  const twins = {tailor: "set-tailor", letters: "set-letters", "set-tailor": "tailor", "set-letters": "letters"};
+  if (twins[t.id]) {
+    const on = t.checked, twin = $(twins[t.id]);
+    const send = () => api("/api/settings", {[/tailor/.test(t.id) ? "tailor_resumes" : "cover_letters"]: on});
+    twin.checked = on;
+    if (t.id.startsWith("set-")) saveRow(t, send, () => { t.checked = twin.checked = !on; });
+    else act(send);
+  }
+  if (t.id === "set-resume-file" || t.id === "set-letter-pick") documentPicked(t);
+  // (the desk's own switches on the Settings page, saved by the same rule as the profile's: saveRow)
+  if (t.id === "auto-search" || t.id === "dont-wait") {
+    const on = t.checked;
+    saveRow(t, () => api("/api/settings", {[t.id === "auto-search" ? "auto_search" : "dont_wait"]: on}), () => { t.checked = !on; });
+  }
   if (t.id === "phone-details") act(() => api("/api/phone/settings", {details: t.checked}));
   if (t.id === "min-pay" && state) {
     // "60000", "$60,000", "60k": dollars a year; empty (or 0) for any pay
@@ -4069,7 +4832,8 @@ document.addEventListener("change", (e) => {
   if (t.id === "troubleshoot") {
     selected.clear();  // (the openings are searched again the other way: none picked carries over)
     if (t.checked) $("handled-only").checked = false;
-    act(() => api("/api/settings", {troubleshoot: t.checked}));
+    const on = t.checked;
+    saveRow(t, () => api("/api/settings", {troubleshoot: on}), () => { t.checked = !on; });
   }
   if (t.dataset.bank) act(() => api("/api/bank", {id: t.dataset.bank, answer: t.value}));
   if (t.id === "report-anonymous" && reportShown) makeReport(reportShown.job, true);
@@ -4085,6 +4849,17 @@ function phoneSummaryDone(box) {
   act(() => api("/api/phone/settings", {summary_at: value}));
 }
 $("phone-summary").addEventListener("blur", (e) => phoneSummaryDone(e.target));
+// a profile setting's text box (Your own alert server): saved when it's left (or Enter pressed), if it changed
+document.addEventListener("focusout", (e) => {
+  const t = e.target;
+  if (!state || !t.dataset || !t.dataset.setting || t.type !== "text" || t.dataset.saving) return;
+  const was = state.settings[t.dataset.setting] ?? "", said = t.value.trim();
+  if (said === String(was)) return;
+  saveSetting(t, said, () => { t.value = String(was); });
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && e.target.dataset && e.target.dataset.setting && e.target.type === "text") e.target.blur();
+});
 $("phone-summary").addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); });
 
 // the link opens GitHub in a new tab; without one (a report being made) it does nothing

@@ -223,7 +223,7 @@ Queued
 ## bank-h
 Common questions
 0 of 12 answered
-Most applications ask these, and your profile doesn't say. Answer once: the desk fills them in at every employer from then on (kept in ~/.job-apply/answers.yaml).
+Most applications ask these, and your profile doesn't say. Answer once: the desk fills them in at every employer from then on (kept with your other answers, lower on this page).
 Which shifts would you work?
 Days
 Evenings
@@ -238,21 +238,62 @@ Yes
 What pay are you looking for? Write it as the site would ask, e.g. "$28 per hour" or "$60,000 per year".
 Show all 12
 
+## remembered-h
+Answers the desk remembers
+Employee ID
+Only at Example Fab
+••••••••
+Show
+Change
+Forget
+Are you willing to work weekends?
+Yes, every other weekend
+Change
+Forget
+Middle name
+Only at Example Litho
+Left empty
+Change
+Forget
+
 ## working-h
 (hidden)
 
 ## profile-h
-Your profile
+Sam Rivera
 Your details, work history and education, and the answers that go on every application.
 Edit your profile
+Common questions
+0 of 12 answered.
+Answer them
 
-## safety-card-h
-Safety
-What the desk may do for you and what it never does, as it is set now.
-See your safety settings
+## panel-search-h
+What and where
+field service +3 · your state
+Change
+Search by itself every 12 hours
+The desk searches again when the openings are over 12 hours old. Never while the queue is paused.
+Learn from what worked
+Once enough of your applications have had an answer, openings like the ones that got answers are listed higher. A job's fit number doesn't change.
+Remind me to follow up
+Days without a reply before an application is marked for a follow-up.
+days
+Let Claude look for replies in my email
+Claude reads replies to your applications through its Gmail connector, and records where each one stands.
 
-## searching-h
-Searching and applying
+## panel-applying-h
+Submit for me
+Off: the desk stops at every review page, and you press Submit. On: complete applications are submitted without asking.
+Practice mode
+The desk fills everything in and sends nothing. It makes no accounts and agrees to nothing while this is on. Good for a first try.
+Make my accounts
+The desk creates your account at each employer with that job system's password, ticking only the site's terms. When a site refuses your password, it resets it through the site's own Forgot password email.
+Agree to required notices
+The privacy notice, the terms of use and the notice about AI screening that an application can't go on without, and its statement that your information is true. Each one is written in the job's log.
+Cookie banners
+Declined wherever the site lets you. A banner with no way to decline waits for you, unless you choose to accept those.
+Decline
+Accept if there is no other way
 Jobs at once
 How many applications the desk fills at the same time.
 1
@@ -263,8 +304,8 @@ How many applications the desk fills at the same time.
 Don't wait for me
 A sign-in or an emailed code waits on its card, and the other jobs carry on.
 Off: a sign-in or emailed code holds the other jobs until you're done, or 5 minutes pass.
-Search by itself every 12 hours
-The desk searches again when the openings are over 12 hours old. Never while the queue is paused.
+See everything the desk may and may not do
+For fixing the desk
 Troubleshooting
 For getting the desk going at more employers. It searches every list and shows only the openings where the desk doesn't go all the way yet. Nothing is submitted while it is on.
 
@@ -283,9 +324,21 @@ Your email: an app password, to read sign-up codes and password resets
 Anthropic API key: for cover letters, instead of your Claude login
 Save
 How this works
-Each employer has its own account on its job site. Save one password for a job system and the desk creates your account at each of that system's employers (agreeing to its terms for you) and signs you in, on that system's own sites only; when a site turns the password down, it resets that account's password to this one through the site's "Forgot password" email (unless your profile says manage_accounts: false). It stays on this computer, in its password vault (Windows Credential Manager, the macOS Keychain or your desktop's keyring; ~/.job-apply/secrets.yaml where there's none), and Claude never sees it. Use passwords you don't use anywhere else.
-Your email: with an app password for the address in your profile (for Gmail, make one at myaccount.google.com/apppasswords; it needs 2-Step Verification), a job waiting on an emailed code or link gets it from your inbox: only mail from that job's site that arrived after it began waiting, read without marking anything read. Without one, with email_codes: true in your profile and the Gmail connector in Claude, Claude reads it through Gmail while the desk's chat is open (only that job's own mail), and the desk puts it in.
-An Anthropic API key (make one in the Claude Console, console.anthropic.com, and add some credit under Billing): with Write a cover letter for each job on, Claude writes each letter through Anthropic's API with it (about 10 to 20 cents a letter, written and checked), so the desk doesn't need Claude Code or your Claude login for them. Each letter is checked against your resume and profile the same way.
+Each employer has its own account on its job site. Save one password for a job system and the desk creates your account at each of that system's employers (agreeing to its terms for you) and signs you in, on that system's own sites only; when a site turns the password down, it resets that account's password to this one through the site's "Forgot password" email (unless Make my accounts is off in Settings). It stays on this computer, in its password vault (Windows Credential Manager, the macOS Keychain or your desktop's keyring), or in a file only you can read where it has none. Use passwords you don't use anywhere else.
+An Anthropic API key (make one in the Claude Console, console.anthropic.com, and add some credit under Billing): with Write a cover letter for each job on, Claude writes each letter through Anthropic's API with it (about 10 to 20 cents a letter, written and checked).
+
+## panel-email-h
+Your email's app password
+A separate password your email provider gives to one program. With it, the desk reads only mail from the job's own site that arrived after the job began waiting, and marks nothing as read. Works with Gmail, Yahoo, iCloud and AOL addresses.
+How to make one for Gmail
+Not saved
+Save
+Test it
+Test it now
+Let Claude read codes through Gmail
+Without an app password, Claude reads the code through its Gmail connector while your chat is open, and the desk puts it in.
+How this works
+Your email: with an app password for the address in your profile (for Gmail, make one at myaccount.google.com/apppasswords; it needs 2-Step Verification), a job waiting on an emailed code or link gets it from your inbox: only mail from that job's site that arrived after it began waiting, read without marking anything read. Without one, with Let Claude read codes through Gmail on and the Gmail connector in Claude, Claude reads it through Gmail while the desk's chat is open (only that job's own mail), and the desk puts it in.
 
 ## phone-h
 Phone alerts
@@ -293,12 +346,54 @@ Off
 A push on your phone when a job needs you or is ready for your Submit, and a summary of the day, with this page closed too (while the desk runs). Free, through the ntfy app.
 Turn on phone alerts
 How this works
-The alerts go through ntfy's servers to the topic your phone subscribes to. So they say only counts and kinds ("A job needs you: a bot check", "2 applications are ready for your Submit"), never an employer, a job or anything about you, unless you turn on Say which employer and job. The topic is a long random name kept on this computer, with your passwords; Turn off forgets it (a new one is made next time). One alert a job a stop, those that come together in one; the summary at the time you pick (empty: none). To use your own ntfy server, set phone_alerts_server under settings: in your profile.
+The alerts go through ntfy's servers to the topic your phone subscribes to. So they say only counts and kinds ("A job needs you: a bot check", "2 applications are ready for your Submit"), never an employer, a job or anything about you, unless you turn on Say which employer and job. The topic is a long random name kept on this computer, with your passwords; Turn off forgets it (a new one is made next time). One alert a job a stop, those that come together in one; the summary at the time you pick (empty: none). To use your own alert server, open Your own alert server, below.
 
 ## alerts-h
 Alerts on this computer
 A note on your screen when a job needs you.
 Alert me
+
+## alert-server-h
+Your own alert server
+Leave this empty to use ntfy.sh.
+
+## panel-documents-h
+Your resume
+resume.pdf
+Replace
+Your usual cover letter
+Optional. It goes in where a site asks for one and no letter was written for the job.
+Choose a file
+Tailor my resume for each job
+Each job waits for Claude to write a resume for it.
+Write a cover letter for each job
+Written through your own Claude sign-in. The first one waits for your OK.
+Which model writes the letters
+Leave this empty for the usual one.
+
+## update-h
+You have the newest version
+Version 0.0.0. Checked 2 hours ago.
+Check now
+
+## panel-about-h
+Open the desk in
+This applies the next time the desk opens.
+Its own window
+A browser tab
+Look
+Light, dark, or whatever your computer is set to.
+Match my computer
+Light
+Dark
+The browser the desk fills forms in
+The desk uses the first it finds, starting with the one chosen. This applies the next time the desk starts.
+Chrome
+Edge
+Its own
+Your files
+Everything is kept on this computer, in ~/.job-apply.
+Open the folder
 
 ## program-h
 This program
@@ -311,7 +406,7 @@ Find jobs searches the career sites of the employers on your lists, and ranks wh
 You pick openings and press Apply. The desk fills each application in the desk's browser window, up to its review page.
 When a site needs you (a question, a sign-in, a bot check), the job waits under Needs you on the Home page.
 Nothing is submitted until you press Submit, unless you turned on "Submit for me". LinkedIn and Indeed are always submitted by you.
-Answers you give here are saved in ~/.job-apply/answers.yaml unless you untick "remember".
+The desk remembers the answers you give, unless you untick "remember". The Your answers page lists them.
 
 ## notes-card-h
 Notes on the desk's stops

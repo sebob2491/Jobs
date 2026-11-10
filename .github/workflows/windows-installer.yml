@@ -188,6 +188,103 @@ jobs:
             throw 'Two desks run'
           }
 
+      - name: An update started by the desk replaces it and brings it back
+        # The desk's Update button (updates.py) starts the new version's installer and stops; the installer stops what
+        # still runs from the program's folder (stop-desk.ps1), installs, and opens the desk again. The processes it
+        # stops include the one that started it, and if they held it in a job that ends with them, the installer would
+        # go down too (the review of Nov 10 couldn't check that from Linux). So the installer just built is started
+        # here the way the desk starts it, with the code's own function (updates.start_installer), from the installed
+        # program's Python run through its uvw.exe as the Start menu's shortcut runs the desk (so stop-desk.ps1 stops
+        # it too), while the desk the steps before started runs. Then, within 3 minutes: the installer's log says the
+        # install finished, a new desk answers on the port the watch file names, and the starter is gone. Where
+        # Windows won't start the installer outside the starter's job, the desk's update fails with its sentence and
+        # starts nothing (updates.NO_BREAKAWAY), and so does this step, at once, saying so.
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $folder = Join-Path $HOME '.job-apply'
+          $updates = Join-Path $folder 'updates'
+          New-Item -ItemType Directory -Force -Path $updates | Out-Null
+          $exe = (Resolve-Path -LiteralPath 'plugins/job-apply/setup/windows/Output/JobDeskSetup.exe').Path
+          $log = Join-Path $updates 'install-ci.log'
+          $starterId = Join-Path $env:RUNNER_TEMP 'starter.pid'
+          $starterSaid = Join-Path $env:RUNNER_TEMP 'starter.txt'
+          Remove-Item -LiteralPath $log, $starterId, $starterSaid -ErrorAction SilentlyContinue
+          # the desk running now (the steps before started it): the watch file names its process and port
+          $watch = Join-Path $folder 'desk_watch_8765.json'
+          $before = Get-Content -Raw -LiteralPath $watch | ConvertFrom-Json
+          Write-Host "The desk before the update: process $($before.pid), port $($before.port)"
+          # the starter: it writes its own process id, starts the installer as the Update button does (out of its own
+          # job, uvw.exe's, or not at all), says which, and waits to be stopped (the desk itself would stop once the
+          # installer had taken over). uvw.exe has no console, so what it says is also written to a file, for this
+          # step to say again
+          $script = Join-Path $env:RUNNER_TEMP 'start_update.py'
+          Set-Content -LiteralPath $script -Encoding utf8 -Value @'
+          import os
+          import sys
+          import time
+          from pathlib import Path
+
+          from job_apply import updates, window
+
+          Path(sys.argv[3]).write_text(str(os.getpid()), encoding="utf-8")
+          try:
+              updates.start_installer(Path(sys.argv[1]), Path(sys.argv[2]))
+              said, refused = "The installer was started out of the starter's job.", False
+          except window.BreakawayRefused:
+              said, refused = "Refused: Windows wouldn't start the installer outside the starter's job, so the desk's Update button would fail here and start nothing.", True
+          print(said, flush=True)
+          Path(sys.argv[4]).write_text(said, encoding="utf-8")
+          if refused:
+              sys.exit(1)
+          time.sleep(600)
+          '@
+          Start-Process -FilePath "$env:APP\bin\uvw.exe" -WorkingDirectory $env:SERVER -ArgumentList (
+            "run --frozen --python 3.13 --project `"$env:SERVER`" python `"$script`" `"$exe`" `"$log`" `"$starterId`" `"$starterSaid`"")
+          $finished = $false
+          $answers = $false
+          $gone = $false
+          $refused = $false
+          $id = $null
+          $now = $null
+          $deadline = (Get-Date).AddMinutes(3)
+          while ((Get-Date) -lt $deadline -and -not ($finished -and $answers -and $gone)) {
+            Start-Sleep 3
+            # (Windows refused to start it outside the starter's job: nothing was started, nothing to wait for)
+            if ((Test-Path -LiteralPath $starterSaid) -and (Select-String -LiteralPath $starterSaid -Pattern 'Refused: ' -SimpleMatch -Quiet)) {
+              $refused = $true
+              break
+            }
+            if (-not $id -and (Test-Path -LiteralPath $starterId)) { $id = [int](Get-Content -Raw -LiteralPath $starterId) }
+            if ($id) { $gone = -not (Get-Process -Id $id -ErrorAction SilentlyContinue) }
+            if (-not $finished -and (Test-Path -LiteralPath $log)) {
+              # (the line JobDeskSetup.iss logs once the install has finished, at ssDone)
+              try { $finished = [bool](Select-String -LiteralPath $log -Pattern 'Job Desk: the install finished.' -SimpleMatch -Quiet) } catch { }
+            }
+            if ($finished -and -not $answers -and (Test-Path -LiteralPath $watch)) {
+              try {
+                # a desk of its own: the watch file names another process than the one before
+                $now = Get-Content -Raw -LiteralPath $watch | ConvertFrom-Json
+                if ($now.pid -ne $before.pid) {
+                  $page = Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 -Uri "http://127.0.0.1:$($now.port)/"
+                  $answers = $page.StatusCode -eq 200 -and $page.Content -match '<title>Job Desk</title>'
+                }
+              } catch { }
+            }
+          }
+          if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 40 }
+          # how the installer was started: out of the starter's job, or not at all (this step fails then)
+          $how = "The starter didn't say how it started the installer."
+          if (Test-Path -LiteralPath $starterSaid) { $how = (Get-Content -Raw -LiteralPath $starterSaid).Trim() }
+          Write-Host "Starter: $how"
+          if ($refused) { throw "Starter: $how" }
+          $missing = @()
+          if (-not $id) { $missing += 'The starter never ran: it wrote no process id, so the installer was never started' }
+          if (-not $finished) { $missing += "The installer's log doesn't say the install finished (it was stopped, or failed: its log is above)" }
+          if (-not $answers) { $missing += 'No new desk answered on its port after the update' }
+          if ($id -and -not $gone) { $missing += "The process that started the installer ($id) still runs: stop-desk.ps1 didn't stop it" }
+          if ($missing.Count -gt 0) { throw ($missing -join '. ') }
+          Write-Host "Updated: the installer finished, a new desk (process $($now.pid)) answers on port $($now.port), and the starter ($id) is gone. $how"
+
       - name: Uninstall silently; the person's job-apply folder stays
         run: |
           $ErrorActionPreference = 'Stop'

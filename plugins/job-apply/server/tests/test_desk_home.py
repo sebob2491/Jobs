@@ -544,7 +544,10 @@ _SAID = ["Your details, your work history and your resume.", "The job titles and
          "Optional. Many sites email a code when you sign in. With this, the desk enters it for you.",
          "{bank}. Each answer is one stop fewer.", "Search the employers on your lists.",
          "Tick an opening and press Apply. Nothing is sent until you press Submit."]
-_BUTTONS = [["Set up", "setup"], ["Choose", "area"], ["Open Settings", "#settings"], ["Open Settings", "#settings"],
+# (the two Open Settings to the panel each password is on: the job systems' on Accounts and passwords, the inbox's
+# app password on Email codes: the design's D1 and D3)
+_BUTTONS = [["Set up", "setup"], ["Choose", "area"], ["Open Settings", "#settings/passwords"],
+            ["Open Settings", "#settings/email"],
             ["Answer them", "#answers"], ["Find jobs", "find"], ["Go to Openings", "#openings"]]
 
 

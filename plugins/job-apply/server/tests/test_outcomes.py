@@ -452,7 +452,8 @@ def test_the_card_says_too_few_yet_and_when_the_order_doesnt_use_it(srv, job_app
     assert "Once 5 of your applications have had an answer, or 3 weeks without one" in said, said
     assert "So far: 3 of 5 (and 2 sent in the last 3 weeks)." in said and "By job system" not in said, said
     said = card({**state["outcomes"], "nudging": False})
-    assert "Off in your profile (settings.learn_from_responses: false)" in said and "Placed higher" not in said, said
+    assert ("Off in Settings, under Job search: the openings' order doesn't use these." in said
+            and "Placed higher" not in said), said
     assert "Only groups with 5 applications or more are shown." in said
     said = card(state["outcomes"])
     assert "Scores, and which openings are recommended, don't change." in said, said

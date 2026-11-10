@@ -28,6 +28,7 @@ import time
 import urllib.request
 import webbrowser
 from collections import Counter
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -39,11 +40,11 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from . import (autofill, config, employment, history, letters, outcomes, pay, phone, places, profile_setup, report,
-               vault, window, workplace)
+from . import (autofill, config, employment, history, letters, mailbox, outcomes, pay, phone, places, profile_setup,
+               report, vault, window, workplace)
 from .browser import _cookie_setting
 from .pipeline import (DESK_PASSWORDS, MAIL_WATCH_MAX, QUEUE_NO_LOCK, Applier, _may_accept_notices,
-                       _may_manage_accounts, _test_identity, placed_key, question_key)
+                       _may_manage_accounts, _secret, _test_identity, placed_key, question_key)
 from .ats import ATS_NAMES, JOB_BOARDS, detect_ats, job_board
 from .postings import FetchError, Posting, fetch_posting, finalize, parse_html
 from .recommend import (applicant_degree, days_since, not_interested_in, recommend, score_listing, target_titles,
@@ -61,6 +62,9 @@ VISIT_GAP = 30 * 60  # a look at the openings this long (seconds) after the one 
 SEEN_WRITE = 60  # the time of the last look is written to desk.json at most this often (the page looks again and again)
 FOUND_KEEP = 5000  # the openings whose first-found time is kept (openings_found.json): the newest
 WHATS_NEW_MOST = 50  # the openings whats_new lists (it counts them all)
+# a job card's buttons that start something in the browser (a pass, a Submit, a round): refused while an update holds
+# the applier (Applier.updating)
+_STARTS = frozenset({"resume", "retry", "submit", "round", "usual_resume", "letter_ok", "letters_off", "apply_anyway"})
 OPEN_URL_MOST = 2000  # the longest address /api/open hands to the person's usual browser
 # The desk's own window is started with a one-time code in its address, never the page's key: a program's command
 # line can be read by the computer's other accounts for as long as it runs. A code is good for one use and this many
@@ -407,10 +411,18 @@ class Desk:
             r("/api/profile/resume", self.profile_resume_view, methods=["POST"]),
             r("/api/profile/read", self.profile_read_view, methods=["POST"]),
             r("/api/profile/save", self.profile_save_view, methods=["POST"]),
+            r("/api/profile/settings", self.profile_settings_view, methods=["POST"]),
+            r("/api/profile/document", self.profile_document_view, methods=["POST"]),
+            r("/api/answers", self.answers_view),
+            r("/api/answers/{action}", self.answers_change_view, methods=["POST"]),
+            r("/api/mail/test", self.mail_test_view, methods=["POST"]),
+            r("/api/open/home", self.open_home_view, methods=["POST"]),
             r("/api/mail/wait", self.mail_wait_view),
             r("/api/open", self.open_view, methods=["POST"]),
             r("/api/quit", self.quit_view, methods=["POST"]),
             r("/api/window", self.window_view, methods=["POST"]),
+            r("/api/update/check", self.update_check_view, methods=["POST"]),
+            r("/api/update/start", self.update_start_view, methods=["POST"]),
         ])
 
     async def start(self, port: int = DEFAULT_PORT, open_browser: bool = True) -> str:
@@ -443,6 +455,7 @@ class Desk:
             if not self._watch_file_atexit:  # (the MCP server ends with Claude Code, never stopping the desk)
                 self._watch_file_atexit = True
                 atexit.register(self._remove_watch_file)
+        self.updates.note_updated()  # (an update this desk's Update button started, said once: _state's restored)
         if self._update_task is None or self._update_task.done():
             self._update_task = asyncio.get_running_loop().create_task(self._watch_updates())
         if self._phone_task is None or self._phone_task.done():
@@ -457,7 +470,7 @@ class Desk:
         """Look for a newer published version now and then (UpdateCheck keeps to its own pace)."""
         while True:
             with contextlib.suppress(Exception):
-                await self.updates.refresh()
+                await self.updates.refresh(standalone=self.standalone)
             await asyncio.sleep(600)
 
     async def _watch_phone(self) -> None:
@@ -651,6 +664,56 @@ class Desk:
         await request.body()  # (read before the answer, whatever an older second start sent: see window_address)
         return JSONResponse({"url": self.window_url()}, headers={"Cache-Control": "no-store"})
 
+    async def update_check_view(self, request: Request) -> Response:
+        """The page's Check now: a look for a newer version now (never more than once a minute: UpdateCheck), and the
+        state's `update`. Nothing is read from what the page sends."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        await self.updates.refresh(standalone=self.standalone, now=True)
+        return JSONResponse(self.updates.state(self.standalone))
+
+    async def update_start_view(self, request: Request) -> Response:
+        """The page's Update now: the update for this copy's kind (updates.py), unless there's nothing newer, it's a
+        copy the desk can't update, one is already under way, or a job is being filled (409, with why). Nothing is read
+        from what the page sends: where the update comes from is the installed plugin.json's alone."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        why = self.updates.why_not(self.standalone, self._filling())
+        if why is not None:
+            return JSONResponse({"error": why}, status_code=409)
+        self.updates.start(self.standalone, filling=self._filling, pause=self._pause_for_update,
+                           quit=self.quitting.set)
+        return JSONResponse({"started": True})
+
+    def _filling(self) -> bool:
+        """Is a job being filled now, or about to be: its pass's task made (the applier's _slots, from the moment the
+        queue begins it, before its first step runs), its step holding the browser, its run running, or what the
+        person asked for that waits its turn in the applier's tasks and goes even while the queue is paused (a Submit
+        they pressed, a job they pressed Carry on for or answered: pressed)? A job merely queued isn't: the update's
+        pause holds it, and it's kept for after."""
+        a = self.applier
+        return (a.current is not None or bool(a._slots)
+                or any(run.status == "running" for run in a.runs.values())
+                or any(kind == "submit" or job_id in a.pressed for kind, job_id in a.tasks))
+
+    def _pause_for_update(self) -> Callable[[], None]:
+        """The queue paused for an update, as the Pause queue button pauses it (queue_view), and the applier held
+        (Applier.updating: from here until the desk quits nothing starts, not even a job or a Submit the person
+        presses); what undoes both, should the installer not start (the queue left paused when it was already)."""
+        a = self.applier
+        was = a.paused
+        a.pause_queue()
+        a.updating = True
+
+        def undo() -> None:
+            a.updating = False
+            if not was:
+                a.resume_queue()
+            else:
+                a.wake()
+
+        return undo
+
     async def seen_view(self, request: Request) -> Response:
         """The page loaded, or came to the front: the person looked at the openings (saw)."""
         if not self._allowed(request, api=True):
@@ -772,6 +835,8 @@ class Desk:
         if job_id >= 2 ** 63:  # past what the tracker can hold: no such job
             return JSONResponse({"error": f"No job with id {job_id}"}, status_code=404)
         try:
+            if action in _STARTS:  # (refused before anything is done: a round's tab isn't even brought up)
+                a.refuse_while_updating()
             if action == "resume":
                 a.resume(job_id)
             elif action == "retry":  # Try now, on a job waiting to be tried again after the site's error
@@ -1058,6 +1123,117 @@ class Desk:
             return self._bad(e)
         return JSONResponse(out)
 
+    # ------------------------------------------------------------- Settings (Version D)
+    async def profile_settings_view(self, request: Request) -> Response:
+        """One of the profile's settings changed on the Settings page ({key, value}): only a key of PROFILE_SETTINGS,
+        to a value it takes (profile_setting_problem), written to profile.yaml's settings with config.set_setting
+        (every other line and comment kept). The settings as they now stand."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        try:
+            body = await self._body(request)
+            key, value = body.get("key"), body.get("value")
+            if not isinstance(key, str) or key not in PROFILE_SETTINGS:
+                raise ValueError("That setting can't be changed here.")
+            wrong = profile_setting_problem(key, value)
+            if wrong:
+                raise ValueError(wrong)
+            if not config.profile_path().exists():
+                raise ValueError("Set up your profile first.")
+            await asyncio.to_thread(config.set_setting, key, profile_setting_value(key, value))
+            return JSONResponse(profile_settings(config.Profile.load().settings))
+        except (ValueError, OSError) as e:
+            return self._bad(e)
+
+    async def profile_document_view(self, request: Request) -> Response:
+        """The usual cover letter, picked on the Settings page ({kind: "cover_letter", name, data: its bytes in
+        base64}), saved as profile_setup.save_resume saves the resume; or, with `remove`, documents.cover_letter
+        emptied (the file stays). Any other kind is refused. Answers with the documents' file names."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        try:
+            body = await self._body(request)
+            if body.get("kind") != "cover_letter":
+                raise ValueError("Only the usual cover letter is saved here.")
+            if not config.profile_path().exists():
+                raise ValueError("Set up your profile first.")
+            if body.get("remove") is True:
+                await asyncio.to_thread(profile_setup.forget_cover_letter)
+            else:
+                await asyncio.to_thread(profile_setup.save_cover_letter, body.get("name"), body.get("data"))
+            documents = document_names(config.Profile.load())
+        except (ValueError, OSError) as e:
+            return self._bad(e)
+        return JSONResponse({"documents": documents, "version": profile_setup.profile_version()})
+
+    async def answers_view(self, request: Request) -> Response:
+        """The Your answers page's Answers the desk remembers (config.remembered_answers), newest first. Asked by the
+        page alone, never part of /api/state; an ID's value isn't in it (its answer
+        is null: /api/answers/show)."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        try:
+            answers = await asyncio.to_thread(config.remembered_answers)
+        except (ValueError, OSError) as e:
+            return self._bad(e)
+        return JSONResponse({"answers": answers}, headers={"Cache-Control": "no-store"})
+
+    async def answers_change_view(self, request: Request) -> Response:
+        """A remembered answer `change`d ({id, answer}) or `forget`ten ({id}): that one entry of answers.yaml and no
+        other; or an ID's value `show`n ({id}: the page's Show, the one place it leaves the desk). An id that names
+        none is a 404."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        action = request.path_params["action"]
+        if action not in ("change", "forget", "show"):
+            return JSONResponse({"error": f"unknown action {action!r}"}, status_code=404)
+        try:
+            body = await self._body(request)
+            if action == "show":  # (an ID's value, only when the person presses Show: never in the list)
+                said = await asyncio.to_thread(config.private_answer, body.get("id"))
+                return JSONResponse({"answer": said}, headers={"Cache-Control": "no-store"})
+            if action == "change":
+                await asyncio.to_thread(config.change_answer, body.get("id"), body.get("answer"))
+            else:
+                await asyncio.to_thread(config.forget_answer, body.get("id"))
+        except LookupError as e:
+            return JSONResponse({"error": str(e)}, status_code=404)
+        except (ValueError, OSError) as e:
+            return self._bad(e)
+        return JSONResponse({"ok": True})
+
+    async def mail_test_view(self, request: Request) -> Response:
+        """The Email codes panel's Test it: a sign-in to the person's inbox with the saved app password, and straight
+        out again (mailbox.try_sign_in: no folder opened, no message read), given up after mailbox.SIGN_IN_TEST_WAIT
+        seconds. {"ok": true}, or {"ok": false, "why": one of mailbox.SIGN_IN_SAID}: never the password or the
+        address."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        password = await asyncio.to_thread(_secret, "email_password")
+        if not password:
+            return JSONResponse({"error": "Save your email's app password first."}, status_code=400)
+        try:
+            address = str(config.Profile.load().get("personal.email") or "").strip()
+        except Exception:  # (a profile that doesn't read: no address to sign in with)
+            address = ""
+        wait = mailbox.SIGN_IN_TEST_WAIT
+        try:
+            why = await asyncio.wait_for(asyncio.to_thread(mailbox.try_sign_in, address, password, wait), wait)
+        except asyncio.TimeoutError:  # (the thread is left to end at its own timeout: its answer is no longer wanted)
+            why = mailbox.SIGN_IN_SAID["unreachable"]
+        return JSONResponse({"ok": True} if why is None else {"ok": False, "why": why},
+                            headers={"Cache-Control": "no-store"})
+
+    async def open_home_view(self, request: Request) -> Response:
+        """Updates and about's Open the folder: the desk's own folder (config.home) in the system's file manager, and
+        only that one. Nothing in the request is read: it names no path."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        folder = config.ensure_home()
+        if not await asyncio.to_thread(window.open_folder, folder):
+            return JSONResponse({"error": "The folder couldn't be opened."}, status_code=502)
+        return JSONResponse({"opened": True})
+
     async def bank_view(self, request: Request) -> Response:
         """An answer to one of the common questions (data/question_bank.yaml), kept in answers.yaml for
         every application that asks it; an empty one takes it out."""
@@ -1238,11 +1414,11 @@ class Desk:
         for name, n in sorted(by_system.items(), key=lambda kv: (-kv[1], kv[0])):
             if not saved[name]:
                 lines.append(f"{DESK_PASSWORDS[name]}: no password saved, so {n} of these jobs "
-                             f"{'stop' if n != 1 else 'stops'} at the sign-in for you. Save one under Site passwords "
-                             "and the desk signs in itself.")
+                             f"{'stop' if n != 1 else 'stops'} at the sign-in for you. Save one in Settings, under "
+                             "Accounts and passwords, and the desk signs in itself.")
         if mailing and not saved["email_password"]:
             lines.append("No email app password saved: a site that emails a sign-up code or link waits for you to "
-                         "enter it. Save one under Site passwords and the desk reads it from your inbox.")
+                         "enter it. Save one in Settings, under Email codes, and the desk reads it from your inbox.")
         try:
             left = sum(1 for q in autofill.common_questions(config.Profile.load()) if q.get("answer") in (None, ""))
         except ValueError:  # a profile that doesn't read: the queue says so itself
@@ -1418,6 +1594,7 @@ class Desk:
     def answer(self, job_id: int, answers: list[dict[str, Any]]) -> str | None:
         """Fill the person's answers in. Returns a note if some couldn't be remembered (they
         still go into this application)."""
+        self.applier.refuse_while_updating()  # (nothing remembered, nothing started: the desk is about to quit)
         run = self.applier.runs.get(job_id)
         if run is None or run.status != "needs_you":
             # nothing is remembered for a job that isn't asking (a stale page)
@@ -1539,6 +1716,14 @@ class Desk:
             # page, which keeps working without the jobs it holds, instead of failing every poll and staying blank
             # (the review of Oct 18)
             return self._state(prof, profile_problem, _NoJobs(), _first_line(e))
+
+    def _restored(self) -> str | None:
+        """The notice about jobs back in the queue after a restart, with a line before it when the restart was an
+        update this desk's Update button installed (said in that desk alone, which noted it as it started)."""
+        said = self.applier.restored_notice()
+        if said and self.updates.updated_to:
+            return f"The Job Desk was updated to {self.updates.updated_to}. {said}"
+        return said
 
     def _state(self, prof: config.Profile, profile_problem: str | None, t: Any,
                tracker_problem: str | None) -> dict[str, Any]:
@@ -1679,10 +1864,16 @@ class Desk:
                         # whether it says they need a work visa sponsored (for a card's "won't sponsor a work visa")
                         "requires_sponsorship": prof.get("work_authorization.requires_sponsorship") is True,
                         # the home town each opening's distance is from ("Within __ miles"), or why there's none
-                        "home": home.label if home else None, "home_problem": home_problem},
+                        "home": home.label if home else None, "home_problem": home_problem,
+                        # the resume's and the usual cover letter's file names (never their paths): Settings' Resume
+                        # and cover letters
+                        "documents": document_names(prof)},
             "settings": {"submit_mode": settings.submit_mode, "dry_run": settings.dry_run,
                          "manage_accounts": settings.may_manage_accounts,
                          "manage_accounts_chosen": settings.manage_accounts_chosen,
+                         # (Make my accounts as the profile has it, practice mode or not: Settings' switch shows this,
+                         # where manage_accounts above is whether the desk may make one now)
+                         "manage_accounts_setting": settings.manage_accounts,
                          # (as it works here: off on a desk run on its own, whatever desk.json says)
                          "auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailoring_on(),
                          "cover_letters": self.applier.letters,
@@ -1693,7 +1884,13 @@ class Desk:
                          "auto_search": self.auto_search, "dont_wait": self.applier.dont_wait,
                          "jobs_at_once": self.applier.at_once(),
                          "follow_up_days": settings.follow_up_days,
-                         "learn_from_responses": settings.learn_from_responses},
+                         "learn_from_responses": settings.learn_from_responses,
+                         # (the Settings page's switches and choices kept in the profile, as written there: Version D)
+                         "accept_notices": settings.accept_notices, "accept_cookies": settings.accept_cookies,
+                         "email_codes": settings.email_codes, "email_tracking": settings.email_tracking,
+                         "desk_window": settings.desk_window, "browser_channel": settings.browser_channel,
+                         "cover_letter_model": settings.cover_letter_model,
+                         "phone_alerts_server": settings.phone_alerts_server},
             "tailoring": len(self.applier.tailoring()),
             # why no cover letter is being written (the switch on), said once at the top of the page
             "letters_problem": self.applier.letters_problem if self.applier.letters else None,
@@ -1719,7 +1916,7 @@ class Desk:
             "version": config.plugin_version(),
             # run on its own, not inside Claude's plugin: the page may offer Quit the Job Desk (/api/quit)
             "standalone": self.standalone,
-            "update": self.updates.notice(),
+            "update": self.updates.state(self.standalone),
             "answers_problem": config.answers_problem(),
             "search": self.search,
             # the person's last look at the openings, and the one before this visit (New is what came after that)
@@ -1736,7 +1933,7 @@ class Desk:
             "paused": self.applier.paused,  # (Pause queue: nothing new starts until Resume queue)
             # the jobs back in the queue after a restart, waiting for Resume queue; and why the queue isn't kept here,
             # if it isn't (another desk keeps it, or the folder allows no lock)
-            "restored": self.applier.restored_notice(),
+            "restored": self._restored(),
             "clearable": len(self.applier.clearable()),  # (the jobs never begun, for Clear the queue)
             "queue_note": self.applier.queue_note(),
             # (a queue this folder can't keep is a problem, said in red; one another desk keeps is only so)
@@ -1763,7 +1960,10 @@ class Desk:
         unknown = "can't tell right now"
         busy = ("The desk couldn't read this setting just now (is profile.yaml open in another program?). Open Safety "
                 "again in a moment.")
-        profile = "profile.yaml, under settings:"
+        # where each switch is now: the Settings page's panel and its row's name (Version D's D4; the page draws one
+        # beginning "Settings, " as a link to that panel)
+        applying = "Settings, Applying: "
+        with_claude = not self.standalone
 
         def tell(ask: Any) -> bool | None:
             """What one of the desk's own functions says, or None when it fails to answer."""
@@ -1794,23 +1994,24 @@ class Desk:
             line("practice", "Practice mode", "on",
                  "Nothing is sent: the desk fills each application up to its review page and never submits it." + does
                  + (" (The live check's test identity: Submit stays refused.)" if identity else ""),
-                 "JOB_APPLY_NEVER_SUBMIT=1 in the environment, which comes before profile.yaml" if config.never_submit()
-                 else f"{profile} submit_mode (dry_run is practice mode; review applies for real)")
+                 "JOB_APPLY_NEVER_SUBMIT=1 in the environment, which comes before Settings" if config.never_submit()
+                 else applying + "Practice mode")
         elif unread:
             line("practice", "Practice mode", "can't tell until profile.yaml is fixed",
                  "Your profile can't be read, so the desk fills and sends nothing until it's fixed.",
-                 f"{profile} submit_mode")
+                 applying + "Practice mode")
         else:
             auto = ", ".join(s.auto_submit_ats) or "none listed under auto_submit_ats, so it asks you everywhere"
             line("practice", "Practice mode", "off",
-                 "Applications can be sent: when you press Submit on the desk, by Submit for me when it's on, or when "
-                 "you tell Claude to submit one in the chat."
+                 ("Applications can be sent: when you press Submit on the desk, by Submit for me when it's on, or when "
+                  "you tell Claude to submit one in the chat." if with_claude else
+                  "Applications can be sent: when you press Submit on the desk, or by Submit for me when it's on.")
                  + (" submit_mode is auto: when Claude fills an application with you in the chat, it submits one "
                     f"that's complete without asking on these job systems: {auto}. Never LinkedIn or Indeed, and the "
-                    "desk itself still waits for your Submit or Submit for me." if s.submit_mode == "auto" else ""),
-                 f"{profile} submit_mode (dry_run is practice mode: nothing is sent)")
-        submit_box = ("The Submit for me switch, in the bar that shows on Openings once a job is ticked "
-                      "(kept in desk.json)")
+                    "desk itself still waits for your Submit or Submit for me."
+                    if s.submit_mode == "auto" and with_claude else ""),
+                 applying + "Practice mode")
+        submit_box = applying + "Submit for me"
         if dry:
             line("auto_submit", "Submit for me", "off in practice mode",
                  "Practice mode sends nothing: the desk stops at each review page.", submit_box)
@@ -1831,7 +2032,7 @@ class Desk:
         line("boards", "LinkedIn and Indeed", "always yours",
              "The desk fills LinkedIn and Indeed applications but never presses their Submit, whatever the settings: "
              "you do, in the desk's browser window.", "Not a setting: always so")
-        where = f"{profile} accept_notices (on unless set to false)"
+        where = applying + "Agree to required notices"
         if notices is None:
             line("accept_notices", "Agree to notices", unknown, busy, where)
         elif notices:
@@ -1850,19 +2051,19 @@ class Desk:
         else:
             line("accept_notices", "Agree to notices", "off",
                  "Notices, terms and attestations are yours: the desk stops for you at each one.", where)
-        where = f"{profile} manage_accounts (on unless set to false)"
+        where = applying + "Make my accounts"
         if accounts is None:
             line("manage_accounts", "Make accounts", unknown, busy, where)
         elif accounts:
             line("manage_accounts", "Make accounts", "on" if s.manage_accounts_chosen else
                  "on (your profile doesn't say, so it's on by default)",
                  "Where an employer's site needs an account, the desk creates yours there: with the job system's "
-                 "password saved under Site passwords, or with the code the site emails where it asks for no password "
-                 "(Eightfold's), ticking only the site's terms (never a newsletter). It resets a saved password a site "
-                 "refuses through the site's own \"Forgot password\" email. A consent to be considered for other "
-                 "positions is given only where the site won't make the account without it, never when it also signs "
-                 "you up for job alerts, a newsletter, a talent community or marketing. A CAPTCHA or security question "
-                 "on the way stays yours.", where)
+                 "password saved in Settings, under Accounts and passwords, or with the code the site emails where it "
+                 "asks for no password (Eightfold's), ticking only the site's terms (never a newsletter). It resets a "
+                 "saved password a site refuses through the site's own \"Forgot password\" email. A consent to be "
+                 "considered for other positions is given only where the site won't make the account without it, "
+                 "never when it also signs you up for job alerts, a newsletter, a talent community or marketing. A "
+                 "CAPTCHA or security question on the way stays yours.", where)
         elif unread:
             line("manage_accounts", "Make accounts", fix,
                  "The desk makes no account and resets no password until it's fixed.", where)
@@ -1878,8 +2079,8 @@ class Desk:
              busy if cookies is None else
              "Cookie banners are declined; one with no way to decline is accepted for you." if cookies else
              "Cookie banners are declined, or left to you when there's no way to decline: never accepted.",
-             f"{profile} accept_cookies (off unless set to true)")
-        where = f"{profile} email_codes (off unless set to true)"
+             applying + "Cookie banners")
+        where = "Settings, Email codes"
         if s.email_codes and not unread:
             line("email_codes", "Emailed codes (Claude)", "on",
                  "Claude may read a sign-up or verification code, or a verification link, that a career site emails "
@@ -1902,12 +2103,13 @@ class Desk:
             usable, why = False, "The desk couldn't look just now (a file it reads may be open in another program)."
         finally:
             a.mail_problem = before
-        where = "The Site passwords card (Your email)"
+        where = "Settings, Email codes"
         if saved and usable:
             line("email_password", "Email app password (the desk)", "saved",
                  "The desk reads only the sign-up codes and links a job's own site emails you"
                  + (", and the password-reset email it just asked that site for" if accounts else "")
-                 + ", opened read-only. Nothing else in your inbox, and Claude never sees the password.", where)
+                 + (", opened read-only. Nothing else in your inbox, and Claude never sees the password."
+                    if with_claude else ", opened read-only. Nothing else in your inbox."), where)
         elif saved:
             line("email_password", "Email app password (the desk)", "saved, but the desk can't use it now",
                  (why or "Your profile has no email address it can read mail for, or your mail service turned the "
@@ -1922,16 +2124,14 @@ class Desk:
              "Claude may read your email through the Gmail connector for employers' replies to your applications, "
              "and logs them under My applications. Never with the desk's email app password; a follow-up is only "
              "ever a draft for you to send." if s.email_tracking and not unread else
-             "Claude doesn't read your email for replies.", f"{profile} email_tracking (off unless set to true)")
+             "Claude doesn't read your email for replies.", "Settings, Job search")
         n = a.at_once()
         line("jobs_at_once", "Jobs at once", str(n),
              ("The desk fills one application at a time." if n == 1 else
               f"The desk fills up to {n} applications at the same time, each in its own tab.")
              + " Never two at one employer's site, and only one at a time signs in, makes an account or waits on an "
                "emailed code.",
-             "The Jobs at once buttons in Settings, under Searching and applying"
-             + (" (your choice there is in force)" if a.jobs_at_once is not None
-                else f", or {profile} jobs_at_once"))
+             applying + "Jobs at once")
         if a.hold_submits:
             said = ("Nothing is submitted, by your Submit or for you. Find jobs searches every list's employers and "
                     "shows only the openings where the desk doesn't go all the way yet; "
@@ -1941,30 +2141,35 @@ class Desk:
             said = ("Practice mode sends nothing either way." if dry else
                     "Nothing is sent while your profile can't be read." if unread else "The desk applies for real.")
         line("troubleshoot", "Troubleshooting", "on" if a.hold_submits else "off", said,
-             "The Troubleshooting switch in Settings, under Searching and applying")
-        letters_box = ("The Cover letter switch, in the bar that shows on Openings once a job is ticked "
-                       "(kept in desk.json)")
+             applying + "For fixing the desk")
+        letters_box = "Settings, Resume and cover letters: Write a cover letter for each job"
         if a.letters:
+            # (what writes them, as the Resume and cover letters panel's row says it: Version D)
+            by_key = tell(lambda: letters.api_key() is not None)
             line("cover_letters", "Cover letters", "on" if a.letters_approved else "on (the first waits for your OK)",
-                 "Claude writes a cover letter for each job you apply to, through your own Claude Code sign-in (your "
-                 "Claude plan; no key needed), from your resume, your profile and the job's posting, using only what "
-                 "they say: never a degree, certification, clearance, years or skill they don't state. It runs with no "
+                 ("Written through Anthropic's API with your key, about 10 to 20 cents a letter." if by_key else
+                  "Written through your own Claude sign-in." if with_claude else
+                  "This needs an Anthropic API key. Save one under Accounts and passwords.")
+                 + " Each letter is written from your resume, your profile and the job's posting, using only what they "
+                 "say: never a degree, certification, clearance, years or skill they don't state. It runs with no "
                  "tools and none of your MCP servers, and the posting is only its data. The letter goes into the job's "
                  "folder and into a cover letter box"
                  + (". " if a.letters_approved else
                     "; the first one waits on its job's card for your Use it, and the rest go in without asking. ")
                  + "Where one can't be written, the job goes on with your usual cover letter, if you have one.",
-                 letters_box + f", and {profile} cover_letter_model for the model")
+                 letters_box + ", and Which model writes the letters")
         else:
             line("cover_letters", "Cover letters", "off",
-                 "No cover letter is written for you: your usual one (documents.cover_letter in profile.yaml), if you "
-                 "have one, goes with every application that asks.", letters_box)
+                 "No cover letter is written for you: your usual one (Settings, Resume and cover letters), if you have "
+                 "one, goes with every application that asks.", letters_box)
         line("bot_checks", "Bot checks and CAPTCHAs", "always yours",
              "The desk never gets around a bot check and never solves a CAPTCHA: it pauses the job and brings its tab "
              "up for you.", "Not a setting: always so")
         line("passwords", "Passwords", "always kept to their own sites",
              "A password saved on the desk is typed only into its own job system's sites, stays on this computer, and "
-             "Claude never sees it. Never type one into the chat.", "Not a setting: always so")
+             "Claude never sees it. Never type one into the chat." if with_claude else
+             "A password saved on the desk is typed only into its own job system's sites, and stays on this computer.",
+             "Not a setting: always so")
         return {"lines": lines, "problem": problem}
 
 
@@ -1974,6 +2179,84 @@ MAILS_CODES = {"oracle_hcm"}
 
 
 _UNREAD = object()  # (a profile.yaml that doesn't read just now)
+
+
+# The profile's settings the Settings page changes (POST /api/profile/settings: Version D's table), and no other: never
+# auto_submit_ats, headless or jobs_at_once, nor the phone alerts' two (their own route, /api/phone/settings)
+PROFILE_SETTINGS = ("submit_mode", "manage_accounts", "accept_notices", "accept_cookies", "learn_from_responses",
+                    "email_codes", "email_tracking", "follow_up_days", "desk_window", "browser_channel",
+                    "cover_letter_model", "phone_alerts_server")
+_SWITCHES = ("manage_accounts", "accept_notices", "accept_cookies", "learn_from_responses", "email_codes",
+             "email_tracking")
+# a model's name as the page's box takes it: 1 to 80 of letters, digits and . _ : [ ] -
+_MODEL_BOX = re.compile(r"[A-Za-z0-9._:\[\]-]{1,80}")
+
+
+def profile_setting_problem(key: str, value: Any) -> str | None:
+    """What's wrong with `value` for the profile setting `key` (one of PROFILE_SETTINGS), in one plain sentence; None
+    when it's one the table takes. Only these values, in these types: a number in quotes, or 1 for true, is wrong."""
+    if key == "submit_mode":
+        return None if value in ("review", "dry_run") and isinstance(value, str) else \
+            "Practice mode is either on or off."
+    if key in _SWITCHES:
+        return None if isinstance(value, bool) else "That switch is either on or off."
+    if key == "follow_up_days":
+        return None if type(value) is int and 1 <= value <= config.FOLLOW_UP_DAYS_MAX else \
+            f"Follow-up days is a whole number from 1 to {config.FOLLOW_UP_DAYS_MAX}."
+    if key == "desk_window":
+        return None if value in ("app", "tab") and isinstance(value, str) else \
+            "The desk opens in its own window or in a browser tab."
+    if key == "browser_channel":
+        return None if value in ("chrome", "msedge", "chromium") and isinstance(value, str) else \
+            "The desk fills forms in Chrome, Edge or its own browser."
+    if key == "cover_letter_model":
+        # (and a name the profile's own reading takes as written: never one that would turn into the usual one)
+        if value == "" or isinstance(value, str) and _MODEL_BOX.fullmatch(value) \
+                and config._cover_letter_model(value) == (value, ""):
+            return None
+        return ("A model's name is 1 to 80 letters, digits and . _ : [ ] -, beginning with a letter or a digit, with "
+                "no spaces. Leave it empty for the usual one.")
+    if key == "phone_alerts_server":
+        if not isinstance(value, str):
+            return "Your own alert server is an address, such as https://ntfy.example.com."
+        said = value.strip()
+        if len(said) > ALERT_SERVER_LONGEST:
+            return f"Your own alert server's address is {ALERT_SERVER_LONGEST} characters at most."
+        if "?" in said or "#" in said:
+            return "Your own alert server is its address alone, with no ? or # in it."
+        try:
+            port = urlsplit(said).port
+        except ValueError:
+            port = -1
+        if port is not None and not 1 <= port <= 65535:
+            return "Your own alert server's port is a number from 1 to 65535."
+        if said == "" or config._phone_alerts_server(said)[1] == "":
+            return None
+        return ("Your own alert server is its https address alone, such as https://ntfy.example.com. Leave it empty to "
+                "use ntfy.sh.")
+    return "That setting can't be changed here."
+
+
+ALERT_SERVER_LONGEST = 200  # characters: the most an alert server's address may be
+
+
+def profile_setting_value(key: str, value: Any) -> Any:
+    """A value profile_setting_problem took, as it's written: an alert server's address as config reads it (its
+    spaces and a trailing "/" gone); any other as it came."""
+    if key == "phone_alerts_server" and isinstance(value, str):
+        return config._phone_alerts_server(value)[0]
+    return value
+
+
+def profile_settings(s: config.Settings) -> dict[str, Any]:
+    """The Settings page's profile settings as they stand (PROFILE_SETTINGS), as the desk reads them."""
+    return {key: getattr(s, key) for key in PROFILE_SETTINGS}
+
+
+def document_names(prof: config.Profile) -> dict[str, str | None]:
+    """The resume's and the usual cover letter's file names, for the Resume and cover letters panel: the first of each
+    that's there (never its path, which names the person's folders); None for none."""
+    return {slot: next((p.name for p in prof.document_files(slot)), None) for slot in ("resume", "cover_letter")}
 
 
 def _profile_jobs_at_once() -> Any:

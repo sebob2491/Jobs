@@ -381,6 +381,14 @@ def _avoid_checked(avoid_titles: list[str], titles: list[str] | None) -> list[st
 
 def set_search_area(places: list[str] | None = None, lists: list[str] | None = None,
                     titles: list[str] | None = None, avoid_titles: list[str] | None = None) -> dict[str, Any]:
+    """_set_search_area, under profile.yaml's lock (config.PROFILE_LOCK): read, changed and written as one, so a
+    Settings switch saved meanwhile is kept too."""
+    with config.PROFILE_LOCK:
+        return _set_search_area(places=places, lists=lists, titles=titles, avoid_titles=avoid_titles)
+
+
+def _set_search_area(places: list[str] | None = None, lists: list[str] | None = None,
+                     titles: list[str] | None = None, avoid_titles: list[str] | None = None) -> dict[str, Any]:
     """Change what and where Find jobs searches: the profile's job titles, the titles to leave out and places, and the
     plugin's lists in the person's own companies.yaml (made for them, with nothing else in it, when they have none),
     each changed in place. A place without its state, a title holding more than one, a list the plugin hasn't,

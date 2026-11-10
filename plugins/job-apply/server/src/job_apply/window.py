@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import webbrowser
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,8 @@ MAC_APPLICATIONS = Path("/Applications")  # where macOS keeps its programs
 # has them on Windows alone; these are Windows' own numbers for them)
 DETACHED_PROCESS = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
 CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+# Windows: started outside the job object the desk's own launcher may hold it in (uv's), so it isn't stopped with it
+CREATE_BREAKAWAY_FROM_JOB = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)
 
 
 def _system() -> str:
@@ -65,6 +68,41 @@ def find_browser() -> str | None:
     return next((str(place) for place in places if os.path.isfile(place)), None)
 
 
+def detached() -> dict[str, Any]:
+    """Popen's options for a program started on its own, never waited for: it outlasts the desk, and nothing of the
+    desk's reaches it (its console, its Ctrl+C)."""
+    if _system() == "windows":
+        return {"creationflags": DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+class BreakawayRefused(Exception):
+    """Windows wouldn't start a program outside the starter's job (start_detached with fallback=False): nothing was
+    started."""
+
+
+def start_detached(args: list[str], popen: Callable[..., Any] | None = None, fallback: bool = True,
+                   **options: Any) -> tuple[Any, bool]:
+    """Start `args` on its own (detached()), never through a shell. Gives back what `popen` (subprocess.Popen) gave,
+    and whether it was started out of the starter's job: True, or False when Windows refused that and it was started
+    inside it (elsewhere there's no such job: True). On Windows it's also taken out of the job the desk's process may
+    be in (uv's launcher holds what it starts in one), so a program that outlives the desk on purpose, such as the
+    installer of an update, isn't stopped when the desk's process is: CREATE_BREAKAWAY_FROM_JOB. A job that forbids
+    that refuses it with "access denied": then it's started without, as before; or, with `fallback` False (a program
+    that must outlive the starter, or not run at all: the update's installer), nothing is started and
+    BreakawayRefused is raised."""
+    popen = popen or subprocess.Popen
+    flags = detached()
+    if "creationflags" in flags:
+        try:
+            return popen(args, **options, creationflags=flags["creationflags"] | CREATE_BREAKAWAY_FROM_JOB), True
+        except PermissionError as e:  # (Windows' ERROR_ACCESS_DENIED: the job allows no breaking away)
+            if not fallback:
+                raise BreakawayRefused(str(e)) from e
+            return popen(args, **options, **flags), False
+    return popen(args, **options, **flags), True
+
+
 def open_window(url: str, mode: str) -> str:
     """Open the desk's page at `url` and say how: "app", in a window of its own (its address ending `&w=app`, which
     tells the page so), or "tab", in a tab of the person's usual browser, as before: when `mode`
@@ -73,15 +111,36 @@ def open_window(url: str, mode: str) -> str:
     if browser is not None:
         # on its own, never waited for: the window outlasts the desk, and nothing of the desk's reaches it (its
         # console, its Ctrl+C, what it prints)
-        detached: dict[str, Any] = ({"creationflags": DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP}
-                                    if _system() == "windows" else {"start_new_session": True})
         try:
             # these two arguments and no other, ever (the module's rule, above)
             subprocess.Popen([browser, f"--app={url}&w=app", f"--window-size={WINDOW_SIZE}"],
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                             **detached)
+                             **detached())
             return "app"
         except OSError:
             pass  # (found, but it won't start: a tab instead)
     webbrowser.open(url)
     return "tab"
+
+
+def _folder_opener() -> list[str]:
+    """The program that shows a folder in the system's file manager, outside Windows (which has os.startfile)."""
+    return ["open"] if _system() == "macos" else ["xdg-open"]
+
+
+def open_folder(folder: Path) -> bool:
+    """Show `folder` in the system's file manager: Windows' own (os.startfile, which opens a folder in Explorer), or
+    macOS' open and Linux's xdg-open, given the folder's whole path as their one argument. Never through a shell.
+    Whether it started."""
+    target = folder.resolve()
+    if not target.is_dir():
+        return False
+    try:
+        if sys.platform == "win32":
+            os.startfile(str(target))  # (Windows alone has it: Explorer opens the folder)
+        else:
+            subprocess.Popen([*_folder_opener(), str(target)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        return False
+    return True

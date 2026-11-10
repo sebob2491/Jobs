@@ -209,7 +209,7 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
                     && document.getElementById('add-links').value === '';
                 }""", timeout=20000)
 
-                await press_menu(page, "settings")
+                await press_menu(page, "settings/passwords")
                 await page.fill("#pw", "typed-on-the-page")
                 await page.click("#pw-form button[type=submit]")
                 await page.wait_for_selector("#pw-state [data-site=workday].good")
@@ -309,7 +309,7 @@ def test_the_page_alerts_when_a_job_needs_you(srv):
             async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.add_init_script(fake)
-                await open_desk(page, desk, "settings")
+                await open_desk(page, desk, "settings/phone")  # (Alerts on this computer: Settings, Phone alerts)
                 await page.wait_for_selector("#alerts:text('Alert me')")
                 await page.click("#alerts")
                 await page.wait_for_selector("#alerts:text('Alerts on')")
@@ -358,7 +358,7 @@ def test_a_job_the_desk_tries_again_after_the_sites_error_alerts_no_one_until_it
             async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.add_init_script(fake)
-                await open_desk(page, desk, "settings")
+                await open_desk(page, desk, "settings/phone")  # (Alerts on this computer: Settings, Phone alerts)
                 await page.wait_for_selector("#alerts:text('Alerts on')")
                 r = desk.applier.runs[job["id"]] = Run(job["id"], "Field Service Engineer", "Example Fab",
                                                        status="needs_you", need="stuck", code="site_error",
@@ -413,7 +413,7 @@ def test_a_job_the_desk_tried_again_says_to_check_it_didnt_go_in_where_it_is_sen
             async with person_browser() as browser:
                 page = await browser.new_page()
                 await page.add_init_script(fake)
-                await open_desk(page, desk, "settings")
+                await open_desk(page, desk, "settings/phone")  # (Alerts on this computer: Settings, Phone alerts)
                 await page.wait_for_selector("#alerts:text('Alerts on')")
                 desk.applier.runs[held["id"]] = Run(held["id"], title, "Example Held", status="ready",
                                                     reason=f"Filled and waiting on the review page. {_RETRY_HELD_SAYS}",
@@ -593,7 +593,7 @@ def test_the_desk_searches_by_itself_only_with_its_switch_on_and_a_search_can_be
                 assert not await page.is_checked("#auto-search") and await page.is_hidden("#stop-search")
                 # turned on while the queue is paused: still nothing
                 desk.applier.paused = True
-                await press_menu(page, "settings")  # (Searching and applying, on the Settings page)
+                await press_menu(page, "settings/search")  # (Search by itself: Settings, Job search)
                 await page.check("#auto-search")
                 await press_menu(page, "openings")
                 await asyncio.sleep(3.5)
@@ -905,7 +905,8 @@ def test_the_desk_page_says_account_handling_is_on_until_the_profile_says(srv, j
     settings = Desk(srv).state()["settings"]
     assert (settings["manage_accounts"], settings["manage_accounts_chosen"]) == (True, False)
     page = (Path(srv.__file__).parent / "static" / "desk.html").read_text(encoding="utf-8")
-    assert "s.manage_accounts && !s.manage_accounts_chosen" in page and "manage_accounts: false" in page
+    assert "s.manage_accounts && !s.manage_accounts_chosen" in page
+    assert "To keep doing these yourself, turn off Make my accounts in Settings, under Applying." in page
 
 
 def test_two_boxes_with_one_label_keep_their_own_answers(srv, job_apply_home):
@@ -1235,7 +1236,7 @@ def test_dont_wait_for_me_lets_the_queue_go_on_past_a_sign_in_or_code(srv, job_a
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await open_desk(page, desk, "settings")  # (Don't wait for me: Settings, Searching and applying)
+                await open_desk(page, desk, "settings/applying")  # (Don't wait for me: Settings, Applying)
                 await page.wait_for_selector("#dont-wait-hint:has-text('Off')")  # (drawn from the desk's state)
                 async with page.expect_response("**/api/settings"):
                     await page.check("#dont-wait")
@@ -1351,7 +1352,7 @@ def test_the_working_on_card_shows_every_job_under_way_and_the_jobs_at_once_butt
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await open_desk(page, desk, "settings")  # (Jobs at once: Settings, Searching and applying)
+                await open_desk(page, desk, "settings/applying")  # (Jobs at once: Settings, Applying)
                 await page.wait_for_selector("#plugin-version:not(:empty)")  # the page has its state
                 await page.wait_for_selector("[data-at-once='1'][aria-pressed='true']")  # (the tests' profile)
                 for n, job_id in enumerate(ids):
@@ -1363,7 +1364,7 @@ def test_the_working_on_card_shows_every_job_under_way_and_the_jobs_at_once_butt
                 await page.wait_for_selector("#work :text('1 more waiting their turn')")
                 work = await page.locator("#work").inner_text()
                 assert "Technician 0" in work and "Technician 1" in work and "Technician 2" not in work, work
-                await press_menu(page, "settings")
+                await press_menu(page, "settings/applying")
                 await page.click("[data-at-once='3']")
                 await page.wait_for_selector("[data-at-once='3'][aria-pressed='true']")
                 for _ in range(50):
@@ -2384,7 +2385,9 @@ def test_troubleshooting_searches_every_list_shows_where_the_desk_stops_and_send
                 await page.check("#handled-only")
                 await page.wait_for_selector("text=HR Generalist", state="detached")
                 listed = list(desk.listings)
-                await press_menu(page, "settings")  # (Searching and applying, on the Settings page)
+                # (Troubleshooting: Settings, Applying, under For fixing the desk)
+                await press_menu(page, "settings/applying")
+                await page.click("#panel-applying details.setmore > summary")
                 await page.check("#troubleshoot")
                 await press_menu(page, "openings")
                 # the other way's openings are cleared; Find jobs searches again, troubleshooting's way
@@ -5247,7 +5250,7 @@ def test_the_safety_window_says_each_setting_as_the_desk_acts_on_it(srv, job_app
     notices = s["accept_notices"]
     assert notices["value"] == "on" and "notice about AI screening" in notices["said"]
     assert "Never a newsletter, job alerts, a talent community or marketing" in notices["said"]
-    assert "accept_notices" in notices["where"]
+    assert notices["where"] == "Settings, Applying: Agree to required notices"
     assert s["manage_accounts"]["value"] == "off" and "never creates an account" in s["manage_accounts"]["said"]
     assert s["accept_cookies"]["value"] == "off" and "never accepted" in s["accept_cookies"]["said"]
     assert (s["email_codes"]["value"], s["email_tracking"]["value"], s["email_password"]["value"]) == (
@@ -5309,17 +5312,30 @@ def test_the_safety_window_says_each_setting_as_the_desk_acts_on_it(srv, job_app
 
 
 def test_the_safety_window_says_where_each_switch_is_since_the_openings_table(srv, job_apply_home):
-    """Version B moved four switches: Jobs at once and Troubleshooting to Settings (Searching and applying), Submit for
-    me and Cover letter into the bar that shows on Openings once a job is ticked. The Safety window's "where" says where
-    each is now (it still said "under Openings" and "under Openings, More")."""
+    """Version B moved four switches: Jobs at once and Troubleshooting to Settings, Submit for me and Cover letter into
+    the bar that shows on Openings once a job is ticked; Version D gives each its row on the Settings page (D3). The
+    Safety window's "where" names that page's panel and row (D4), never a place the control no longer is: "under
+    Openings", the bar, Searching and applying, or a file (profile.yaml, desk.json)."""
     desk = Desk(srv)
     desk.applier.start = lambda: None
     where = {line["key"]: line["where"] for line in desk.safety()["lines"]}
-    assert not [key for key, said in where.items() if "under Openings" in said], where
-    assert where["jobs_at_once"].startswith("The Jobs at once buttons in Settings, under Searching and applying")
-    assert where["troubleshoot"] == "The Troubleshooting switch in Settings, under Searching and applying"
-    bar = "in the bar that shows on Openings once a job is ticked"
-    assert bar in where["auto_submit"] and bar in where["cover_letters"], where
+    gone = ("under Openings", "in the bar", "Searching and applying", "profile.yaml", "desk.json", "settings:")
+    assert not [key for key, said in where.items() if any(g in said for g in gone)], where
+    assert where["practice"] == "Settings, Applying: Practice mode"
+    assert where["auto_submit"] == "Settings, Applying: Submit for me"
+    assert where["accept_notices"] == "Settings, Applying: Agree to required notices"
+    assert where["manage_accounts"] == "Settings, Applying: Make my accounts"
+    assert where["accept_cookies"] == "Settings, Applying: Cookie banners"
+    assert where["email_codes"] == where["email_password"] == "Settings, Email codes"
+    assert where["jobs_at_once"] == "Settings, Applying: Jobs at once"
+    assert where["troubleshoot"] == "Settings, Applying: For fixing the desk"
+    assert where["cover_letters"] == "Settings, Resume and cover letters: Write a cover letter for each job"
+    assert where["boards"] == where["bot_checks"] == where["passwords"] == "Not a setting: always so"
+    # (each that isn't "Not a setting" names a panel of the Settings page, which the page links to)
+    panels = ("Your profile", "Job search", "Applying", "Accounts and passwords", "Email codes", "Phone alerts",
+              "Resume and cover letters", "Updates and about")
+    assert all(said == "Not a setting: always so" or said.startswith(tuple(f"Settings, {p}" for p in panels))
+               for said in where.values()), where
 
 
 def test_the_page_marks_new_openings_hides_one_not_wanted_with_undo_and_shows_safety(srv, job_apply_home):
@@ -5401,7 +5417,7 @@ def test_the_page_marks_new_openings_hides_one_not_wanted_with_undo_and_shows_sa
                 await page.locator("li.row", has_text="Equipment Technician").wait_for()
                 seen["left"] = srv.tracker().not_interested()
                 # the header's Safety
-                await press_menu(page, "settings")
+                await press_menu(page, "settings/applying")
                 await page.click("#safety-btn")
                 await page.wait_for_selector("#safety[open] li[data-safety=auto_submit]")
                 seen["safety"] = await page.inner_text("#safety-body li[data-safety=auto_submit]")
@@ -5745,8 +5761,8 @@ def test_the_safety_windows_troubleshooting_and_accounts_say_what_the_desk_does(
     made = s["manage_accounts"]
     assert (made["value"] == "on") == makes, made
     if makes:
-        assert "with the job system's password saved under Site passwords, or with the code the site emails where it " \
-               "asks for no password (Eightfold's)" in made["said"], made
+        assert "with the job system's password saved in Settings, under Accounts and passwords, or with the code the " \
+               "site emails where it asks for no password (Eightfold's)" in made["said"], made
         assert "never when it also signs you up for job alerts, a newsletter, a talent community or marketing" \
             in made["said"], made
 
@@ -6240,7 +6256,7 @@ def test_each_switch_that_is_on_is_said_under_the_openings_head(srv, job_apply_h
                 seen["handled"] = await said("Only where")
                 await page.uncheck("#handled-only")
                 seen["handled_off"] = await gone()
-                await press_menu(page, "settings")  # (Searching and applying, on the Settings page)
+                await press_menu(page, "settings/search")  # (Search by itself: Settings, Job search)
                 await page.check("#auto-search")
                 await press_menu(page, "openings")
                 seen["auto"] = await said("Search by itself:")
@@ -6248,16 +6264,18 @@ def test_each_switch_that_is_on_is_said_under_the_openings_head(srv, job_apply_h
                 seen["mine"] = await gone()
                 await press_menu(page, "openings")  # (the Openings tabs are on Openings)
                 await said("Search by itself:")
-                await press_menu(page, "settings")
+                await press_menu(page, "settings/search")
                 await page.uncheck("#auto-search")
                 await press_menu(page, "openings")
                 seen["auto_off"] = await gone()
                 # (last: turned on or off, Troubleshooting clears the openings for Find jobs to search again)
-                await press_menu(page, "settings")
+                # (Settings, Applying, under For fixing the desk: left open, for the uncheck below)
+                await press_menu(page, "settings/applying")
+                await page.click("#panel-applying details.setmore > summary")
                 await page.check("#troubleshoot")
                 await press_menu(page, "openings")
                 seen["troubleshoot"] = await said("Troubleshooting:")
-                await press_menu(page, "settings")
+                await press_menu(page, "settings/applying")
                 await page.uncheck("#troubleshoot")
                 await press_menu(page, "openings")
                 seen["troubleshoot_off"] = await gone()
@@ -6301,7 +6319,7 @@ def test_the_common_questions_show_the_most_asked_four_and_site_passwords_only_t
                 seen["shown"] = await page.eval_on_selector_all("#bank [data-bank]",
                                                                 "bs => bs.map((b) => b.dataset.bank)")
                 seen["link"] = await page.inner_text("#bank [data-act=bank-all]")
-                await press_menu(page, "settings")
+                await press_menu(page, "settings/passwords")
                 seen["pills"] = await page.inner_text("#pw-state")
                 seen["pills_hidden"] = await page.is_hidden("#pw-state")
                 seen["count"] = await page.inner_text("#pw-count")
@@ -6311,7 +6329,7 @@ def test_the_common_questions_show_the_most_asked_four_and_site_passwords_only_t
                 seen["all"] = await page.eval_on_selector_all("#bank [data-bank]",
                                                               "bs => bs.map((b) => b.dataset.bank)")
                 config.secrets_path().write_text("workday_password: a\n", encoding="utf-8")
-                await press_menu(page, "settings")
+                await press_menu(page, "settings/passwords")
                 await page.wait_for_selector("#pw-state [data-site=workday]")
                 seen["saved"] = await page.eval_on_selector_all("#pw-state .pill", "ps => ps.map((p) => p.innerText)")
                 seen["count_saved"] = await page.inner_text("#pw-count")

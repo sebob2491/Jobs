@@ -1,5 +1,6 @@
 {
  "profile": {
+  "documents": {"resume": "resume.pdf", "cover_letter": null},
   "name": "Sam Rivera",
   "missing": [],
   "gaps": [
@@ -13,6 +14,15 @@
   "home_problem": ""
  },
  "settings": {
+  "accept_notices": true,
+  "accept_cookies": false,
+  "email_codes": false,
+  "email_tracking": false,
+  "desk_window": "app",
+  "browser_channel": "chrome",
+  "cover_letter_model": "",
+  "phone_alerts_server": "",
+  "manage_accounts_setting": false,
   "submit_mode": "review",
   "dry_run": false,
   "manage_accounts": false,
@@ -83,7 +93,20 @@
  "tracker_damaged": false,
  "tracker_path": "~/.job-apply/tracker.db",
  "version": "0.0.0",
- "update": null,
+ "update": {
+  "current": "0.0.0",
+  "latest": "0.0.0",
+  "newer": false,
+  "kind": "plugin",
+  "checked_at": 1792350000.0,
+  "progress": null,
+  "error": null,
+  "commands": [
+   "claude plugin marketplace update sebob-jobs",
+   "claude plugin update job-apply@sebob-jobs"
+  ],
+  "notes": null
+ },
  "answers_problem": null,
  "search": {
   "status": "done",

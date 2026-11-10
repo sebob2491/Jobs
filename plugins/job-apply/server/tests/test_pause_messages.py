@@ -253,6 +253,9 @@ def test_the_window_has_one_name_and_so_has_i_submitted_it():
     assert not re.search(r">I submitted it(?! myself)|\"I submitted it(?! myself)", desk)
 
 
+PANEL = "Resume and cover letters"  # (the Settings page's panel for the resume and the letters: the documents)
+
+
 def test_the_job_button_is_carry_on_and_resume_is_only_the_document():
     """The review of Oct 18 (U3): the job's "Resume" button sat beside "Use my usual resume" and "Tailor my resume for
     each job", and about 45 stops ended "then press Resume". The button is "Carry on" (the queue's "Carry on with the
@@ -261,12 +264,14 @@ def test_the_job_button_is_carry_on_and_resume_is_only_the_document():
     for name in ("desk.py", "server.py", "browser_menus.py", "browser_dates.py", "browser_uploads.py"):
         said += [(f"{name}:{line}", text) for line, text in
                  _said(ast.parse((PIPELINE.parent / name).read_text(encoding="utf-8")))]
-    # (the document's own label, "Resume", and a file's name, "<First>_<Last>_Resume.pdf", stay)
+    # (the document's own label, "Resume", a file's name, "<First>_<Last>_Resume.pdf", and the Settings page's panel for
+    # the documents, "Resume and cover letters" (Version D), stay)
     button = [(line, text[:120]) for line, text in said
-              if text.strip() != "Resume" and re.search(r"(?<![\w/])Resume\b(?![/._])", text)]
+              if text.strip() != "Resume" and re.search(r"(?<![\w/])Resume\b(?![/._])", text.replace(PANEL, ""))]
     assert not button, button
     desk = (PIPELINE.parent / "static" / "desk.html").read_text(encoding="utf-8")
-    assert not re.search(r"(?<![\w/])Resume\b(?![/._])", re.sub(r"(?<!:)//.*", "", desk))  # (comments aside)
+    assert not re.search(r"(?<![\w/])Resume\b(?![/._])",
+                         re.sub(r"(?<!:)//.*", "", desk).replace(PANEL, ""))  # (comments aside)
     assert 'b("resume", "Carry on")' in desk and 'data-act="resume">Carry on with the queue<' in desk
 
 

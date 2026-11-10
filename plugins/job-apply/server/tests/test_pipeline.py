@@ -1478,7 +1478,8 @@ def test_a_cookie_banner_with_no_way_to_decline_is_the_persons_unless_they_allow
 
     r, (accepted, prefs) = apply_once()
     assert (r.status, r.need) == ("needs_you", "stuck") and "can't decline" in r.reason, (r.reason, r.log)
-    assert "accept_cookies: true" in r.reason and (accepted, prefs) == (0, 0)
+    assert ("To have the desk accept banners that have no way to decline, choose that in Settings, under Applying."
+            in r.reason and (accepted, prefs) == (0, 0))
     profile = job_apply_home / "profile.yaml"
     profile.write_text(profile.read_text(encoding="utf-8").replace("settings:\n",
                                                                    "settings:\n  accept_cookies: true\n"),
@@ -1608,7 +1609,7 @@ def test_a_notice_over_the_form_is_the_persons_and_the_form_is_filled_after_it(s
     r, (status, need, reason, before), after = run(go())
     assert (status, need) == ("needs_you", "stuck") and f"“{NOTICE}”" in reason, reason
     assert ("press its button in the desk's browser window, then press Carry on" in reason
-            and "accept_notices: true" in reason)
+            and "turn on Agree to required notices in Settings, under Applying." in reason)
     assert before == {"uploads": 0, "agreed": 0, "first": "", "country": "", "terms": ""}  # nothing done behind it
     assert (r.status, r.need) == ("needs_you", "questions"), (r.status, r.reason, r.log)
     assert [q["label"][:20] for q in r.questions] == ["Terms and Conditions"], r.questions
@@ -1723,7 +1724,8 @@ def test_a_privacy_dialog_over_the_form_is_agreed_and_another_is_the_persons(srv
     elif notice in ("waiver", "signup"):  # (not the setting's to give: no hint that it would)
         assert "Use of the Eightfold AI" in r.reason and "accept_notices" not in r.reason, r.reason
     else:
-        assert "“Privacy Policy of Example Corp”" in r.reason and "accept_notices: true" in r.reason, r.reason
+        assert ("“Privacy Policy of Example Corp”" in r.reason
+                and "turn on Agree to required notices in Settings, under Applying." in r.reason), r.reason
 
 
 CONFIRMS = {
@@ -2683,7 +2685,8 @@ def test_a_data_privacy_statement_is_the_persons_without_accept_notices(srv, mon
     r, kept, filled = create_account_on_sf(srv)
     assert (r.status, r.need) == ("needs_you", "sign_in"), (r.status, r.reason, r.log)
     assert "asks you to read and accept its data privacy statement" in r.reason, r.reason
-    assert "accept_notices: true" in r.reason and "I tried" not in r.reason, r.reason
+    assert ("turn on Agree to required notices in Settings, under Applying." in r.reason
+            and "I tried" not in r.reason), r.reason
     assert kept == {}, kept  # the statement never opened, nothing pressed
     assert filled == ["sam.rivera@example.com", "Sam", "United States", True], filled  # the form is filled in
     assert not any("agreed to" in line for line in r.log), r.log
@@ -10968,8 +10971,8 @@ def test_an_optional_id_question_is_put_to_the_person_once():
     pipeline._went_left(fresh, {**result, "needs_input": [before]}, {**page, "fields": [before]})
     # (said with how it's undone: the third review's LOW 1)
     assert [(e["label"], e["why"]) for e in fresh.went_in.public()["left"]] == [
-        (pipeline._short(WWID), "you left it empty at Example Fab before (to be asked again, ask Claude to clear it "
-                                "from answers.yaml, or set history.employee_ids)")]
+        (pipeline._short(WWID), "you left it empty at Example Fab before (to be asked there again, forget it on the "
+                                "Your answers page)")]
 
 
 def test_an_answer_that_doesnt_stick_the_first_time_is_filled_again_not_asked_again(srv, monkeypatch):
@@ -14171,7 +14174,8 @@ def test_a_degree_list_with_several_kinds_of_the_profiles_degree_says_so(srv):
                                         {"url": "https://example.wd1.myworkdayjobs.com/x"}, [degree])
     assert (f"The Degree list for {school} in Education 1 has several kinds of Bachelor's Degree (Bachelor of Arts, "
             "Bachelor of Science)") in said, said
-    assert "has no choice for" not in said and "degree: Bachelor of Science" in said, said
+    assert "has no choice for" not in said and (
+        "Or write it in full in your profile (Settings, Your profile), Bachelor of Science, say" in said), said
     assert rest == []
 
 
@@ -16402,8 +16406,8 @@ def test_what_a_filled_page_still_needs_is_said_the_same_way_on_each_path(srv):
     unfilled = {"label": "Country of Residence", "kind": "combobox", "error": "TimeoutError: Locator.evaluate"}
     assert applier._stop_for_what_is_left(run_, "", [unfilled], [{"label": "Resume/CV*"}])
     assert run_.need == "stuck" and run_.reason.startswith(
-        "The form wants a file (Resume/CV*) and the profile doesn't say where yours is: ask Claude to set "
-        "documents.resume (or documents.cover_letter) in profile.yaml, then press Carry on. "), run_.reason
+        "The form wants a file (Resume/CV*) and your profile doesn't have one. Add it in Settings, under Resume and "
+        "cover letters, then press Carry on. "), run_.reason
     nothing = Run(2)
     assert not applier._stop_for_what_is_left(nothing, "", [], []) and nothing.status != "needs_you"
 
@@ -16424,10 +16428,10 @@ def test_a_file_the_profile_has_no_place_for_is_named_as_the_persons(srv):
     both = Run(2)
     assert applier._stop_for_what_is_left(both, "", [], [cover, sample])
     assert both.reason == (
-        "The form wants a file (Please upload your Letter of Application/Cover Letter.*) and the profile doesn't say "
-        "where yours is: ask Claude to set documents.resume (or documents.cover_letter) in profile.yaml, then press "
-        "Carry on. It also wants a file your profile has no place for: “Please upload a writing sample”: attach it in "
-        "the desk's browser window."), both.reason
+        "The form wants a file (Please upload your Letter of Application/Cover Letter.*) and your profile doesn't have "
+        "one. Add it in Settings, under Resume and cover letters, then press Carry on. It also wants a file your "
+        "profile has no place for: “Please upload a writing sample”: attach it in the desk's browser window."
+    ), both.reason
 
 
 def test_a_file_for_another_document_of_the_profiles_names_the_slot_to_fill(srv, job_apply_home):
@@ -16467,8 +16471,8 @@ def test_a_file_for_another_document_of_the_profiles_names_the_slot_to_fill(srv,
     with_resume = Run(4)
     assert applier._stop_for_what_is_left(with_resume, "", [], [{"label": "Resume/CV*", "kind": "file"}, transcripts])
     assert with_resume.reason == (
-        "The form wants a file (Resume/CV*) and the profile doesn't say where yours is: ask Claude to set "
-        "documents.resume (or documents.cover_letter) in profile.yaml, then press Carry on. It also wants your "
+        "The form wants a file (Resume/CV*) and your profile doesn't have one. Add it in Settings, under Resume and "
+        "cover letters, then press Carry on. It also wants your "
         "transcripts (“Please upload your Unofficial Transcripts”): add documents.transcripts to your profile (the "
         "file your profile names for documents.transcripts isn't there), or attach it in the desk's browser "
         "window."), with_resume.reason

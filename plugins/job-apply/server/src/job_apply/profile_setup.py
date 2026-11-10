@@ -545,16 +545,17 @@ def save_form(form: Any) -> dict[str, Any]:
     other line and comment kept, all or nothing. What was written (the places), and what the profile still needs."""
     config.ensure_home()
     path = config.profile_path()
-    prof = config.Profile.load(path)
-    writes = changes(form, prof)
-    if writes:
-        text = path.read_text(encoding="utf-8")
-        try:
-            for keys, value in writes:
-                text = config.set_yaml_value(text, keys, value)
-        except ValueError as e:
-            raise FormError(f"Your profile couldn't be changed here ({e}). Change it in {path} by hand.") from None
-        config.write_text_atomic(path, text)
+    with config.PROFILE_LOCK:  # (read, changed and written as one: a Settings switch saved meanwhile is kept too)
+        prof = config.Profile.load(path)
+        writes = changes(form, prof)
+        if writes:
+            text = path.read_text(encoding="utf-8")
+            try:
+                for keys, value in writes:
+                    text = config.set_yaml_value(text, keys, value)
+            except ValueError as e:
+                raise FormError(f"Your profile couldn't be changed here ({e}). Change it in {path} by hand.") from None
+            config.write_text_atomic(path, text)
     return {"saved": [".".join(keys) for keys, _ in writes],
             "missing": config.Profile.load(path).missing_required(), "version": profile_version()}
 
@@ -583,9 +584,37 @@ def save_resume(name: Any, data: Any) -> Path:
     """The resume picked on the page (its file name, and its bytes in base64), saved as ~/.job-apply/resume.pdf or
     resume.docx, with documents.resume set to it. A file that isn't a PDF or a Word document inside, or is bigger than
     RESUME_MOST, is a ValueError, and nothing is saved."""
+    return _save_document("resume", "resume", name, data)
+
+
+def save_cover_letter(name: Any, data: Any) -> Path:
+    """The usual cover letter picked on the page, as save_resume saves the resume: the same two kinds, the same size
+    limit and the same checks of what's inside, saved as ~/.job-apply/cover_letter.pdf (or .docx), with
+    documents.cover_letter set to it."""
+    return _save_document("cover_letter", "cover letter", name, data)
+
+
+def forget_cover_letter() -> None:
+    """documents.cover_letter emptied: no usual cover letter. Its file stays where it is."""
+    path = config.profile_path()
+    with config.PROFILE_LOCK:
+        if not path.exists():
+            raise ValueError("Set up your profile first.")
+        try:
+            text = config.set_yaml_value(path.read_text(encoding="utf-8"), ("documents", "cover_letter"), "")
+        except ValueError as e:
+            raise ValueError(f"Your profile couldn't be changed here ({e}). Change it in {path} by hand.") from None
+        config.write_text_atomic(path, text)
+
+
+def _save_document(slot: str, what: str, name: Any, data: Any) -> Path:
+    """save_resume's work for documents.<slot> ("resume" or "cover_letter"), its sentences naming the file as `what`:
+    saved in the desk's own folder as <slot>.pdf or <slot>.docx, never under a name from the page."""
+    if slot not in ("resume", "cover_letter"):
+        raise ValueError(f"not a document: {slot!r}")
     suffix = Path(str(name or "")).suffix.lower()
     if suffix not in RESUME_KINDS:
-        raise ValueError("Pick your resume as a PDF or a Word (.docx) file")
+        raise ValueError(f"Pick your {what} as a PDF or a Word (.docx) file")
     if not isinstance(data, str) or len(data) > (RESUME_MOST + 2) // 3 * 4:
         raise ValueError(f"That file is bigger than {RESUME_MOST // (1024 * 1024)} MB: pick a smaller copy")
     try:
@@ -595,23 +624,24 @@ def save_resume(name: Any, data: Any) -> Path:
     if not raw:
         raise ValueError("That file is empty")
     if suffix == ".pdf" and not raw.startswith(b"%PDF-"):
-        raise ValueError("That file isn't a PDF inside: save your resume as a PDF and pick that")
+        raise ValueError(f"That file isn't a PDF inside: save your {what} as a PDF and pick that")
     if suffix == ".docx":
         try:
             zipfile.ZipFile(io.BytesIO(raw)).getinfo("word/document.xml")
         except (zipfile.BadZipFile, KeyError):
-            raise ValueError("That file isn't a Word document inside: save your resume as .docx or PDF and pick that") \
-                from None
+            raise ValueError(f"That file isn't a Word document inside: save your {what} as .docx or PDF and pick "
+                             "that") from None
     config.ensure_home()
-    target = config.home() / f"resume{suffix}"
+    target = config.home() / f"{slot}{suffix}"
     path = config.profile_path()
-    try:
-        text = config.set_yaml_value(path.read_text(encoding="utf-8"), ("documents", "resume"),
-                                     _profile_path_of(target))
-    except ValueError as e:  # (worked out before anything is written)
-        raise ValueError(f"Your profile couldn't be changed here ({e}). Change it in {path} by hand.") from None
-    _write_bytes_atomic(target, raw)
-    config.write_text_atomic(path, text)
+    with config.PROFILE_LOCK:  # (read, changed and written as one, as a setting is: config.set_setting)
+        try:
+            text = config.set_yaml_value(path.read_text(encoding="utf-8"), ("documents", slot),
+                                         _profile_path_of(target))
+        except ValueError as e:  # (worked out before anything is written)
+            raise ValueError(f"Your profile couldn't be changed here ({e}). Change it in {path} by hand.") from None
+        _write_bytes_atomic(target, raw)
+        config.write_text_atomic(path, text)
     return target
 
 

@@ -2,7 +2,7 @@
 # account there and the common questions answered) to the application's review page, or to its last button.
 # The desk's "Only where the desk goes all the way" switch shows these employers' openings alone.
 # Refresh it from each full nightly before a release: `uv run python scripts/nightly_summary.py --handled`.
-as_of: "2026-11-02: full run of Nov 2 (main dbe5690, 0.3.243): Edward Jones added (no flips in the last 10 runs; Oct 31 was its site's maintenance); onsemi kept (its stop was Oracle's upload error, a site's)"
+as_of: "2026-11-10: full run of Nov 10 (main 23c3717, 0.4.3): Mayo Clinic added; left out as the run and its history give them: NXP Semiconductors and TEKsystems (not all the way in this run), and Micron, onsemi, Station Casinos (Red Rock Resorts) and Switch (they flip from run to run)"
 employers:
   - "Air Liquide"
   - "Air Products"
@@ -59,17 +59,15 @@ employers:
   - "Maricopa County"
   - "Marketech International"
   - "Matheson"
+  - "Mayo Clinic"
   - "MGM Resorts"
   - "Microchip Technology"
-  - "Micron"
   - "Mission Support and Test Services (NNSS)"
   - "Nevada State University"
   - "Nikon Precision"
   - "Northern Trust"
   - "Northrop Grumman"
   - "NV Energy"
-  - "NXP Semiconductors"
-  - "onsemi"
   - "Onto Innovation"
   - "PayPal"
   - "PwC"
@@ -78,9 +76,6 @@ employers:
   - "Robert Half"
   - "SCREEN SPE USA"
   - "Southwest Gas"
-  - "Station Casinos (Red Rock Resorts)"
-  - "Switch"
-  - "TEKsystems"
   - "TEKsystems (consultant jobs)"
   - "Texas Instruments"
   - "The Venetian Resort"
