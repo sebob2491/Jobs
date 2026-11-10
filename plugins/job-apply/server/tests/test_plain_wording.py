@@ -5,8 +5,7 @@ names profile.yaml, answers.yaml, secrets.yaml, desk.json, companies.yaml, a `se
 Version C adds the test with the list as it stands; Versions D and F shorten it (an entry that excuses nothing any more
 fails, so it must leave the list).
 
-The page (static/desk.html) is read the same way once its own words are changed: until then it's in PAGE_LATER, and
-moving it to CHECKED (with its own allowed sentences, if any) switches its part on."""
+The page (static/desk.html) is read line by line, its styles and comments left out (_page_said)."""
 
 import ast
 import re
@@ -14,9 +13,9 @@ from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "job_apply"
 # the files whose sentences are read: the server's (Python) and the page's (HTML)
-CHECKED = ["desk.py", "config.py", "letters.py", *sorted(p.name for p in SRC.glob("pipeline*.py"))]
-# read like the rest once the page half of Version C has reworded the page's sentences
-PAGE_LATER = ["static/desk.html"]
+CHECKED = ["desk.py", "config.py", "letters.py", *sorted(p.name for p in SRC.glob("pipeline*.py")), "static/desk.html"]
+# a file whose words are still to be reworded before it's read (the page was, until Version C's page half): none now
+PAGE_LATER: list[str] = []
 
 # (a key as said to the person, "settings.submit_mode": not the page's code reading it, state.settings.dry_run)
 NAMES = re.compile(r"profile\.yaml|answers\.yaml|secrets\.yaml|desk\.json|companies\.yaml|(?<![\w.$])settings\.[a-z_]+|"
@@ -59,6 +58,17 @@ ALLOWED = [
     ("pipeline_filling.py", "add it to that school under education_history in profile.yaml"),
     ("pipeline_filling.py", "Or write it in full under education_history in profile.yaml"),
     ("pipeline_mail.py", "settings.email_codes is off"),
+    # the page's: the Common questions card, the Site passwords card's long paragraph, the Help page's line on answers,
+    # the question card for an employee ID, the What's working card, #auto-hint, the What and where window: Version D
+    ("static/desk.html", "(kept in <code>~/.job-apply/answers.yaml</code>)"),
+    ("static/desk.html", "<code>~/.job-apply/secrets.yaml</code> where there's none"),
+    ("static/desk.html", "Answers you give here are saved in <code>~/.job-apply/answers.yaml</code>"),
+    ("static/desk.html", "ask Claude to clear it from answers.yaml"),
+    ("static/desk.html", "(settings.learn_from_responses: false)"),
+    ("static/desk.html", "(settings.submit_mode: dry_run)"),
+    ("static/desk.html", "of your own (companies.yaml)"),
+    # the page's update notice: Version F
+    ("static/desk.html", "in a terminal (PowerShell on Windows)"),
 ]
 
 _LOGGERS = {"log", "logger", "logging", "_logger"}
@@ -189,3 +199,4 @@ def test_the_test_finds_what_it_looks_for():
     # (every file named is there, and the page is read in one list or the other, never both)
     assert all((SRC / name).is_file() for name in CHECKED + PAGE_LATER)
     assert not set(CHECKED) & set(PAGE_LATER) and "static/desk.html" in CHECKED + PAGE_LATER
+    assert "static/desk.html" in CHECKED and PAGE_LATER == []  # (the page's part is on: Version C's page half)
