@@ -6316,7 +6316,9 @@ def test_the_preflight_dialog_defaults_to_seeing_to_things_first(srv, job_apply_
                 await page.wait_for_selector("#preflight", state="hidden")
                 await page.wait_for_timeout(500)
                 seen["after_escape"] = list(desk.applier.tasks)
-                await press_menu(page, "openings")  # (Escape sees to them first too: it led to Settings)
+                # (Escape only closes the window: the person stays on Openings, the job still ticked)
+                seen["escape_page"] = await page.evaluate("document.body.dataset.page")
+                seen["escape_apply"] = await page.inner_text("#apply")
                 await page.click("#apply")
                 await page.wait_for_selector("#preflight[open]")
                 await page.click("#preflight-apply")
@@ -6331,6 +6333,7 @@ def test_the_preflight_dialog_defaults_to_seeing_to_things_first(srv, job_apply_
     assert seen["said"][0].startswith("Workday: no password saved, so 1 of these jobs stops at the sign-in"), seen
     assert seen["focused"] == "preflight-first", seen
     assert seen["after_enter"] == [] and seen["after_escape"] == [], seen
+    assert seen["escape_page"] == "openings" and seen["escape_apply"] == "Apply to 1 selected", seen
     assert seen["picked"] == "workday" and seen["pw_focused"] == "pw" and seen["pw_in_view"], seen
     assert seen["applied"] == [url], seen
     assert seen["native"] == [], seen  # (no browser confirm: the page's own window)

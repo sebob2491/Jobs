@@ -1392,7 +1392,8 @@ function askNotInterested(url) {
 }
 
 // Before Apply: what will stop the ticked jobs, in a window whose default (focused) button is See to these first, so
-// Enter or Escape never applies. True only for the person's Apply anyway
+// Enter or Escape never applies. Its answer: "apply" (Apply anyway), "first" (See to these first), or "" when closed
+// any other way (Escape): then it only closes, the person left where they were
 function askPreflight(lines) {
   const d = $("preflight");
   $("preflight-lines").replaceChildren(...lines.map((line) => {
@@ -1401,7 +1402,7 @@ function askPreflight(lines) {
     return li;
   }));
   return new Promise((resolve) => {
-    d.addEventListener("close", () => resolve(d.returnValue === "apply"), {once: true});
+    d.addEventListener("close", () => resolve(d.returnValue), {once: true});
     d.returnValue = "";
     d.showModal();
     $("preflight-first").focus();
@@ -1415,7 +1416,8 @@ async function applyTicked(urls, auto) {
   const pre = await api("/api/preflight", {urls});
   const said = (pre.lines || []).join("\n");
   if (said && said !== preflightSeen) {
-    if (!await askPreflight(pre.lines)) { seeToFirst(pre.lines[0]); return; }
+    const answer = await askPreflight(pre.lines);
+    if (answer !== "apply") { if (answer === "first") seeToFirst(pre.lines[0]); return; }
     preflightSeen = said;
   }
   const out = await api("/api/apply", {urls, submit: auto});
