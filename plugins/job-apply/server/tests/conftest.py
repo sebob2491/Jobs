@@ -406,6 +406,21 @@ async def person_browser():
             await person.close()
 
 
+async def open_desk(page, desk, at: str = "home") -> None:
+    """The desk's page opened on one of its side menu's pages (home, openings, applications, answers, working,
+    settings or help), its state drawn. A card shows only on its own page, so a test opens the page its card is on;
+    one that uses two pages presses the menu's link for the second, as a person would."""
+    await page.goto(f"{desk.url}#{at}")
+    # (in the page, not in sight: under 1,024 px wide the side menu shows its icons only, the version out of sight)
+    await page.wait_for_selector("#plugin-version:not(:empty)", state="attached")
+
+
+async def press_menu(page, at: str) -> None:
+    """The side menu's link for the page `at` pressed, as a person would, and that page shown."""
+    await page.click(f".nav a[href='#{at}']")
+    await page.wait_for_function("(at) => document.body.dataset.page === at", arg=at)
+
+
 @pytest.fixture
 def srv(job_apply_home, loop):
     """The MCP server module with a fresh tracker; closes its browser afterwards."""

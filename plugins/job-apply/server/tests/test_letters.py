@@ -18,7 +18,7 @@ from pathlib import Path
 import httpx
 import pytest
 import yaml
-from conftest import browser_available, fixture_url, run
+from conftest import browser_available, fixture_url, press_menu, run
 
 from job_apply import config, letters, pipeline, pipeline_letters, render, vault
 from job_apply.desk import Desk
@@ -984,6 +984,7 @@ def test_the_page_shows_the_first_letter_as_text_with_use_it_and_the_switch(srv,
             buttons = await card.locator("button").all_inner_texts()
             await card.locator("button", has_text="Use it").click()
             await until_page(lambda: any(c[1] == f"/api/job/{job}/letter_ok" for c in calls), calls)
+            await press_menu(page, "openings")  # (the switch is on the Openings page, the card on Home)
             await page.locator("#letters").check()
             await until_page(lambda: ("POST", "/api/settings", {"cover_letters": True}) in calls, calls)
             return text, bold, buttons

@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Job Desk: proposed look (mockup, made-up data)</title>
+<style>
+:root {
+  --bg: #f5f6f8; --panel: #ffffff; --line: #e4e7ec; --line-2: #eef0f3;
+  --text: #111827; --body: #374151; --muted: #6b7280; --faint: #9ca3af;
+  --accent: #4f46e5; --accent-2: #4338ca; --accent-bg: #eef2ff; --accent-line: #c7d2fe;
+  --good: #15803d; --good-bg: #dcfce7; --warn: #b45309; --warn-bg: #fef3c7;
+  --bad: #b91c1c; --bad-bg: #fee2e2; --info: #1d4ed8; --info-bg: #dbeafe;
+  --control-line: #d5d9e0; --hover: #f1f3f6; --chip: #eceef2; --row-sel: #f5f7ff; --side: #fafbfc; --on-accent: #ffffff;
+  --shadow: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.05);
+  --shadow-lg: 0 14px 34px rgba(16,24,40,.22), 0 3px 8px rgba(16,24,40,.10);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { font: 14px/1.45 "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  color: var(--text); background: #cfd4dc; -webkit-font-smoothing: antialiased; }
+.ico { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round;
+  stroke-linejoin: round; flex: none; }
+.window { width: 1440px; height: 900px; display: grid; grid-template-rows: 36px 1fr; background: var(--bg); overflow: hidden; }
+
+/* the program's own window: a title bar, no address bar or tabs */
+.titlebar { display: flex; align-items: center; gap: 9px; padding-left: 14px; background: #eceef2;
+  border-bottom: 1px solid #dde1e7; font-size: 12.5px; color: var(--body); }
+.titlebar .logo { width: 17px; height: 17px; }
+.caption { margin-left: auto; display: flex; height: 100%; }
+.caption span { width: 46px; display: grid; place-items: center; color: #4b5563; }
+.caption svg { width: 10px; height: 10px; stroke: currentColor; fill: none; stroke-width: 1.1; }
+
+.app { display: grid; grid-template-columns: 244px 1fr; min-height: 0; }
+
+/* the side bar: where everything is, and how the queue is doing */
+.side { background: #fafbfc; border-right: 1px solid var(--line); display: flex; flex-direction: column;
+  padding: 16px 12px 12px; min-height: 0; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 2px 8px 16px; }
+.brand .logo { width: 30px; height: 30px; }
+.brand b { font-size: 15.5px; font-weight: 700; letter-spacing: -.01em; }
+.nav { display: flex; flex-direction: column; gap: 2px; }
+.nav a { display: flex; align-items: center; gap: 11px; height: 36px; padding: 0 10px; border-radius: 8px;
+  color: var(--body); text-decoration: none; font-weight: 500; font-size: 13.5px; }
+.nav a .ico { color: var(--muted); }
+.nav a .n { margin-left: auto; font-size: 11.5px; font-weight: 600; color: var(--muted); background: #eceef2;
+  border-radius: 999px; padding: 1px 7px; min-width: 24px; text-align: center; }
+.nav a .n.hot { background: var(--warn-bg); color: var(--warn); }
+body[data-screen=home] .nav a[href="#home"], body[data-screen=openings] .nav a[href="#openings"],
+body[data-screen=settings] .nav a[href="#settings"] { background: var(--accent-bg); color: var(--accent-2); font-weight: 600; }
+body[data-screen=home] .nav a[href="#home"] .ico, body[data-screen=openings] .nav a[href="#openings"] .ico,
+body[data-screen=settings] .nav a[href="#settings"] .ico { color: var(--accent); }
+.nav .sep { height: 1px; background: var(--line); margin: 10px 8px; }
+.grow { flex: 1; }
+.queue { border: 1px solid var(--line); background: #fff; border-radius: 12px; padding: 12px 12px 12px 14px; box-shadow: var(--shadow); }
+.queue .r1 { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 13px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 3px #dcfce7; }
+.queue p { margin: 3px 0 10px; color: var(--muted); font-size: 12.5px; }
+.queue .bar { height: 4px; border-radius: 99px; background: #eceef2; overflow: hidden; }
+.queue .bar i { display: block; height: 100%; width: 42%; background: var(--accent); border-radius: 99px; }
+.me { display: flex; align-items: center; gap: 10px; padding: 14px 8px 2px; }
+.avatar { width: 30px; height: 30px; border-radius: 50%; background: #e0e7ff; color: #3730a3; display: grid;
+  place-items: center; font-weight: 700; font-size: 12px; }
+.me b { display: block; font-size: 13px; font-weight: 600; line-height: 1.25; }
+.me small { display: block; color: var(--muted); font-size: 11.5px; }
+
+/* buttons: one kind that leads, the rest quiet */
+.btn { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 13px; border-radius: 8px;
+  border: 1px solid #d5d9e0; background: #fff; color: #1f2937; font: inherit; font-weight: 500; font-size: 13.5px;
+  box-shadow: 0 1px 1px rgba(16,24,40,.04); white-space: nowrap; }
+.btn .ico { width: 16px; height: 16px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600;
+  box-shadow: 0 1px 2px rgba(79,70,229,.35); }
+.btn.soft { background: var(--accent-bg); border-color: var(--accent-line); color: var(--accent-2); font-weight: 600; box-shadow: none; }
+.btn.sm { height: 30px; padding: 0 11px; font-size: 13px; border-radius: 7px; }
+.btn.ghost { border-color: transparent; background: transparent; box-shadow: none; color: #4b5563; }
+.btn.icon { width: 30px; padding: 0; justify-content: center; }
+.btn.danger { color: var(--bad); border-color: var(--bad); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.main { min-width: 0; min-height: 0; display: grid; }
+.screen { display: none; grid-template-rows: 64px 1fr; min-height: 0; }
+body[data-screen=home] #home, body[data-screen=openings] #openings, body[data-screen=settings] #settings { display: grid; }
+.top { display: flex; align-items: center; gap: 12px; padding: 0 28px; background: #fff; border-bottom: 1px solid var(--line); }
+.top h1 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -.01em; }
+.top .sub { color: var(--muted); font-size: 13px; }
+.top .sub a { color: var(--accent); text-decoration: none; font-weight: 500; }
+.search { display: flex; align-items: center; gap: 8px; width: 270px; height: 34px; padding: 0 11px;
+  border: 1px solid #d5d9e0; border-radius: 8px; background: #fff; color: var(--faint); font-size: 13.5px; }
+.search .ico { width: 16px; height: 16px; }
+.content { padding: 22px 28px 24px; min-height: 0; overflow: hidden; position: relative; }
+
+.card { background: #fff; border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); }
+.card-h { display: flex; align-items: center; gap: 10px; padding: 13px 18px; border-bottom: 1px solid var(--line-2); min-height: 56px; }
+.card-h h2 { margin: 0; font-size: 14.5px; font-weight: 650; }
+.count { font-size: 11.5px; font-weight: 700; border-radius: 999px; padding: 1px 8px; background: #eceef2; color: #4b5563; }
+.count.warn { background: var(--warn-bg); color: var(--warn); }
+.count.good { background: var(--good-bg); color: var(--good); }
+
+/* Home */
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 18px; }
+.tile { padding: 15px 18px 14px; display: grid; grid-template-columns: 1fr auto; column-gap: 12px; align-items: start; }
+.tile .label { color: var(--muted); font-size: 12.5px; font-weight: 500; }
+.tile .num { font-size: 28px; font-weight: 700; letter-spacing: -.02em; line-height: 1.2; grid-column: 1; }
+.tile .sub { color: var(--muted); font-size: 12.5px; grid-column: 1 / -1; }
+.tico { grid-row: 1 / 3; grid-column: 2; width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; }
+.amber { background: var(--warn-bg); color: var(--warn); }
+.indigo { background: var(--accent-bg); color: var(--accent); }
+.green { background: var(--good-bg); color: var(--good); }
+.gray { background: #f1f3f6; color: #4b5563; }
+.tile.attn { border-color: #f5c451; box-shadow: 0 0 0 3px #fdf0c8; }
+.cols { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.stack { display: grid; gap: 18px; }
+.item { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 13px 18px;
+  border-top: 1px solid var(--line-2); }
+.card-h + .item { border-top: 0; }
+.itico { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; }
+.item .t { font-weight: 600; }
+.item .s { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.item .acts { display: flex; align-items: center; gap: 6px; }
+.item .wait { color: var(--muted); font-size: 12px; margin-right: 6px; white-space: nowrap; }
+.job { padding: 13px 18px 14px; border-top: 1px solid var(--line-2); }
+.card-h + .job { border-top: 0; }
+.job .head { display: flex; align-items: baseline; gap: 8px; }
+.job .head b { font-weight: 600; }
+.job .head span { color: var(--muted); font-size: 13px; }
+.job .head em { margin-left: auto; font-style: normal; color: var(--muted); font-size: 12px; }
+.steps, .steplabels { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
+.steps { margin-top: 10px; }
+.steps i { height: 5px; border-radius: 99px; background: #e9ebef; }
+.steps i.done { background: var(--accent); }
+.steps i.now { background: linear-gradient(90deg, var(--accent) 55%, #c7d2fe 55%); }
+.steplabels { margin-top: 6px; font-size: 11.5px; color: var(--muted); }
+.steplabels .on { color: var(--body); font-weight: 600; }
+.card-f { display: flex; align-items: center; gap: 8px; padding: 11px 18px; border-top: 1px solid var(--line-2);
+  color: var(--muted); font-size: 13px; }
+.card-f a { margin-left: auto; color: var(--accent); text-decoration: none; font-weight: 500; }
+.chart { display: grid; grid-template-columns: repeat(7, 1fr); gap: 12px; height: 104px; padding: 16px 20px 0; }
+.chart div { display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 6px; }
+.chart i { width: 100%; max-width: 34px; border-radius: 6px 6px 2px 2px; background: #c7d2fe; min-height: 3px; }
+.chart i.today { background: var(--accent); }
+.chart i.none { background: #e9ebef; }
+.chart span { font-size: 11.5px; color: var(--muted); }
+.chart span.today { color: var(--body); font-weight: 600; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); padding: 12px 20px 16px; }
+.stats b { display: block; font-size: 17px; font-weight: 700; }
+.stats span { color: var(--muted); font-size: 12.5px; }
+
+/* Openings */
+.tabs { display: flex; gap: 24px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
+.tabs a { padding: 0 2px 10px; color: var(--muted); font-weight: 500; text-decoration: none; display: flex; gap: 7px;
+  align-items: center; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tabs a.on { color: var(--text); font-weight: 600; border-color: var(--accent); }
+.filters { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.f { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px 0 11px; border: 1px solid #d5d9e0;
+  border-radius: 8px; background: #fff; font-size: 13px; font-weight: 500; color: var(--body); white-space: nowrap; }
+.f .ico { width: 15px; height: 15px; color: var(--faint); }
+.f.on { border-color: var(--accent-line); background: var(--accent-bg); color: var(--accent-2); }
+.f.on .ico { color: var(--accent); }
+.f .count { background: var(--accent); color: #fff; }
+.sw-label { margin-left: auto; white-space: nowrap; display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--body); font-weight: 500; }
+.switch { width: 34px; height: 20px; border-radius: 99px; background: #d1d5db; position: relative; flex: none; display: inline-block; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+.switch.on { background: var(--accent); }
+.switch.on::after { left: 16px; }
+table { width: 100%; border-collapse: separate; border-spacing: 0; }
+th { font-size: 12px; font-weight: 600; color: var(--muted); text-align: left; padding: 0 12px; height: 40px;
+  border-bottom: 1px solid var(--line); background: #fafbfc; }
+th:first-child { border-top-left-radius: 14px; } th:last-child { border-top-right-radius: 14px; }
+td { padding: 0 12px; height: 60px; border-bottom: 1px solid var(--line-2); vertical-align: middle; font-size: 13.5px; }
+tr:last-child td { border-bottom: 0; }
+tr:last-child td:first-child { border-bottom-left-radius: 14px; } tr:last-child td:last-child { border-bottom-right-radius: 14px; }
+th:first-child, td:first-child { padding-left: 18px; width: 46px; }
+tr.sel td { background: #f5f7ff; }
+.cb { width: 17px; height: 17px; border: 1.5px solid #c2c8d2; border-radius: 5px; display: inline-grid; place-items: center;
+  background: #fff; vertical-align: middle; }
+.cb.on { background: var(--accent); border-color: var(--accent); }
+.cb svg { width: 11px; height: 11px; stroke: #fff; stroke-width: 3.2; fill: none; stroke-linecap: round; stroke-linejoin: round; visibility: hidden; }
+.cb.on svg { visibility: visible; }
+.cb.some { background: var(--accent); border-color: var(--accent); position: relative; }
+.cb.some::after { content: ""; width: 9px; height: 2px; background: #fff; border-radius: 2px; }
+.fit { --p: 88; --c: #16a34a; width: 38px; height: 38px; border-radius: 50%;
+  background: conic-gradient(var(--c) calc(var(--p) * 1%), #e6e9ee 0); display: grid; place-items: center; }
+.fit b { width: 30px; height: 30px; border-radius: 50%; background: #fff; display: grid; place-items: center;
+  font-size: 12.5px; font-weight: 700; }
+tr.sel .fit b { background: #f5f7ff; }
+.role b { font-weight: 600; font-size: 14px; display: block; }
+.role span { color: var(--muted); font-size: 13px; }
+.pay { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dim { color: var(--muted); }
+.sys b { font-weight: 500; display: block; }
+.sys small { display: flex; align-items: center; gap: 4px; color: var(--good); font-size: 12px; font-weight: 500; }
+.sys small .ico { width: 13px; height: 13px; stroke-width: 2.4; }
+.sys small.no { color: var(--muted); }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; padding: 2px 9px;
+  border-radius: 999px; background: #eceef2; color: #4b5563; white-space: nowrap; }
+.pill.new { background: var(--info-bg); color: var(--info); }
+.pill.good { background: var(--good-bg); color: var(--good); }
+.pill.warn { background: var(--warn-bg); color: var(--warn); }
+.pill.work { background: var(--accent-bg); color: var(--accent-2); }
+.pill.work::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.bulk { position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%); display: flex; align-items: center;
+  gap: 14px; background: #111827; color: #d1d5db; border-radius: 14px; padding: 10px 10px 10px 18px;
+  box-shadow: var(--shadow-lg); font-size: 13.5px; white-space: nowrap; }
+.bulk b { color: #fff; font-weight: 600; }
+.bulk .div { width: 1px; height: 20px; background: #374151; }
+.bulk .opt { display: inline-flex; align-items: center; gap: 7px; }
+.bulk .opt .ico { width: 15px; height: 15px; color: #9ca3af; }
+.bulk .opt .chev { width: 13px; height: 13px; }
+.bulk .btn.ghost { color: #d1d5db; }
+.bulk .btn.primary { height: 36px; padding: 0 16px; }
+
+/* Settings */
+.settings { display: grid; grid-template-columns: 216px minmax(0, 1fr); gap: 30px; }
+.snav { display: flex; flex-direction: column; gap: 2px; }
+.snav a { height: 34px; display: flex; align-items: center; padding: 0 12px; border-radius: 8px; color: var(--body);
+  text-decoration: none; font-weight: 500; font-size: 13.5px; border: 1px solid transparent; }
+.snav a.on { background: #fff; border-color: var(--line); box-shadow: var(--shadow); font-weight: 600; color: var(--text); }
+.spanel { max-width: 820px; }
+.spanel h2 { margin: 0; font-size: 17px; font-weight: 700; }
+.spanel > p { margin: 3px 0 16px; color: var(--muted); font-size: 13.5px; }
+.set { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: center; padding: 13px 18px;
+  border-top: 1px solid var(--line-2); }
+.set:first-child { border-top: 0; }
+.set b { display: block; font-weight: 600; }
+.set .d { display: block; color: var(--muted); font-size: 13px; margin-top: 1px; }
+.seg { display: inline-flex; border: 1px solid #d5d9e0; border-radius: 8px; overflow: hidden; background: #fff; }
+.seg span { padding: 5px 12px; font-size: 13px; font-weight: 500; color: #4b5563; border-left: 1px solid #e5e7eb; }
+.seg span:first-child { border-left: 0; }
+.seg span.on { background: var(--accent-bg); color: var(--accent-2); font-weight: 700; }
+.update { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 15px 18px; margin-top: 18px; }
+.update .logo { width: 38px; height: 38px; }
+.update b { display: block; font-weight: 600; }
+.update span { color: var(--muted); font-size: 13px; }
+.update .acts { display: flex; gap: 8px; }
+</style>
+</head>
+<body data-screen="home">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#4338ca"/></linearGradient>
+    <symbol id="logo" viewBox="0 0 32 32">
+      <rect width="32" height="32" rx="9" fill="url(#lg)"/>
+      <rect x="7.5" y="12.5" width="17" height="11.5" rx="2.2" fill="none" stroke="#fff" stroke-width="2"/>
+      <path d="M12.5 12.5v-1.8a1.7 1.7 0 0 1 1.7-1.7h3.6a1.7 1.7 0 0 1 1.7 1.7v1.8" fill="none" stroke="#fff" stroke-width="2"/>
+      <path d="m12.6 18.4 2.4 2.4 4.4-5" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20h14V9.5"/><path d="M10 20v-6h4v6"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+    <symbol id="i-case" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/><path d="M3 13h18"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M21 3 10.5 13.5"/><path d="M21 3 14.5 21l-4-7.5L3 9.5 21 3z"/></symbol>
+    <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13L22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/></symbol>
+    <symbol id="i-ask" viewBox="0 0 24 24"><path d="M20.5 12a8.5 8.5 0 0 1-12.3 7.6L3.5 20.5l.9-4.7A8.5 8.5 0 1 1 20.5 12z"/><path d="M9.9 9.6a2.2 2.2 0 0 1 4.2.9c0 1.4-2.1 1.9-2.1 3.2"/><path d="M12 16.4h.01"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M5 20V11"/><path d="M11 20V5"/><path d="M17 20v-6"/><path d="M3 20h18"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h9"/><path d="M19 6h1"/><circle cx="16" cy="6" r="2.2"/><path d="M4 12h1"/><path d="M11 12h9"/><circle cx="8" cy="12" r="2.2"/><path d="M4 18h9"/><path d="M19 18h1"/><circle cx="16" cy="18" r="2.2"/></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.8 9.6a2.2 2.2 0 0 1 4.2.9c0 1.4-2.1 1.9-2.1 3.2"/><path d="M12 16.6h.01"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9"/><path d="m16 7 3 3"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.5 3 8.4 7 10 4-1.6 7-5.5 7-10V6z"/><path d="m9 11.8 2.2 2.2 3.8-4.3"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7"/></symbol>
+    <symbol id="i-checkc" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12.3 2.7 2.7L16 9.5"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 5v14"/><path d="M15 5v14"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v5h-5"/></symbol>
+    <symbol id="i-sort" viewBox="0 0 24 24"><path d="M7 5v14"/><path d="m3.5 15.5 3.5 3.5 3.5-3.5"/><path d="M17 19V5"/><path d="m13.5 8.5 3.5-3.5 3.5 3.5"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 17h6"/></symbol>
+    <symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17z"/><path d="m14.5 7.5 3 3"/></symbol>
+    <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 7.5 8.5 6 8.5-6"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 2.8 19.5h18.4z"/><path d="M12 10v4.5"/><path d="M12 17.2h.01"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5v14l11-7z"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.2"/><path d="M11 18h2"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9.5" rx="2"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  </defs>
+</svg>
+
+<div class="window">
+  <div class="titlebar">
+    <svg class="logo"><use href="#logo"/></svg> Job Desk
+    <div class="caption">
+      <span><svg viewBox="0 0 10 10"><path d="M0 5h10"/></svg></span>
+      <span><svg viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9"/></svg></span>
+      <span><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0 0 10"/></svg></span>
+    </div>
+  </div>
+  <div class="app">
+    <aside class="side">
+      <div class="brand"><svg class="logo"><use href="#logo"/></svg><b>Job Desk</b></div>
+      <nav class="nav">
+        <a href="#home"><svg class="ico"><use href="#i-home"/></svg>Home<span class="n hot">3</span></a>
+        <a href="#openings"><svg class="ico"><use href="#i-search"/></svg>Openings<span class="n">34</span></a>
+        <a href="#applications"><svg class="ico"><use href="#i-send"/></svg>Applications<span class="n">27</span></a>
+        <a href="#answers"><svg class="ico"><use href="#i-ask"/></svg>Your answers</a>
+        <a href="#working"><svg class="ico"><use href="#i-chart"/></svg>What's working</a>
+        <div class="sep"></div>
+        <a href="#settings"><svg class="ico"><use href="#i-sliders"/></svg>Settings</a>
+        <a href="#help"><svg class="ico"><use href="#i-help"/></svg>Help</a>
+      </nav>
+      <div class="grow"></div>
+      <div class="queue">
+        <div class="r1"><span class="dot"></span>Working on 2 jobs
+          <span class="grow"></span><span class="btn sm ghost icon" title="Pause"><svg class="ico"><use href="#i-pause"/></svg></span></div>
+        <p>4 more waiting · 2 at a time</p>
+        <div class="bar"><i></i></div>
+      </div>
+      <div class="me"><span class="avatar">SR</span><div><b>Sam Rivera</b><small>Version 0.3.252 · up to date</small></div></div>
+    </aside>
+
+    <div class="main">
+      <!-- ============================== Home ============================== -->
+      <section class="screen" id="home">
+        <div class="top">
+          <h1>Home</h1>
+          <span class="grow"></span>
+          <span class="sub">Last search 2 hours ago · 6 new openings</span>
+          <span class="btn"><svg class="ico"><use href="#i-refresh"/></svg>Find jobs</span>
+        </div>
+        <div class="content">
+          <div class="tiles">
+            <div class="card tile attn"><span class="label">Needs you</span><span class="num">3</span>
+              <span class="sub">Questions, a sign-in, a bot check</span><span class="tico amber"><svg class="ico"><use href="#i-inbox"/></svg></span></div>
+            <div class="card tile"><span class="label">Working on</span><span class="num">2</span>
+              <span class="sub">4 more waiting</span><span class="tico indigo"><svg class="ico"><use href="#i-clock"/></svg></span></div>
+            <div class="card tile"><span class="label">Ready to submit</span><span class="num">3</span>
+              <span class="sub">Filled in, waiting for your OK</span><span class="tico green"><svg class="ico"><use href="#i-checkc"/></svg></span></div>
+            <div class="card tile"><span class="label">Sent this week</span><span class="num">12</span>
+              <span class="sub">3 answers · 2 interviews</span><span class="tico gray"><svg class="ico"><use href="#i-send"/></svg></span></div>
+          </div>
+          <div class="cols">
+            <div class="stack">
+              <section class="card">
+                <div class="card-h"><h2>Needs you</h2><span class="count warn">3</span><span class="grow"></span>
+                  <span class="btn primary sm">Go through them<svg class="ico"><use href="#i-arrow"/></svg></span></div>
+                <div class="item"><span class="itico indigo"><svg class="ico"><use href="#i-ask"/></svg></span>
+                  <div><div class="t">Answer 2 questions</div><div class="s">Equipment Technician · Sonoran Semiconductor · shift, relocation</div></div>
+                  <div class="acts"><span class="wait">12 min</span><span class="btn sm">Answer</span><span class="btn sm ghost icon"><svg class="ico"><use href="#i-more"/></svg></span></div></div>
+                <div class="item"><span class="itico amber"><svg class="ico"><use href="#i-key"/></svg></span>
+                  <div><div class="t">Sign in to carry on</div><div class="s">Process Technician · Copper State Fab · their site asked for you</div></div>
+                  <div class="acts"><span class="wait">8 min</span><span class="btn sm">Open</span><span class="btn sm ghost icon"><svg class="ico"><use href="#i-more"/></svg></span></div></div>
+                <div class="item"><span class="itico gray"><svg class="ico"><use href="#i-shield"/></svg></span>
+                  <div><div class="t">Quick bot check</div><div class="s">Field Service Engineer · Desert Robotics · the other jobs carry on</div></div>
+                  <div class="acts"><span class="wait">3 min</span><span class="btn sm">Solve</span><span class="btn sm ghost icon"><svg class="ico"><use href="#i-more"/></svg></span></div></div>
+              </section>
+              <section class="card">
+                <div class="card-h"><h2>Ready to submit</h2><span class="count good">3</span><span class="grow"></span>
+                  <span class="btn sm">Review all 3</span></div>
+                <div class="item"><span class="itico green"><svg class="ico"><use href="#i-checkc"/></svg></span>
+                  <div><div class="t">Maintenance Technician</div><div class="s">Canyon Aerospace · 14 answers filled · your resume attached</div></div>
+                  <div class="acts"><span class="btn sm">Review</span><span class="btn sm soft">Submit</span></div></div>
+                <div class="item"><span class="itico green"><svg class="ico"><use href="#i-checkc"/></svg></span>
+                  <div><div class="t">Facilities Technician</div><div class="s">Desert Valley Health · 9 answers filled</div></div>
+                  <div class="acts"><span class="btn sm">Review</span><span class="btn sm soft">Submit</span></div></div>
+                <div class="item"><span class="itico green"><svg class="ico"><use href="#i-checkc"/></svg></span>
+                  <div><div class="t">Equipment Engineer I</div><div class="s">Mesa Vacuum Systems · 11 answers filled · cover letter written</div></div>
+                  <div class="acts"><span class="btn sm">Review</span><span class="btn sm soft">Submit</span></div></div>
+              </section>
+            </div>
+            <div class="stack">
+              <section class="card">
+                <div class="card-h"><h2>Working on</h2><span class="count">2</span></div>
+                <div class="job">
+                  <div class="head"><b>Process Technician</b><span>Saguaro Semiconductor</span><em>3 min</em></div>
+                  <div class="steps"><i class="done"></i><i class="done"></i><i class="now"></i><i></i><i></i></div>
+                  <div class="steplabels"><span>Opened</span><span>Account</span><span class="on">Form</span><span>Questions</span><span>Review</span></div>
+                </div>
+                <div class="job">
+                  <div class="head"><b>Lab Technician</b><span>Copper State Health</span><em>1 min</em></div>
+                  <div class="steps"><i class="done"></i><i class="now"></i><i></i><i></i><i></i></div>
+                  <div class="steplabels"><span>Opened</span><span class="on">Account</span><span>Form</span><span>Questions</span><span>Review</span></div>
+                </div>
+                <div class="card-f">4 more waiting their turn<a href="#">See the queue</a></div>
+              </section>
+              <section class="card">
+                <div class="card-h"><h2>This week</h2><span class="grow"></span><a href="#" style="color:var(--accent);text-decoration:none;font-weight:500;font-size:13px">What's working</a></div>
+                <div class="chart">
+                  <div><i style="height:26%"></i><span>Mon</span></div>
+                  <div><i style="height:64%"></i><span>Tue</span></div>
+                  <div><i style="height:40%"></i><span>Wed</span></div>
+                  <div><i style="height:14%"></i><span>Thu</span></div>
+                  <div><i class="today" style="height:88%"></i><span class="today">Fri</span></div>
+                  <div><i class="none"></i><span>Sat</span></div>
+                  <div><i class="none"></i><span>Sun</span></div>
+                </div>
+                <div class="stats"><div><b>12</b><span>sent</span></div><div><b>3</b><span>answers</span></div><div><b>2</b><span>interviews</span></div></div>
+              </section>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================== Openings ============================== -->
+      <section class="screen" id="openings">
+        <div class="top">
+          <h1>Openings</h1>
+          <span class="sub">Technician jobs near Mesa, AZ · searched 2 hours ago · <a href="#">Change</a></span>
+          <span class="grow"></span>
+          <span class="search"><svg class="ico"><use href="#i-search"/></svg>Search a title or company</span>
+          <span class="btn"><svg class="ico"><use href="#i-refresh"/></svg>Find jobs</span>
+        </div>
+        <div class="content">
+          <div class="tabs">
+            <a class="on" href="#">Recommended <span class="count">18</span></a>
+            <a href="#">All <span class="count">34</span></a>
+            <a href="#">Not interested <span class="count">3</span></a>
+          </div>
+          <div class="filters">
+            <span class="f"><svg class="ico"><use href="#i-sort"/></svg>Best fit<svg class="ico"><use href="#i-chev"/></svg></span>
+            <span class="f on">Pay: $50k+<svg class="ico"><use href="#i-chev"/></svg></span>
+            <span class="f">Posted: any time<svg class="ico"><use href="#i-chev"/></svg></span>
+            <span class="f on">Within 25 miles<svg class="ico"><use href="#i-chev"/></svg></span>
+            <span class="f">Workplace<svg class="ico"><use href="#i-chev"/></svg></span>
+            <span class="f"><svg class="ico"><use href="#i-sliders"/></svg>More filters <span class="count">2</span></span>
+            <span class="sw-label"><span class="switch on"></span>Only where the desk goes all the way</span>
+          </div>
+          <div class="card">
+            <table>
+              <thead><tr><th><span class="cb some"></span></th><th style="width:62px">Fit</th><th>Job</th><th style="width:158px">Pay</th>
+                <th style="width:112px">Posted</th><th style="width:170px">Applies on</th><th style="width:150px">Status</th></tr></thead>
+              <tbody>
+                <tr class="sel"><td><span class="cb on"><svg viewBox="0 0 24 24"><use href="#i-check"/></svg></span></td>
+                  <td><span class="fit" style="--p:92"><b>92</b></span></td>
+                  <td class="role"><b>Field Service Engineer</b><span>Sonoran Semiconductor · Chandler, AZ · 6 mi</span></td>
+                  <td class="pay">$71k – $107k / yr</td><td>2 days ago</td>
+                  <td class="sys"><b>Workday</b><small><svg class="ico"><use href="#i-check"/></svg>Goes all the way</small></td>
+                  <td><span class="pill new">New</span></td></tr>
+                <tr class="sel"><td><span class="cb on"><svg viewBox="0 0 24 24"><use href="#i-check"/></svg></span></td>
+                  <td><span class="fit" style="--p:88"><b>88</b></span></td>
+                  <td class="role"><b>Equipment Technician II</b><span>Copper State Fab · Tempe, AZ · 11 mi</span></td>
+                  <td class="pay">$31 – $38 / hr</td><td>Today</td>
+                  <td class="sys"><b>Workday</b><small><svg class="ico"><use href="#i-check"/></svg>Goes all the way</small></td>
+                  <td><span class="pill new">New</span></td></tr>
+                <tr><td><span class="cb"></span></td>
+                  <td><span class="fit" style="--p:84;--c:#4f46e5"><b>84</b></span></td>
+                  <td class="role"><b>Process Technician</b><span>Saguaro Semiconductor · Phoenix, AZ · 18 mi</span></td>
+                  <td class="pay">$28 – $34 / hr</td><td>3 days ago</td>
+                  <td class="sys"><b>SuccessFactors</b><small><svg class="ico"><use href="#i-check"/></svg>Goes all the way</small></td>
+                  <td><span class="pill work">Working on it</span></td></tr>
+                <tr><td><span class="cb"></span></td>
+                  <td><span class="fit" style="--p:79;--c:#4f46e5"><b>79</b></span></td>
+                  <td class="role"><b>Maintenance Technician</b><span>Canyon Aerospace · Mesa, AZ · 3 mi</span></td>
+                  <td class="pay">$62k – $80k / yr</td><td>5 days ago</td>
+                  <td class="sys"><b>Oracle</b><small><svg class="ico"><use href="#i-check"/></svg>Goes all the way</small></td>
+                  <td><span class="pill good">Ready to submit</span></td></tr>
+                <tr class="sel"><td><span class="cb on"><svg viewBox="0 0 24 24"><use href="#i-check"/></svg></span></td>
+                  <td><span class="fit" style="--p:76;--c:#4f46e5"><b>76</b></span></td>
+                  <td class="role"><b>Facilities Technician</b><span>Pima Medical Devices · Scottsdale, AZ · 14 mi</span></td>
+                  <td class="pay dim">Not listed</td><td>1 week ago</td>
+                  <td class="sys"><b>Workday</b><small><svg class="ico"><use href="#i-check"/></svg>Goes all the way</small></td>
+                  <td></td></tr>
+                <tr><td><span class="cb"></span></td>
+                  <td><span class="fit" style="--p:71;--c:#4f46e5"><b>71</b></span></td>
+                  <td class="role"><b>Field Service Technician</b><span>Mesa Vacuum Systems · Gilbert, AZ · 8 mi</span></td>
+                  <td class="pay">$58k – $72k / yr</td><td>4 days ago</td>
+                  <td class="sys"><b>iCIMS</b><small class="no">May stop for a bot check</small></td>
+                  <td></td></tr>
+                <tr><td><span class="cb"></span></td>
+                  <td><span class="fit" style="--p:68;--c:#9ca3af"><b>68</b></span></td>
+                  <td class="role"><b>Manufacturing Technician</b><span>Kino Instruments · Chandler, AZ · 9 mi</span></td>
+                  <td class="pay">$26 – $30 / hr</td><td>2 weeks ago</td>
+                  <td class="sys"><b>Greenhouse</b><small><svg class="ico"><use href="#i-check"/></svg>Goes all the way</small></td>
+                  <td><span class="pill warn">Needs you</span></td></tr>
+                <tr><td><span class="cb"></span></td>
+                  <td><span class="fit" style="--p:64;--c:#9ca3af"><b>64</b></span></td>
+                  <td class="role"><b>Calibration Technician</b><span>Ocotillo Metrology · Remote</span></td>
+                  <td class="pay">$55k – $65k / yr</td><td>6 days ago</td>
+                  <td class="sys"><b>Company site</b><small class="no">Not checked yet</small></td>
+                  <td></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="bulk">
+            <b>3 selected</b><span class="div"></span>
+            <span class="opt"><svg class="ico"><use href="#i-eye"/></svg>Stops at each review page<svg class="ico chev"><use href="#i-chev"/></svg></span>
+            <span class="opt"><svg class="ico"><use href="#i-file"/></svg>Tailored resume: off</span>
+            <span class="opt"><svg class="ico"><use href="#i-pen"/></svg>Cover letter: on</span>
+            <span class="btn sm ghost">Clear</span>
+            <span class="btn primary">Apply to 3 jobs<svg class="ico"><use href="#i-arrow"/></svg></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================== Settings ============================== -->
+      <section class="screen" id="settings">
+        <div class="top"><h1>Settings</h1></div>
+        <div class="content">
+          <div class="settings">
+            <nav class="snav">
+              <a href="#">Your profile</a><a href="#">Job search</a><a class="on" href="#">Applying</a>
+              <a href="#">Accounts and passwords</a><a href="#">Email codes</a><a href="#">Phone alerts</a>
+              <a href="#">Resume and cover letters</a><a href="#">Updates and about</a>
+            </nav>
+            <div class="spanel">
+              <h2>Applying</h2>
+              <p>What the desk may do in your name. It never solves a CAPTCHA, and never signs you up for a newsletter or job alerts.</p>
+              <div class="card">
+                <div class="set"><div><b>Submit for me</b><span class="d">Off: the desk stops at every review page, and you press Submit.</span></div><span class="switch"></span></div>
+                <div class="set"><div><b>Make my accounts</b><span class="d">Creates your account at each employer, with a password kept in Windows' own password vault.</span></div><span class="switch on"></span></div>
+                <div class="set"><div><b>Agree to required notices</b><span class="d">The privacy notices and terms an application can't go on without.</span></div><span class="switch on"></span></div>
+                <div class="set"><div><b>Cookie banners</b><span class="d">Declined wherever the site lets you.</span></div><span class="seg"><span class="on">Decline</span><span>Accept if there's no other way</span></span></div>
+                <div class="set"><div><b>Jobs at once</b><span class="d">How many applications the desk fills at the same time.</span></div><span class="seg"><span>1</span><span class="on">2</span><span>3</span><span>4</span><span>5</span></span></div>
+                <div class="set"><div><b>Keep going while I'm away</b><span class="d">A sign-in or emailed code waits on its card, and the other jobs carry on.</span></div><span class="switch on"></span></div>
+              </div>
+              <div class="card update">
+                <svg class="logo"><use href="#logo"/></svg>
+                <div><b>Version 0.3.253 is ready</b><span>You have 0.3.252. Updating takes about a minute, and the queue picks up where it left off.</span></div>
+                <div class="acts"><span class="btn sm">What's new</span><span class="btn sm primary">Update now</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+<script>
+function go() { document.body.dataset.screen = (location.hash || "#home").slice(1); }
+addEventListener("hashchange", go); go();
+</script>
+</body>
+</html>

@@ -72,7 +72,7 @@ Source: "build\uv\uvw.exe"; DestDir: "{app}\bin"; Flags: ignoreversion
 Source: "stop-desk.ps1"; Flags: dontcopy
 
 [Icons]
-; uvw is uv without a console window: the desk runs out of sight, and its page opens in the browser
+; uvw is uv without a console window: the desk runs out of sight, and it opens in a window of its own
 Name: "{autoprograms}\Job Desk"; Filename: "{app}\bin\uvw.exe"; Parameters: "run --frozen --python {#Python} --project ""{app}\plugin\server"" job-apply-desk"; WorkingDir: "{app}\plugin\server"; Comment: "Open the Job Desk"
 Name: "{autodesktop}\Job Desk"; Filename: "{app}\bin\uvw.exe"; Parameters: "run --frozen --python {#Python} --project ""{app}\plugin\server"" job-apply-desk"; WorkingDir: "{app}\plugin\server"; Comment: "Open the Job Desk"; Tasks: desktopicon
 

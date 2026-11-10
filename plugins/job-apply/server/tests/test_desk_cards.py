@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 
 import pytest
-from conftest import browser_available, person_browser, run
+from conftest import browser_available, open_desk, person_browser, run
 
 from job_apply.desk import Desk
 
@@ -21,8 +21,11 @@ DESK_FIXTURES = Path(__file__).parent / "fixtures" / "desk"
 UPDATE = os.environ.get("JOB_APPLY_UPDATE_SNAPSHOTS") == "1"
 
 # Each case: the canned state it draws, the snapshot its cards are compared with, what's kept in the browser before the
-# page opens (its localStorage), and what's pressed before the cards are read. Every <details> is opened first (What
-# went in, the passwords' How this works), so what's in them is in the snapshot too.
+# page opens (its localStorage), and what's pressed before the cards are read. A card shows only on its own page of the
+# side menu, so the cards are read on each page in turn (the menu's links pressed, as a person would), each card from
+# its own page; the Openings card from Openings, or from Applications for the "applications" case ("list": its page),
+# with the presses made there. Every <details> is opened first (What went in, the passwords' How this works), so
+# what's in them is in the snapshot too.
 CASES = {
     # a job stopped for each need: questions (with a What went in panel), a sign-in holding the queue, an emailed code,
     # a bot check, a CAPTCHA, stuck, a Submit that didn't go, the person's own Submit, one to check whether it went in,
@@ -37,7 +40,7 @@ CASES = {
     # the common questions (one answered) and a saved password
     "openings": {"state": "state-openings.json", "golden": "cards-openings.txt"},
     # the same openings' My applications: one due a follow-up, one at the interview stage
-    "applications": {"state": "state-openings.json", "golden": "cards-applications.txt",
+    "applications": {"state": "state-openings.json", "golden": "cards-applications.txt", "list": "applications",
                      "press": ["[data-filter=mine]"]},
     # the bar's Stuck group picked: its hint offers the Notes; the queue paused with one waiting
     "notes": {"state": "state-notes.json", "golden": "cards-notes.txt", "storage": {"desk-stop-filter": "stuck"}},
@@ -73,9 +76,10 @@ def _state(name: str) -> dict:
     return json.loads((DESK_FIXTURES / name).read_text(encoding="utf-8"))
 
 
-def _cards(srv, monkeypatch, state: dict, storage: dict | None = None, press: list[str] = ()) -> str:
-    """The desk's page drawn from `state` (Desk.state replaced by it), each section.card's words as
-    _snapshot says them."""
+def _cards(srv, monkeypatch, state: dict, storage: dict | None = None, press: list[str] = (),
+           list_page: str = "openings") -> str:
+    """The desk's page drawn from `state` (Desk.state replaced by it), each section.card's words as _snapshot says
+    them, each read on its own page (the Openings card on `list_page`, where `press` is pressed)."""
     monkeypatch.setattr(Desk, "state", lambda self: copy.deepcopy(state))
     desk = Desk(srv)
     desk.applier.start = lambda: None  # (nothing is worked: the page shows only the canned state)
@@ -85,18 +89,31 @@ def _cards(srv, monkeypatch, state: dict, storage: dict | None = None, press: li
         try:
             async with person_browser() as browser:
                 page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                # The Alerts on this computer card's button says what the browser allows ("Alert me", "Alerts
+                # blocked"), and the tests' browsers differ in that (CI's headless shell blocks notifications, a
+                # full Chromium hasn't been asked): the cards are read as on a browser not asked yet
+                await page.add_init_script("""(() => { try { Object.defineProperty(Notification, "permission",
+                    {get: () => "default"}); } catch (e) {} })()""")
                 if storage:
                     await page.add_init_script(f"""(() => {{ try {{ for (const [k, v] of Object.entries({json.dumps(storage)}))
                         localStorage.setItem(k, v); }} catch (e) {{}} }})()""")  # noqa: E501
-                await page.goto(desk.url)
+                await open_desk(page, desk)
                 await page.wait_for_selector("#plugin-version:not(:empty)")  # the state is drawn
-                for selector in press:
-                    await page.click(selector)
-                await page.evaluate("() => document.querySelectorAll('details').forEach((d) => { d.open = true; })")
-                await page.wait_for_timeout(100)
-                cards = await page.evaluate(_READ_CARDS)
+                cards: dict[str, str | None] = {}
+                for at in ("home", list_page, "answers", "working", "settings", "help"):
+                    if at != "home":
+                        await page.click(f".nav a[href='#{at}']")
+                        await page.wait_for_function("(at) => document.body.dataset.page === at", arg=at)
+                    if at == list_page:
+                        for selector in press:
+                            await page.click(selector)
+                    await page.evaluate("() => document.querySelectorAll('details').forEach((d) => { d.open = true; })")
+                    await page.wait_for_timeout(100)
+                    for card, text in await page.evaluate(_READ_CARDS):  # (in the page's order; null when not shown)
+                        if cards.get(card) is None:
+                            cards[card] = text
                 await browser.close()
-                return cards
+                return [[card, text] for card, text in cards.items()]
         finally:
             await desk.stop()
 
@@ -137,8 +154,10 @@ def _compare(name: str, seen: str) -> None:
 @pytest.mark.parametrize("case", sorted(CASES))
 def test_the_desks_cards_say_what_they_said(srv, job_apply_home, monkeypatch, case):
     how = CASES[case]
-    seen = _cards(srv, monkeypatch, _state(how["state"]), how.get("storage"), how.get("press", []))
-    assert seen.count("\n## ") + 1 == 9, seen  # (every card: the openings, the idle one, the seven on the side)
+    seen = _cards(srv, monkeypatch, _state(how["state"]), how.get("storage"), how.get("press", []),
+                  how.get("list", "openings"))
+    # (every card: Home's four, the Openings card, Your answers' and What's working's, Settings' six, Help's two)
+    assert seen.count("\n## ") + 1 == 15, seen
     _compare(how["golden"], seen)
 
 

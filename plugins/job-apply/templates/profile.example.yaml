@@ -242,3 +242,5 @@ settings:
   phone_alert_details: false
   phone_summary_at: "18:00"     # when the daily summary comes (this computer's clock), or off
   phone_alerts_server: ~        # your own ntfy server's https address (empty: ntfy.sh)
+  # app: the Job Desk opens in a window of its own. tab: in a tab of your usual browser.
+  desk_window: app

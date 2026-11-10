@@ -1,3 +1,32 @@
+## needs-h
+Needs you
+1
+Technician · Example Stuck Stuck
+I couldn't find the button that moves this application on.
+Show me
+Carry on
+Skip job
+I submitted it myself
+Report a problem
+
+## done-h
+Ready and done
+Technician · Example Failed Didn't finish
+The page didn't load: TimeoutError.
+Show me
+Carry on
+Skip job
+I submitted it myself
+Report a problem
+No applications tracked yet.
+
+## work-h
+Working on
+Paused: 1 waiting. Press Carry on with the queue.
+
+## idle-h
+(hidden)
+
 ## list-h
 Openings
 Recommended
@@ -79,38 +108,6 @@ Example Failed · Phoenix, AZ · YYYY-MM-DD · pay not listed
 title matches
 Didn't finish
 
-## idle-h
-(hidden)
-
-## needs-h
-Needs you
-1
-Technician · Example Stuck Stuck
-I couldn't find the button that moves this application on.
-Show me
-Carry on
-Skip job
-I submitted it myself
-Report a problem
-
-## work-h
-Working on
-Paused: 1 waiting. Press Carry on with the queue.
-
-## done-h
-Ready and done
-Technician · Example Failed Didn't finish
-The page didn't load: TimeoutError.
-Show me
-Carry on
-Skip job
-I submitted it myself
-Report a problem
-No applications tracked yet.
-
-## working-h
-(hidden)
-
 ## bank-h
 Common questions
 0 of 12 answered
@@ -128,6 +125,19 @@ No
 Yes
 What pay are you looking for? Write it as the site would ask, e.g. "$28 per hour" or "$60,000 per year".
 Show all 12
+
+## working-h
+(hidden)
+
+## profile-h
+Your profile
+Your details, work history and education, and the answers that go on every application.
+Edit your profile
+
+## safety-card-h
+Safety
+What the desk may do for you and what it never does, as it is set now.
+See your safety settings
 
 ## pw-h
 Site passwords
@@ -155,4 +165,27 @@ A push on your phone when a job needs you or is ready for your Submit, and a sum
 Turn on phone alerts
 How this works
 The alerts go through ntfy's servers to the topic your phone subscribes to. So they say only counts and kinds ("A job needs you: a bot check", "2 applications are ready for your Submit"), never an employer, a job or anything about you, unless you turn on Say which employer and job. The topic is a long random name kept on this computer, with your passwords; Turn off forgets it (a new one is made next time). One alert a job a stop, those that come together in one; the summary at the time you pick (empty: none). To use your own ntfy server, set phone_alerts_server under settings: in your profile.
+
+## alerts-h
+Alerts on this computer
+A note on your screen when a job needs you.
+Alert me
+
+## program-h
+This program
+Version 0.0.0.
+The desk runs inside Claude here. It stops when you close Claude.
+
+## how-h
+How the desk works
+Find jobs searches the career sites of the employers on your lists, and ranks what it finds against your profile.
+You pick openings and press Apply to selected. The desk fills each application in the desk's browser window, up to its review page.
+When a site needs you (a question, a sign-in, a bot check), the job waits under Needs you on the Home page.
+Nothing is submitted until you press Submit, unless you turned on "Submit for me". LinkedIn and Indeed are always submitted by you.
+Answers you give here are saved in ~/.job-apply/answers.yaml unless you untick "remember".
+
+## notes-card-h
+Notes on the desk's stops
+Each time a job stops on something the desk most likely got wrong, it takes a note. Filing the notes is how the next version gets better.
+Notes (2)
 

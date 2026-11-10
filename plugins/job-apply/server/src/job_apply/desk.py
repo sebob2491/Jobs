@@ -31,15 +31,16 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
 from . import (autofill, config, employment, history, letters, outcomes, pay, phone, places, profile_setup, report,
-               vault, workplace)
+               vault, window, workplace)
 from .browser import _cookie_setting
 from .pipeline import (DESK_PASSWORDS, MAIL_WATCH_MAX, QUEUE_NO_LOCK, Applier, _may_accept_notices,
                        _may_manage_accounts, _test_identity, placed_key, question_key)
@@ -60,6 +61,13 @@ VISIT_GAP = 30 * 60  # a look at the openings this long (seconds) after the one 
 SEEN_WRITE = 60  # the time of the last look is written to desk.json at most this often (the page looks again and again)
 FOUND_KEEP = 5000  # the openings whose first-found time is kept (openings_found.json): the newest
 WHATS_NEW_MOST = 50  # the openings whats_new lists (it counts them all)
+OPEN_URL_MOST = 2000  # the longest address /api/open hands to the person's usual browser
+# The desk's own window is started with a one-time code in its address, never the page's key: a program's command
+# line can be read by the computer's other accounts for as long as it runs. A code is good for one use and this many
+# seconds, and the desk keeps at most WINDOW_CODES_MOST at a time (the oldest goes first)
+WINDOW_CODE_LIFE = 60
+WINDOW_CODES_MOST = 5
+_clock = time.monotonic  # the clock the codes' age is told by (the tests move it)
 # a job's statuses once it's sent in, or waiting on its review page (APPLICATION_STATUSES): no opening to turn down
 SENT = frozenset(APPLICATION_STATUSES)
 # and once it's done with on the desk (the page's DONE): sent in, closed, or skipped. An opening in one is no news
@@ -129,6 +137,22 @@ def _count_param(request: Request, name: str, default: int, most: int) -> int:
     return int(said)
 
 
+def _web_address(url: str) -> bool:
+    """May /api/open hand this to the person's usual browser? Only a web address: at most OPEN_URL_MOST characters,
+    with no space or control character among them (nor any other that doesn't show), http or https, and with a host.
+    Never a file, another program's own kind of link (ms-settings:, javascript:) or anything else the computer would
+    open with something other than the browser."""
+    if not 0 < len(url) <= OPEN_URL_MOST:
+        return False
+    if any(c.isspace() or not c.isprintable() for c in url):  # (before it's parsed: urlsplit drops some of these)
+        return False
+    try:
+        parts = urlsplit(url)
+        return parts.scheme in ("http", "https") and bool(parts.hostname)
+    except ValueError:
+        return False
+
+
 class _QuietServer(uvicorn.Server):
     """uvicorn inside the MCP server: no signal handlers of its own (Claude Code owns them)."""
 
@@ -165,6 +189,7 @@ class Desk:
         self.applier.listed = lambda: self.listings  # (the openings listed here: for its Not interested check)
         self.fetch = fetch_posting  # reads each recommended posting's requirements
         self.token = secrets.token_urlsafe(18)
+        self._window_codes: dict[str, float] = {}  # one-time codes for the desk's window, each with when it was made
         self.port: int | None = None
         self.listings: list[dict[str, Any]] = []
         self.handled_only = False  # the page shows only openings where the desk goes all the way (desk_handled.yaml)
@@ -189,6 +214,11 @@ class Desk:
         # Find jobs searches when the person presses it. With this on (off unless they turn it on: issue #112, note
         # 44), the page also searches by itself once the openings are 12 hours old, but not while the queue is paused
         self.auto_search = False
+        # run on its own (job-apply-desk: main sets it), not inside Claude's plugin. Only then can the page stop the
+        # desk (its Quit the Job Desk: /api/quit sets `quitting`, which main waits on); inside Claude it stops with
+        # Claude
+        self.standalone = False
+        self.quitting = asyncio.Event()
         self.search: dict[str, Any] = {"status": "idle", "at": None, "error": None, "query": "", "location": None,
                                        "errors": {}, "browser_only": [], "auto": False, "stopped": None}
         self._search_task: asyncio.Task | None = None
@@ -309,6 +339,30 @@ class Desk:
     def url(self) -> str:
         return f"http://127.0.0.1:{self.port}/?t={self.token}"
 
+    def window_url(self) -> str:
+        """The page's address for a window or tab to open with: a new one-time code (WINDOW_CODE_LIFE) in place of
+        the key, which the page's address (/) trades for the key's address once."""
+        now = _clock()
+        codes = {code: made for code, made in self._window_codes.items() if now - made < WINDOW_CODE_LIFE}
+        while len(codes) >= WINDOW_CODES_MOST:
+            del codes[min(codes, key=codes.__getitem__)]
+        code = secrets.token_urlsafe(18)
+        codes[code] = now
+        self._window_codes = codes
+        return f"http://127.0.0.1:{self.port}/?c={code}"
+
+    def _use_window_code(self, code: str) -> bool:
+        """Whether `code` is one of window_url's, unused and in time; used up either way once it's found."""
+        now = _clock()
+        found = None
+        for kept in list(self._window_codes):
+            # bytes: compare_digest refuses non-ASCII text (and every kept code is compared: no telling by the time)
+            if secrets.compare_digest(kept.encode(), code.encode()):
+                found = kept
+        if found is None:
+            return False
+        return now - self._window_codes.pop(found) < WINDOW_CODE_LIFE
+
     def app(self) -> Starlette:
         r = Route
         return Starlette(routes=[
@@ -338,6 +392,9 @@ class Desk:
             r("/api/profile/read", self.profile_read_view, methods=["POST"]),
             r("/api/profile/save", self.profile_save_view, methods=["POST"]),
             r("/api/mail/wait", self.mail_wait_view),
+            r("/api/open", self.open_view, methods=["POST"]),
+            r("/api/quit", self.quit_view, methods=["POST"]),
+            r("/api/window", self.window_view, methods=["POST"]),
         ])
 
     async def start(self, port: int = DEFAULT_PORT, open_browser: bool = True) -> str:
@@ -375,7 +432,9 @@ class Desk:
         if self._phone_task is None or self._phone_task.done():
             self._phone_task = asyncio.get_running_loop().create_task(self._watch_phone())
         if open_browser:
-            await asyncio.get_running_loop().run_in_executor(None, webbrowser.open, self.url)
+            # in a window of its own, or a tab of the person's usual browser (settings.desk_window: window.py)
+            # (with a one-time code, never the key: window_url; the profile read off the event loop, with the opening)
+            await asyncio.get_running_loop().run_in_executor(None, _open_window, self.window_url())
         return self.url
 
     async def _watch_updates(self) -> None:
@@ -488,6 +547,13 @@ class Desk:
     async def page_view(self, request: Request) -> Response:
         if not self._allowed(request, api=False):
             return self._forbidden()
+        # the desk's window, opened with a one-time code (window_url): to the page's own address, with its key, once.
+        # A code that's wrong, used or too old gets the page as a wrong key does, and no key
+        code = request.query_params.get("c")
+        if code is not None and self._use_window_code(code):
+            own = request.query_params.get("w") == "app"
+            return RedirectResponse(self.url + ("&w=app" if own else ""), status_code=303,
+                                    headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
         return HTMLResponse(PAGE.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
 
     async def state_view(self, request: Request) -> Response:
@@ -533,6 +599,40 @@ class Desk:
         if not self._allowed(request, api=True):
             return self._forbidden()
         return JSONResponse(self.safety(), headers={"Cache-Control": "no-store"})
+
+    async def open_view(self, request: Request) -> Response:
+        """A link pressed in the desk's own window (window.py): opened in the person's usual browser, where they're
+        signed in to LinkedIn and the rest. A web address and nothing else (_web_address), whatever is sent."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        try:
+            url = (await self._body(request)).get("url")
+        except ValueError:
+            url = None
+        if not isinstance(url, str) or not _web_address(url):
+            return JSONResponse({"error": "Only web addresses can be opened."}, status_code=400)
+        if not await asyncio.get_running_loop().run_in_executor(None, webbrowser.open, url):
+            # (no browser took it: the page opens the link the ordinary way, as it does for any refusal)
+            return JSONResponse({"error": "No browser opened it."}, status_code=502)
+        return JSONResponse({"opened": True})
+
+    async def quit_view(self, request: Request) -> Response:
+        """The page's Quit the Job Desk: a desk run on its own stops (main, which waits on `quitting`, stops it as
+        Ctrl+C does: the queue is kept, as at any restart). One inside Claude's plugin isn't the page's to stop."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        if not self.standalone:
+            return JSONResponse({"error": "The desk runs inside Claude here: close Claude to stop it."},
+                                status_code=409)
+        self.quitting.set()
+        return JSONResponse({"quitting": True})
+
+    async def window_view(self, request: Request) -> Response:
+        """A second start of the desk (main, finding this one running) opening this desk's page: an address with a
+        one-time code for it (window_url), so the key never goes on a browser's command line."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        return JSONResponse({"url": self.window_url()}, headers={"Cache-Control": "no-store"})
 
     async def seen_view(self, request: Request) -> Response:
         """The page loaded, or came to the front: the person looked at the openings (saw)."""
@@ -1575,6 +1675,8 @@ class Desk:
             "tracker_damaged": damaged(tracker_problem or ""),
             "tracker_path": str(config.db_path()),
             "version": config.plugin_version(),
+            # run on its own, not inside Claude's plugin: the page may offer Quit the Job Desk (/api/quit)
+            "standalone": self.standalone,
             "update": self.updates.notice(),
             "answers_problem": config.answers_problem(),
             "search": self.search,
@@ -1839,6 +1941,21 @@ def _profile_jobs_at_once() -> Any:
     except Exception:
         return _UNREAD
     return settings.get("jobs_at_once") if isinstance(settings, dict) else None
+
+
+def _desk_window() -> str:
+    """settings.desk_window, as the profile has it now: "app" (the desk's page in a window of its own) or "tab" (in
+    a tab of the person's usual browser); its default while the profile doesn't read."""
+    try:
+        return config.Profile.load().settings.desk_window
+    except Exception:
+        return config.DESK_WINDOW_DEFAULT
+
+
+def _open_window(url: str) -> None:
+    """The desk's page at `url` in its window or a tab, as the profile's settings.desk_window says (read here: off the
+    event loop, where Desk.start calls this)."""
+    window.open_window(url, _desk_window())
 
 
 def _first_line(e: BaseException) -> str:
@@ -2254,27 +2371,55 @@ def running_desk(port: int) -> str | None:
     return f"http://127.0.0.1:{port}/?t={token}"
 
 
+def window_address(url: str) -> str | None:
+    """For a second start: the running desk at `url` (running_desk's, with its key) asked for an address with a
+    one-time code (/api/window), to open its window with. None where it can't give one (a desk from before
+    /api/window, or one that doesn't answer in time): main then opens `url` itself, in a tab."""
+    parts = urlsplit(url)
+    token = parse_qs(parts.query).get("t", [""])[0]
+    ask = urllib.request.Request(f"http://127.0.0.1:{parts.port}/api/window", data=b"{}", method="POST",
+                                 headers={"x-desk-token": token, "content-type": "application/json"})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # (127.0.0.1 is never behind a proxy)
+    try:
+        with opener.open(ask, timeout=5) as answer:
+            coded = json.loads(answer.read().decode("utf-8")).get("url")
+    except (OSError, ValueError, AttributeError, http.client.HTTPException):
+        return None
+    # (only the running desk's own page, with a code, is opened: whatever else answers on that port can't send the
+    # window anywhere else)
+    own = f"http://127.0.0.1:{parts.port}/?c="
+    if not isinstance(coded, str) or not re.fullmatch(re.escape(own) + r"[A-Za-z0-9_-]+", coded):
+        return None
+    return coded
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the Job Desk on its own (without Claude Code)."""
     ap = argparse.ArgumentParser(description="Open the Job Desk")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
-    ap.add_argument("--no-browser", action="store_true", help="don't open the page in your browser")
+    ap.add_argument("--no-browser", action="store_true", help="don't open the Job Desk's window")
     args = ap.parse_args(argv)
     if (url := running_desk(args.port)) is not None:
         print(f"The Job Desk is already running: {url}", flush=True)
         if not args.no_browser:
-            webbrowser.open(url)
+            coded = window_address(url)
+            if coded is not None:
+                window.open_window(coded, _desk_window())
+            else:
+                # (no code to be had: the address with the key, in a tab of the usual browser, never on a browser's
+                # command line, where a window's address goes: the review of Nov 9)
+                window.open_window(url, "tab")
         return 0
     from . import server
 
     desk = get_desk(server)
+    desk.standalone = True  # (the page may stop this desk: its Quit the Job Desk, /api/quit)
 
     async def run() -> None:
         url = await desk.start(port=args.port, open_browser=not args.no_browser)
         print(f"Job Desk: {url}\nLeave this window open while you use it; Ctrl+C stops it.", flush=True)
         try:
-            while True:
-                await asyncio.sleep(3600)
+            await desk.quitting.wait()  # (until the page's Quit the Job Desk; Ctrl+C ends the wait too)
         finally:
             await desk.stop()
             await server.browser.close()

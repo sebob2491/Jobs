@@ -13,7 +13,7 @@ from datetime import date
 import httpx
 import pytest
 import yaml
-from conftest import browser_available, person_browser, run
+from conftest import browser_available, open_desk, person_browser, run
 from test_letters import KEY, FakeAnthropic
 
 from job_apply import config, letters, profile_setup
@@ -707,7 +707,7 @@ def test_set_up_your_profile_never_opens_over_a_window_opened_meanwhile(srv, tem
                     held.append(route)
 
                 await page.route("**/api/profile/form", hold)
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 for _ in range(200):
                     if held:
                         break

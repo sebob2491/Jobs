@@ -16,6 +16,8 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   - `pipeline.py`: the Job Desk's application driver, with its accounts, mail and filling parts in `pipeline_accounts.py`,
     `pipeline_mail.py` and `pipeline_filling.py` (mixins that read pipeline's names as `pipeline.X`);
   - `desk.py` and `static/desk.html`: the Job Desk page;
+  - `window.py`: the desk's own window: the person's Edge or Chrome started with the page's address and a size and
+    nothing else (never the browser the desk fills forms in; `settings.desk_window: tab` opens a tab instead);
   - `autofill.py`: answers from the profile;
   - `never.py`: what the desk never agrees to, ticks or presses for the person (one list, every path);
   - `browser.py` and `formjs.py`: the browser and the form reader; the browser's tabs, menus, dates, uploads and

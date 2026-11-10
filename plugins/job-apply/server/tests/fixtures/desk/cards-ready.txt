@@ -1,3 +1,61 @@
+## needs-h
+Needs you
+0
+Nothing right now.
+
+## done-h
+Ready and done
+1 to submit
+Field Service Engineer · Example Ready Ready to submit
+Filled and waiting on the review page.
+What went in (2 answers, 1 file, 1 agreement, 1 account made, 1 left empty)
+My Information
+First Name
+Sam
+Last Name
+Rivera
+Files put up
+Resume: resume.pdf
+Agreed to for you
+agreed to Example Ready's notice “AI in hiring”
+Account
+created your account on Example Ready's site with your saved password
+Left empty (optional)
+Middle Name (your profile doesn't answer it)
+Show me
+Submit
+Skip job
+I submitted it myself
+Cover letter
+Report a problem
+Technician · Example Failed Didn't finish
+The page didn't load: TimeoutError.
+Show me
+Carry on
+Skip job
+I submitted it myself
+Report a problem
+Technician · Example Sent Submitted
+Submitted: the site said thank you.
+Report a problem
+Technician · Example Skipped Skipped
+Skipped.
+Undo
+Report a problem
+Applied: 1
+
+## work-h
+Working on
+Process Technician · Example Running
+HH:MMopened the posting
+HH:MMclicked “Apply”
+HH:MMfilled 4 field(s) on “My Information”
+Report a problem
+2 more queued.
+
+## idle-h
+(hidden)
+
 ## list-h
 Openings
 Recommended
@@ -105,67 +163,6 @@ Example Queued Too · Phoenix, AZ · YYYY-MM-DD · pay not listed
 title matches
 Queued
 
-## idle-h
-(hidden)
-
-## needs-h
-Needs you
-0
-Nothing right now.
-
-## work-h
-Working on
-Process Technician · Example Running
-HH:MMopened the posting
-HH:MMclicked “Apply”
-HH:MMfilled 4 field(s) on “My Information”
-Report a problem
-2 more queued.
-
-## done-h
-Ready and done
-1 to submit
-Field Service Engineer · Example Ready Ready to submit
-Filled and waiting on the review page.
-What went in (2 answers, 1 file, 1 agreement, 1 account made, 1 left empty)
-My Information
-First Name
-Sam
-Last Name
-Rivera
-Files put up
-Resume: resume.pdf
-Agreed to for you
-agreed to Example Ready's notice “AI in hiring”
-Account
-created your account on Example Ready's site with your saved password
-Left empty (optional)
-Middle Name (your profile doesn't answer it)
-Show me
-Submit
-Skip job
-I submitted it myself
-Cover letter
-Report a problem
-Technician · Example Failed Didn't finish
-The page didn't load: TimeoutError.
-Show me
-Carry on
-Skip job
-I submitted it myself
-Report a problem
-Technician · Example Sent Submitted
-Submitted: the site said thank you.
-Report a problem
-Technician · Example Skipped Skipped
-Skipped.
-Undo
-Report a problem
-Applied: 1
-
-## working-h
-(hidden)
-
 ## bank-h
 Common questions
 0 of 12 answered
@@ -183,6 +180,19 @@ No
 Yes
 What pay are you looking for? Write it as the site would ask, e.g. "$28 per hour" or "$60,000 per year".
 Show all 12
+
+## working-h
+(hidden)
+
+## profile-h
+Your profile
+Your details, work history and education, and the answers that go on every application.
+Edit your profile
+
+## safety-card-h
+Safety
+What the desk may do for you and what it never does, as it is set now.
+See your safety settings
 
 ## pw-h
 Site passwords
@@ -210,4 +220,27 @@ A push on your phone when a job needs you or is ready for your Submit, and a sum
 Turn on phone alerts
 How this works
 The alerts go through ntfy's servers to the topic your phone subscribes to. So they say only counts and kinds ("A job needs you: a bot check", "2 applications are ready for your Submit"), never an employer, a job or anything about you, unless you turn on Say which employer and job. The topic is a long random name kept on this computer, with your passwords; Turn off forgets it (a new one is made next time). One alert a job a stop, those that come together in one; the summary at the time you pick (empty: none). To use your own ntfy server, set phone_alerts_server under settings: in your profile.
+
+## alerts-h
+Alerts on this computer
+A note on your screen when a job needs you.
+Alert me
+
+## program-h
+This program
+Version 0.0.0.
+The desk runs inside Claude here. It stops when you close Claude.
+
+## how-h
+How the desk works
+Find jobs searches the career sites of the employers on your lists, and ranks what it finds against your profile.
+You pick openings and press Apply to selected. The desk fills each application in the desk's browser window, up to its review page.
+When a site needs you (a question, a sign-in, a bot check), the job waits under Needs you on the Home page.
+Nothing is submitted until you press Submit, unless you turned on "Submit for me". LinkedIn and Indeed are always submitted by you.
+Answers you give here are saved in ~/.job-apply/answers.yaml unless you untick "remember".
+
+## notes-card-h
+Notes on the desk's stops
+Each time a job stops on something the desk most likely got wrong, it takes a note. Filing the notes is how the next version gets better.
+No notes right now.
 

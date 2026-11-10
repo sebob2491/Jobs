@@ -261,7 +261,7 @@ def test_the_desks_what_and_where_window_saves_and_finds_jobs_again(srv):
     import asyncio
     import time
 
-    from conftest import browser_available, launch_options, run
+    from conftest import browser_available, launch_options, open_desk, run
     if not browser_available():
         pytest.skip("needs Chromium")
     from playwright.async_api import async_playwright
@@ -286,7 +286,7 @@ def test_the_desks_what_and_where_window_saves_and_finds_jobs_again(srv):
             async with async_playwright() as pw:
                 browser = await pw.chromium.launch(**launch_options())
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_function("document.getElementById('area-btn').textContent.includes('Phoenix, AZ')")
                 assert "Field Service Engineer" in await page.text_content("#area-btn")
                 await page.click("#area-btn")
@@ -346,7 +346,7 @@ def test_the_what_and_where_window_saves_the_titles_to_leave_out(srv):
     import asyncio
     import time
 
-    from conftest import browser_available, launch_options, run
+    from conftest import browser_available, launch_options, open_desk, run
     if not browser_available():
         pytest.skip("needs Chromium")
     from playwright.async_api import async_playwright
@@ -380,7 +380,7 @@ def test_the_what_and_where_window_saves_the_titles_to_leave_out(srv):
             async with async_playwright() as pw:
                 browser = await pw.chromium.launch(**launch_options())
                 page = await browser.new_page()
-                await page.goto(desk.url)
+                await open_desk(page, desk, "openings")
                 await page.wait_for_function("document.getElementById('area-btn')"
                                              ".title.includes('a title with Intern')")
                 await page.click("#area-btn")

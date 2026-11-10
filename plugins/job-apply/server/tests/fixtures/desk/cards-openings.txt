@@ -1,3 +1,18 @@
+## needs-h
+(hidden)
+
+## done-h
+(hidden)
+
+## work-h
+(hidden)
+
+## idle-h
+Nothing needs you
+The desk is idle. Tick openings and press Apply, and what it's working on and what needs you show up here.
+Applied: 1
+Interviewing: 1
+
 ## list-h
 Openings
 Recommended
@@ -93,32 +108,6 @@ title matches
 2nd shift
 Not interested
 
-## idle-h
-Nothing needs you
-The desk is idle. Tick openings and press Apply, and what it's working on and what needs you show up here.
-Applied: 1
-Interviewing: 1
-
-## needs-h
-(hidden)
-
-## work-h
-(hidden)
-
-## done-h
-(hidden)
-
-## working-h
-What's working
-35 sent
-From 32 applications answered or sent 3 weeks ago or more (3 newer still wait): 8 got an answer (25%), and 6 led to an interview or a test (19%). The first answer took 9 days (the median of 8).
-Applications through Workday led to an interview or a test more often than those through iCIMS: 6 of 12 (50%), against 0 of 20 (0%).
-By job system
-Applications Answered Interview or test Days to answer
-iCIMS 20 10% 0% –
-Workday 12 50% 50% 7
-Only groups with 5 applications or more are shown. Where a difference is clear, not likely luck, openings like the applications that led to interviews are placed a little higher in the list, and ones like those that didn't a little lower (as much as 10 points would move them; “Placed higher” or “Placed lower” under a score says why). Scores, and which openings are recommended, don't change. Counted on this computer only.
-
 ## bank-h
 Common questions
 1 of 12 answered
@@ -141,6 +130,27 @@ Either
 Show all 11
 Your answers
 What pay are you looking for? Write it as the site would ask, e.g. "$28 per hour" or "$60,000 per year".
+
+## working-h
+What's working
+35 sent
+From 32 applications answered or sent 3 weeks ago or more (3 newer still wait): 8 got an answer (25%), and 6 led to an interview or a test (19%). The first answer took 9 days (the median of 8).
+Applications through Workday led to an interview or a test more often than those through iCIMS: 6 of 12 (50%), against 0 of 20 (0%).
+By job system
+Applications Answered Interview or test Days to answer
+iCIMS 20 10% 0% –
+Workday 12 50% 50% 7
+Only groups with 5 applications or more are shown. Where a difference is clear, not likely luck, openings like the applications that led to interviews are placed a little higher in the list, and ones like those that didn't a little lower (as much as 10 points would move them; “Placed higher” or “Placed lower” under a score says why). Scores, and which openings are recommended, don't change. Counted on this computer only.
+
+## profile-h
+Your profile
+Your details, work history and education, and the answers that go on every application.
+Edit your profile
+
+## safety-card-h
+Safety
+What the desk may do for you and what it never does, as it is set now.
+See your safety settings
 
 ## pw-h
 Site passwords
@@ -169,4 +179,27 @@ A push on your phone when a job needs you or is ready for your Submit, and a sum
 Turn on phone alerts
 How this works
 The alerts go through ntfy's servers to the topic your phone subscribes to. So they say only counts and kinds ("A job needs you: a bot check", "2 applications are ready for your Submit"), never an employer, a job or anything about you, unless you turn on Say which employer and job. The topic is a long random name kept on this computer, with your passwords; Turn off forgets it (a new one is made next time). One alert a job a stop, those that come together in one; the summary at the time you pick (empty: none). To use your own ntfy server, set phone_alerts_server under settings: in your profile.
+
+## alerts-h
+Alerts on this computer
+A note on your screen when a job needs you.
+Alert me
+
+## program-h
+This program
+Version 0.0.0.
+The desk runs inside Claude here. It stops when you close Claude.
+
+## how-h
+How the desk works
+Find jobs searches the career sites of the employers on your lists, and ranks what it finds against your profile.
+You pick openings and press Apply to selected. The desk fills each application in the desk's browser window, up to its review page.
+When a site needs you (a question, a sign-in, a bot check), the job waits under Needs you on the Home page.
+Nothing is submitted until you press Submit, unless you turned on "Submit for me". LinkedIn and Indeed are always submitted by you.
+Answers you give here are saved in ~/.job-apply/answers.yaml unless you untick "remember".
+
+## notes-card-h
+Notes on the desk's stops
+Each time a job stops on something the desk most likely got wrong, it takes a note. Filing the notes is how the next version gets better.
+No notes right now.
 
