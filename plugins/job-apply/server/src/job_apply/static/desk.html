@@ -473,7 +473,7 @@ button.score:hover { box-shadow: 0 0 0 2px var(--control-line); }
 /* Home's four tiles (C5): a number with a line under it and an icon at the right; one that waits on the person, marked */
 .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
 .tile { padding: 15px 18px 14px; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px;
-  align-items: start; }
+  align-items: start; align-content: start; }
 .tile .label { color: var(--muted); font-size: 13px; font-weight: 500; }
 .tile .num { font-size: 28px; font-weight: 700; letter-spacing: -.02em; line-height: 1.2; grid-column: 1;
   font-variant-numeric: tabular-nums; }
