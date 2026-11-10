@@ -244,9 +244,9 @@ def test_the_first_cover_letters_stop_names_claude_only_inside_claude(srv, stand
         assert r.reason == alone + " Or tell Claude in the chat what to change." == pipeline_letters.LETTER_SAYS
 
 
-ADD_IT = "Add it in your profile (Settings, Your profile), then press Carry on."
-ASK_FOR_JOBS = " Or ask Claude: “add the start and end months of my jobs from my resume to my profile”."
-ASK_FOR_SCHOOLS = " Or ask Claude to add it from your resume (only what it says: never a degree you didn't finish)."
+IN_PROFILE = "Add it in your profile (Settings, Your profile)"
+ASK_FOR_JOBS = "ask Claude: “add the start and end months of my jobs from my resume to my profile”"
+ASK_FOR_SCHOOLS = "ask Claude to add it from your resume (only what it says: never a degree you didn't finish)"
 
 
 NO_DEGREE = (" For a college where you took classes without finishing, your profile says Some college (no degree), "
@@ -258,8 +258,9 @@ AFTER = (" From then on, the desk fills them in from your profile on every appli
 @pytest.mark.parametrize("standalone", [True, False])
 def test_the_stops_about_past_jobs_and_schools_name_claude_only_inside_claude(srv, standalone):
     """The stops for a past job's and a school's dates (or Degree) the profile lacks say to add them in the profile on
-    the desk, never in profile.yaml; inside Claude each adds what to ask Claude. A Degree box adds how a college not
-    finished is said (coursework is never a degree). Carry on is asked for once for each thing the person does."""
+    the desk, never in profile.yaml; inside Claude each adds what to ask Claude, as another way to add them. A Degree
+    box adds how a college not finished is said (coursework is never a degree). Carry on is asked for once after
+    whatever was added, whichever way, and once more for the other way: typing into the page."""
     path = config.profile_path()
     profile = yaml.safe_load(path.read_text(encoding="utf-8"))
     profile["work_history"][0].pop("start")
@@ -276,25 +277,39 @@ def test_the_stops_about_past_jobs_and_schools_name_claude_only_inside_claude(sr
     def said(*boxes):
         return applier._entry_gaps(Run(1, "Technician", "Example Litho"), site, list(boxes))[0]
 
-    def jobs(add_it=ADD_IT):
+    def add_it(ask, last=True):
+        if standalone:
+            return IN_PROFILE + (", then press Carry on." if last else ".")
+        return f"{IN_PROFILE}, or {ask}." + (" Then press Carry on." if last else "")
+
+    def jobs(last=True):
         return ("Workday asks about your past jobs, and your profile doesn't have this for them: Equipment Technician "
-                "at Intel (From). " + add_it + ("" if standalone else ASK_FOR_JOBS))
+                "at Intel (From). " + add_it(ASK_FOR_JOBS, last))
 
     def schools(what):
         return ("Workday asks about your schools, and your profile doesn't have this for them: Arizona State "
-                f"University in Education 1 ({what}). " + ADD_IT + ("" if standalone else ASK_FOR_SCHOOLS))
+                f"University in Education 1 ({what}). " + add_it(ASK_FOR_SCHOOLS))
 
     assert said(work) == jobs() + AFTER
     assert said(school) == schools("From") + AFTER
     assert said(degree) == schools("Degree") + NO_DEGREE + AFTER
     # (both to add: Carry on is asked for once, after the schools)
-    assert said(work, school) == (jobs("Add it in your profile (Settings, Your profile).") + " " + schools("From")
-                                  + AFTER)
+    assert said(work, school) == jobs(last=False) + " " + schools("From") + AFTER
     for each in (said(work), said(school), said(degree), said(work, school)):
         assert "profile.yaml" not in each and "_history" not in each, each
         assert ("Claude" in each) is not standalone, each
-        # (once for what was added in the profile, once for the other way: typing into the page)
-        assert "Then press Carry on" not in each and each.count("press Carry on") == 2, each
+        # (once for what was added to the profile, by hand or by Claude; once for the other way: typing into the page)
+        assert each.lower().count("press carry on") == 2, each
+    # the words themselves, one of each
+    if standalone:
+        assert said(work).startswith("Workday asks about your past jobs, and your profile doesn't have this for them: "
+                                     "Equipment Technician at Intel (From). Add it in your profile (Settings, Your "
+                                     "profile), then press Carry on. From then on, the desk fills them in")
+    else:
+        assert said(work).startswith("Workday asks about your past jobs, and your profile doesn't have this for them: "
+                                     "Equipment Technician at Intel (From). Add it in your profile (Settings, Your "
+                                     "profile), or ask Claude: “add the start and end months of my jobs from my "
+                                     "resume to my profile”. Then press Carry on. From then on, the desk fills them in")
 
 
 def test_the_sentences_the_same_with_claude_and_without():

@@ -14075,7 +14075,9 @@ def test_a_schools_missing_degree_is_asked_for_as_a_degree_never_as_dates(srv):
     pending = [{"id": "a", "label": "Degree*", "section": "Education 1", "required": True, "kind": "listbox"}]
     said, rest, _ = applier._entry_gaps(r, {"url": "https://example.wd1.myworkdayjobs.com/x"}, pending)
     assert "Arizona State University in Education 1 (Degree)" in said, said
-    assert "Add it in your profile (Settings, Your profile), then press Carry on." in said \
+    # (inside Claude, as the tests' desk is: in the profile or by asking Claude, then Carry on)
+    assert "Add it in your profile (Settings, Your profile), or ask Claude to add it from your resume" in said \
+        and "Then press Carry on." in said \
         and "Some college (no degree)" in said and "never a degree you didn't finish" in said, said
     assert "years as start" not in said, said
     assert rest == []
@@ -14199,8 +14201,8 @@ def test_a_degree_list_with_nothing_for_classes_leaves_the_pick_to_the_person(sr
     # a list that has such a choice: the profile can say it
     said, _, code = applier._entry_gaps(r, site, [{**degree, "options": [*WORKDAY_DEGREES, "Some College, No Degree"]}])
     assert f"{school} in Education 2 (Degree)" in said \
-        and "Add it in your profile (Settings, Your profile), then press Carry on." in said \
-        and "Some college (no degree)" in said, said
+        and "Add it in your profile (Settings, Your profile), or ask Claude to add it from your resume" in said \
+        and "Then press Carry on." in said and "Some college (no degree)" in said, said
     assert code == "profile_gap"
 
     # written as setup writes it, and turned down by the list: still the person's pick, never "the closest"

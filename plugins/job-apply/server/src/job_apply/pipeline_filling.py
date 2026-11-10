@@ -512,23 +512,30 @@ class FillingMixin:
             return "; ".join(f"{name} ({', '.join(what)})" for name, what in entries.items())
 
         site, said = pipeline._site(run, data), []
+
+        def add_it(ask: str, last: bool) -> str:
+            """Where to add it: the profile on the desk, or (inside Claude) by asking Claude; then Carry on, asked for
+            once after the last of them, whichever way they were added (the second look of Nov 10: the old words left
+            the one who asked Claude with nothing to press)."""
+            if self.standalone:
+                return "Add it in your profile (Settings, Your profile)" + (", then press Carry on." if last else ".")
+            return f"Add it in your profile (Settings, Your profile), or {ask}." + (" Then press Carry on." if last
+                                                                                    else "")
+
         if missing["work"]:
-            # (with schools to add too, Carry on is asked for once, after both: the schools' sentence says it)
             said.append(f"{site} asks about your past jobs, and your profile doesn't have this for them: "
-                        f"{listed(missing['work'])}. Add it in your profile (Settings, Your profile)"
-                        + ("." if missing["education"] else ", then press Carry on.")
-                        + ("" if self.standalone else " Or ask Claude: \u201cadd the start and end months of my jobs "
-                           "from my resume to my profile\u201d."))
+                        f"{listed(missing['work'])}. "
+                        + add_it("ask Claude: \u201cadd the start and end months of my jobs from my resume to my "
+                                 "profile\u201d", last=not missing["education"]))
         if missing["education"]:
             said.append(f"{site} asks about your schools, and your profile doesn't have this for them: "
-                        f"{listed(missing['education'])}. Add it in your profile (Settings, Your profile), then press "
-                        "Carry on."
-                        + ("" if self.standalone else " Or ask Claude to add it from your resume (only what it says: "
-                           "never a degree you didn't finish).")
+                        f"{listed(missing['education'])}. "
+                        + add_it("ask Claude to add it from your resume (only what it says: never a degree you didn't "
+                                 "finish)", last=True)
                         # (a Degree box: coursework is never a degree. The profile's form saves a college not finished,
                         # its "Did you finish this degree?" answered No, as Some college (no degree): profile_setup)
                         + (" For a college where you took classes without finishing, your profile says Some college "
-                           "(no degree), never a degree: answer No to “Did you finish this degree?”."
+                           "(no degree), never a degree: answer No to \u201cDid you finish this degree?\u201d."
                            if re.search(r"degree|qualification|diploma", " ".join(
                                w for boxes in missing["education"].values() for w in boxes).lower()) else ""))
         if said:
