@@ -422,9 +422,9 @@ def test_a_row_where_the_desk_goes_all_the_way_says_so_in_its_applies_on_cell(sr
     tip = ("In the plugin's live check, the desk took a test applicant at this employer all the way to the review "
            "page.")
     assert all(systems.values()), systems
-    assert seen == {"Module Equipment Technician": ["cell", [systems["Module Equipment Technician"], "Goes all the way"],
-                                                    tip, 1],
-                    "Field Service Engineer": ["cell", [systems["Field Service Engineer"]], None, 0]}, seen
+    handled, other = "Module Equipment Technician", "Field Service Engineer"
+    assert seen == {handled: ["cell", [systems[handled], "Goes all the way"], tip, 1],
+                    other: ["cell", [systems[other]], None, 0]}, seen
 
 
 # Where each line's cells sit: the six rows' and the header's (the box, Fit, Job, Pay, Posted, Applies on, Status)
