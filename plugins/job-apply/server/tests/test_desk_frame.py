@@ -26,7 +26,7 @@ PAGES = {"home": "Home", "openings": "Openings", "applications": "Applications",
 # one ready to submit and nothing sent in yet: Home's five cards (Getting started first; not Done this visit), no What's
 # working card
 CARDS = {"home": ["start-h", "needs-h", "done-h", "work-h", "thisweek-h"], "openings": ["list-h"],
-         "applications": ["apps-h"], "answers": ["bank-h"], "working": [],
+         "applications": ["apps-h"], "answers": ["bank-h", "remembered-h"], "working": [],
          # (Settings opens on its Your profile panel, the design's D1: the other panels' cards are in the page, each
          # shown by its panel's address, test_desk_settings_page.py)
          "settings": ["profile-h"],

@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 from conftest import browser_available, open_desk, person_browser, press_menu, run
 
+from job_apply import config
 from job_apply.desk import Desk
 
 pytestmark = pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")
@@ -47,6 +48,16 @@ CASES = {
     # the bar's Stuck group picked: its hint offers the Notes; the queue paused with one waiting
     "notes": {"state": "state-notes.json", "golden": "cards-notes.txt", "storage": {"desk-stop-filter": "stuck"}},
 }
+
+# The answers the desk remembers, for Your answers' second card (D5), newest first: an ID kept for one employer (shown
+# as dots), a question answered for every employer, and one left empty at another employer. Made-up values only
+REMEMBERED = [
+    {"match": config.question_pattern("Employee ID"), "answer": "EX-000123", "question": "Employee ID",
+     "at": "Example Fab"},
+    {"match": config.question_pattern("Are you willing to work weekends?"), "answer": "Yes, every other weekend",
+     "question": "Are you willing to work weekends?"},
+    {"match": config.question_pattern("Middle name"), "answer": None, "question": "Middle name", "at": "Example Litho"},
+]
 
 # what changes from one run or computer to another: times of day, dates, "5 min ago", and This week's day names (a
 # bar's, on a line of its own: the 7 days end today)
@@ -104,6 +115,9 @@ def _cards(srv, monkeypatch, state: dict, storage: dict | None = None, press: li
     monkeypatch.setattr(Desk, "state", lambda self: copy.deepcopy(state))
     desk = Desk(srv)
     desk.applier.start = lambda: None  # (nothing is worked: the page shows only the canned state)
+    # (Your answers' Answers the desk remembers is filled by the desk's /api/answers, not the state (the design's D5):
+    # the same made-up answers file every run, the card read once it's drawn from it)
+    config._write_answers({}, [dict(e) for e in REMEMBERED])
 
     async def go():
         await desk.start(port=0, open_browser=False)
@@ -131,6 +145,8 @@ def _cards(srv, monkeypatch, state: dict, storage: dict | None = None, press: li
                     if at == list_page:
                         for selector in press:
                             await page.click(selector)
+                    if at == "answers":
+                        await page.wait_for_selector("#remembered-card[data-loaded]", state="attached")
                     await page.evaluate("() => document.querySelectorAll('details').forEach((d) => { d.open = true; })")
                     # (and every job's card opened, as a person would, by its chevron: four or more in a list start
                     # closed, the design's C3)
@@ -185,10 +201,11 @@ def test_the_desks_cards_say_what_they_said(srv, job_apply_home, monkeypatch, ca
     seen = _cards(srv, monkeypatch, _state(how["state"]), how.get("storage"), how.get("press", []),
                   how.get("list", "openings"))
     # (every card: Home's six (Version C's This week and Getting started among them), the Openings card, the
-    # Applications card (Version B's B6), Your answers' and What's working's, Settings' eleven (Version D's Job search
-    # and Applying cards among them, Safety a row of Applying's; D3's Your own alert server under Phone alerts, the
-    # rows of Updates and about, and those of Email codes and of Resume and cover letters), Help's two)
-    assert seen.count("\n## ") + 1 == 23, seen
+    # Applications card (Version B's B6), Your answers' two (D5's Answers the desk remembers) and What's working's,
+    # Settings' eleven (Version D's Job search and Applying cards among them, Safety a row of Applying's; D3's Your own
+    # alert server under Phone alerts, the rows of Updates and about, and those of Email codes and of Resume and cover
+    # letters), Help's two)
+    assert seen.count("\n## ") + 1 == 24, seen
     _compare(how["golden"], seen)
 
 
