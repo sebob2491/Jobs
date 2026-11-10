@@ -262,6 +262,16 @@ input[type=checkbox]:disabled { opacity: .5; cursor: default; }
 /* under a card's rows: a closed <details> holding rows seldom needed */
 details.setmore { padding: 0; color: inherit; font-size: inherit; }
 details.setmore > summary { padding: 10px 18px; font-size: 13px; }
+details.setmore > .setmore-b { margin: 0; padding: 0 18px 13px; color: var(--muted); font-size: 13px; }
+/* Your answers' Answers the desk remembers (D5): a row each, the question, the employer it's kept for, the answer (dots
+   for an ID until Show), Change and Forget at the right; a row being changed has its box and Save and Cancel there */
+#remembered > .setrow:first-child { border-top: 0; }
+#remembered .ans { margin: 4px 0 0; color: var(--text); font-size: 14px; overflow-wrap: anywhere; white-space: pre-wrap; }
+#remembered .ans.empty { color: var(--muted); font-style: italic; }
+#remembered .ans .dots { letter-spacing: 2px; }
+#remembered .setrow input[type=text] { width: 100%; margin-top: 6px; }
+#remembered-problem { margin: 12px 18px; }
+#remembered-none { margin: 0; padding: 16px 18px; color: var(--muted); }
 #alerts[aria-pressed="true"] { background: var(--accent-bg); border-color: var(--accent-line); color: var(--accent-2);
   font-weight: 600; }
 
@@ -969,11 +979,20 @@ body.stopped > :not(#stopped) { display: none; }
         <section class="card" aria-labelledby="bank-h" id="bank-card" hidden>
           <div class="card-head"><h2 id="bank-h">Common questions</h2><span class="pill" id="bank-count"></span></div>
           <p class="small" style="margin: 12px 18px 0">Most applications ask these, and your profile doesn't say. Answer once:
-            the desk fills them in at every employer from then on (kept in <code>~/.job-apply/answers.yaml</code>).</p>
+            the desk fills them in at every employer from then on (kept with your other answers, lower on this page).</p>
           <div id="bank"></div>
           <details id="bank-done" hidden><summary>Your answers</summary><div id="bank-given"></div></details>
         </section>
         <p class="page-none" id="bank-none" hidden>No common questions to show yet.</p>
+        <!-- (D5: every answer given on a job's card with "remember" ticked. Asked of the desk (/api/answers) when this
+             page opens and after each change, never part of the state; an ID's value is put in the page only once Show
+             is pressed, and goes back to dots when the page is left. Drawn by renderRemembered, not by the refresh) -->
+        <section class="card" aria-labelledby="remembered-h" id="remembered-card">
+          <div class="card-head"><h2 id="remembered-h">Answers the desk remembers</h2></div>
+          <p class="notice bad" id="remembered-problem" role="alert" hidden></p>
+          <div id="remembered"></div>
+          <p class="small" id="remembered-none" hidden>Nothing remembered yet. An answer you give on a job's card is kept here when "remember" is ticked.</p>
+        </section>
       </div>
       <div class="page narrow" data-pages="working" hidden>
         <!-- what's worked: the person's own applications' outcomes by group (outcomes.py), counted on this computer only -->
@@ -1114,7 +1133,7 @@ body.stopped > :not(#stopped) { display: none; }
               <div class="card-head"><h2 id="pw-h">Site passwords</h2><span class="pill" id="pw-count"></span></div>
               <form class="pw" id="pw-form" autocomplete="off">
                 <p class="small">One password per job system: the desk makes your account at each of its employers and signs
-                  you in. It stays on this computer; Claude never sees it.</p>
+                  you in. It stays on this computer<span id="pw-claude">; Claude never sees it</span>.</p>
                 <div class="pw-row">
                   <select id="pw-site" aria-label="Job system">
                     <option value="workday">Workday: Intel, Applied, KLA and 10 more</option>
@@ -1136,21 +1155,14 @@ body.stopped > :not(#stopped) { display: none; }
                 <p>Each employer has its own account on its job site. Save one password for a job system and the
                   desk creates your account at each of that system's employers (agreeing to its terms for you) and signs you in,
                   on that system's own sites only; when a site turns the password down, it resets that account's password to this
-                  one through the site's "Forgot password" email (unless your profile says <code>manage_accounts: false</code>).
+                  one through the site's "Forgot password" email (unless Make my accounts is off in Settings).
                   It stays on this computer, in its password vault (Windows Credential Manager, the macOS Keychain or your
-                  desktop's keyring; <code>~/.job-apply/secrets.yaml</code> where there's none), and Claude never sees it.
+                  desktop's keyring), or in a file only you can read where it has none.
                   Use passwords you don't use anywhere else.</p>
-                <p>Your email: with an app password for the address in your profile (for Gmail, make one at
-                  <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a>;
-                  it needs 2-Step Verification), a job waiting on an emailed code or link gets it from your inbox: only mail from
-                  that job's site that arrived after it began waiting, read without marking anything read. Without one, with
-                  <code>email_codes: true</code> in your profile and the Gmail connector in Claude, Claude reads it through Gmail
-                  while the desk's chat is open (only that job's own mail), and the desk puts it in.</p>
                 <p>An Anthropic API key (make one in the Claude Console,
                   <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>,
                   and add some credit under Billing): with Write a cover letter for each job on, Claude writes each letter
-                  through Anthropic's API with it (about 10 to 20 cents a letter, written and checked), so the desk doesn't need Claude Code or your Claude login
-                  for them. Each letter is checked against your resume and profile the same way.</p>
+                  through Anthropic's API with it (about 10 to 20 cents a letter, written and checked).</p>
                 </details>
               </form>
             </section>
@@ -1184,6 +1196,15 @@ body.stopped > :not(#stopped) { display: none; }
                   <p class="s" id="set-email-codes-said">Without an app password, Claude reads the code through its Gmail connector while your chat is open, and the desk puts it in.</p></div>
                 <input type="checkbox" class="switch" id="set-email-codes" data-setting="email_codes" aria-labelledby="set-email-codes-name" aria-describedby="set-email-codes-said">
               </div>
+              <!-- (the Site passwords card's paragraph about email, moved here: Plain wording, Version D) -->
+              <details class="setmore"><summary>How this works</summary>
+                <p class="setmore-b">Your email: with an app password for the address in your profile (for Gmail, make one at
+                  <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a>;
+                  it needs 2-Step Verification), a job waiting on an emailed code or link gets it from your inbox: only mail from
+                  that job's site that arrived after it began waiting, read without marking anything read.<span id="mail-claude"> Without one,
+                  with Let Claude read codes through Gmail on and the Gmail connector in Claude, Claude reads it through Gmail
+                  while the desk's chat is open (only that job's own mail), and the desk puts it in.</span></p>
+              </details>
             </section>
           </div>
           <div class="spanel" id="panel-phone" data-panel="phone" hidden>
@@ -1221,7 +1242,7 @@ body.stopped > :not(#stopped) { display: none; }
                   anything about you, unless you turn on Say which employer and job. The topic is a long random name kept on
                   this computer, with your passwords; Turn off forgets it (a new one is made next time).
                   One alert a job a stop, those that come together in one; the summary at the time you pick (empty: none). To
-                  use your own ntfy server, set <code>phone_alerts_server</code> under <code>settings:</code> in your profile.</p>
+                  use your own alert server, open Your own alert server, below.</p>
                 </details>
               </div>
             </section>
@@ -1337,7 +1358,7 @@ body.stopped > :not(#stopped) { display: none; }
               <li>When a site needs you (a question, a sign-in, a bot check), the job waits under Needs you on the Home page.</li>
               <li>Nothing is submitted until you press Submit, unless you turned on "Submit for me". LinkedIn and Indeed are always submitted by you.</li>
             </ol>
-            <p class="small">Answers you give here are saved in <code>~/.job-apply/answers.yaml</code> unless you untick "remember".</p>
+            <p class="small">The desk remembers the answers you give, unless you untick "remember". The Your answers page lists them.</p>
           </div>
         </section>
         <!-- the notes the desk took on its stops, filed by the person (renderNotes): the button shows with notes to file -->
@@ -1968,9 +1989,23 @@ function renderSafety(s) {
     li.dataset.safety = l.key;
     add(li, "strong", `${l.name}: ${l.value}.`);
     li.appendChild(document.createTextNode(" " + l.said));
-    add(li, "span", `Where: ${l.where}.`, "where");
+    // (a "where" that begins "Settings, " is a link to that panel, named as Settings' own menu names it: D4. Its words
+    // stay the words; a name that's no panel's stays plain words)
+    const where = add(li, "span", undefined, "where");
+    const panel = /^Settings, ([^:]+)/.exec(l.where);
+    const to = panel && [...document.querySelectorAll(".snav a")].find((a) => a.textContent.trim() === panel[1].trim());
+    if (to) {
+      const a = document.createElement("a");
+      a.href = to.getAttribute("href");
+      a.textContent = l.where;
+      where.append("Where: ", a, ".");
+    } else {
+      where.textContent = `Where: ${l.where}.`;
+    }
   }
 }
+// (a "where" pressed: the window closes, and its address opens the panel)
+$("safety-body").addEventListener("click", (e) => { if (e.target.closest("a[href^='#settings/']")) $("safety").close(); });
 
 // Not interested: the opening picked, and its window asking why (optional)
 let niUrl = null;
@@ -2331,8 +2366,7 @@ function question(jobId, q, i, repeated = false, company = "") {
   // how that's undone. Any answer to their ID here is remembered for this employer alone; one whose words may name
   // another organization's ID, "id_unsure", is for this application only, with no Remember)
   const here = company && q.own_id ? ` Left empty with Remember ticked and Fill these in, it isn't asked at `
-    + `${esc(company)} again either (to be asked there again, ask Claude to clear it from answers.yaml, or put your ID `
-    + `in your profile's history.employee_ids).` : "";
+    + `${esc(company)} again either (to be asked there again, forget it on the Your answers page).` : "";
   const once = q.id_unsure ? " For this application only." : "";
   const about = q.about ? `<span class="small">“${esc(q.about)}”</span>`
     : q.account ? `<span class="small">For this account only: never remembered.</span>`
@@ -2775,7 +2809,7 @@ function renderWorking() {
       are placed a little higher in the list, and ones like those that didn't a little lower (as much as ${o.cap} points
       would move them; “Placed higher” or “Placed lower” under a score says why). Scores, and which openings are
       recommended, don't change. Counted on this computer only.`
-      : `Off in your profile (settings.learn_from_responses: false): the openings' order doesn't use these.`}</p>`;
+      : `Off in Settings, under Job search: the openings' order doesn't use these.`}</p>`;
   }
   if ($("working").dataset.html !== html) { $("working").innerHTML = html; $("working").dataset.html = html; }
 }
@@ -2860,6 +2894,115 @@ function renderBank() {
   patch($("bank-given"), given.map(bankQuestion));
 }
 
+// Your answers' Answers the desk remembers (D5): every answer given on a job's card with "remember" ticked, as the
+// desk lists them (/api/answers), asked when the page opens and after each change, never from the state (the refresh
+// doesn't draw this card, so a row being changed keeps its words and the keyboard's place). An ID's value (`private`)
+// is put in the page only once its Show is pressed, and goes back to dots when the page is left
+let remembered = null, rememberedAsked = 0, rememberedEdit = null, rememberedBusy = "";
+const rememberedShown = new Set(), rememberedErr = new Map();
+const FORGET_ASK = "Forget this answer? The desk asks you again the next time a site asks it.";
+const answerWords = (a) => Array.isArray(a) ? a.join(", ") : a == null ? "" : String(a);
+async function loadRemembered() {
+  const asked = ++rememberedAsked;
+  let got = null, problem = "";
+  try { got = (await api("/api/answers")).answers || []; } catch (e) { problem = e.message || "the desk didn't answer"; }
+  if (asked !== rememberedAsked) return;  // (an older ask's answer, come after a newer one's)
+  remembered = got;
+  if (rememberedEdit && !(got || []).some((a) => a.id === rememberedEdit.id)) rememberedEdit = null;
+  $("remembered-problem").textContent = problem ? `Problem: your remembered answers can't be shown: ${problem}` : "";
+  $("remembered-problem").hidden = !problem;
+  renderRemembered();
+  $("remembered-card").dataset.loaded = "1";
+}
+function rememberedRow(a, i) {
+  const id = esc(a.id), q = `ans-q-${i}`, busy = rememberedBusy === a.id ? " disabled" : "";
+  const words = answerWords(a.answer), shown = !a.private || rememberedShown.has(a.id);
+  const at = a.at ? `<p class="s">Only at ${esc(a.at)}</p>` : "";
+  let value, acts;
+  if (rememberedEdit && rememberedEdit.id === a.id) {
+    value = `<input type="text" data-ans-box="${id}" autocomplete="off" spellcheck="false" aria-labelledby="${q}"${busy}>`;
+    acts = `<button class="btn sm primary" data-ans-save="${id}"${busy}>Save</button>`
+      + `<button class="btn sm" data-ans-cancel="${id}"${busy}>Cancel</button>`;
+  } else {
+    value = !words ? `<p class="ans empty">Left empty</p>` : shown ? `<p class="ans">${esc(words)}</p>`
+      : `<p class="ans"><span class="dots" role="img" aria-label="Hidden">••••••••</span></p>`;
+    acts = (a.private && words ? `<button class="btn sm ghost" data-ans-show="${id}" aria-describedby="${q}">${shown ? "Hide" : "Show"}</button>` : "")
+      + `<button class="btn sm" data-ans-change="${id}" aria-describedby="${q}"${busy}>Change</button>`
+      + `<button class="btn sm danger" data-ans-forget="${id}" aria-describedby="${q}"${busy}>Forget</button>`;
+  }
+  const err = rememberedErr.get(a.id);
+  return {key: a.id, html: `<div class="setrow" data-answer="${id}"><div><p class="t" id="${q}">${esc(a.question)}</p>${at}${value}</div>
+    <div class="acts">${acts}</div>${err ? `<p class="set-err" role="alert">${esc(err)}</p>` : ""}</div>`};
+}
+function renderRemembered() {
+  const list = remembered || [];
+  patch($("remembered"), list.map(rememberedRow));
+  $("remembered-none").hidden = remembered === null || list.length > 0;
+  // (the box of the row being changed: its words put back where it was drawn anew, never from the desk's list)
+  const box = rememberedEdit && $("remembered").querySelector("[data-ans-box]");
+  if (box && !box.dataset.filled) { box.value = rememberedEdit.draft; box.dataset.filled = "1"; }
+}
+// (the control named, in the row of the answer `id`)
+const rememberedControl = (name, id) => $("remembered").querySelector(`[data-ans-${name}="${CSS.escape(id)}"]`);
+async function rememberedSend(id, path, body) {
+  rememberedBusy = id;
+  rememberedErr.delete(id);
+  renderRemembered();
+  let ok = true;
+  try { await api(path, body); } catch (e) { ok = false; rememberedErr.set(id, e.message || "That wasn't saved."); }
+  rememberedBusy = "";
+  if (ok && rememberedEdit && rememberedEdit.id === id) rememberedEdit = null;
+  await loadRemembered();
+  return ok;
+}
+$("remembered").addEventListener("input", (e) => {
+  if (e.target.dataset.ansBox !== undefined && rememberedEdit) rememberedEdit.draft = e.target.value;
+});
+$("remembered").addEventListener("keydown", (e) => {
+  const box = e.target.dataset.ansBox;
+  if (box === undefined) return;
+  if (e.key === "Enter") { e.preventDefault(); rememberedControl("save", box).click(); }
+  if (e.key === "Escape") { e.preventDefault(); rememberedControl("cancel", box).click(); }
+});
+$("remembered").addEventListener("click", async (e) => {
+  const b = e.target.closest("button");
+  if (!b || b.disabled) return;
+  const d = b.dataset;
+  if (d.ansShow !== undefined) {
+    if (rememberedShown.has(d.ansShow)) rememberedShown.delete(d.ansShow); else rememberedShown.add(d.ansShow);
+    renderRemembered();  // (the focus kept on it: patch)
+  } else if (d.ansChange !== undefined) {
+    const a = (remembered || []).find((x) => x.id === d.ansChange);
+    if (!a) return;
+    // (an ID not shown starts empty: its value isn't put in the page for a Change)
+    rememberedEdit = {id: a.id, draft: !a.private || rememberedShown.has(a.id) ? answerWords(a.answer) : ""};
+    rememberedErr.delete(a.id);
+    renderRemembered();
+    const box = rememberedControl("box", a.id);
+    if (box) box.focus();
+  } else if (d.ansCancel !== undefined) {
+    rememberedEdit = null;
+    rememberedErr.delete(d.ansCancel);
+    renderRemembered();
+    const back = rememberedControl("change", d.ansCancel);
+    if (back) back.focus();
+  } else if (d.ansSave !== undefined) {
+    const id = d.ansSave, box = rememberedControl("box", id);
+    if (box && rememberedEdit) rememberedEdit.draft = box.value;
+    const ok = await rememberedSend(id, "/api/answers/change", {id, answer: box ? box.value : ""});
+    const next = rememberedControl(ok ? "change" : "box", id);
+    if (next) next.focus();
+  } else if (d.ansForget !== undefined) {
+    if (!confirm(FORGET_ASK)) return;
+    const id = d.ansForget, at = (remembered || []).findIndex((x) => x.id === id);
+    const ok = await rememberedSend(id, "/api/answers/forget", {id});
+    // (the keyboard on to the row that took its place, or the one before)
+    const rows = remembered || [], now = ok ? rows[Math.min(at, rows.length - 1)] : rows[at];
+    const next = now && rememberedControl("change", now.id);
+    if (next) next.focus();
+  }
+});
+
 // a problem the desk says in a sentence of its own ("The desk couldn't read your email: ..."): "Problem: the desk ..."
 const problemSaid = (html) => "Problem: " + String(html).replace(/^(The|Your|A|This) /, (w) => w.toLowerCase());
 
@@ -2913,7 +3056,7 @@ function renderHeader() {
   const auto = $("auto");
   if (document.activeElement !== auto) auto.checked = !!s.auto_submit;
   auto.disabled = s.dry_run;
-  $("auto-hint").textContent = s.dry_run ? "Off in practice mode (settings.submit_mode: dry_run)." : s.auto_submit ? "On: complete applications are submitted without asking." : "Off: you press Submit for each one.";
+  $("auto-hint").textContent = s.dry_run ? "Off while Practice mode is on." : s.auto_submit ? "On: complete applications are submitted without asking." : "Off: you press Submit for each one.";
   document.querySelectorAll("[data-at-once]").forEach((b) => b.setAttribute("aria-pressed", String(Number(b.dataset.atOnce) === s.jobs_at_once)));
   const dontWait = $("dont-wait");
   if (document.activeElement !== dontWait) dontWait.checked = !!s.dont_wait;
@@ -3024,10 +3167,10 @@ function renderHeader() {
   if (p.gaps && p.gaps.length) notes.push({cls: "notice info", tip: "gaps:" + p.gaps.join(","), html: `Fewer stops: your profile could also hold ${esc(inWords(p.gaps.map(profileField)))}.`});
   // on by default since 0.3.67: said until the profile says either way
   if (s.manage_accounts && !s.manage_accounts_chosen) notes.push({cls: "notice info", tip: "accounts", html: `The desk now handles your job-site
-    accounts: with a password saved below, it creates the account at each employer (agreeing to its terms for you) and, when
-    a site turns your saved password down, resets it to that one through the site's "Forgot password" email. To keep doing
-    these yourself, add <code>manage_accounts: false</code> under <code>settings:</code> in <code>${esc(p.path)}</code>;
-    <code>manage_accounts: true</code> keeps them and hides this note.`});
+    accounts: with a password saved in Settings, under Accounts and passwords, it creates the account at each employer
+    (agreeing to its terms for you) and, when a site turns your saved password down, resets it to that one through the
+    site's "Forgot password" email. To keep doing these yourself, turn off Make my accounts in Settings, under Applying.
+    <button class="link" data-act="accounts-keep">Keep it on</button>`});
   const up = state.update;
   if (up && up.newer) notes.push({cls: "notice info", html: `job-apply ${esc(up.latest)} is out (you have ${esc(up.current)}). Between runs, `
     + `in a terminal (PowerShell on Windows) run ${up.commands.map((c) => `<code>${esc(c)}</code>`).join(", then ")}, then `
@@ -3385,7 +3528,7 @@ function renderAreaDraft() {
     employers)</span></span></label>`).join("");
   const own = $("area-own");
   own.hidden = !area.own;
-  own.textContent = area.own ? `And ${area.own} employer${area.own === 1 ? "" : "s"} of your own (companies.yaml).` : "";
+  own.textContent = area.own ? `And ${area.own} employer${area.own === 1 ? "" : "s"} of your own.` : "";
 }
 function areaAdd(kind, value) {
   // (a title to leave out typed as several, "Senior, Call Center", is each of them)
@@ -3431,7 +3574,7 @@ const SETUP_CONSENTS = [
    "The desk declines cookie banners. One with no way to decline (TI's “Agree and Proceed”) waits for you, "
    + "unless you tick this. Off unless you turn it on."],
   ["manage_accounts", "Make my accounts on job sites (default: on)",
-   "Many employers' job sites need an account. With a password saved under Site passwords, the desk makes yours, "
+   "Many employers' job sites need an account. With a password saved in Settings, under Accounts and passwords, the desk makes yours, "
    + "agreeing to each site's terms in your name (and to being considered for other open positions where a site won't "
    + "make the account without it; never job alerts or a newsletter), and when a site turns your saved password down, "
    + "it resets it through that site's “Forgot password” email. Security questions come to you on the "
@@ -3474,7 +3617,7 @@ function renderSetup() {
     ? `<button type="button" data-act="setup-read" ${r.found ? "" : "disabled"}>Read my resume</button>
        <span class="small">Claude reads it with your Anthropic API key and fills in the boxes on the next steps that
        are empty, for you to check.</span>`
-    : `<p class="small">Type your details on the next steps, or save an Anthropic API key under Site passwords to have
+    : `<p class="small">Type your details on the next steps, or save an Anthropic API key in Settings, under Accounts and passwords, to have
        your resume read for you.</p>`;
   $("setup-personal").innerHTML = SETUP_PERSONAL.map(([k, label, auto]) => `<label class="q"><span>${label}</span>
     <input type="text" data-sf="${k}" autocomplete="${auto}" value="${esc(f.personal[k] || "")}"></label>`).join("");
@@ -3627,6 +3770,14 @@ function route() {
     if (a.getAttribute("href") === "#" + page) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   }
   if (moved) $("content").scrollTop = 0;  // (a page starts at its top, not where the last one was left)
+  // (Your answers' remembered answers: asked of the desk each time the page opens; left, an ID shown is dots again and
+  // a change not saved is let go)
+  if (moved && page === "answers") loadRemembered();
+  if (page !== "answers" && (rememberedShown.size || rememberedEdit)) {
+    rememberedShown.clear();
+    rememberedEdit = null;
+    renderRemembered();
+  }
   // (in a narrow window Settings' menu is one row that scrolls sideways: the panel's link brought into it)
   const on = document.querySelector(".snav a[aria-current]");
   if (panel && on) {
@@ -3800,6 +3951,8 @@ function renderSettingsRows() {
   $("mail-pw-state").className = mailSaved ? "pill good" : "pill";
   if (!$("mail-test").dataset.saving) $("mail-test").disabled = !mailSaved;
   $("set-email-codes-row").hidden = !!state.standalone;
+  $("mail-claude").hidden = !!state.standalone;  // (Claude reads codes through Gmail only inside Claude)
+  $("pw-claude").hidden = !!state.standalone;  // ("Claude never sees it": only where Claude is)
   // Resume and cover letters: the files' names (never their paths), and the twins of the apply bar's Tailor my resume
   // and Cover letter, from the same state as theirs
   const docs = p.documents || {};
@@ -4228,6 +4381,8 @@ document.addEventListener("click", (e) => {
   if (a === "week-close") $("week").close();
   if (a === "safety") act(async () => { renderSafety(await api("/api/safety")); if (!$("safety").open) $("safety").showModal(); }, false);
   if (a === "safety-close") $("safety").close();
+  // (the blue note about accounts: Make my accounts kept on, said in the profile, so the note is done)
+  if (a === "accounts-keep") act(() => api("/api/profile/settings", {key: "manage_accounts", value: true}));
   if (a === "ni-close") { niUrl = null; $("ni").close(); }
   if (a === "notes") {
     act(async () => {

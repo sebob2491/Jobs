@@ -46,15 +46,6 @@ ALLOWED = [
     ("pipeline.py", "(settings.accept_notices)"),
     ("pipeline_accounts.py", "(settings.manage_accounts)"),
     ("pipeline_mail.py", "settings.email_codes is off"),
-    # the page's: the Common questions card, the Site passwords card's long paragraph, the Help page's line on answers,
-    # the question card for an employee ID, the What's working card, #auto-hint, the What and where window: Version D
-    ("static/desk.html", "(kept in <code>~/.job-apply/answers.yaml</code>)"),
-    ("static/desk.html", "<code>~/.job-apply/secrets.yaml</code> where there's none"),
-    ("static/desk.html", "Answers you give here are saved in <code>~/.job-apply/answers.yaml</code>"),
-    ("static/desk.html", "ask Claude to clear it from answers.yaml"),
-    ("static/desk.html", "(settings.learn_from_responses: false)"),
-    ("static/desk.html", "(settings.submit_mode: dry_run)"),
-    ("static/desk.html", "of your own (companies.yaml)"),
     # the page's update notice: Version F
     ("static/desk.html", "in a terminal (PowerShell on Windows)"),
 ]

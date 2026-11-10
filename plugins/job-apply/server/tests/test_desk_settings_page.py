@@ -865,3 +865,145 @@ def test_tailor_and_cover_letter_in_settings_and_in_the_apply_bar_always_agree(s
     assert seen["off now"] == [True, True, False, False], seen
     assert seen["off"] == [[True, True, False, False], False], seen
     assert seen["tailor off"] == [[False, False, False, False], False], seen
+
+
+# The Safety window's lines whose "where" names a panel (the design's D4), each with the panel its link opens
+SAFETY_PANELS = {"practice": "applying", "auto_submit": "applying", "accept_notices": "applying",
+                 "manage_accounts": "applying", "accept_cookies": "applying", "email_codes": "email",
+                 "email_password": "email"}
+# Each line of the Safety window as drawn: its key, its "where" line's words, and the link in it (its address, its
+# words), or null
+_WHERE = """() => [...document.querySelectorAll('#safety-body li')].map((li) => {
+  const w = li.querySelector('.where'), a = w.querySelector('a');
+  return {key: li.dataset.safety, said: w.textContent, link: a && [a.getAttribute('href'), a.textContent]};
+})"""
+_WHERE_NOW = """() => [document.getElementById('safety').open, document.body.dataset.page, document.body.dataset.panel,
+  document.querySelector('.snav a[aria-current=page]').getAttribute('href'), location.hash]"""
+
+
+def test_each_where_in_the_safety_window_links_to_its_panel_and_pressing_it_opens_the_panel(srv, job_apply_home):
+    """The design's D7, test 13. In the Safety window, each "where" of D4 is a link to its panel (its words the
+    "where" itself, said as before: "Where: Settings, Applying: Practice mode."); a "where" naming no panel ("Not a
+    setting: always so") stays words. Pressing one closes the window and opens that panel; so does pressing it by
+    the keyboard."""
+    desk = _idle_desk(srv)
+    lines = {line["key"]: line["where"] for line in desk.safety()["lines"]}
+    by_name = {name: panel for panel, name in PANELS.items()}
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                await open_desk(page, desk, "settings/applying")
+                seen = {}
+                await page.click("#safety-btn")
+                await page.wait_for_selector("#safety[open] #safety-body li")
+                seen["where"] = await page.evaluate(_WHERE)
+                # pressed: the window closes, Email codes opens
+                await page.click("#safety-body li[data-safety=email_codes] .where a")
+                await page.wait_for_function("() => document.body.dataset.panel === 'email'")
+                seen["email"] = await page.evaluate(_WHERE_NOW)
+                # from Email codes (its own address), the window again, and Practice mode's link pressed by the
+                # keyboard: Applying opens
+                await page.evaluate("() => document.getElementById('safety-btn').click()")
+                await page.wait_for_selector("#safety[open] #safety-body li")
+                await page.focus("#safety-body li[data-safety=practice] .where a")
+                await page.keyboard.press("Enter")
+                await page.wait_for_function("() => document.body.dataset.panel === 'applying'")
+                seen["practice"] = await page.evaluate(_WHERE_NOW)
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    where = {w["key"]: w for w in seen["where"]}
+    assert list(where) == list(lines), where
+    for key, said in lines.items():
+        assert where[key]["said"] == f"Where: {said}.", where[key]
+        named = said.removeprefix("Settings, ").split(":")[0] if said.startswith("Settings, ") else None
+        if named in by_name:
+            assert where[key]["link"] == [f"#settings/{by_name[named]}", said], where[key]
+        else:
+            assert where[key]["link"] is None, where[key]
+    for key, panel in SAFETY_PANELS.items():
+        if lines[key].startswith("Settings, "):  # (practice mode set by the environment comes before Settings)
+            assert where[key]["link"] and where[key]["link"][0] == f"#settings/{panel}", where[key]
+    assert where["email_codes"]["link"] == ["#settings/email", "Settings, Email codes"]
+    assert where["boards"]["link"] is None and where["bot_checks"]["link"] is None
+    assert seen["email"] == [False, "settings", "email", "#settings/email", "#settings/email"], seen["email"]
+    assert seen["practice"] == [False, "settings", "applying", "#settings/applying", "#settings/applying"], seen
+
+
+def test_the_note_about_accounts_names_the_switch_and_keep_it_on_saves_it(srv, job_apply_home):
+    """Plain wording, Version D: the blue note about accounts (shown while the profile doesn't say) tells the person
+    to turn off Make my accounts in Settings, under Applying, and names no file or key; its Keep it on writes
+    manage_accounts: true to the profile, and the note goes."""
+    path = job_apply_home / "profile.yaml"
+    prof = yaml.safe_load(path.read_text(encoding="utf-8"))
+    prof["settings"].pop("manage_accounts")
+    path.write_text(yaml.safe_dump(prof), encoding="utf-8")
+    desk = _idle_desk(srv)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                await open_desk(page, desk, "home")
+                note = page.locator("#notices p", has_text="The desk now handles your job-site accounts")
+                said = await note.inner_text()
+                await note.locator("[data-act=accounts-keep]").click()
+                await note.wait_for(state="detached")
+                await browser.close()
+                return said
+        finally:
+            await desk.stop()
+
+    said = " ".join(run(go()).split())
+    assert ("To keep doing these yourself, turn off Make my accounts in Settings, under Applying. Keep it on"
+            in said), said
+    assert "manage_accounts" not in said and "profile.yaml" not in said and "saved below" not in said, said
+    assert _written(job_apply_home)["manage_accounts"] is True
+
+
+@pytest.mark.parametrize("standalone", [False, True])
+def test_the_passwords_and_email_codes_words_name_claude_only_where_claude_is(srv, standalone):
+    """Plain wording, Version D: the Site passwords card's first paragraph ends "It stays on this computer; Claude
+    never sees it." with Claude, "It stays on this computer." without; its long paragraph names Make my accounts and
+    no file, and its paragraph about email is in the Email codes panel's How this works, whose sentence about Claude
+    reading codes through Gmail shows only with Claude."""
+    desk = _idle_desk(srv)
+    desk.standalone = standalone
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                await open_desk(page, desk, "settings/passwords")
+                await page.evaluate("() => document.querySelectorAll('details').forEach((d) => { d.open = true; })")
+                seen = {"first": await page.inner_text("#pw-form > p.small"),
+                        "card": await page.inner_text("#pw-form")}
+                await press_menu(page, "settings/email")
+                seen["email"] = await page.inner_text("#panel-email details.setmore")
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    start = "One password per job system: the desk makes your account at each of its employers and signs you in. "
+    assert seen["first"] == start + ("It stays on this computer." if standalone else
+                                     "It stays on this computer; Claude never sees it."), seen["first"]
+    card = " ".join(seen["card"].split())
+    assert "(unless Make my accounts is off in Settings)" in card, card
+    assert ("desktop's keyring), or in a file only you can read where it has none. Use passwords you don't use "
+            "anywhere else.") in card, card
+    assert card.endswith("(about 10 to 20 cents a letter, written and checked)."), card
+    assert "Your email: with an app password" not in card and "manage_accounts" not in card and "secrets.yaml" not in card, card
+    email = " ".join(seen["email"].split())
+    assert email.startswith("How this works Your email: with an app password for the address in your profile"), email
+    assert ("Claude reads it through Gmail" in email) is not standalone, email
+    assert "email_codes" not in email, email
