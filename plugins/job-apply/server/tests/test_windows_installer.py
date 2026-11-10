@@ -470,3 +470,32 @@ def test_an_update_reopens_the_desk_and_never_runs_the_claude_code_setup_again(i
     assert claude["Check"] == "not Relaunch"
     finish = next(e for e in iss["Run"] if e.get("Description") == "Open the Job Desk now")
     assert "skipifsilent" in finish["Flags"].split() and "Check" not in finish
+
+
+def test_an_update_that_didnt_finish_opens_the_desk_still_installed(iss):
+    """The desk stops for an update (PrepareToInstall), so an update the person cancelled, or one that failed and
+    rolled back, must open the desk still installed, or nothing would: DeinitializeSetup (run as Setup ends, whether it
+    finished or not) starts it as the Start menu's shortcut does, only for an update (Relaunch) that didn't finish
+    (Installed, set at ssDone, is false), and only when that desk is there."""
+    code = iss["code"]
+    assert re.search(r"var\s+Problems: String;\s*(\{[^}]*\}\s*)?Installed: Boolean;", code), code
+    assert re.search(r"if CurStep = ssDone then\s*begin\s*Installed := True;\s*"
+                     r"Log\('Job Desk: the install finished\.'\);\s*end;", code), code
+    proc = re.search(r"procedure DeinitializeSetup\(\);(.*?)\nend;", code, re.S)
+    assert proc, code
+    body = proc.group(1)
+    assert re.search(r"begin\s*if Installed or not Relaunch\(\) then\s*Exit;", body), body
+    assert re.search(r"try\s*App := ExpandConstant\('\{app\}'\);\s*except\s*Exit;\s*end;", body), body
+    assert ("if not FileExists(App + '\\bin\\uvw.exe') or not FileExists(App + "
+            "'\\plugin\\server\\src\\job_apply\\desk.py') then\n    Exit;") in body, body
+    start = re.search(r"Exec\((.*?)\);", body, re.S)
+    assert start, body
+    args = [a.strip() for a in re.split(r",\s*", start.group(1).replace("\n", " "))]
+    # what it starts: the shortcut's program, arguments and folder, and it isn't waited for
+    start_menu = iss["Icons"][0]
+    app = "{app}"
+    assert args[0] == "App + '\\bin\\uvw.exe'" and start_menu["Filename"] == app + "\\bin\\uvw.exe"
+    said = args[1].replace("' + App + '", app)
+    assert said == "'" + start_menu["Parameters"] + "'", said
+    assert args[2] == "App + '\\plugin\\server'" and start_menu["WorkingDir"] == app + "\\plugin\\server"
+    assert args[3:] == ["SW_SHOWNORMAL", "ewNoWait", "Code"]

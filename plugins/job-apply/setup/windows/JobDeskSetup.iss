@@ -94,6 +94,8 @@ Type: dirifempty; Name: "{app}"
 [Code]
 var
   Problems: String;
+  { (true once the install has finished: DeinitializeSetup tells a finished update from one that stopped) }
+  Installed: Boolean;
 
 { Started by the desk's Update button (updates.py: /RELAUNCH=1): open the desk again once installed, and never run
   the Claude Code setup, whatever box was ticked last time }
@@ -251,6 +253,34 @@ begin
     if Problems <> '' then
       SuppressibleMsgBox('The Job Desk is installed, but:' + Problems, mbError, MB_OK, IDOK);
   end;
+  if CurStep = ssDone then
+  begin
+    Installed := True;
+    Log('Job Desk: the install finished.');
+  end;
+end;
+
+{ An update from the desk's Update button (Relaunch) that didn't finish: cancelled in its progress window, or failed
+  and rolled back. The desk stopped for it (PrepareToInstall), so the desk still installed opens again, as the Start
+  menu's shortcut opens it, and the person is back where they were on the version they had. Nothing starts when that
+  desk isn't there, or when Setup stopped before it knew where the program is. }
+procedure DeinitializeSetup();
+var
+  App: String;
+  Code: Integer;
+begin
+  if Installed or not Relaunch() then
+    Exit;
+  try
+    App := ExpandConstant('{app}');
+  except
+    Exit;
+  end;
+  if not FileExists(App + '\bin\uvw.exe') or not FileExists(App + '\plugin\server\src\job_apply\desk.py') then
+    Exit;
+  Log('Job Desk: the update did not finish; opening the desk that is still installed.');
+  Exec(App + '\bin\uvw.exe', 'run --frozen --python {#Python} --project "' + App + '\plugin\server" job-apply-desk',
+    App + '\plugin\server', SW_SHOWNORMAL, ewNoWait, Code);
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
