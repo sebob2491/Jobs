@@ -222,33 +222,55 @@ def test_the_page_checks_at_most_once_a_minute_and_by_itself_every_6_hours(copy,
 # ------------------------------------------------------------------ updating an installed copy
 
 
-class Started:
-    """A Popen that starts nothing: what it was handed, in order with the desk's own steps."""
+@pytest.fixture(autouse=True)
+def _settle(monkeypatch):
+    """The installer watched for a moment, not 5 seconds, before the desk stops for it."""
+    monkeypatch.setattr(updates, "INSTALLER_SETTLE", 0.05, raising=False)
 
-    def __init__(self, steps):
+
+class Process:
+    """What Popen gives back: still running (poll None), or ended with `code`."""
+
+    def __init__(self, code=None):
+        self.code, self.polled = code, 0
+
+    def poll(self):
+        self.polled += 1
+        return self.code
+
+
+class Started:
+    """A Popen that starts nothing: what it was handed, in order with the desk's own steps, and the record of the
+    version it was for as it was then. Its installer runs on (`ends`: ended at once, with that code)."""
+
+    def __init__(self, steps, ends=None):
         self.steps = steps
         self.calls = []
+        self.records = []
+        self.process = Process(ends)
 
     def __call__(self, args, **options):
         self.calls.append((args, options))
         self.steps.append("installer")
-        return object()
+        record = config.home() / "updates" / "updated-to"
+        self.records.append(record.read_text(encoding="utf-8") if record.exists() else None)
+        return self.process
 
 
-def _installed_update(copy, transport, popen=None):
+def _installed_update(copy, transport, popen=None, filling=lambda: False, steps=None, pause=None):
     copy.installed(True)
-    steps = []
+    steps = [] if steps is None else steps
     popen = popen or Started(steps)
     check = updates.UpdateCheck(transport=transport, popen=popen,
                                 run=lambda *a, **k: pytest.fail("no command runs for an installed copy"))
     run(check.refresh(standalone=True))
 
-    def pause():
+    def paused():
         steps.append("pause")
         return lambda: steps.append("resume")
 
     async def go():
-        await check.update_installed(filling=lambda: False, pause=pause, quit=lambda: steps.append("quit"))
+        await check.update_installed(filling=filling, pause=pause or paused, quit=lambda: steps.append("quit"))
 
     run(go())
     return check, steps, popen
@@ -272,11 +294,15 @@ def test_a_good_download_is_kept_and_the_installer_started_with_five_arguments_a
                     f"/LOG={_folder() / 'install-0.4.4.log'}"]
     assert not options.get("shell") and "executable" not in options
     if sys.platform == "win32":
-        assert options["creationflags"] == window.DETACHED_PROCESS | window.CREATE_NEW_PROCESS_GROUP
+        assert options["creationflags"] == (window.DETACHED_PROCESS | window.CREATE_NEW_PROCESS_GROUP
+                                            | window.CREATE_BREAKAWAY_FROM_JOB)
     else:
         assert options["start_new_session"] is True
     assert all(options[s] is subprocess.DEVNULL for s in ("stdin", "stdout", "stderr"))
     assert check.state(standalone=True)["progress"] == "installing"
+    # the version it's for recorded before it started (the installer may stop this desk at once), and kept
+    assert popen.records == ["0.4.4"] and (_folder() / "updated-to").read_text(encoding="utf-8") == "0.4.4"
+    assert popen.process.polled >= 2  # (watched until INSTALLER_SETTLE was up, then the desk stopped)
 
 
 @pytest.mark.parametrize("digest_line", [f"{'0' * 64}  JobDeskSetup.exe\n", "not a checksum\n",
@@ -403,7 +429,293 @@ def test_an_installer_that_wont_start_undoes_the_pause_and_the_desk_carries_on(c
     check, steps, _ = _installed_update(copy, _site(), popen=refuses)
     assert steps == ["pause", "resume"]
     state = check.state(standalone=True)
-    assert state["progress"] == "failed" and state["error"] == "The installer couldn't be started."
+    assert state["progress"] == "failed" and state["error"] == \
+        "The installer couldn't be started. Wait a minute, then press Update now to try again."
+    assert not (_folder() / "updated-to").exists()
+
+
+@pytest.mark.parametrize("code", [0, 1, 2])
+def test_an_installer_that_ended_at_once_never_stops_the_desk(copy, loop, code):
+    """The desk stops for the installer only once it has taken over: one that has already ended (closed, or it ran
+    into something at once) never began, so the queue is resumed, the record of it goes, and the desk carries on."""
+    steps = []
+    popen = Started(steps, ends=code)
+    check, steps, _ = _installed_update(copy, _site(), popen=popen, steps=steps)
+    assert steps == ["pause", "installer", "resume"]  # (no "quit")
+    state = check.state(standalone=True)
+    assert (state["progress"], state["error"]) == (
+        "failed", "The installer stopped as soon as it started. Press Update now to try again.")
+    assert not (_folder() / "updated-to").exists()
+    assert (_folder() / "JobDeskSetup-0.4.4.exe").read_bytes() == INSTALLER  # (kept: it matched)
+
+
+def test_an_installer_watched_until_it_has_taken_over_then_the_desk_stops(copy, loop, monkeypatch):
+    """Still running INSTALLER_SETTLE seconds after it started: it has taken over, and only then the desk stops."""
+    monkeypatch.setattr(updates, "INSTALLER_SETTLE", 0.6)
+    steps = []
+    popen = Started(steps)
+    began = time.monotonic()
+    _installed_update(copy, _site(), popen=popen, steps=steps)
+    assert time.monotonic() - began >= 0.6 and steps == ["pause", "installer", "quit"]
+
+    # one that ends while it's watched never began: the desk carries on
+    class EndsSoon(Process):
+        def poll(self):
+            self.polled += 1
+            return None if self.polled < 3 else 1
+
+    steps = []
+    late = Started(steps)
+    late.process = EndsSoon()
+    check, steps, _ = _installed_update(copy, _site(), popen=late, steps=steps)
+    assert steps == ["pause", "installer", "resume"] and check.state(standalone=True)["progress"] == "failed"
+
+
+def test_the_installer_starts_out_of_the_desks_job_where_windows_allows_it(monkeypatch, tmp_path):
+    """On Windows the installer is started out of the job the desk's process may be in (uv's launcher holds what it
+    starts in one, and stop-desk.ps1 stops that process): CREATE_BREAKAWAY_FROM_JOB. A job that forbids it refuses
+    with access denied: then it starts without, and the update goes on. Elsewhere: a session of its own."""
+    calls = []
+
+    def starter(refuse_breakaway=False, refuse=None):
+        def popen(args, **options):
+            calls.append(options.get("creationflags", options.get("start_new_session")))
+            if refuse is not None:
+                raise refuse
+            if refuse_breakaway and options["creationflags"] & window.CREATE_BREAKAWAY_FROM_JOB:
+                raise PermissionError(13, "Access is denied")
+            return Process()
+        return popen
+
+    log, exe = tmp_path / "install.log", tmp_path / "JobDeskSetup-0.4.4.exe"
+    detached = window.DETACHED_PROCESS | window.CREATE_NEW_PROCESS_GROUP
+    monkeypatch.setattr(window, "_system", lambda: "windows")
+    assert isinstance(updates.start_installer(exe, log, starter()), Process)
+    assert calls == [detached | window.CREATE_BREAKAWAY_FROM_JOB] and window.CREATE_BREAKAWAY_FROM_JOB == 0x01000000
+    calls.clear()
+    assert isinstance(updates.start_installer(exe, log, starter(refuse_breakaway=True)), Process)
+    assert calls == [detached | window.CREATE_BREAKAWAY_FROM_JOB, detached]
+    calls.clear()
+    with pytest.raises(FileNotFoundError):  # (anything else is no job's refusal: not tried again)
+        updates.start_installer(exe, log, starter(refuse=FileNotFoundError(2, "not there")))
+    assert calls == [detached | window.CREATE_BREAKAWAY_FROM_JOB]
+    calls.clear()
+    monkeypatch.setattr(window, "_system", lambda: "linux")
+    updates.start_installer(exe, log, starter())
+    assert calls == [True]
+
+
+def test_a_queue_paused_before_the_update_stays_paused_when_the_installer_ends_at_once(srv, copy):
+    copy.installed(True)
+    steps = []
+    check = updates.UpdateCheck(transport=_site(), popen=Started(steps, ends=1))
+    check.latest = "0.4.4"
+    desk = _desk(srv, check)
+    desk.standalone = True
+
+    async def go(paused):
+        desk.applier.paused = paused
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with _client(desk) as c:
+                answer = await c.post("/api/update/start", headers={"x-desk-token": desk.token}, json={})
+                assert answer.status_code == 200
+                for _ in range(200):
+                    if check.progress == "failed":
+                        break
+                    await asyncio.sleep(0.02)
+                return check.progress, desk.applier.paused, desk.quitting.is_set()
+        finally:
+            await desk.stop()
+
+    assert run(go(True)) == ("failed", True, False)
+    check.progress = None
+    assert run(go(False)) == ("failed", False, False)
+
+
+# ------------------------------------------------------------------ what a failure says, and a download kept
+
+
+def test_a_network_failure_says_the_desk_needs_the_internet(copy, loop):
+    def offline(request):
+        if str(request.url) == API:
+            return _site().handler(request)
+        raise httpx.ConnectError("no route", request=request)
+
+    check, steps, popen = _installed_update(copy, httpx.MockTransport(offline))
+    assert steps == [] and popen.calls == []
+    assert check.state(standalone=True)["error"] == \
+        "The new version couldn't be downloaded. The desk needs the internet for that."
+
+
+SAVE = ("The new version couldn't be saved on this computer. Make some room on the disk, or wait a minute, then press "
+        "Update now to try again.")
+
+
+def test_a_failure_to_save_says_so_not_the_internet(copy, loop, monkeypatch):
+    # the folder can't be made (a file where it goes)
+    _folder().parent.mkdir(parents=True, exist_ok=True)
+    _folder().write_text("in the way", encoding="utf-8")
+    check, steps, popen = _installed_update(copy, _site())
+    assert steps == [] and popen.calls == [] and check.state(standalone=True)["error"] == SAVE
+    _folder().unlink()
+
+    # a disk that's full as it writes
+    class Full:
+        def __init__(self, f):
+            self.f = f
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            self.f.close()
+
+        def write(self, piece):
+            raise OSError(28, "No space left on device")
+
+    real_open = updates.Path.open
+
+    def full_open(self, mode="r", *a, **k):
+        f = real_open(self, mode, *a, **k)
+        return Full(f) if self.name.endswith(".part") else f
+
+    monkeypatch.setattr(updates.Path, "open", full_open)
+    check, steps, popen = _installed_update(copy, _site())
+    assert steps == [] and popen.calls == [] and check.state(standalone=True)["error"] == SAVE
+    assert not any(_folder().glob("JobDeskSetup*"))
+    monkeypatch.setattr(updates.Path, "open", real_open)
+
+    # the whole file can't take its name (another program, an antivirus, holds it)
+    def held(a, b):
+        raise PermissionError(13, "in use by another process")
+
+    monkeypatch.setattr(updates.os, "replace", held)
+    check, steps, popen = _installed_update(copy, _site())
+    assert steps == [] and popen.calls == [] and check.state(standalone=True)["error"] == SAVE
+
+
+def test_an_older_installer_that_cant_be_deleted_never_stops_the_update(copy, loop, monkeypatch):
+    _folder().mkdir(parents=True)
+    older = _folder() / "JobDeskSetup-0.4.2.exe"
+    older.write_bytes(b"an older one, held by another program")
+    real_unlink = updates.Path.unlink
+
+    def unlink(self, missing_ok=False):
+        if self == older:
+            raise PermissionError(13, "in use by another process")
+        return real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(updates.Path, "unlink", unlink)
+    check, steps, _ = _installed_update(copy, _site())
+    assert steps == ["pause", "installer", "quit"] and older.exists()
+    assert check.state(standalone=True)["progress"] == "installing"
+
+
+def test_an_installer_that_matched_is_used_again_without_downloading_it(copy, loop):
+    _folder().mkdir(parents=True)
+    (_folder() / "JobDeskSetup-0.4.4.exe").write_bytes(INSTALLER)
+    seen = []
+    check, steps, popen = _installed_update(copy, _site(seen=seen))
+    assert seen == [API, DOWNLOAD + "JobDeskSetup.exe.sha256", STORAGE + "JobDeskSetup.exe.sha256"]
+    assert steps == ["pause", "installer", "quit"]
+    assert popen.calls[0][0][0] == str(_folder() / "JobDeskSetup-0.4.4.exe")
+
+
+def test_an_installer_kept_that_doesnt_match_is_deleted_and_downloaded_again(copy, loop):
+    _folder().mkdir(parents=True)
+    (_folder() / "JobDeskSetup-0.4.4.exe").write_bytes(INSTALLER[:-5] + b"bent!")
+    seen = []
+    check, steps, popen = _installed_update(copy, _site(seen=seen))
+    assert DOWNLOAD + "JobDeskSetup.exe" in seen and STORAGE + "JobDeskSetup.exe" in seen
+    assert (_folder() / "JobDeskSetup-0.4.4.exe").read_bytes() == INSTALLER
+    assert steps == ["pause", "installer", "quit"]
+
+
+def test_a_job_begun_during_the_download_stops_the_update_and_keeps_the_download(copy, loop):
+    """The second look at the jobs being filled, just before the queue is paused: a job begun while it downloaded
+    stops it (no pause, nothing started), and the download that matched is kept for the next try."""
+    seen = []
+    check, steps, popen = _installed_update(copy, _site(seen=seen), filling=lambda: True)
+    assert steps == [] and popen.calls == []
+    state = check.state(standalone=True)
+    assert (state["progress"], state["error"]) == (
+        "failed", "Jobs are being filled. Wait for them to finish, or pause the queue.")
+    assert (_folder() / "JobDeskSetup-0.4.4.exe").read_bytes() == INSTALLER
+    # the next try: no second download
+    seen.clear()
+    check, steps, popen = _installed_update(copy, _site(seen=seen))
+    assert STORAGE + "JobDeskSetup.exe" not in seen and steps == ["pause", "installer", "quit"]
+
+
+def test_an_unexpected_error_never_leaves_an_update_under_way(copy, loop):
+    """Something no step expects (a bug, say) still ends the update: failed, with a sentence, never "under way" (the
+    page would wait for it for ever, and the Update button would answer "already under way")."""
+    def pause():
+        raise RuntimeError("something unexpected")
+
+    check, steps, popen = _installed_update(copy, _site(), pause=pause)
+    state = check.state(standalone=True)
+    assert not check.under_way() and popen.calls == []
+    assert (state["progress"], state["error"]) == (
+        "failed", "The update stopped before it began. Press Update now to try again.")
+
+    def strange(args, **options):
+        raise RuntimeError("something unexpected")
+
+    plugin = updates.UpdateCheck(run=strange)
+    run(plugin.update_plugin())
+    assert not plugin.under_way() and plugin.state()["error"] == "Claude couldn't update the plugin."
+
+
+def test_redirects_are_followed_here_alone_and_tls_is_never_turned_off(copy, loop, monkeypatch):
+    """Every client the check and the update make follows no redirect by itself (each is looked at here: https only),
+    and checks TLS as httpx does unless told not to."""
+    made = []
+    real = httpx.AsyncClient
+
+    def client(**options):
+        made.append(dict(options))
+        return real(**options)
+
+    monkeypatch.setattr(updates.httpx, "AsyncClient", client)
+    _installed_update(copy, _site())
+    assert len(made) >= 2
+    for options in made:
+        assert options.get("follow_redirects") is False, options
+        assert options.get("verify", True) is True and "trust_env" not in options, options
+        assert set(options) <= {"timeout", "follow_redirects", "transport"}, options
+
+
+def test_an_update_that_didnt_finish_is_said_once_when_the_desk_starts_again(srv, copy, monkeypatch):
+    """The installer was cancelled, or failed and rolled back, and opened the version before again: the record of the
+    update it was started for, still later than this copy, says so once, as the update's failure."""
+    monkeypatch.setenv("JOB_APPLY_NO_UPDATE_CHECK", "1")
+    _folder().mkdir(parents=True)
+    (_folder() / "updated-to").write_text("0.4.4", encoding="utf-8")
+
+    async def update_of(desk):
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with _client(desk) as c:
+                return (await c.get("/api/state", headers={"x-desk-token": desk.token})).json()
+        finally:
+            await desk.stop()
+
+    state = run(update_of(_desk(srv, updates.UpdateCheck())))
+    assert (state["update"]["progress"], state["update"]["error"]) == (
+        "failed", "The update to version 0.4.4 didn't finish. Press Update now to try again.")
+    assert "0.4.4" not in (state["restored"] or "")
+    assert not (_folder() / "updated-to").exists()
+    again = run(update_of(_desk(srv, updates.UpdateCheck())))
+    assert (again["update"]["progress"], again["update"]["error"]) == (None, None)
+
+    # a record of an older one, or of no version, says nothing
+    for said in ("0.4.2", "not a version"):
+        (_folder() / "updated-to").write_text(said, encoding="utf-8")
+        check = updates.UpdateCheck()
+        check.note_updated()
+        assert (check.progress, check.updated_to) == (None, None)
 
 
 # ------------------------------------------------------------------ updating a plugin copy

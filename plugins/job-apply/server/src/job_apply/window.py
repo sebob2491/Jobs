@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import webbrowser
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,8 @@ MAC_APPLICATIONS = Path("/Applications")  # where macOS keeps its programs
 # has them on Windows alone; these are Windows' own numbers for them)
 DETACHED_PROCESS = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
 CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+# Windows: started outside the job object the desk's own launcher may hold it in (uv's), so it isn't stopped with it
+CREATE_BREAKAWAY_FROM_JOB = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)
 
 
 def _system() -> str:
@@ -71,6 +74,22 @@ def detached() -> dict[str, Any]:
     if _system() == "windows":
         return {"creationflags": DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP}
     return {"start_new_session": True}
+
+
+def start_detached(args: list[str], popen: Callable[..., Any] | None = None, **options: Any) -> Any:
+    """Start `args` on its own (detached()), never through a shell, and give back what `popen` (subprocess.Popen)
+    gave. On Windows it's also taken out of the job the desk's process may be in (uv's launcher holds what it starts
+    in one), so a program that outlives the desk on purpose, such as the installer of an update, isn't stopped when
+    the desk's process is: CREATE_BREAKAWAY_FROM_JOB. A job that forbids that refuses it with "access denied": then
+    it's started without, as before."""
+    popen = popen or subprocess.Popen
+    flags = detached()
+    if "creationflags" in flags:
+        try:
+            return popen(args, **options, creationflags=flags["creationflags"] | CREATE_BREAKAWAY_FROM_JOB)
+        except PermissionError:  # (Windows' ERROR_ACCESS_DENIED: the job allows no breaking away)
+            pass
+    return popen(args, **options, **flags)
 
 
 def open_window(url: str, mode: str) -> str:

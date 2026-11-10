@@ -14,7 +14,14 @@ nothing, and is tried again next time. JOB_APPLY_NO_UPDATE_CHECK=1 turns it off.
 
 Where a download comes from is decided by the installed plugin.json alone: of the Release's answer only its version is
 used, once it is digits and dots, and the tag and file names are built again from it. Downloads are https only, with
-redirects only to https, and stop at MAX_DOWNLOAD while they stream. Nothing is started before the SHA-256 matches.
+redirects followed here alone and only to https, TLS checked as httpx always checks it, and stop at MAX_DOWNLOAD while
+they stream. Nothing is started before the SHA-256 matches. An installer whose SHA-256 matched is kept until it's
+used, so a try stopped after the download (a job began meanwhile) doesn't download it again.
+
+The desk stops for the installer only once it has taken over: still running INSTALLER_SETTLE seconds after it started.
+Before it starts, a record of the version it's for goes in `updates`; the desk that opens next reads it once and says
+whether the update came through (the new version) or didn't finish (the version before, opened again by the installer
+when it was cancelled or failed).
 """
 
 from __future__ import annotations
@@ -55,6 +62,7 @@ MAX_REDIRECTS = 5
 INSTALLER_ARGS = ("/SILENT", "/CURRENTUSER", "/NORESTART", "/RELAUNCH=1")
 UNDER_WAY = ("downloading", "installing", "updating")
 UPDATED_TO = "updated-to"  # (in `updates`: the version an installer was started for, said once by the desk it opens)
+INSTALLER_SETTLE = 5.0  # seconds the installer is watched before the desk stops for it: one that ended by then didn't
 
 # The sentences: 409s from /api/update/start, and `error` when `progress` is "failed"
 NOT_NEWER = "There's no newer version to update to."
@@ -63,7 +71,12 @@ ALREADY = "An update is already under way."
 FILLING = "Jobs are being filled. Wait for them to finish, or pause the queue."
 NOT_WHOLE = "The download didn't arrive whole."
 NOT_DOWNLOADED = "The new version couldn't be downloaded. The desk needs the internet for that."
-WONT_START = "The installer couldn't be started."
+NOT_SAVED = ("The new version couldn't be saved on this computer. Make some room on the disk, or wait a minute, then "
+             "press Update now to try again.")
+WONT_START = "The installer couldn't be started. Wait a minute, then press Update now to try again."
+ENDED_EARLY = "The installer stopped as soon as it started. Press Update now to try again."
+NOT_FINISHED = "The update to version {} didn't finish. Press Update now to try again."
+STOPPED = "The update stopped before it began. Press Update now to try again."
 CLAUDE_FAILED = "Claude couldn't update the plugin."
 
 _VERSION = re.compile(r"[0-9]{1,9}(?:\.[0-9]{1,9}){0,5}")  # digits and dots, and nothing else (ASCII digits only)
@@ -132,6 +145,23 @@ def updates_folder() -> Path:
     return config.home() / "updates"
 
 
+def start_installer(installer: Path, log: Path, popen: Callable[..., Any] | None = None) -> Any:
+    """Start a downloaded installer on its own (window.start_detached: it outlives the desk, out of the desk's job where
+    Windows allows), with exactly INSTALLER_ARGS and /LOG=`log`, never through a shell, nothing of the desk's in its
+    input or output; what `popen` (subprocess.Popen) gave back. The installer workflow's update step calls this too,
+    with the installer it built."""
+    return window.start_detached([str(installer), *INSTALLER_ARGS, f"/LOG={log}"], popen=popen,
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for piece in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(piece)
+    return digest.hexdigest()
+
+
 def _no_window() -> dict[str, Any]:
     """Windows: a command run without a console window of its own (the desk itself may have none)."""
     return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)} if sys.platform == "win32" else {}
@@ -174,7 +204,7 @@ class UpdateCheck:
         return self.progress in UNDER_WAY
 
     def _client(self) -> httpx.AsyncClient:
-        # (redirects followed by _fetch, to https only)
+        # (redirects followed by _fetch alone, to https only; TLS checked, as httpx does unless told not to)
         options: dict[str, Any] = {"timeout": 30, "follow_redirects": False}
         if self.transport is not None:
             options["transport"] = self.transport
@@ -227,26 +257,30 @@ class UpdateCheck:
     # ------------------------------------------------------------ downloads
     async def _fetch(self, client: httpx.AsyncClient, url: str, limit: int, take: Callable[[bytes], None]) -> None:
         """GET `url` over https, following redirects only to https, handing each piece to `take`; past `limit` bytes
-        (said ahead, or as it streams) it stops. Raises UpdateFailed(NOT_DOWNLOADED) on anything else."""
+        (said ahead, or as it streams) it stops. Raises UpdateFailed(NOT_DOWNLOADED) on anything else the network does
+        (what `take` raises goes on as it is: saving isn't the network's)."""
         for _ in range(MAX_REDIRECTS + 1):
             if urlsplit(url).scheme != "https":
                 raise UpdateFailed(NOT_DOWNLOADED)
-            async with client.stream("GET", url) as response:
-                if response.is_redirect:
-                    url = urljoin(url, response.headers.get("location", ""))
-                    continue
-                if response.status_code != 200:
-                    raise UpdateFailed(NOT_DOWNLOADED)
-                said = response.headers.get("content-length", "")
-                if said.isdigit() and int(said) > limit:
-                    raise UpdateFailed(NOT_DOWNLOADED)
-                got = 0
-                async for piece in response.aiter_bytes():
-                    got += len(piece)
-                    if got > limit:
+            try:
+                async with client.stream("GET", url) as response:
+                    if response.is_redirect:
+                        url = urljoin(url, response.headers.get("location", ""))
+                        continue
+                    if response.status_code != 200:
                         raise UpdateFailed(NOT_DOWNLOADED)
-                    take(piece)
-                return
+                    said = response.headers.get("content-length", "")
+                    if said.isdigit() and int(said) > limit:
+                        raise UpdateFailed(NOT_DOWNLOADED)
+                    got = 0
+                    async for piece in response.aiter_bytes():
+                        got += len(piece)
+                        if got > limit:
+                            raise UpdateFailed(NOT_DOWNLOADED)
+                        take(piece)
+                    return
+            except (httpx.HTTPError, OSError) as e:  # (offline, refused, reset, timed out)
+                raise UpdateFailed(NOT_DOWNLOADED) from e
         raise UpdateFailed(NOT_DOWNLOADED)
 
     async def _read(self, client: httpx.AsyncClient, url: str, limit: int) -> bytes:
@@ -289,7 +323,8 @@ class UpdateCheck:
         self.progress, self.error = "downloading", None
         version = self.latest or ""
         folder = updates_folder()
-        saved: Path | None = None
+        record = folder / UPDATED_TO
+        recorded = False
         undo: Callable[[], None] | None = None
         try:
             if not newer(version, config.plugin_version()):  # (and digits and dots: newer checks both)
@@ -299,29 +334,18 @@ class UpdateCheck:
             checksum_url, installer_url = download_url(version, CHECKSUM), download_url(version, INSTALLER)
             if checksum_url is None or installer_url is None:
                 raise UpdateFailed(NOT_DOWNLOADED)
-            folder.mkdir(parents=True, exist_ok=True)
-            # 2. the checksum, then the installer (into a .part file: only a whole, matching one becomes the .exe)
-            part = saved.with_name(saved.name + ".part")
-            digest = hashlib.sha256()
             try:
-                async with self._client() as client:
-                    line = (await self._read(client, checksum_url, 1024)).decode("ascii", errors="replace")
-                    expected = _CHECKSUM_LINE.fullmatch(line)
-                    if expected is None:
-                        raise UpdateFailed(NOT_WHOLE)
-                    part.unlink(missing_ok=True)
-                    with part.open("xb") as f:
-                        def take(piece: bytes) -> None:
-                            digest.update(piece)
-                            f.write(piece)
-
-                        await self._fetch(client, installer_url, MAX_DOWNLOAD, take)
-                # 3. the SHA-256 must match, or the file goes
-                if not hmac.compare_digest(digest.hexdigest(), expected[1]):
+                folder.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                raise UpdateFailed(NOT_SAVED) from e
+            # 2. the checksum, then the installer, unless one kept from a try before still matches it
+            async with self._client() as client:
+                line = (await self._read(client, checksum_url, 1024)).decode("ascii", errors="replace")
+                expected = _CHECKSUM_LINE.fullmatch(line)
+                if expected is None:
                     raise UpdateFailed(NOT_WHOLE)
-                os.replace(part, saved)
-            finally:
-                part.unlink(missing_ok=True)
+                if not await self._kept(saved, expected[1]):
+                    await self._download(client, installer_url, saved, expected[1])
             # 4. still later than this copy (it may have been updated meanwhile)
             if not newer(version, config.plugin_version()):
                 raise UpdateFailed(NOT_NEWER)
@@ -331,33 +355,100 @@ class UpdateCheck:
             undo = pause()
             for older in folder.glob(f"{INSTALLER[:-4]}-*.exe"):
                 if older != saved:
-                    older.unlink(missing_ok=True)
-            # 6. the installer, on its own, with exactly these arguments, never through a shell
+                    with contextlib.suppress(OSError):  # (one another program holds stays: it stops nothing)
+                        older.unlink(missing_ok=True)
+            # 6. the installer, on its own, with exactly these arguments, never through a shell; the version it's for
+            # recorded first (the desk may be stopped by it at any moment after it starts)
             self.progress = "installing"
             try:
-                self.popen([str(saved), *INSTALLER_ARGS, f"/LOG={folder / f'install-{version}.log'}"],
-                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           **window.detached())
+                config.write_text_atomic(record, version)
+            except OSError as e:
+                raise UpdateFailed(NOT_SAVED) from e
+            recorded = True
+            try:
+                process = start_installer(saved, folder / f"install-{version}.log", self.popen)
             except (OSError, ValueError, subprocess.SubprocessError) as e:
                 raise UpdateFailed(WONT_START) from e
-            with contextlib.suppress(OSError):
-                (folder / UPDATED_TO).write_text(version, encoding="utf-8")
+            # 7. the desk stops only once the installer has taken over: one that already ended never began
+            if await self._ended_early(process):
+                raise UpdateFailed(ENDED_EARLY)
         except UpdateFailed as e:
-            self._fail_installed(saved, undo, str(e))
+            self._fail_installed(undo, record if recorded else None, str(e))
             return
-        except Exception:  # (offline, a disk that's full, anything else: never left "under way")
-            self._fail_installed(saved, undo, NOT_DOWNLOADED)
+        except Exception:  # (anything else: never left "under way")
+            self._fail_installed(undo, record if recorded else None, STOPPED)
             return
         # 7. the desk stops, as Quit does
         quit()
 
-    def _fail_installed(self, saved: Path | None, undo: Callable[[], None] | None, sentence: str) -> None:
-        if undo is not None:
-            undo()
-        if saved is not None:
+    async def _kept(self, saved: Path, digest: str) -> bool:
+        """An installer kept from a try before (its SHA-256 matched then): used again when its SHA-256 is the
+        Release's still, without downloading it again; deleted otherwise."""
+        if not saved.is_file():
+            return False
+        try:
+            got = await asyncio.to_thread(_sha256, saved)
+        except OSError:
+            got = ""
+        if hmac.compare_digest(got, digest):
+            return True
+        try:
+            saved.unlink(missing_ok=True)
+        except OSError as e:
+            raise UpdateFailed(NOT_SAVED) from e
+        return False
+
+    async def _download(self, client: httpx.AsyncClient, url: str, saved: Path, digest: str) -> None:
+        """The installer, into a .part file: only a whole one whose SHA-256 is `digest` becomes `saved`."""
+        part = saved.with_name(saved.name + ".part")
+        got = hashlib.sha256()
+        try:
+            try:
+                part.unlink(missing_ok=True)
+                with part.open("xb", buffering=0) as f:  # (unbuffered: a full disk is said by the write that fails)
+                    def take(piece: bytes) -> None:
+                        got.update(piece)
+                        try:
+                            f.write(piece)
+                        except OSError as e:
+                            raise UpdateFailed(NOT_SAVED) from e
+
+                    await self._fetch(client, url, MAX_DOWNLOAD, take)
+            except OSError as e:  # (_fetch says the network's own: what's left is this computer's)
+                raise UpdateFailed(NOT_SAVED) from e
+            # 3. the SHA-256 must match, or the file goes
+            if not hmac.compare_digest(got.hexdigest(), digest):
+                raise UpdateFailed(NOT_WHOLE)
+            try:
+                os.replace(part, saved)
+            except OSError as e:
+                raise UpdateFailed(NOT_SAVED) from e
+        finally:
             with contextlib.suppress(OSError):
-                saved.unlink(missing_ok=True)
-        self._failed(sentence)
+                part.unlink(missing_ok=True)
+
+    @staticmethod
+    async def _ended_early(process: Any) -> bool:
+        """Has the installer just started ended already? It's watched for INSTALLER_SETTLE seconds: one that ends that
+        soon never began (it ran into something at once, or was closed). One still running has taken over: its first
+        steps stop this desk (stop-desk.ps1)."""
+        deadline = time.monotonic() + INSTALLER_SETTLE
+        while process.poll() is None:
+            if time.monotonic() >= deadline:
+                return False
+            await asyncio.sleep(min(0.25, INSTALLER_SETTLE))
+        return True
+
+    def _fail_installed(self, undo: Callable[[], None] | None, record: Path | None, sentence: str) -> None:
+        """The queue as it was (resumed, unless it was paused before), no record of an installer started, and why."""
+        try:
+            if undo is not None:
+                undo()
+        finally:
+            if record is not None:
+                with contextlib.suppress(OSError):
+                    record.unlink(missing_ok=True)
+            self._failed(sentence)
 
     async def update_plugin(self) -> None:
         """Update a plugin copy: Claude's two commands, with the claude found, one after the other, no shell, each
@@ -385,14 +476,20 @@ class UpdateCheck:
         self.progress = "done"
 
     def note_updated(self) -> None:
-        """At the desk's start: an installer this desk's update started, now done (this copy is its version), is
-        noted for the page to say once. The note goes either way."""
-        marker = updates_folder() / UPDATED_TO
+        """At the desk's start, the record of an installer an Update button started, said once: done (this copy is its
+        version), noted for the queue's notice; not finished (this copy is still older: the installer was cancelled or
+        failed, and opened this desk again), said as the update's failure. The record goes either way."""
+        record = updates_folder() / UPDATED_TO
         try:
-            version = marker.read_text(encoding="utf-8").strip()
-        except OSError:
+            version = record.read_text(encoding="utf-8").strip()
+        except (OSError, ValueError):
             return
         with contextlib.suppress(OSError):
-            marker.unlink()
-        if _parts(version) is not None and version == config.plugin_version():
+            record.unlink()
+        if _parts(version) is None:
+            return
+        current = config.plugin_version()
+        if version == current:
             self.updated_to = version
+        elif newer(version, current):
+            self._failed(NOT_FINISHED.format(version))
