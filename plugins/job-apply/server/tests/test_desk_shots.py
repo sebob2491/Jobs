@@ -422,3 +422,61 @@ def test_a_picture_of_the_update_card_and_the_notice(srv, job_apply_home, monkey
 
     run(go())
     assert all((folder / name).stat().st_size > 2000 for name in names)
+
+
+# Accounts and passwords (the design's E4) in its states: what each changes in the openings state (one password saved,
+# made by no one), and on a desk run on its own or inside Claude
+_NONE = {"workday": False, "successfactors": False, "icims": False, "applicantstack": False, "ukg": False,
+         "infor": False, "taleo": False, "email": False, "anthropic": False}
+_SOME = {**_NONE, "workday": True, "successfactors": True, "anthropic": True}
+_MADE = {"workday_password": "2026-11-10"}
+PASSWORD_SHOTS = {
+    "none": ({"passwords": _NONE, "passwords_made": {}}, True),
+    "some": ({"passwords": _SOME, "passwords_made": _MADE}, True),
+    "showing": ({"passwords": _SOME, "passwords_made": _MADE}, True),
+    "menu": ({"passwords": _SOME, "passwords_made": _MADE}, True),
+    "inside": ({"passwords": _SOME, "passwords_made": _MADE}, False),
+    "vault": ({"passwords": _NONE, "passwords_made": {},
+               "vault_problem": "Your password vault (Windows Credential Manager) isn't answering, so the desk can't "
+                                "read the passwords saved in it: unlock it, then open the Job Desk again."}, True),
+}
+
+
+@pytest.mark.parametrize("window", ((1440, 1500), (390, 2400)), ids=lambda w: f"{w[0]}x{w[1]}")
+@pytest.mark.parametrize("look", LOOKS)
+@pytest.mark.parametrize("case", PASSWORD_SHOTS)
+def test_a_picture_of_accounts_and_passwords(srv, job_apply_home, monkeypatch, case, look, window):
+    """Settings' Accounts and passwords (E4), its panel alone: none saved yet; some made and some typed; a password
+    showing (a made-up one); a row's More menu open; inside Claude; and the password vault not answering. In each look,
+    wide and at a phone's width; saved as passwords-<case>-<look>-<w>x<h>.png."""
+    from job_apply import config
+
+    folder = Path(SHOTS)
+    folder.mkdir(parents=True, exist_ok=True)
+    over, standalone = PASSWORD_SHOTS[case]
+    desk = _canned(srv, monkeypatch, {**_state("state-openings.json"), **over, "standalone": standalone})
+    desk.standalone = standalone
+    config.save_site_password("workday_password", "Made-up-Shown-42")  # (what Show asks the desk for)
+    path = folder / f"passwords-{case}-{look}-{window[0]}x{window[1]}.png"
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": window[0], "height": window[1]}, color_scheme=look)
+                await open_desk(page, desk, "settings/passwords")
+                await page.wait_for_selector("#pw-rows [data-pw]")
+                if case == "showing":
+                    await page.click("[data-pw=workday] [data-pw-act=show]")
+                    await page.wait_for_selector("[data-pw-box]")
+                if case == "menu":
+                    await page.click("[data-pw=successfactors] summary")
+                    await page.wait_for_selector("[data-pw=successfactors] details.menu[open] .menu-panel")
+                await page.wait_for_timeout(150)
+                await page.locator("#panel-passwords").screenshot(path=str(path))
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert path.stat().st_size > 2000
