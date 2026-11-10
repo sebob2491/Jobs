@@ -155,9 +155,9 @@ def test_the_desks_cards_say_what_they_said(srv, job_apply_home, monkeypatch, ca
     how = CASES[case]
     seen = _cards(srv, monkeypatch, _state(how["state"]), how.get("storage"), how.get("press", []),
                   how.get("list", "openings"))
-    # (every card: Home's four, the Openings card, Your answers' and What's working's, Settings' seven (Version B's
-    # Searching and applying among them), Help's two)
-    assert seen.count("\n## ") + 1 == 16, seen
+    # (every card: Home's four, the Openings card, the Applications card (Version B's B6), Your answers' and What's
+    # working's, Settings' seven (Version B's Searching and applying among them), Help's two)
+    assert seen.count("\n## ") + 1 == 17, seen
     _compare(how["golden"], seen)
 
 

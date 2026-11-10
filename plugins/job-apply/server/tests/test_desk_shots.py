@@ -88,3 +88,31 @@ def test_a_picture_of_the_openings_with_a_drop_down_open(srv, job_apply_home, mo
 
     run(go())
     assert path.stat().st_size > 2000
+
+
+@pytest.mark.parametrize("window", WINDOWS, ids=lambda w: f"{w[0]}x{w[1]}")
+@pytest.mark.parametrize("look", LOOKS)
+def test_a_picture_of_the_openings_with_jobs_ticked(srv, job_apply_home, monkeypatch, look, window):
+    """The Openings page (the openings state) with the recommended openings ticked, so the apply bar shows over its
+    foot (the design's B5), in each look and window size; saved as openings-openings-ticked-<look>-<w>x<h>.png."""
+    folder = Path(SHOTS)
+    folder.mkdir(parents=True, exist_ok=True)
+    desk = _canned(srv, monkeypatch, _state("state-openings.json"))
+    path = folder / f"openings-openings-ticked-{look}-{window[0]}x{window[1]}.png"
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": window[0], "height": window[1]}, color_scheme=look)
+                await open_desk(page, desk, "openings")
+                await page.click("[data-act=select-recommended]")
+                await page.wait_for_selector(".applybar", state="visible")
+                await page.wait_for_timeout(150)
+                await page.screenshot(path=str(path))
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert path.stat().st_size > 2000

@@ -24,7 +24,7 @@ PAGES = {"home": "Home", "openings": "Openings", "applications": "Applications",
          "working": "What's working", "settings": "Settings", "help": "Help"}
 # The cards each page shows (each by its heading's id, in the page's order) on a desk with a job stopped for the person
 # and nothing sent in yet: Home's three cards (not the idle one), no What's working card
-CARDS = {"home": ["needs-h", "done-h", "work-h"], "openings": ["list-h"], "applications": ["list-h"],
+CARDS = {"home": ["needs-h", "done-h", "work-h"], "openings": ["list-h"], "applications": ["apps-h"],
          "answers": ["bank-h"], "working": [],
          "settings": ["profile-h", "safety-card-h", "searching-h", "pw-h", "phone-h", "alerts-h", "program-h"],
          "help": ["how-h", "notes-card-h"]}
@@ -126,7 +126,7 @@ def test_the_page_opens_on_home_and_each_menu_link_shows_its_pages_cards(srv):
         assert seen[unknown] == shown("home", f"#{unknown}"), (unknown, seen[unknown])
     assert seen["frame"] == {"stopped": True, "sprite": "svg", "old": 0, "frame": ["side", "main"],
                              "notices": "content",
-                             "pages": ["home", "openings applications", "answers", "working", "settings", "help"],
+                             "pages": ["home", "openings", "applications", "answers", "working", "settings", "help"],
                              "headings": ["page-title"]}, seen["frame"]
 
 
@@ -154,10 +154,11 @@ def test_a_search_that_isnt_running_shows_no_stop_search_on_any_page(srv):
 
 
 def test_applications_chooses_my_applications_and_recommended_leads_back_to_openings(srv):
-    """The design's A8, test 7. Openings and Applications share the Openings card, and its tab and the address stay
-    in step: #applications chooses My applications; pressing Recommended (or All) leads back to #openings; the menu's
-    Applications link (Version B's My applications, no longer a tab) leads to #applications; and the menu's Openings
-    link, while My applications is chosen, chooses Recommended."""
+    """The design's A8, test 7, as Version B has it: the Applications page lists the applications in its own list
+    (B6's #app-rows) with no Openings tab in sight, and the Openings tabs and the address stay in step: pressing All,
+    then Recommended, on Openings stays on #openings; the menu's Applications link (Version B's My applications, no
+    longer a tab) leads to #applications; and the menu's Openings link leads back to Recommended (the tab as it was
+    left: B2's route() no longer sets it). An opening is ticked on Openings, so the apply bar (B5) shows there."""
     desk = _idle_desk(srv)
     desk.listings = [{"company": "Example Fab", "title": "Field Service Engineer", "location": "Phoenix, AZ",
                       "url": "https://careers.example.com/fab/1", "fit": _fit(80)},
@@ -166,10 +167,13 @@ def test_applications_chooses_my_applications_and_recommended_leads_back_to_open
     sent = srv.add_job(url="https://careers.example.com/etch/3", title="Process Technician",
                        company="Example Etch")["job"]
     srv.update_job(sent["id"], status="applied")
+    # (the tabs and the list in sight: the Openings page's #rows, or the Applications page's #app-rows)
     read = """() => ({
         hash: location.hash, title: document.getElementById('page-title').textContent,
-        pressed: [...document.querySelectorAll('[data-filter][aria-pressed=true]')].map((b) => b.dataset.filter),
-        rows: [...document.querySelectorAll('#rows .title')].map((t) => t.textContent),
+        pressed: [...document.querySelectorAll('[data-filter][aria-pressed=true]')]
+          .filter((b) => b.getClientRects().length > 0).map((b) => b.dataset.filter),
+        rows: [...document.querySelectorAll('#rows .title, #app-rows .title')]
+          .filter((t) => t.getClientRects().length > 0).map((t) => t.textContent),
         apply: document.getElementById('apply').getClientRects().length > 0,
     })"""
 
@@ -179,17 +183,20 @@ def test_applications_chooses_my_applications_and_recommended_leads_back_to_open
             async with person_browser() as browser:
                 page = await browser.new_page()
                 await open_desk(page, desk, "applications")
-                await page.wait_for_selector("#rows li.row.app")
+                await page.wait_for_selector("#app-rows li.row.app")
                 seen = {"applications": await page.evaluate(read)}
                 # (an application's row is .row.app: a row of the list, not the page's frame, which is .app too)
-                seen["row"] = await page.evaluate("document.querySelector('#rows li.row.app').offsetHeight")
-                await page.click("[data-filter=recommended]")
-                await page.wait_for_function("location.hash === '#openings'")
+                seen["row"] = await page.evaluate("document.querySelector('#app-rows li.row.app').offsetHeight")
+                await page.click('.nav a[href="#openings"]')  # (the Openings tabs are on the Openings page)
                 await page.wait_for_selector("#rows [data-pick]")
-                seen["recommended"] = await page.evaluate(read)
+                await page.check("[data-pick='https://careers.example.com/fab/1']")  # (the apply bar shows)
                 await page.click("[data-filter=all]")
                 await page.wait_for_selector("#rows li.row >> nth=1")
                 seen["all"] = await page.evaluate(read)
+                await page.click("[data-filter=recommended]")
+                await page.wait_for_function("location.hash === '#openings'")
+                await page.wait_for_selector("#rows li.row >> nth=1", state="detached")
+                seen["recommended"] = await page.evaluate(read)
                 await page.click('.nav a[href="#applications"]')  # (My applications is the Applications page)
                 await page.wait_for_function("location.hash === '#applications'")
                 seen["mine"] = await page.evaluate(read)
@@ -199,7 +206,7 @@ def test_applications_chooses_my_applications_and_recommended_leads_back_to_open
                 await page.wait_for_selector("#rows [data-pick]")
                 seen["menu"] = await page.evaluate(read)
                 await page.go_back()
-                await page.wait_for_selector("#rows li.row.app")
+                await page.wait_for_selector("#app-rows li.row.app")
                 seen["back"] = await page.evaluate(read)
                 await browser.close()
                 return seen

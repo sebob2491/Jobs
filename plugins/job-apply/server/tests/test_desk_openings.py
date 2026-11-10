@@ -485,3 +485,130 @@ def test_at_1000_pixels_pay_posted_and_applies_on_sit_under_the_job_cell(srv, jo
     for line in wide["lines"]:
         assert not line["twoLines"] and line["inOrder"] and line["inRow"] and line["cut"] == [], wide
     assert not wide["sideways"] and not wide["content"], wide
+
+
+# The apply bar as the person sees it: shown or not, its words left to right, the count, Apply's words, and the page's
+# padding at its foot (the bar never covers the last row)
+_BAR = """() => {
+  const bar = document.querySelector('.applybar'), apply = document.getElementById('apply');
+  const row = [...bar.querySelectorAll('#apply-count, label, button')].map((el) => el.innerText.trim());
+  return {shown: bar.getClientRects().length > 0, count: document.getElementById('apply-count').innerText,
+          apply: apply.innerText.trim(), arrow: apply.querySelectorAll('svg use[href="#i-arrow"]').length,
+          disabled: apply.disabled, row,
+          tips: [...bar.querySelectorAll('label')].map((l) => l.title),
+          switches: [...bar.querySelectorAll('label input')]
+            .map((i) => i.id + (i.classList.contains('switch') ? ' switch' : '')),
+          pad: parseFloat(getComputedStyle(document.getElementById('content')).paddingBottom),
+          atFoot: bar.getClientRects().length > 0 && innerHeight - bar.getBoundingClientRect().bottom < 60};
+}"""
+
+
+def test_the_apply_bar_shows_only_while_something_is_ticked_and_counts_it(srv, job_apply_home):
+    """B8's test 7. The apply bar (B5) is hidden while nothing is ticked; ticked, it floats at the window's foot with
+    how many are selected, the three switches, Clear and Apply, whose words count the jobs ("Apply to 1 job", "Apply to
+    2 jobs"), and the page has 96px more room at its foot; Clear hides it again."""
+    desk = _idle_desk(srv)
+    desk.listings = [_opening(1, "Example Fab", "Field Service Engineer"),
+                     _opening(2, "Example Litho", "Process Technician"),
+                     _opening(3, "Example Etch", "Equipment Technician")]
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1440, "height": 900})
+                await open_desk(page, desk, "openings")
+                await _until_titles(page, ["Field Service Engineer", "Process Technician", "Equipment Technician"])
+                seen = {"none": await page.evaluate(_BAR)}
+                await page.check("[data-pick='https://careers.example.com/1']")
+                await page.wait_for_selector(".applybar", state="visible")
+                seen["one"] = await page.evaluate(_BAR)
+                await page.check("[data-pick='https://careers.example.com/3']")
+                await page.wait_for_timeout(1700)  # (a refresh: the same)
+                seen["two"] = await page.evaluate(_BAR)
+                await page.click(".applybar [data-act=select-none]")
+                await page.wait_for_selector(".applybar", state="hidden")
+                seen["cleared"] = await page.evaluate(_BAR)
+                seen["clears"] = await page.locator("[data-act=select-none]").count()
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    none, one, two = seen["none"], seen["one"], seen["two"]
+    assert not none["shown"] and none["disabled"] and not none["atFoot"], none
+    assert seen["cleared"] == none and seen["clears"] == 1, seen
+    assert one["shown"] and one["atFoot"] and not one["disabled"] and one["arrow"] == 1, one
+    assert (one["count"], one["apply"]) == ("1 selected", "Apply to 1 job"), one
+    assert (two["count"], two["apply"]) == ("2 selected", "Apply to 2 jobs"), two
+    assert two["row"] == ["2 selected", "Submit for me", "Tailor my resume", "Cover letter", "Clear",
+                          "Apply to 2 jobs"], two
+    assert two["tips"] == ["Submit for me when nothing needs me", "Tailor my resume for each job",
+                           "Write a cover letter for each job"], two
+    assert two["switches"] == ["auto switch", "tailor switch", "letters switch"], two
+    assert one["pad"] - none["pad"] == 96 and two["pad"] == one["pad"], (none, one, two)
+
+
+def test_the_applications_page_lists_the_applications_in_its_own_list_and_its_tabs_filter_them(
+        srv, job_apply_home, monkeypatch):
+    """B8's test 10. The Applications page has its own card: the applications in #app-rows (none in the openings'
+    #rows), under tabs with their numbers (All, Waiting with its follow-ups, Heard back, Interviews, Closed) that filter
+    them, and the columns Job, Applied, Last heard, Status and one without a header. The Openings tabs aren't there."""
+    from test_desk import _after_submit_jobs
+
+    _after_submit_jobs(srv, monkeypatch)
+    desk = _idle_desk(srv)
+    read = """() => ({
+      companies: [...document.querySelectorAll('#app-rows li.row .meta')].map((m) => m.innerText.trim()),
+      tabs: [...document.querySelectorAll('#app-groups button')].map((b) => [b.dataset.appGroup,
+        b.innerText.replace(/\\s+/g, ' ').trim(), b.getAttribute('aria-pressed')]),
+      head: [...document.querySelectorAll('[aria-labelledby=apps-h] [role=columnheader]')]
+        .map((h) => h.innerText.trim()),
+      openingRows: document.querySelectorAll('#rows li.row.app').length,
+      openingTabs: [...document.querySelectorAll('[data-filter]')].filter((b) => b.getClientRects().length).length,
+    })"""
+    cells = """() => [...document.querySelectorAll('#app-rows li.row')].filter((r) => r.innerText.includes('Quiet Fab'))
+      .map((r) => [...r.children].map((c) => [c.getAttribute('role'), c.innerText.replace(/\\s+/g, ' ').trim()]))[0]"""
+
+    async def press(page, group: str) -> dict:
+        await page.click(f"#app-groups [data-app-group={group}]")
+        await page.wait_for_selector(f"[data-app-group={group}][aria-pressed=true]")
+        return await page.evaluate(read)
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1440, "height": 900})
+                await open_desk(page, desk, "applications")
+                await page.wait_for_selector("#app-rows li.row >> nth=9")
+                seen = {"all": await page.evaluate(read), "quiet": await page.evaluate(cells)}
+                seen["interviews"] = await press(page, "interviews")
+                seen["closed"] = await press(page, "closed")
+                seen["waiting"] = await press(page, "waiting")
+                await page.wait_for_timeout(1700)  # (a refresh: the tab and its rows stay)
+                seen["later"] = await page.evaluate(read)
+                seen["back to all"] = await press(page, "all")
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    every = seen["all"]
+    assert every["head"] == ["Job", "Applied", "Last heard", "Status", ""], every
+    assert every["openingRows"] == 0 and every["openingTabs"] == 0, every
+    assert sorted(every["companies"]) == sorted(["Quiet Fab", "Fresh Fab", "Ready Fab", "Ack Fab", "Quiz Fab",
+                                                 "Talk Fab", "Test Fab", "Offer Fab", "No Fab", "Gone Fab"]), every
+    assert [t[:2] for t in every["tabs"]] == [["all", "All 10"], ["waiting", "Waiting 3, 1 to follow up"],
+                                              ["heard", "Heard back 2"], ["interviews", "Interviews 3"],
+                                              ["closed", "Closed 2"]], every
+    assert seen["quiet"] == [["cell", "Technician Quiet Fab"], ["cell", "2026-10-01"], ["cell", "No reply yet"],
+                             ["cell", "Applied Follow-up due 2026-10-11"], ["cell", "Follow up"]], seen["quiet"]
+    assert sorted(seen["interviews"]["companies"]) == ["Offer Fab", "Talk Fab", "Test Fab"], seen
+    assert sorted(seen["closed"]["companies"]) == ["Gone Fab", "No Fab"], seen
+    assert sorted(seen["waiting"]["companies"]) == ["Fresh Fab", "Quiet Fab", "Ready Fab"], seen
+    assert seen["later"] == seen["waiting"], seen
+    assert [t[2] for t in seen["waiting"]["tabs"]] == ["false", "true", "false", "false", "false"], seen
+    assert seen["back to all"]["companies"] == every["companies"], seen

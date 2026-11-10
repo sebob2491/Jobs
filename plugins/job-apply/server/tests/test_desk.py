@@ -1235,7 +1235,7 @@ def test_dont_wait_for_me_lets_the_queue_go_on_past_a_sign_in_or_code(srv, job_a
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await open_desk(page, desk, "openings")
+                await open_desk(page, desk, "settings")  # (Don't wait for me: Settings, Searching and applying)
                 await page.wait_for_selector("#dont-wait-hint:has-text('Off')")  # (drawn from the desk's state)
                 async with page.expect_response("**/api/settings"):
                     await page.check("#dont-wait")
@@ -1337,7 +1337,7 @@ def test_jobs_at_once_chosen_on_the_desk_outlasts_a_profile_that_doesnt_read_and
 
 def test_the_working_on_card_shows_every_job_under_way_and_the_jobs_at_once_buttons_set_it(srv):
     """With jobs filled at once, Working on lists each one under way, and how many more are queued; the Jobs at once
-    buttons beside Submit for me show the setting and change it."""
+    buttons (on the Settings page, under Searching and applying) show the setting and change it."""
     from job_apply.pipeline import Run
 
     ids = [srv.add_job(url=f"https://careers.employer{n}.example/job/{n}", title=f"Technician {n}",
@@ -1351,7 +1351,7 @@ def test_the_working_on_card_shows_every_job_under_way_and_the_jobs_at_once_butt
         try:
             async with person_browser() as browser:
                 page = await browser.new_page()
-                await open_desk(page, desk, "openings")
+                await open_desk(page, desk, "settings")  # (Jobs at once: Settings, Searching and applying)
                 await page.wait_for_selector("#plugin-version:not(:empty)")  # the page has its state
                 await page.wait_for_selector("[data-at-once='1'][aria-pressed='true']")  # (the tests' profile)
                 for n, job_id in enumerate(ids):
@@ -1363,7 +1363,7 @@ def test_the_working_on_card_shows_every_job_under_way_and_the_jobs_at_once_butt
                 await page.wait_for_selector("#work :text('1 more queued.')")
                 work = await page.locator("#work").inner_text()
                 assert "Technician 0" in work and "Technician 1" in work and "Technician 2" not in work, work
-                await press_menu(page, "openings")
+                await press_menu(page, "settings")
                 await page.click("[data-at-once='3']")
                 await page.wait_for_selector("[data-at-once='3'][aria-pressed='true']")
                 for _ in range(50):
@@ -1411,7 +1411,7 @@ def test_only_where_the_desk_goes_all_the_way_shows_those_employers_alone_and_is
                 await page.check("#handled-only")
                 await page.wait_for_selector("text=Field Service Engineer", state="detached")
                 assert await page.locator("text=Module Equipment Technician").count() == 1
-                assert await page.locator("#apply").inner_text() == "Apply to 1 selected"
+                assert await page.locator("#apply").inner_text() == "Apply to 1 job"
                 # (the review's) a link the person adds shows, whatever its employer, and nothing hidden is applied to
                 # (a pasted link)
                 srv.add_job(url="https://example.com/p", title="Pasted Technician", company="lamresearch")
@@ -3321,7 +3321,7 @@ def test_the_page_lists_my_applications_folds_an_idle_side_and_closes_a_tip(srv,
                 assert "location not given" not in await page.inner_text("#rows")
                 assert await page.inner_text("#nav-applications") == "2"  # (the menu's number for Applications)
                 await press_menu(page, "applications")
-                rows = await page.inner_text("#rows")
+                rows = await page.inner_text("#app-rows")
                 assert "Intel" in rows and "Applied" in rows and "Rejected" in rows and "KLA" not in rows, rows
                 assert await page.locator("#apply").is_hidden()
                 assert "Fewer stops" in await page.inner_text("#notices")
@@ -4925,30 +4925,30 @@ def test_my_applications_on_the_page_are_grouped_marked_for_follow_up_and_copy_a
                 seen["bar"] = " ".join((await page.inner_text("#app-groups")).split())
                 await page.click("[data-app-group=interviews]")
                 await page.wait_for_selector("[data-app-group=interviews][aria-pressed=true]")
-                seen["interviews"] = await page.inner_text("#rows")
-                seen["interview_preps"] = await page.locator("#rows [data-act=prep]").count()
-                talk = page.locator("#rows li", has_text="Talk Fab")
+                seen["interviews"] = await page.inner_text("#app-rows")
+                seen["interview_preps"] = await page.locator("#app-rows [data-act=prep]").count()
+                talk = page.locator("#app-rows li", has_text="Talk Fab")
                 seen["heard"] = " ".join((await talk.locator(".heard").inner_text()).split())
                 seen["heard_tip"] = await talk.locator(".heard").get_attribute("title")
                 await talk.locator("[data-act=prep]").click()
                 await page.wait_for_function("document.getElementById('toast').textContent.includes('Copied')")
                 seen["toast"] = await page.inner_text("#toast")
                 seen["copied"] = await page.evaluate("navigator.clipboard.readText()")
-                await page.locator("#rows li", has_text="Test Fab").locator("[data-act=prep]").click()
+                await page.locator("#app-rows li", has_text="Test Fab").locator("[data-act=prep]").click()
                 await page.wait_for_function("async () => (await navigator.clipboard.readText()).includes('Test Fab')")
                 seen["copied_test"] = await page.evaluate("navigator.clipboard.readText()")
                 await page.click("[data-app-group=heard]")
                 await page.wait_for_selector("[data-app-group=heard][aria-pressed=true]")
-                seen["heard_rows"] = await page.inner_text("#rows")
-                seen["heard_preps"] = [await page.locator("#rows li", has_text=c).locator("[data-act=prep]").count()
+                seen["heard_rows"] = await page.inner_text("#app-rows")
+                seen["heard_preps"] = [await page.locator("#app-rows li", has_text=c).locator("[data-act=prep]").count()
                                        for c in ("Quiz Fab", "Ack Fab")]
                 await page.click("[data-app-group=waiting]")
                 await page.wait_for_selector("[data-app-group=waiting][aria-pressed=true]")
-                seen["waiting"] = await page.inner_text("#rows")
-                seen["quiet"] = " ".join((await page.inner_text("#rows li:has-text('Quiet Fab')")).split())
-                seen["waiting_preps"] = await page.locator("#rows [data-act=prep]").count()
-                seen["follow_ups"] = await page.locator("#rows [data-act=follow-up]").count()
-                await page.locator("#rows li", has_text="Quiet Fab").locator("[data-act=follow-up]").click()
+                seen["waiting"] = await page.inner_text("#app-rows")
+                seen["quiet"] = " ".join((await page.inner_text("#app-rows li:has-text('Quiet Fab')")).split())
+                seen["waiting_preps"] = await page.locator("#app-rows [data-act=prep]").count()
+                seen["follow_ups"] = await page.locator("#app-rows [data-act=follow-up]").count()
+                await page.locator("#app-rows li", has_text="Quiet Fab").locator("[data-act=follow-up]").click()
                 await page.wait_for_function("async () => (await navigator.clipboard.readText()).includes('follow-up')")
                 seen["copied_follow_up"] = await page.evaluate("navigator.clipboard.readText()")
                 seen["toast_follow_up"] = await page.inner_text("#toast")
@@ -4957,11 +4957,11 @@ def test_my_applications_on_the_page_are_grouped_marked_for_follow_up_and_copy_a
                 await press_menu(page, "applications")
                 await page.wait_for_selector("#app-groups:not([hidden]) button")
                 seen["kept"] = await page.get_attribute("[data-app-group=waiting]", "aria-pressed")
-                seen["kept_rows"] = await page.inner_text("#rows")
+                seen["kept_rows"] = await page.inner_text("#app-rows")
                 await page.set_viewport_size({"width": 390, "height": 900})
                 seen["sizes"] = await page.evaluate("() => [document.documentElement.scrollWidth, "
                                                     "document.documentElement.clientWidth]")
-                await page.click("[data-filter=recommended]")
+                await press_menu(page, "openings")  # (the Openings tabs are on Openings)
                 seen["hidden_again"] = await page.locator("#app-groups").is_hidden()
                 seen["sent"] = sent
                 await browser.close()
@@ -5343,6 +5343,7 @@ def test_the_page_marks_new_openings_hides_one_not_wanted_with_undo_and_shows_sa
                 await page.wait_for_selector("[data-stop=fresh][aria-pressed=true]")
                 seen["fresh_rows"] = await page.locator("#rows li.row").count()
                 await page.click("[data-stop=any]")
+                await page.keyboard.press("Escape")  # (More filters closed: at 390px its panel lies over the rows)
                 # how a score adds up
                 await page.click(f"button.score[data-parts='{fse}']")
                 seen["parts"] = " ".join((await page.locator("li.row", has_text="Field Service Engineer")
@@ -6225,7 +6226,7 @@ def test_each_switch_that_is_on_is_said_under_the_openings_head(srv, job_apply_h
                 seen["auto"] = await said("Search by itself:")
                 await press_menu(page, "applications")  # (said with the openings only)
                 seen["mine"] = await gone()
-                await page.click("[data-filter=recommended]")
+                await press_menu(page, "openings")  # (the Openings tabs are on Openings)
                 await said("Search by itself:")
                 await press_menu(page, "settings")
                 await page.uncheck("#auto-search")
@@ -6369,7 +6370,7 @@ def test_the_preflight_dialog_defaults_to_seeing_to_things_first(srv, job_apply_
     assert seen["said"][0].startswith("Workday: no password saved, so 1 of these jobs stops at the sign-in"), seen
     assert seen["focused"] == "preflight-first", seen
     assert seen["after_enter"] == [] and seen["after_escape"] == [], seen
-    assert seen["escape_page"] == "openings" and seen["escape_apply"] == "Apply to 1 selected", seen
+    assert seen["escape_page"] == "openings" and seen["escape_apply"] == "Apply to 1 job", seen
     assert seen["picked"] == "workday" and seen["pw_focused"] == "pw" and seen["pw_in_view"], seen
     assert seen["applied"] == [url], seen
     assert seen["native"] == [], seen  # (no browser confirm: the page's own window)

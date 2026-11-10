@@ -14,25 +14,33 @@ Applied: 1
 Interviewing: 1
 
 ## list-h
-Openings
-Recommended
-3
+(hidden)
+
+## apps-h
+Applications
 All
-4
-Not interested
+2
+Waiting
+1, 1 to follow up
+Heard back
+Interviews
 1
-All 2
-Waiting 1, 1 to follow up
-Heard back 0
-Interviews 1
-Closed 0
+Closed
+Job
+Applied
+Last heard
+Status
 Equipment Technician
-Example Etch · applied YYYY-MM-DD · No reply yet
+Example Etch
+YYYY-MM-DD
+No reply yet
+Applied
 Follow-up due YYYY-MM-DD
 Follow up
-Applied
 Field Service Engineer
-Example Optics · applied YYYY-MM-DD · Heard YYYY-MM-DD: interview
+Example Optics
+YYYY-MM-DD
+Heard YYYY-MM-DD: interview
 Interviewing
 Prep me
 
@@ -82,6 +90,16 @@ See your safety settings
 
 ## searching-h
 Searching and applying
+Jobs at once
+How many applications the desk fills at the same time.
+1
+2
+3
+4
+5
+Don't wait for me
+A sign-in or an emailed code waits on its card, and the other jobs carry on.
+Off: a sign-in or emailed code holds the other jobs until you're done, or 5 minutes pass.
 Search by itself every 12 hours
 The desk searches again when the openings are over 12 hours old. Never while the queue is paused.
 Troubleshooting

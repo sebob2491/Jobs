@@ -63,7 +63,6 @@ Recommended
 All
 7
 Select recommended
-Clear
 Add job links
 Add
 Best fit
@@ -115,22 +114,6 @@ Entry level
 Not senior
 Company
 Only where the desk goes all the way
-Apply to selected
-Tick the jobs to apply to.
-Submit for me when nothing needs me
-Off: you press Submit for each one.
-Jobs at once
-1
-2
-3
-4
-5
-Don't wait for me
-Off: a sign-in or emailed code holds the other jobs until you're done, or 5 minutes pass.
-Tailor my resume for each job
-Off: your usual resume goes with every application.
-Write a cover letter for each job
-On: Claude writes one for each job, with your Claude login.
 Fit
 Job
 Pay
@@ -188,6 +171,9 @@ YYYY-MM-DD
 Workday
 Queued
 
+## apps-h
+(hidden)
+
 ## bank-h
 Common questions
 0 of 12 answered
@@ -221,6 +207,16 @@ See your safety settings
 
 ## searching-h
 Searching and applying
+Jobs at once
+How many applications the desk fills at the same time.
+1
+2
+3
+4
+5
+Don't wait for me
+A sign-in or an emailed code waits on its card, and the other jobs carry on.
+Off: a sign-in or emailed code holds the other jobs until you're done, or 5 minutes pass.
 Search by itself every 12 hours
 The desk searches again when the openings are over 12 hours old. Never while the queue is paused.
 Troubleshooting

@@ -964,7 +964,7 @@ def test_the_switch_and_the_first_letters_ok_are_kept_and_said_in_safety(srv, mo
 @pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")
 def test_the_page_shows_the_first_letter_as_text_with_use_it_and_the_switch(srv, monkeypatch):
     """The page: the first letter's card shows the letter as text (never as markup), with Use it and Turn cover
-    letters off; Use it calls the desk; the switch under Openings calls it too."""
+    letters off; Use it calls the desk; the switch in the Openings apply bar calls it too."""
     from test_desk_buttons import _desk_page, _until as until_page
 
     _renders(srv, monkeypatch)
@@ -974,6 +974,11 @@ def test_the_page_shows_the_first_letter_as_text_with_use_it_and_the_switch(srv,
     desk.applier.runs[job] = Run(job, "Technician 0", "Employer 0", status="needs_you", need="cover_letter",
                                  code="cover_letter", reason=pipeline_letters.LETTER_SAYS,
                                  letter_text="# Sam Rivera\n\nDear Hiring Team,\n\n<b>Made-up</b> letter text.")
+    # (an opening to tick: the switch is in the apply bar, which shows on Openings once one is ticked)
+    opening = "https://careers.example.com/letters/1"
+    desk.listings = [{"company": "Example Fab", "title": "Field Service Engineer", "url": opening,
+                      "location": "Phoenix, AZ",
+                      "fit": {"score": 80, "reasons": [], "concerns": [], "blocked": False, "recommended": True}}]
 
     async def go():
         async with _desk_page(desk) as (page, calls):
@@ -985,6 +990,7 @@ def test_the_page_shows_the_first_letter_as_text_with_use_it_and_the_switch(srv,
             await card.locator("button", has_text="Use it").click()
             await until_page(lambda: any(c[1] == f"/api/job/{job}/letter_ok" for c in calls), calls)
             await press_menu(page, "openings")  # (the switch is on the Openings page, the card on Home)
+            await page.check(f"[data-pick='{opening}']")  # (its apply bar shows)
             await page.locator("#letters").check()
             await until_page(lambda: ("POST", "/api/settings", {"cover_letters": True}) in calls, calls)
             return text, bold, buttons
