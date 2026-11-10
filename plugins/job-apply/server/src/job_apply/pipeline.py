@@ -5960,21 +5960,32 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             if again:
                 self._log(run, f"filled again {len(again)} field(s) the page marked invalid")
                 data, text = await self._look()
+        changed: list[str] = []  # boxes typed again that show something else since (said on the stop)
         if lost := _shown_but_lost(run, data, job or {}):
             # text boxes the page says are blank though they show the profile's answer for that very box (or the
             # person's): the page lost its own record of them (Micron's Eightfold, run 200: "Error: Last Name cannot
             # be left blank." beside the last name shown, on a one-page form whose review is its own Submit, so the
             # retype after a step pressed in vain never came). Typed again key by key, once a box, and the page read
             # again; one it still refuses is the person's (_unready)
+            # (once a box by its id: a box the page draws afresh gets a new id, so it may be typed once more on each
+            # Carry on, as many times as the person presses it, never by the desk on its own)
             run.review_retyped |= {str(f["id"]) for f in lost}
-            run.did("typed", lost)
             retyped = set(await srv.browser.retype([str(f["id"]) for f in lost], settle=REVIEW_RETYPE_SETTLE))
             if retyped:
+                run.did("typed", [f for f in lost if str(f["id"]) in retyped])
                 names = ", ".join(clean_label(f.get("label") or "") for f in lost if str(f["id"]) in retyped)
                 self._log(run, f"typed again what the page said was empty though it showed your answer: {names}")
                 await asyncio.sleep(REVIEW_RETYPE_SETTLE)
                 data, text = await self._look()
-        if self._unready(run, data):
+                # (a page that clears its error while its own record stays empty can't be told from one fixed:
+                # nothing the desk reads shows that record. But a box that no longer shows word for word what was
+                # typed (a type-ahead drawn as a text box picks its suggestion as it's left) is never called fixed)
+                typed_as = {str(f["id"]): str(f.get("value") or "").strip() for f in lost if str(f["id"]) in retyped}
+                changed = [f"“{_short(clean_label(f.get('label') or ''))}” now shows "
+                           f"“{_short(str(f.get('value') or '').strip())}”, not what was typed again"
+                           for f in data.get("fields") or [] if str(f.get("id")) in typed_as
+                           and str(f.get("value") or "").strip() != typed_as[str(f.get("id"))]]
+        if self._unready(run, data, changed):
             return
         if ats in config.HUMAN_SUBMIT_ONLY:
             srv._mark_ready(job, f"filled on {ATS_NAMES.get(ats, ats)} by the Job Desk")
@@ -6024,28 +6035,29 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         self._log(run, "checked the review page: no required box is left empty, and it shows no error")
         self._log(run, "reached the review page")
 
-    def _unready(self, run: Run, data: dict[str, Any]) -> bool:
+    def _unready(self, run: Run, data: dict[str, Any], changed: list[str] | None = None) -> bool:
         """The check before a job is called filled, on its review page (or a one-page form at its Submit): the page as
         read, every frame the form is in, for required boxes still empty (_left_empty) and for what the page itself
         says is wrong or wanted (_page_says_wrong: its errors, Workday's "Errors Found", boxes it marks invalid).
         Either, and the job is the person's, said for what it is, never "Ready to submit" (the owner's notes 47, 48, 50
         and 51, Oct 20; Insight's review page listed "Error: Last Name cannot be left blank." and was called ready, with
         its errors said). A review page that shows the answers as words (Workday's Review step: no boxes) passes where
-        it shows no error. True when it paused."""
+        it shows no error. `changed`: boxes the review typed again that show something else since (_finish), said too,
+        and never ready while there are any. True when it paused."""
         # (never a box the fill of this very page left empty on purpose: a current job's end date, _form_lap's)
         skipped = run.skipped_on[1] if run.skipped_on and run.skipped_on[0] == _step_page(data) else frozenset()
         left = [f for f in _left_empty(data) if str(f.get("id")) not in skipped]
         wrong = _page_says_wrong(data)
-        if not left and not wrong:
+        if not left and not wrong and not changed:
             return False
         said = "; ".join(wrong)[:300].rstrip(" .")
+        moved = "; ".join(changed or [])[:300].rstrip(" .")  # (what the desk typed again, now otherwise)
+        parts = [*([f"the page still has {_boxes_said(len(left))} empty ({_left_said(left)})"] if left else []),
+                 *([moved] if moved else []), *([f"the page shows errors: {said}"] if said else [])]
         before = ("Submit was pressed for this job before and no confirmation showed, so it may have gone through: "
                   "check your email or the site first. " if run.pressed_before else "")
         self._pause(run, "stuck",
-                    before + "Not ready to submit: "
-                    + (f"the page still has {_boxes_said(len(left))} empty ({_left_said(left)})" if left else "")
-                    + ("; " if left and said else "")
-                    + (f"the page shows errors: {said}" if said else "")
+                    before + "Not ready to submit: " + "; ".join(parts)
                     + ". Fix it in the desk's browser window, then press Carry on: the desk checks the page again.",
                     [{**{k: f[k] for k in ("id", "kind", "label", "section", "sublabel", "options", "role")
                          if f.get(k) not in (None, [])}, "required": True} for f in left if f.get("kind") != "file"],

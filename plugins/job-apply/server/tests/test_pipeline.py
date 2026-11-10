@@ -13505,9 +13505,10 @@ def test_a_review_page_with_errors_after_an_earlier_press_says_both(srv, monkeyp
     assert "Last Name cannot be left blank" in r.reason, r.reason
 
 
-def _lost_name_run(srv, monkeypatch, query: str = "") -> tuple[Run, int, dict]:
-    """tests/fixtures/site/eightfold-lost-name.html with `query`, run until the job stops or is ready: the run, how
-    many times Submit application was pressed, and the page's own record of its boxes (by label)."""
+def _lost_name_run(srv, monkeypatch, query: str = "", carry_on: bool = False) -> tuple[Run, int, dict, dict]:
+    """tests/fixtures/site/eightfold-lost-name.html with `query`, run until the job stops or is ready (and, with
+    `carry_on`, once more after the person's Carry on on that stop): the run, how many times Submit application was
+    pressed, the page's own record of its boxes (by label), and how many keys were typed into each box (by label)."""
     monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.3)
     job = srv.add_job(url=fixture_url("site/eightfold-lost-name.html") + query, title="Equipment Technician",
                       company="Example Fab")["job"]
@@ -13518,7 +13519,11 @@ def _lost_name_run(srv, monkeypatch, query: str = "") -> tuple[Run, int, dict]:
         try:
             r = applier.enqueue(job["id"])
             await until(lambda: r.status not in ("queued", "running"), about=state(r))
-            return r, await r.page.evaluate("() => window.sent"), await r.page.evaluate("() => window.record")
+            if carry_on:
+                r = applier.resume(job["id"])
+                await until(lambda: r.status not in ("queued", "running"), about=state(r))
+            return (r, await r.page.evaluate("() => window.sent"), await r.page.evaluate("() => window.record"),
+                    await r.page.evaluate("() => window.keyed"))
         finally:
             await applier.stop()
 
@@ -13530,10 +13535,12 @@ def test_a_box_the_review_says_is_blank_though_it_shows_the_profiles_answer_is_t
     the profile's last name in Legal Name's Last Name, marked invalid with "Error: Last Name cannot be left blank."
     beside it: the page's own record of the box was empty. The check before the job is called ready stopped on it
     (three rounds, Carry on and all). A text box the page says is blank while it shows the profile's answer for that
-    very box is typed again, key by key, once, and the page read again: ready, with the page's record holding it."""
-    r, sent, record = _lost_name_run(srv, monkeypatch)
+    very box is typed again, key by key, once, and the page read again: ready, with the page's record holding it. That
+    box alone: not Contact Information's "Last name", which the error's words name too but the page doesn't mark."""
+    r, sent, record, keyed = _lost_name_run(srv, monkeypatch)
     assert r.status == "ready", (r.status, r.reason, r.log)
     assert record.get("Last Name") == "Rivera", record
+    assert keyed == {"Last Name": len("Rivera")}, keyed
     assert any(line.startswith("typed again what the page said was empty") and "Last Name" in line
                for line in r.log), "\n".join(r.log)
     assert sent == 0
@@ -13542,15 +13549,37 @@ def test_a_box_the_review_says_is_blank_though_it_shows_the_profiles_answer_is_t
 @pytest.mark.parametrize("query", ["?refuse", "?other"])
 def test_a_box_the_review_still_refuses_or_that_shows_another_answer_stops_for_the_person(srv, monkeypatch, query):
     """The same page, where typing the box again doesn't help (?refuse: typed again once, never more, and the job is
-    the person's with what the page says), and where the box shows a name that isn't the profile's (?other: never
-    typed again, never replaced: the person's)."""
-    r, sent, record = _lost_name_run(srv, monkeypatch, query)
+    the person's with what the page says; their Carry on on that stop doesn't type it again), and where the box shows
+    a name that isn't the profile's (?other: never typed again, never replaced: the person's)."""
+    r, sent, record, keyed = _lost_name_run(srv, monkeypatch, query, carry_on=True)
     assert (r.status, r.need, r.code) == ("needs_you", "stuck", "review_errors"), (r.status, r.reason, r.log)
     assert "Last Name cannot be left blank" in r.reason and r.reason.endswith("the desk checks the page again."), \
         r.reason
     typed = [line for line in r.log if line.startswith("typed again what the page said was empty")]
     assert len(typed) == (1 if query == "?refuse" else 0), r.log
+    assert keyed == ({"Last Name": len("Rivera")} if query == "?refuse" else {}), keyed
     assert "Last Name" not in record and sent == 0, record
+
+
+def test_only_the_named_text_box_the_review_marks_is_typed_again(srv, monkeypatch):
+    """Boxes showing the profile's answers that the review never types again: one marked invalid that no error names
+    (Email), one an error names that's disabled (Address Line 1) or read-only (Postal Code), and a text area an error
+    names (Mailing City). The Last Name alone is typed again; the others stay the person's, said on the stop."""
+    r, sent, record, keyed = _lost_name_run(srv, monkeypatch, "?decoys")
+    assert (r.status, r.code) == ("needs_you", "review_errors"), (r.status, r.reason, r.log)
+    assert keyed == {"Last Name": len("Rivera")}, keyed
+    assert record.get("Last Name") == "Rivera" and sent == 0, record
+
+
+def test_a_box_that_changes_once_typed_again_is_the_persons_said_with_what_it_shows(srv, monkeypatch):
+    """A type-ahead box drawn as a text box puts its suggestion in as it's left ("Rivera" becomes "Rivera Jr"), and the
+    page's error goes: never called fixed (it no longer shows the answer typed), never typed again, and the stop says
+    what the box shows now and what to do."""
+    r, sent, record, keyed = _lost_name_run(srv, monkeypatch, "?suggest")
+    assert (r.status, r.need, r.code) == ("needs_you", "stuck", "review_errors"), (r.status, r.reason, r.log)
+    assert "\u201cLast Name\u201d now shows \u201cRivera Jr\u201d" in r.reason, r.reason
+    assert r.reason.endswith("the desk checks the page again."), r.reason
+    assert keyed == {"Last Name": len("Rivera")} and sent == 0, keyed
 
 
 def _left_empty_run(srv, monkeypatch, query: str) -> tuple[Run, int, dict]:
