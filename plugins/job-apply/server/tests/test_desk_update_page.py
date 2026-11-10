@@ -84,7 +84,8 @@ ROWS = {
         "more": "", "links": [], "buttons": [["Check now", False]]}),
     "newer, installed": (_update(**NEWER), None, {
         "title": "Version 0.4.4 is ready", "said": "You have 0.4.3. Updating takes about a minute. The desk closes, "
-        "installs, and opens again. Your queue is kept.", "more": "", "links": WHATS_NEW, "buttons": [["Update now", False]]}),
+        "installs, and opens again. Your queue is kept.", "more": "", "links": WHATS_NEW,
+        "buttons": [["Update now", False]]}),
     "newer, plugin": (_update(**NEWER, kind="plugin"), None, {
         "title": "Version 0.4.4 is ready", "said": "You have 0.4.3. The desk updates the plugin. Then restart Claude "
         "to use it.", "more": "", "links": WHATS_NEW, "buttons": [["Update now", False]]}),
