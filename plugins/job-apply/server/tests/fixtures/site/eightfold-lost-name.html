@@ -14,6 +14,7 @@
      ?other: that Last Name shows another name than the profile's (the site's own) on load, marked the same way.
      ?suggest: that Last Name is a type-ahead: leaving it after keys were typed into it puts its suggestion in
      ("Rivera Jr"), which the record takes, and the error goes.
+     ?locks: that Last Name turns read-only as it's gone back into, once it's been left: nothing can be typed again.
      ?decoys: boxes showing the profile's answers that must never be typed again: Email marked invalid with no error
      naming it, Address Line 1 named by an error but disabled, Postal Code named but read-only, and a text area
      (Mailing City) named by an error.
@@ -91,7 +92,10 @@
       if (!q.has('refuse')) waiting = setTimeout(() => { window.record['Last Name'] = value; waiting = null; }, 300);
     });
   }
+  let left = false;
+  lastName.addEventListener('focus', () => { if (q.has('locks') && left) lastName.readOnly = true; });
   lastName.addEventListener('blur', () => {
+    left = true;
     clearTimeout(waiting);
     waiting = null;
     if (q.has('suggest') && keys && lastName.value) {

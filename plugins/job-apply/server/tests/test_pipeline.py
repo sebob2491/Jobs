@@ -13582,6 +13582,17 @@ def test_a_box_that_changes_once_typed_again_is_the_persons_said_with_what_it_sh
     assert keyed == {"Last Name": len("Rivera")} and sent == 0, keyed
 
 
+def test_a_box_the_review_couldnt_type_again_isnt_recorded_as_typed(srv, monkeypatch):
+    """The box turns read-only as it's gone back into (?locks): nothing is typed again, so the stop's record of what
+    the desk last did (Run.last_action) never says it typed that box, nor does the log."""
+    monkeypatch.setattr(browser_module, "FOCUS_TIMEOUT", 1000)
+    r, sent, record, keyed = _lost_name_run(srv, monkeypatch, "?locks")
+    assert (r.status, r.code) == ("needs_you", "review_errors"), (r.status, r.reason, r.log)
+    assert not keyed and sent == 0, keyed
+    assert not any(line.startswith("typed again what the page said was empty") for line in r.log), r.log
+    assert (r.last_action or {}).get("target") != "Last Name", r.last_action
+
+
 def _left_empty_run(srv, monkeypatch, query: str) -> tuple[Run, int, dict]:
     """tests/fixtures/site/required-left-empty.html with `query`, run until the job stops or is ready: the run, how
     many times the step's own button was pressed, and what its boxes hold (by id)."""
