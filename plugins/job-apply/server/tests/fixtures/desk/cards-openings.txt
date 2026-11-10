@@ -92,27 +92,36 @@ Tailor my resume for each job
 Off: your usual resume goes with every application.
 Write a cover letter for each job
 Off: your usual cover letter, if you have one, goes in.
+Fit
+Job
+Pay
+Posted
+Applies on
+Status
 88
 Field Service Engineer
-Example Fab · Phoenix, AZ; Chandler, AZ; Austin, TX and 1 more · YYYY-MM-DD · $71k–$107k/yr · Remote · Full-time
-New
-title matches
+Example Fab · Phoenix, AZ; Chandler, AZ; Austin, TX and 1 more · Remote · Full-time
 asks an Associate's or equivalent experience, read from the text
-Not interested
+$71k–$107k/yr
+YYYY-MM-DD
+Workday
+New
 64
 Equipment Technician
-Example Litho · Tempe, AZ · in your town · date unknown · $26–$28/hr (≈$54k–$58k/yr) · likely hybrid
-Desk goes all the way
-title matches
+Example Litho · Tempe, AZ · in your town · likely hybrid
 may need a security clearance
-Not interested
+$26–$28/hr (≈$54k–$58k/yr)
+No date
+iCIMS
+Goes all the way
 61
 Maintenance Technician
-Example Vacuum · Mesa, AZ · about 6 mi · Posted 3 Days Ago · pay not listed · Full-time / Temporary
-Also on Indeed
-title matches
+Example Vacuum · Mesa, AZ · about 6 mi · Full-time / Temporary
 2nd shift
-Not interested
+Also on Indeed
+Not listed
+Posted 3 Days Ago
+Greenhouse
 
 ## bank-h
 Common questions

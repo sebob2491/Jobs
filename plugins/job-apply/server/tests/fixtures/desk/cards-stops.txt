@@ -213,80 +213,101 @@ Tailor my resume for each job
 Off: your usual resume goes with every application.
 Write a cover letter for each job
 On: Claude writes one for each job, with your Claude login; the first waits for your OK.
+Fit
+Job
+Pay
+Posted
+Applies on
+Status
 72
 Equipment Technician
-Example Questions · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Questions · Phoenix, AZ
+Not listed
+YYYY-MM-DD
 Questions
 72
 Equipment Technician
-Example Sign In · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Sign In · Phoenix, AZ
+Not listed
+YYYY-MM-DD
 Sign in
 72
 Equipment Technician
-Example Code · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Code · Phoenix, AZ
+Not listed
+YYYY-MM-DD
 Emailed code
 72
 Process Technician
-Example Code · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Code · Phoenix, AZ
+Not listed
+YYYY-MM-DD
 Emailed code
 72
 Equipment Technician
-Example Bot · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Bot · Phoenix, AZ
+Not listed
+YYYY-MM-DD
 Bot check
 72
 Equipment Technician
-Example Captcha · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Captcha · Phoenix, AZ
+Not listed
+YYYY-MM-DD
 CAPTCHA
 72
 Equipment Technician
-Example Stuck · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Stuck · Phoenix, AZ
+Not listed
+YYYY-MM-DD
 Stuck
 72
 Equipment Technician
-Example Site Error · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Site Error · Phoenix, AZ
+Not listed
+YYYY-MM-DD
 Stuck
 72
 Equipment Technician
-Example Not Sent · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Not Sent · Phoenix, AZ
+Not listed
+YYYY-MM-DD
 Stuck
 72
 Equipment Technician
-Example Own Submit · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Own Submit · Phoenix, AZ
+Not listed
+YYYY-MM-DD
 Your Submit
 72
 Equipment Technician
-Example Check · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Check · Phoenix, AZ
+Not listed
+YYYY-MM-DD
 Check if it went in
 72
 Equipment Technician
-Example Tailor · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Tailor · Phoenix, AZ
+Not listed
+YYYY-MM-DD
 Waiting for a resume
 72
 Equipment Technician
-Example Twice · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Twice · Phoenix, AZ
+Not listed
+YYYY-MM-DD
 Already begun?
 72
 Equipment Technician
-Example Restart · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Restart · Phoenix, AZ
+Not listed
+YYYY-MM-DD
 Restarted
 72
 Equipment Technician
-Example Letter · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Letter · Phoenix, AZ
+Not listed
+YYYY-MM-DD
 Cover letter to check
 
 ## bank-h

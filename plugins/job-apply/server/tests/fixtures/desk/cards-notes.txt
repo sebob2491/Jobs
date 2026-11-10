@@ -103,15 +103,23 @@ Tailor my resume for each job
 Off: your usual resume goes with every application.
 Write a cover letter for each job
 Off: your usual cover letter, if you have one, goes in.
+Fit
+Job
+Pay
+Posted
+Applies on
+Status
 72
 Technician
-Example Stuck · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Stuck · Phoenix, AZ
+Not listed
+YYYY-MM-DD
 Stuck
 72
 Technician
-Example Failed · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Failed · Phoenix, AZ
+Not listed
+YYYY-MM-DD
 Didn't finish
 
 ## bank-h

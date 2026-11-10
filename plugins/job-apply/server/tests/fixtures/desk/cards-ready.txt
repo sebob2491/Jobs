@@ -131,41 +131,54 @@ Tailor my resume for each job
 Off: your usual resume goes with every application.
 Write a cover letter for each job
 On: Claude writes one for each job, with your Claude login.
+Fit
+Job
+Pay
+Posted
+Applies on
+Status
 72
 Field Service Engineer
-Example Ready · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Ready · Phoenix, AZ
+Not listed
+YYYY-MM-DD
 Ready to submit
 72
 Technician
-Example Failed · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Failed · Phoenix, AZ
+Not listed
+YYYY-MM-DD
 Didn't finish
 72
 Technician
-Example Sent · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Sent · Phoenix, AZ
+Not listed
+YYYY-MM-DD
 Submitted
 72
 Technician
-Example Skipped · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Skipped · Phoenix, AZ
+Not listed
+YYYY-MM-DD
 Skipped
 Undo
 72
 Process Technician
-Example Running · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Running · Phoenix, AZ
+Not listed
+YYYY-MM-DD
 Working…
 72
 Technician
-Example Queued · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Queued · Phoenix, AZ
+Not listed
+YYYY-MM-DD
 Queued
 72
 Technician
-Example Queued Too · Phoenix, AZ · YYYY-MM-DD · pay not listed
-title matches
+Example Queued Too · Phoenix, AZ
+Not listed
+YYYY-MM-DD
 Queued
 
 ## bank-h
