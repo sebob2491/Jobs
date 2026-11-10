@@ -6,6 +6,7 @@ import json
 import threading
 import time
 
+import pytest
 import yaml
 from test_desk_settings import _calls, _desk
 
@@ -175,6 +176,37 @@ def test_change_and_forget_keep_the_persons_own_comments_and_layout(srv, job_app
     assert "WW123456" not in text and "why: the badge number" not in text and "One line now." not in text
     assert yaml.safe_load(text) == {"answers": [changed[1], changed[3]]}
     assert text.startswith(COMMENTS[0] + "answers:\n" + COMMENTS[1] + "- match: weekends\n"), text
+
+
+def test_forgetting_the_last_answer_keeps_the_note_and_the_next_one_is_saved_under_it(job_apply_home):
+    """The only entry forgotten: "answers:" is left with nothing under it, which reads as the empty list it is, so the
+    edit in place stands (the person's note stays); the next answer saved is kept under "answers:"."""
+    path = job_apply_home / "answers.yaml"
+    path.write_text("# My own note.\nanswers:\n- match: weekends\n  answer: 'Yes'  # why: it pays more\n",
+                    encoding="utf-8")
+    config.forget_answer("weekends\n")
+    assert path.read_text(encoding="utf-8") == "# My own note.\nanswers:\n"
+    assert config.remembered_answers() == []
+    config.save_answer("Are you willing to work nights?", "No")
+    assert [a["answer"] for a in yaml.safe_load(path.read_text(encoding="utf-8"))["answers"]] == ["No"]
+
+
+@pytest.mark.parametrize("between", ["# the next one's note\n", "\n", "\n# the next one's note\n\n"],
+                         ids=["a comment", "a blank line", "both"])
+def test_forget_leaves_what_is_between_an_entry_ending_in_a_list_and_the_next(job_apply_home, between):
+    """An entry whose last value is a block list ends, by its node, on the next entry's dash: the comment and blank
+    lines between are the next entry's, and stay when it's forgotten; so do those after the last entry in the file."""
+    path = job_apply_home / "answers.yaml"
+    first = "- match: shifts\n  answer:\n  - Days\n  - Nights\n"
+    second = "- match: weekends\n  answer: 'Yes'\n  at:\n  - Example Fab\n"
+    path.write_text("answers:\n" + first + between + second + between, encoding="utf-8")
+    config.forget_answer("shifts\n")
+    assert path.read_text(encoding="utf-8") == "answers:\n" + between + second + between
+    # (and the last entry in the file, its list's end at the end of the file)
+    path.write_text("answers:\n" + second.replace("  at:\n  - Example Fab\n", "") + first + between,
+                    encoding="utf-8")
+    config.forget_answer("shifts\n")
+    assert path.read_text(encoding="utf-8") == "answers:\n- match: weekends\n  answer: 'Yes'\n" + between
 
 
 def test_a_file_laid_out_so_it_cant_be_edited_in_place_is_written_anew_with_the_change(srv, job_apply_home):

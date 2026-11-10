@@ -1418,7 +1418,10 @@ def _edit_answers(data: dict[str, Any], entries: list[Any], i: int, entry: dict[
     try:
         text = path.read_text(encoding="utf-8")
         edited = _answers_text_edit(text, i, None if entry is None else entry["answer"])
-        if edited is not None and (yaml.safe_load(edited) or {}) == {**data, "answers": want}:
+        reads = (yaml.safe_load(edited) or {}) if edited is not None else None
+        if isinstance(reads, dict) and "answers" in reads and reads["answers"] is None:
+            reads["answers"] = []  # ("answers:" with nothing under it, its last entry forgotten: the empty list it is)
+        if edited is not None and reads == {**data, "answers": want}:
             write_text_atomic(path, edited)
             return
     except (OSError, ValueError, yaml.YAMLError):
@@ -1452,11 +1455,17 @@ def _answers_text_edit(text: str, i: int, answer: str | None) -> str | None:
     first = item.start_mark.line
     if item.start_mark.column == 0 or lines[first][:item.start_mark.column].strip() != "-":
         return None  # (its "- " isn't alone before it on its first line)
-    last_mark = item.value[-1][1].end_mark
-    last = last_mark.line if last_mark.column > 0 else last_mark.line - 1
+    # its own last line: the last before the next entry (or the list's end) that isn't blank or a comment. A value
+    # ending in a block list ends, by its node, on the next entry's dash; the comment and blank lines above that dash
+    # are the next entry's, and stay
+    if i + 1 < len(seq.value):
+        bound = seq.value[i + 1].start_mark.line
+    else:
+        end = seq.end_mark
+        bound = min(len(lines), end.line + (1 if end.column > 0 else 0))
+    last = bound - 1
+    while last >= first and (not lines[last].strip() or lines[last].lstrip().startswith("#")):
+        last -= 1
     if last < first:
-        return None
-    nxt = seq.value[i + 1].start_mark.line if i + 1 < len(seq.value) else None
-    if nxt is not None and nxt <= last:
-        return None  # (the next entry begins on a line of this one's)
+        return None  # (the next entry begins on this one's line)
     return "".join(lines[:first] + lines[last + 1:])
