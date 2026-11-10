@@ -68,6 +68,8 @@ def test_remembered_answers_show_ids_as_dots_until_show_change_and_forget_them(s
                 # Show: the Example Fab ID's value, and only it
                 fab = _row(seen["rows"], "Employee ID", "Example Fab")
                 await page.locator("#remembered > .setrow").nth(fab).locator("button", has_text="Show").click()
+                # (the value asked of the desk on the press: drawn once it comes)
+                await page.locator("#remembered > .setrow").nth(fab).locator("button", has_text="Hide").wait_for()
                 seen["shown"] = await page.evaluate(_ROWS)
                 seen["shown_page"] = await page.evaluate(_PAGE)
                 # Change on the weekends answer: a box with its words, kept through a refresh (1.5 seconds)
@@ -187,6 +189,92 @@ def test_change_on_an_id_not_shown_starts_empty_and_keeps_its_value_out_of_the_p
     row, kept = seen["after"]
     assert row["said"] == ["Only at Example Fab", DOTS], row
     assert kept == [{**before[0], "answer": "WW000111"}, *before[1:]], kept
+
+
+# Everything the page holds that could carry an ID's value: its HTML, its text, every box's value, and the card's own
+# variables (the list from the desk, the values shown, a change under way, the errors), as one string
+_HELD = """() => [document.documentElement.outerHTML, document.body.innerText,
+  [...document.querySelectorAll('input, textarea')].map((i) => i.value).join('|'),
+  JSON.stringify([remembered, [...rememberedShown], rememberedEdit, [...rememberedErr]])].join('\\n')"""
+
+
+def test_an_ids_value_comes_only_on_show_and_is_let_go_on_hide_on_leaving_and_on_a_new_list(srv, job_apply_home):
+    """An ID's value isn't in the list the desk sends (D5, the second look): before Show it is nowhere in the page,
+    not in its HTML, its text, a box or the card's variables. Show asks the desk for it (one /api/answers/show with
+    the row's id) and draws it, with Hide; Hide, leaving the page, and the list asked again (after a change) each drop
+    it from the variables too. A Show the desk refuses keeps the dots and says why under the row."""
+    _write(job_apply_home)
+    desk = _idle_desk(srv)
+    shows: list = []
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                page.on("request", lambda r: shows.append(r.post_data_json) if r.url.endswith("/api/answers/show")
+                        else None)
+                fab = page.locator("#remembered > .setrow").nth(0)
+
+                async def show() -> None:
+                    await fab.locator("button", has_text="Show").click()
+                    await fab.locator("button", has_text="Hide").wait_for()
+
+                seen: dict = {}
+                await open_desk(page, desk, "answers")
+                await _loaded(page)
+                seen["before"] = await page.evaluate(_HELD)
+                await show()
+                seen["shown"] = ((await page.evaluate(_ROWS))[0], len(shows), await page.evaluate(_HELD))
+                await fab.locator("button", has_text="Hide").click()
+                await fab.locator("button", has_text="Show").wait_for()
+                seen["hidden"] = ((await page.evaluate(_ROWS))[0], await page.evaluate(_HELD))
+                # shown, then Change: the box holds the value
+                await show()
+                await fab.locator("button", has_text="Change").click()
+                seen["change"] = await fab.locator("input[type=text]").input_value()
+                await fab.locator("button", has_text="Cancel").click()
+                # shown, then the page left
+                await press_menu(page, "home")
+                seen["left"] = await page.evaluate(_HELD)
+                await press_menu(page, "answers")
+                await _loaded(page)
+                # shown, then the list asked again (another row's answer changed)
+                await show()
+                weekends = page.locator("#remembered > .setrow").nth(1)
+                await weekends.locator("button", has_text="Change").click()
+                await weekends.locator("input[type=text]").fill("Yes, any weekend")
+                await weekends.locator("button", has_text="Save").click()
+                await page.wait_for_function("() => !document.querySelector('#remembered input')")
+                await fab.locator("button", has_text="Show").wait_for()
+                seen["new list"] = await page.evaluate(_HELD)
+                # a Show refused: the Example Litho ID forgotten behind the page's back
+                _write(job_apply_home, [e for e in ENTRIES if e.get("at") != "Example Litho"
+                                        or e["question"] != "Employee ID"])
+                litho = page.locator("#remembered > .setrow").nth(3)
+                await litho.locator("button", has_text="Show").click()
+                await litho.locator(".set-err").wait_for()
+                seen["refused"] = ((await page.evaluate(_ROWS))[3], await litho.locator(".set-err").inner_text())
+                await browser.close()
+                return seen
+        finally:
+            await desk.stop()
+
+    seen = run(go())
+    assert not [i for i in IDS if i in seen["before"]], "an ID's value is in the page before Show"
+    row, asked, held = seen["shown"]
+    assert row["said"] == ["Only at Example Fab", "WW123456"] and row["buttons"][0] == "Hide", row
+    assert asked == 1 and shows[0] == {"id": _id(ENTRIES[0])}, shows
+    assert "WW123456" in held and "EX-778899" not in held
+    row, held = seen["hidden"]
+    assert row["said"] == ["Only at Example Fab", DOTS] and "WW123456" not in held, row
+    assert seen["change"] == "WW123456"
+    assert "WW123456" not in seen["left"], "kept after the page was left"
+    assert "WW123456" not in seen["new list"], "kept after the list was asked again"
+    assert len(shows) == 4, shows
+    row, said = seen["refused"]
+    assert row["said"] == ["Only at Example Litho", DOTS] and row["buttons"][0] == "Show", row
+    assert said == "That answer isn't remembered any more.", said
 
 
 def test_with_nothing_remembered_the_card_says_so_in_d5s_words(srv, job_apply_home):

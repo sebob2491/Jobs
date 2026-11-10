@@ -2897,13 +2897,15 @@ function renderBank() {
 // Your answers' Answers the desk remembers (D5): every answer given on a job's card with "remember" ticked, as the
 // desk lists them (/api/answers), asked when the page opens and after each change, never from the state (the refresh
 // doesn't draw this card, so a row being changed keeps its words and the keyboard's place). An ID's value (`private`)
-// is put in the page only once its Show is pressed, and goes back to dots when the page is left
+// isn't in the list: Show asks the desk for it (/api/answers/show), and it is kept (rememberedShown) only until Hide,
+// the page left, or the list asked again, each of which lets it go
 let remembered = null, rememberedAsked = 0, rememberedEdit = null, rememberedBusy = "";
-const rememberedShown = new Set(), rememberedErr = new Map();
+const rememberedShown = new Map(), rememberedErr = new Map();  // (an ID shown: its id, its value)
 const FORGET_ASK = "Forget this answer? The desk asks you again the next time a site asks it.";
 const answerWords = (a) => Array.isArray(a) ? a.join(", ") : a == null ? "" : String(a);
 async function loadRemembered() {
   const asked = ++rememberedAsked;
+  rememberedShown.clear();  // (an ID's value let go: the new list is drawn with dots)
   let got = null, problem = "";
   try { got = (await api("/api/answers")).answers || []; } catch (e) { problem = e.message || "the desk didn't answer"; }
   if (asked !== rememberedAsked) return;  // (an older ask's answer, come after a newer one's)
@@ -2916,7 +2918,8 @@ async function loadRemembered() {
 }
 function rememberedRow(a, i) {
   const id = esc(a.id), q = `ans-q-${i}`, busy = rememberedBusy === a.id ? " disabled" : "";
-  const words = answerWords(a.answer), shown = !a.private || rememberedShown.has(a.id);
+  const shown = !a.private || rememberedShown.has(a.id);
+  const words = a.private ? rememberedShown.get(a.id) || "" : answerWords(a.answer);
   const at = a.at ? `<p class="s">Only at ${esc(a.at)}</p>` : "";
   let value, acts;
   if (rememberedEdit && rememberedEdit.id === a.id) {
@@ -2924,9 +2927,9 @@ function rememberedRow(a, i) {
     acts = `<button class="btn sm primary" data-ans-save="${id}"${busy}>Save</button>`
       + `<button class="btn sm" data-ans-cancel="${id}"${busy}>Cancel</button>`;
   } else {
-    value = !words ? `<p class="ans left">Left empty</p>` : shown ? `<p class="ans">${esc(words)}</p>`
+    value = a.empty ? `<p class="ans left">Left empty</p>` : shown ? `<p class="ans">${esc(words)}</p>`
       : `<p class="ans"><span class="dots" role="img" aria-label="Hidden">••••••••</span></p>`;
-    acts = (a.private && words ? `<button class="btn sm ghost" data-ans-show="${id}" aria-describedby="${q}">${shown ? "Hide" : "Show"}</button>` : "")
+    acts = (a.private && !a.empty ? `<button class="btn sm ghost" data-ans-show="${id}" aria-describedby="${q}">${shown ? "Hide" : "Show"}</button>` : "")
       + `<button class="btn sm" data-ans-change="${id}" aria-describedby="${q}"${busy}>Change</button>`
       + `<button class="btn sm danger" data-ans-forget="${id}" aria-describedby="${q}"${busy}>Forget</button>`;
   }
@@ -2969,13 +2972,24 @@ $("remembered").addEventListener("click", async (e) => {
   if (!b || b.disabled) return;
   const d = b.dataset;
   if (d.ansShow !== undefined) {
-    if (rememberedShown.has(d.ansShow)) rememberedShown.delete(d.ansShow); else rememberedShown.add(d.ansShow);
+    const id = d.ansShow;
+    if (rememberedShown.has(id)) {  // Hide: the value let go, not only undrawn
+      rememberedShown.delete(id);
+    } else {
+      const asked = rememberedAsked;
+      rememberedErr.delete(id);
+      let said = null;
+      try { said = (await api("/api/answers/show", {id})).answer; } catch (e) { rememberedErr.set(id, e.message || "It couldn't be shown."); }
+      // (kept only while the list it was asked for is still the one drawn, on this page)
+      if (said != null && asked === rememberedAsked && document.body.dataset.page === "answers") rememberedShown.set(id, String(said));
+      said = null;
+    }
     renderRemembered();  // (the focus kept on it: patch)
   } else if (d.ansChange !== undefined) {
     const a = (remembered || []).find((x) => x.id === d.ansChange);
     if (!a) return;
     // (an ID not shown starts empty: its value isn't put in the page for a Change)
-    rememberedEdit = {id: a.id, draft: !a.private || rememberedShown.has(a.id) ? answerWords(a.answer) : ""};
+    rememberedEdit = {id: a.id, draft: a.private ? rememberedShown.get(a.id) || "" : answerWords(a.answer)};
     rememberedErr.delete(a.id);
     renderRemembered();
     const box = rememberedControl("box", a.id);
