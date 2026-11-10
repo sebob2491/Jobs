@@ -520,7 +520,7 @@ def test_a_link_opens_in_the_usual_browser_from_the_desks_own_window_and_as_befo
     async def go():
         await desk.start(port=0, open_browser=False)
         try:
-            async with _page(desk, desk.url + "&w=app") as (page, calls):
+            async with _page(desk, desk.url + "&w=app#openings") as (page, calls):
                 await page.context.route("https://careers.example.com/**", a_job)
                 await page.click(fab)
                 await _until(lambda: opened, about=lambda: calls)
@@ -530,7 +530,7 @@ def test_a_link_opens_in_the_usual_browser_from_the_desks_own_window_and_as_befo
                     await page.click(litho)
                 await (await new.value).wait_for_url(lambda url: url == long)
                 refused = (calls[1:], list(opened), [other.url for other in page.context.pages[1:]])
-            async with _page(desk, desk.url) as (page, calls):
+            async with _page(desk, desk.url + "#openings") as (page, calls):
                 await page.context.route("https://careers.example.com/**", a_job)
                 async with page.context.expect_page() as new:
                     await page.click(fab)
@@ -543,7 +543,7 @@ def test_a_link_opens_in_the_usual_browser_from_the_desks_own_window_and_as_befo
 
     own, refused, tab = run(go())
     # its own window: the desk is asked, the usual browser gets the address, and no page opens from this one
-    assert own == ([("POST", "/api/open", {"url": read})], [read], 1, desk.url + "&w=app"), own
+    assert own == ([("POST", "/api/open", {"url": read})], [read], 1, desk.url + "&w=app#openings"), own
     # refused by the desk: nothing more handed to the usual browser, and the link's own page opens
     assert refused == ([("POST", "/api/open", {"url": long})], [read], [long]), refused[1:]
     # a tab: no call, nothing handed over, and the link's own page opens

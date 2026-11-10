@@ -10,441 +10,790 @@
      nothing is fetched for it) -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22g%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%221%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%236366f1%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%234338ca%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22url%28%23g%29%22%2F%3E%3Cpath%20d%3D%22M9%2016.5l4.5%204.5L23%2011%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%223%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3C%2Fsvg%3E">
 <style>
+/* The design system (docs/design/job-desk-mockup.html is the reference for sizes): one set of colors, light and dark.
+   The dark ones apply when the computer is set to dark, unless <html> says data-theme="light", and always under
+   data-theme="dark". Yellow is only "waiting for you", red only "a problem", green only "done, ready or saved", and
+   indigo marks what is selected or leading. No other color is added: a new state reuses one of these */
 :root {
-  --bg: #f6f7f9; --surface: #ffffff; --text: #1b1f24; --muted: #5d6673; --line: #e2e6ea;
-  --accent: #1f6feb; --accent-text: #ffffff; --good: #1a7f37; --good-bg: #e7f5ec; --warn: #9a6700; --warn-bg: #fff4d6;
-  --bad: #cf222e; --bad-bg: #ffebe9; --info-bg: #eef4ff; --info-text: #0b57d0; --chip: #eef0f3; --shadow: 0 1px 2px rgba(0,0,0,.06);
-  --body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: light;
+  --bg: #f5f6f8; --panel: #ffffff; --side: #fafbfc; --line: #e4e7ec; --line-2: #eef0f3; --control-line: #d5d9e0;
+  --text: #111827; --body: #374151; --muted: #6b7280; --faint: #9ca3af; --hover: #f1f3f6; --chip: #eceef2;
+  --accent: #4f46e5; --accent-2: #4338ca; --accent-bg: #eef2ff; --accent-line: #c7d2fe; --row-sel: #f5f7ff;
+  --on-accent: #ffffff;
+  --good: #15803d; --good-bg: #dcfce7; --warn: #b45309; --warn-bg: #fef3c7; --bad: #b91c1c; --bad-bg: #fee2e2;
+  --info: #1d4ed8; --info-bg: #dbeafe;
+  --shadow: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.05);
+  --shadow-lg: 0 14px 34px rgba(16,24,40,.22), 0 3px 8px rgba(16,24,40,.10);
+  --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
 }
 @media (prefers-color-scheme: dark) {
-  :root { --bg: #0f1216; --surface: #171b21; --text: #e6e9ee; --muted: #9aa4b2; --line: #2a313a;
-    --accent: #4c8dff; --good: #4ac26b; --good-bg: #13291b; --warn: #d4a72c; --warn-bg: #2c2410;
-    --bad: #ff7b72; --bad-bg: #3a1716; --info-bg: #15223a; --info-text: #4c8dff; --chip: #232a33; --shadow: none; }
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0f1115; --panel: #171a21; --side: #13161c; --line: #272c36; --line-2: #20242d; --control-line: #343b49;
+    --text: #e8eaf0; --body: #c5cad3; --muted: #9aa3b2; --faint: #6b7483; --hover: #1d2129; --chip: #232832;
+    --accent: #6366f1; --accent-2: #a5b4fc; --accent-bg: #20254a; --accent-line: #38407a; --row-sel: #1b1f3a;
+    --on-accent: #ffffff;
+    --good: #4ade80; --good-bg: #12301f; --warn: #fbbf24; --warn-bg: #33270b; --bad: #f87171; --bad-bg: #3a1616;
+    --info: #60a5fa; --info-bg: #132a4a;
+    --shadow: none; --shadow-lg: 0 14px 34px rgba(0,0,0,.55), 0 3px 8px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1115; --panel: #171a21; --side: #13161c; --line: #272c36; --line-2: #20242d; --control-line: #343b49;
+  --text: #e8eaf0; --body: #c5cad3; --muted: #9aa3b2; --faint: #6b7483; --hover: #1d2129; --chip: #232832;
+  --accent: #6366f1; --accent-2: #a5b4fc; --accent-bg: #20254a; --accent-line: #38407a; --row-sel: #1b1f3a;
+  --on-accent: #ffffff;
+  --good: #4ade80; --good-bg: #12301f; --warn: #fbbf24; --warn-bg: #33270b; --bad: #f87171; --bad-bg: #3a1616;
+  --info: #60a5fa; --info-bg: #132a4a;
+  --shadow: none; --shadow-lg: 0 14px 34px rgba(0,0,0,.55), 0 3px 8px rgba(0,0,0,.35);
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 var(--body); }
-header { position: sticky; top: 0; z-index: 5; background: var(--surface); border-bottom: 1px solid var(--line); }
-.bar { max-width: 1240px; margin: 0 auto; padding: 12px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
-h1 { font-size: 18px; margin: 0; }
-.who { color: var(--muted); font-size: 14px; }
-.spacer { flex: 1; }
-.links { display: inline-flex; gap: 12px; }
-.pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; background: var(--chip); color: var(--muted); white-space: nowrap; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--text); font: 14px/1.45 var(--font); -webkit-font-smoothing: antialiased; }
+a { color: var(--accent); }
+code { font-size: 12.5px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ico { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round;
+  stroke-linejoin: round; flex: none; }
+.logo { flex: none; }
+.grow, .spacer { flex: 1; }
+.nowrap { white-space: nowrap; }
+.small { font-size: 13px; color: var(--muted); }
+
+/* the frame: the side menu stays put, the top bar is one for all pages, and the page under it scrolls */
+.app { display: grid; grid-template-columns: 244px minmax(0, 1fr); height: 100vh; }
+.side { background: var(--side); border-right: 1px solid var(--line); display: flex; flex-direction: column;
+  padding: 16px 12px 12px; min-height: 0; overflow-y: auto; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 2px 8px 16px; }
+.brand .logo { width: 30px; height: 30px; }
+.brand b { font-size: 15.5px; font-weight: 700; letter-spacing: -.01em; }
+.nav { display: flex; flex-direction: column; gap: 2px; }
+.nav a { display: flex; align-items: center; gap: 11px; height: 36px; padding: 0 10px; border-radius: 8px;
+  color: var(--body); text-decoration: none; font-weight: 500; font-size: 13.5px; flex: none; }
+.nav a .ico { color: var(--muted); }
+.nav a:hover { background: var(--hover); }
+.nav a[aria-current="page"] { background: var(--accent-bg); color: var(--accent-2); font-weight: 600; }
+.nav a[aria-current="page"] .ico { color: var(--accent); }
+.nav a .count { margin-left: auto; min-width: 24px; padding: 1px 7px; text-align: center; }
+.nav .sep { height: 1px; background: var(--line); margin: 10px 8px; flex: none; }
+/* how the queue is doing, and its two buttons */
+.queue { border: 1px solid var(--line); background: var(--panel); border-radius: 12px; padding: 12px 12px 12px 14px;
+  box-shadow: var(--shadow); margin-top: 12px; flex: none; }
+.queue .r1 { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 13px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--warn); box-shadow: 0 0 0 3px var(--warn-bg); }
+.dot.on { background: var(--good); box-shadow: 0 0 0 3px var(--good-bg); }
+.queue p { margin: 3px 0 10px; color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
+.queue .bar { height: 4px; border-radius: 99px; background: var(--chip); overflow: hidden; }
+.queue .bar i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 99px; }
+/* (full width, and its words wrap: "Carry on with the queue (4 waiting)" is wider than the menu) */
+.queue .btn { width: 100%; height: auto; min-height: 30px; padding: 5px 10px; margin-top: 10px; white-space: normal;
+  line-height: 1.25; text-align: center; }
+.queue .btn + .btn { margin-top: 4px; }
+/* the person: one button, for their profile */
+button.me { display: flex; align-items: center; justify-content: flex-start; gap: 10px; width: 100%; height: auto;
+  margin-top: 6px; padding: 8px; border: 0; border-radius: 8px; background: none; box-shadow: none; color: var(--text);
+  text-align: left; white-space: normal; flex: none; }
+button.me:hover { background: var(--hover); }
+.avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--accent-bg); color: var(--accent-2);
+  display: grid; place-items: center; font-weight: 700; font-size: 12px; flex: none; }
+.me-words { min-width: 0; }
+.me b { display: block; font-size: 13px; font-weight: 600; line-height: 1.25; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.me small { display: block; color: var(--muted); font-size: 11.5px; font-weight: 400; }
+
+.main { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); min-width: 0;
+  min-height: 0; }
+/* the top bar: the page's name and What and where at the left, the rest at the right. 64px high; it grows by a row
+   when a search's words and buttons don't fit beside the rest */
+.top { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 12px; min-height: 64px;
+  padding: 14px 28px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.top-l { display: flex; align-items: center; gap: 12px; min-width: 0; margin-right: auto; }
+.top h1 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; }
+.top .sub { color: var(--muted); font-size: 13px; }
+/* (each control's wrapper is shown by its pages, the control by its own rule: the wrapper takes no room itself) */
+.top [data-pages] { display: contents; }
+#searched:empty, #mode:empty { display: none; }
+/* (as wide as leaves the rest of the bar on one line, down to a window of about 1,050 px; its tooltip has it whole) */
+#area-btn { display: inline-block; line-height: 32px; max-width: clamp(150px, calc(100vw - 940px), 340px);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.content { padding: 22px 28px 24px; min-height: 0; overflow-y: auto; }
+.page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; align-content: start; }
+.page.narrow { max-width: 820px; }
+/* Home: two columns, what waits for the person at the left */
+.cols { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+/* (nothing in any of its cards: the one card that says so, not a lone card in the right-hand column) */
+.cols.lone { grid-template-columns: minmax(0, 820px); }
+.cols.lone > .stack:first-child { display: none; }
+/* the line a page shows in place of its one card, while that card has nothing to show */
+.page-none { margin: 0; padding: 28px 18px; border: 1px dashed var(--control-line); border-radius: 14px;
+  text-align: center; color: var(--muted); }
+
+/* buttons: one kind that leads (.primary), the rest quiet. A <button> without a class is the plain one */
+button, .btn, a.button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 34px;
+  padding: 0 13px; border-radius: 8px; border: 1px solid var(--control-line); background: var(--panel);
+  color: var(--body); font: inherit; font-weight: 500; font-size: 13.5px; box-shadow: 0 1px 1px rgba(16,24,40,.04);
+  white-space: nowrap; text-decoration: none; cursor: pointer; }
+button:hover, .btn:hover { background: var(--hover); }
+button:disabled, .btn:disabled { opacity: .5; cursor: default; }
+button .ico, .btn .ico { width: 16px; height: 16px; }
+button.primary, .btn.primary, a.button.primary { background: var(--accent); border-color: var(--accent);
+  color: var(--on-accent); font-weight: 600; box-shadow: 0 1px 2px rgba(79,70,229,.35); }
+button.primary:hover, .btn.primary:hover, a.button.primary:hover { background: var(--accent); filter: brightness(.93); }
+.btn.soft { background: var(--accent-bg); border-color: var(--accent-line); color: var(--accent-2); font-weight: 600;
+  box-shadow: none; }
+.btn.sm { height: 30px; padding: 0 11px; font-size: 13px; border-radius: 7px; }
+.btn.ghost { border-color: transparent; background: transparent; box-shadow: none; }
+.btn.ghost:hover { background: var(--hover); }
+.btn.icon { width: 34px; padding: 0; }
+.btn.icon.sm { width: 30px; }
+.btn.danger { color: var(--bad); border-color: var(--bad); }
+a.button:not([href]) { opacity: .5; cursor: default; }
+/* a button that reads as a link, in a line of words or beside a card's buttons */
+button.link { display: inline; height: auto; padding: 0; border: 0; border-radius: 4px; background: none;
+  box-shadow: none; color: var(--accent); font-size: inherit; white-space: normal; text-align: left; }
+button.link:hover { background: none; text-decoration: underline; }
+/* pills: the state of one thing. A count: a number beside a title or a menu item */
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 2px 9px;
+  border-radius: 999px; background: var(--chip); color: var(--body); white-space: nowrap; }
 .pill.good { background: var(--good-bg); color: var(--good); }
 .pill.warn { background: var(--warn-bg); color: var(--warn); }
 .pill.bad { background: var(--bad-bg); color: var(--bad); }
-.pill.info { background: var(--info-bg); color: var(--info-text); }
-button { font: inherit; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--text); padding: 7px 12px; cursor: pointer; }
-button:hover { border-color: var(--muted); }
-button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
-button.primary:disabled { opacity: .5; cursor: default; }
-button.link { border: 0; background: none; color: var(--accent); padding: 0; }
-a.button { display: inline-block; border-radius: 8px; padding: 7px 12px; text-decoration: none; }
-a.button.primary { background: var(--accent); color: var(--accent-text); font-weight: 600; }
-a.button:not([href]) { opacity: .5; cursor: default; }
-dialog { max-width: min(760px, calc(100vw - 32px)); border: 1px solid var(--line); border-radius: 10px;
-  background: var(--surface); color: var(--text); padding: 16px; }
-dialog::backdrop { background: rgba(0,0,0,.4); }
-dialog h2 { font-size: 16px; margin: 0 0 8px; }
-dialog pre { max-height: 50vh; overflow: auto; white-space: pre-wrap; font-size: 12px; background: var(--bg);
-  border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
-dialog .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-main { max-width: 1240px; margin: 0 auto; padding: 16px; display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 16px; align-items: start; }
-/* one column on narrow screens: notices, then what needs the person, then the openings,
-   then the password card */
-@media (max-width: 900px) {
-  main { grid-template-columns: minmax(0, 1fr); }
-  main > .side { display: contents; }
-  #notices { order: -4; }
-  [aria-labelledby="needs-h"], [aria-labelledby="idle-h"] { order: -3; }
-  [aria-labelledby="work-h"] { order: -2; }
-  [aria-labelledby="done-h"] { order: -1; }
-  [aria-labelledby="pw-h"] { order: 1; }
+.pill.info, .pill.new { background: var(--info-bg); color: var(--info); }
+.pill.work { background: var(--accent-bg); color: var(--accent-2); }
+.pill.work::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.count { font-size: 12px; font-weight: 600; border-radius: 999px; padding: 1px 8px; background: var(--chip);
+  color: var(--body); font-variant-numeric: tabular-nums; }
+.count.warn { background: var(--warn-bg); color: var(--warn); }
+.count.good { background: var(--good-bg); color: var(--good); }
+/* boxes to type or pick in, and tick boxes */
+input[type=text], input[type=password], input[type=time], input[type=search], select { height: 34px; padding: 0 10px;
+  font: inherit; font-size: 13.5px; border: 1px solid var(--control-line); border-radius: 8px; background: var(--panel);
+  color: var(--text); }
+input::placeholder { color: var(--faint); }
+input[type=file] { font: inherit; font-size: 13px; max-width: 100%; }
+input[type=radio] { accent-color: var(--accent); }
+input[type=checkbox] { appearance: none; -webkit-appearance: none; width: 17px; height: 17px; margin: 0 2px 0 0;
+  flex: none; vertical-align: -3px; border: 1.5px solid var(--control-line); border-radius: 5px;
+  background: var(--panel) center / 11px 11px no-repeat; cursor: pointer; }
+input[type=checkbox]:checked { border-color: var(--accent); background-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12.5 4.5 4.5L19 7'/%3E%3C/svg%3E"); }
+input[type=checkbox]:disabled { opacity: .5; cursor: default; }
+@media (prefers-reduced-motion: no-preference) {
+  button, .btn, a.button, .nav a, input, select { transition: background-color .12s ease-out, border-color .12s ease-out,
+    color .12s ease-out, box-shadow .12s ease-out, filter .12s ease-out; }
 }
-section.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
-.card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
-.card-head h2 { font-size: 15px; margin: 0; }
-.tabs { display: flex; gap: 4px; }
-.tabs button { padding: 4px 10px; font-size: 13px; }
-.tabs button[aria-pressed="true"] { background: var(--chip); border-color: var(--muted); }
-.stops { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 14px 10px; }
-.stops button { padding: 3px 10px; font-size: 13px; border-radius: 999px; }
-.stops button[aria-pressed="true"] { background: var(--chip); border-color: var(--muted); font-weight: 600; }
-.stop-hint { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 0 14px 10px; font-size: 13px; color: var(--muted); }
+
+/* cards */
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow);
+  min-width: 0; scroll-margin-top: 14px; }
+.card-head, .card-h { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 11px 18px;
+  border-bottom: 1px solid var(--line-2); min-height: 56px; }
+.card-head h2, .card-h h2 { font-size: 15px; font-weight: 600; margin: 0; }
+.card-b { padding: 13px 18px 16px; }
+.card-b ol { margin: 0; padding-left: 20px; }
+.card-b li { margin: 4px 0; }
+.card-b p { margin: 12px 0 0; }
+.card-f { display: flex; align-items: center; gap: 8px; padding: 11px 18px; border-top: 1px solid var(--line-2);
+  color: var(--muted); font-size: 13px; }
+/* a list row: an icon in a tinted square, two lines of words, the actions at the right */
+.item { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 14px; align-items: center;
+  padding: 13px 18px; border-top: 1px solid var(--line-2); }
+.item:first-child, .card-h + .item { border-top: 0; }
+.itico { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; flex: none; }
+.amber { background: var(--warn-bg); color: var(--warn); }
+.indigo { background: var(--accent-bg); color: var(--accent); }
+.green { background: var(--good-bg); color: var(--good); }
+.gray { background: var(--hover); color: var(--body); }
+.item .t { margin: 0; font-size: 14px; font-weight: 600; }
+.item .s { margin: 1px 0 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.item .acts { display: flex; align-items: center; gap: 6px; }
+.item > .logo { width: 38px; height: 38px; }
+#alerts[aria-pressed="true"] { background: var(--accent-bg); border-color: var(--accent-line); color: var(--accent-2);
+  font-weight: 600; }
+
+/* the Openings card: its tabs (underlined), filters, the groups by where each opening stands, and the rows */
+.tabs { display: flex; flex-wrap: wrap; gap: 0 18px; margin: 0 6px; }
+.tabs button { height: 34px; padding: 0 1px; border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+  background: none; box-shadow: none; color: var(--muted); font-size: 14px; }
+.tabs button:hover { background: none; color: var(--text); }
+.tabs button[aria-pressed="true"] { color: var(--text); font-weight: 600; border-bottom-color: var(--accent); }
+#mine-count:empty { display: none; }
+.links { display: inline-flex; gap: 12px; }
+.handled-switch { font-size: 13px; display: flex; align-items: center; gap: 6px; color: var(--body); }
+/* the Openings head's More (Troubleshooting, Search by itself), and a muted line for each switch that's on */
+.card-head details.more { padding: 0; border-top: 0; color: var(--text); }
+.more-body { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 6px; }
+.switch-hint { flex-basis: 100%; font-size: 13px; color: var(--muted); }
+.switch-hint p { margin: 0; }
 /* the openings' sort and filters (pay, posted), under the tabs */
-.filters { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; padding: 10px 14px; font-size: 13px; }
-.filters .group { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
-.filters button { padding: 3px 10px; font-size: 13px; border-radius: 999px; }
-.filters button[aria-pressed="true"] { background: var(--chip); border-color: var(--muted); font-weight: 600; }
+.filters { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; padding: 12px 18px; font-size: 13px;
+  color: var(--body); }
+.filters .group { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
 .filters .hint { color: var(--muted); }
-.filters button:disabled { opacity: .55; cursor: default; }
-.filters input { width: 7em; font: inherit; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
+.filters input { width: 7em; height: 28px; font-size: 13px; }
+.stops { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 18px 12px; }
+/* (each a choice to press: tinted when it's on) */
+.filters button, .stops button, .at-once button { height: 28px; padding: 0 11px; font-size: 13px; border-radius: 999px;
+  box-shadow: none; }
+.filters button[aria-pressed="true"], .stops button[aria-pressed="true"], .at-once button[aria-pressed="true"] {
+  background: var(--accent-bg); border-color: var(--accent-line); color: var(--accent-2); font-weight: 600; }
+.stop-hint { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 0 18px 12px; font-size: 13px;
+  color: var(--muted); }
 /* My applications' groups: the openings bar's look, in a bar of its own (padding: under the card's head) */
-#app-groups { padding-top: 10px; }
-.row.app .state button { padding: 3px 10px; font-size: 13px; }
-/* a word that something happened (Prep me copied): at the foot of the window, gone after a few seconds */
-.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 20; max-width: calc(100vw - 32px);
-  padding: 8px 14px; border-radius: 8px; background: var(--text); color: var(--bg); font-size: 14px; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
-.toast:empty { display: none; }
-.toast button.link { color: inherit; font-weight: 600; text-decoration: underline; margin-left: 8px; }
-/* a notice: blue, information (a tip, an update); red, a problem ("Problem: ..."). Yellow is only .waiting's: what
-   waits for you now */
-.notice { margin: 0 0 16px; padding: 10px 14px; border-radius: 10px; background: var(--info-bg); color: var(--text); grid-column: 1 / -1; }
-.notice.bad { background: var(--bad-bg); border: 1px solid var(--bad); }
-.notice code { font-size: 13px; }
-.notice.tip { display: flex; align-items: flex-start; gap: 12px; }
-.notice.tip > span { flex: 1; }
-.notice .close { color: var(--muted); font-size: 16px; line-height: 1; }
-.waiting { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0; padding: 12px 14px; border-radius: 10px;
-  background: var(--warn-bg); border: 1px solid var(--warn); grid-column: 1 / -1; }
-.waiting strong { color: var(--warn); }
-.addbar { display: flex; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
-.addbar input { flex: 1; min-width: 0; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
-.applybar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--info-bg); }
-.applybar label { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+#app-groups { padding-top: 12px; }
+.addbar { display: flex; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line-2);
+  border-bottom: 1px solid var(--line-2); }
+.addbar input { flex: 1; min-width: 0; }
+.applybar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 12px 18px;
+  border-bottom: 1px solid var(--line-2); background: var(--row-sel); }
+.applybar label { display: flex; align-items: center; gap: 6px; color: var(--body); }
 .applybar .hint { color: var(--muted); font-size: 13px; }
-.at-once { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; }
-.at-once button { padding: 2px 9px; font-size: 13px; }
-.at-once button[aria-pressed="true"] { background: var(--chip); border-color: var(--muted); font-weight: 600; }
+.at-once { display: inline-flex; align-items: center; gap: 4px; color: var(--body); }
+.at-once button { padding: 0 10px; }
 ul.rows { list-style: none; margin: 0; padding: 0; }
-.row { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--line); align-items: start; }
+.row { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 12px; padding: 13px 18px;
+  border-top: 1px solid var(--line-2); align-items: start; }
 .row:first-child { border-top: 0; }
 @media (max-width: 600px) { .row { grid-template-columns: auto auto minmax(0, 1fr); } .row > div:last-child { grid-column: 3; } }
 .row.done { opacity: .6; }
 .row.app, .row.app:first-child { grid-template-columns: minmax(0, 1fr) auto; }
 @media (max-width: 600px) { .row.app > div:last-child { grid-column: auto; } }
-.row input[type=checkbox] { margin-top: 4px; width: 17px; height: 17px; }
+.row input[type=checkbox] { margin-top: 5px; }
 .row .state { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
-.score { min-width: 38px; text-align: center; font-weight: 700; font-size: 14px; padding: 3px 0; border-radius: 8px; background: var(--chip); }
+.row.app .state button { height: 28px; padding: 0 10px; font-size: 13px; }
+.state button.link { font-size: 13px; }
+.score { display: inline-block; min-width: 38px; text-align: center; font-weight: 700; font-size: 13px; line-height: 20px;
+  padding: 3px 0; border-radius: 8px; background: var(--chip); color: var(--body); font-variant-numeric: tabular-nums; }
 /* a score that can show how it adds up: pressed, its parts come up under the opening's tags */
-button.score { border: 0; cursor: pointer; }
-button.score:hover { outline: 1px solid var(--muted); }
+button.score { height: auto; border: 0; box-shadow: none; }
+button.score:hover { box-shadow: 0 0 0 1px var(--muted); }
+.score.s4 { background: var(--good-bg); color: var(--good); }
+.score.s3 { background: var(--info-bg); color: var(--info); }
+.score.s2 { background: var(--warn-bg); color: var(--warn); }
+.score.s1 { color: var(--muted); }
+button.score.s4:hover { background: var(--good-bg); }
+button.score.s3:hover { background: var(--info-bg); }
+button.score.s2:hover { background: var(--warn-bg); }
 .parts { font-size: 13px; color: var(--muted); margin-top: 6px; overflow-wrap: anywhere; }
 /* (the words wrap, so a long one, an employer's name, never widens the page; only the number stays whole) */
 .parts .n { white-space: nowrap; font-variant-numeric: tabular-nums; }
-.state button.link { font-size: 13px; }
-/* What's working: a few lines, then each kind of group as a small table */
-#working { padding: 4px 14px 12px; font-size: 13px; }
-#working p { margin: 8px 0 0; }
-#working ul { margin: 6px 0 0; padding-left: 18px; }
-#working table { width: 100%; border-collapse: collapse; margin-top: 4px; font-variant-numeric: tabular-nums; }
-#working caption { text-align: left; font-weight: 600; padding-top: 10px; }
-#working th, #working td { padding: 3px 4px; border-top: 1px solid var(--line); text-align: right; }
-#working th:first-child, #working td:first-child { text-align: left; overflow-wrap: anywhere; }
-#working th { font-weight: 600; color: var(--muted); }
-/* the Safety window: each setting, its value, and what it means now */
-#safety-body ul { list-style: none; margin: 0; padding: 0; }
-#safety-body li { padding: 8px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
-#safety-body li:first-child { border-top: 0; }
-#safety-body .where { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
-#ni .actions { margin-top: 12px; }
-.score.s4 { background: var(--good-bg); color: var(--good); }
-.score.s3 { background: var(--info-bg); color: var(--info-text); }
-.score.s2 { background: var(--warn-bg); color: var(--warn); }
-.score.s1 { color: var(--muted); }
 .title { font-weight: 600; color: var(--text); text-decoration: none; overflow-wrap: anywhere; }
 .title:hover { text-decoration: underline; }
 .meta { color: var(--muted); font-size: 13px; margin-top: 2px; }
-.nowrap { white-space: nowrap; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 6px; }
 .chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--chip); color: var(--muted); }
 .chip.plus { background: var(--good-bg); color: var(--good); }
 .chip.minus { background: var(--warn-bg); color: var(--warn); }
 .chip.stop { background: var(--bad-bg); color: var(--bad); }
-.chip.new { background: var(--info-bg); color: var(--info-text); font-weight: 600; }
+.chip.new { background: var(--info-bg); color: var(--info); font-weight: 600; }
 .chip.handled { background: var(--good-bg); color: var(--good); font-weight: 600; }
-.handled-switch { font-size: 13px; display: flex; align-items: center; gap: 6px; }
-/* the Openings head's More (Troubleshooting, Search by itself), and a muted line for each switch that's on */
-.card-head details.more { padding: 0; border-top: 0; color: var(--text); }
-.card-head details.more summary { cursor: pointer; color: var(--accent); }
-.more-body { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 6px; }
-.switch-hint { flex-basis: 100%; font-size: 13px; color: var(--muted); }
-.switch-hint p { margin: 0; }
-.empty { padding: 28px 16px; text-align: center; color: var(--muted); }
-.side { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
-.task { padding: 12px 14px; border-top: 1px solid var(--line); }
+.empty { padding: 28px 18px; text-align: center; color: var(--muted); }
+
+/* a job's card, under Needs you, Working on, or Ready and done */
+.task { padding: 13px 18px; border-top: 1px solid var(--line-2); }
 .task:first-child { border-top: 0; }
-.task h3 { font-size: 14px; margin: 0 0 4px; }
-.task p { margin: 4px 0 8px; font-size: 14px; }
-.task .actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.task:last-child { border-radius: 0 0 13px 13px; }
+.task h3 { font-size: 14px; font-weight: 600; margin: 0 0 4px; }
+.task h3 .small { font-weight: 400; }
+.task p { margin: 4px 0 8px; font-size: 14px; overflow-wrap: anywhere; }
+.task .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.task .actions button { height: 30px; padding: 0 11px; font-size: 13px; border-radius: 7px; }
+.task .actions button.link { height: auto; padding: 0; margin: 0 2px; }
 .task.hands { background: var(--warn-bg); }
 /* the first cover letter, on its card for the person's say: drawn as text */
 .task .letter-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow: auto; font-size: 13px;
-  background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin: 6px 0 8px; }
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin: 6px 0 8px; }
 .q { display: grid; gap: 4px; margin: 10px 0; }
 .q > span { font-size: 14px; }
-.q input[type=text], .q select { font: inherit; width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
+.q input[type=text], .q select { width: 100%; }
 .q .remember { font-size: 12px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
-.log { font-size: 12px; color: var(--muted); margin: 6px 0 0; padding-left: 16px; }
+.log { font-size: 12px; color: var(--muted); margin: 6px 0 8px; padding-left: 16px; }
 .log .when, #week .when { font-variant-numeric: tabular-nums; margin-right: 4px; }
-/* This week: what the desk's history says of the last 7 days */
-#week h3 { font-size: 14px; margin: 16px 0 4px; }
-#week ul { margin: 0; padding-left: 18px; }
-#week li { margin: 2px 0; overflow-wrap: anywhere; }
-#week-recent li { font-size: 13px; }
-.small { font-size: 13px; color: var(--muted); }
-.counts { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 14px; }
-.pw { padding: 2px 14px 14px; }
-.bankq { display: grid; gap: 4px; padding: 10px 14px; border-top: 1px solid var(--line); }
-.bankq:first-child { border-top: 0; }
-.bankq > span { font-size: 14px; }
-.bankq select, .bankq input { font: inherit; width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
-.pw-row { display: flex; gap: 8px; margin-top: 8px; }
-/* (width 0: a choice as long as "SuccessFactors: TSMC Arizona, ..." doesn't widen the page) */
-.pw-row select { flex: 1; min-width: 0; width: 0; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
-.pw details { padding: 8px 0 0; border-top: 0; }
-#area-lists label { display: flex; gap: 8px; align-items: baseline; margin-top: 8px; }
-#area h3 { font-size: 14px; margin: 16px 0 4px; }
-#area .pw-row input { flex: 1; min-width: 0; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
-.chip.pick { display: inline-flex; align-items: center; gap: 4px; background: var(--info-bg); color: var(--text); font-size: 13px; }
-.chip.pick.extra { background: var(--chip); color: var(--muted); }
-.chip.pick button { border: 0; background: none; padding: 0 2px; font-size: 14px; line-height: 1; color: inherit; cursor: pointer; }
-button.idea { font-size: 12px; padding: 2px 8px; border-radius: 999px; }
-.ideas { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: baseline; margin-top: 8px; font-size: 13px; color: var(--muted); }
-#area-btn { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#area-error { color: var(--bad); }
-/* Set up your profile: a step at a time */
-#setup h3 { font-size: 14px; margin: 16px 0 4px; }
-#setup-error { color: var(--bad); }
-#setup-filled { color: var(--text); background: var(--info-bg); padding: 8px 10px; border-radius: 8px; }
-.setup-grid, .setup-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0 12px; }
-.setup-row { border: 1px solid var(--line); border-radius: 8px; padding: 2px 10px 8px; margin: 8px 0; }
-.setup-row > .wide { grid-column: 1 / -1; }
-.q input[type=file] { font: inherit; }
-fieldset.yesno { border: 0; padding: 0; margin: 10px 0; }
-fieldset.yesno legend { font-size: 14px; padding: 0; margin-bottom: 4px; }
-fieldset.yesno label { margin-right: 18px; }
-label.consent { display: flex; gap: 8px; align-items: flex-start; margin: 12px 0; }
-label.consent input { margin-top: 4px; }
-.pw details p { margin: 6px 0 0; }
-.pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
-.pw-row input { flex: 1; min-width: 0; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); }
-details { padding: 10px 14px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); }
-details a { color: var(--accent); }
+.counts { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 18px; }
+.task + .counts, .empty + .counts { border-top: 1px solid var(--line-2); }
+.spin { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -1px; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+details { padding: 10px 18px; border-top: 1px solid var(--line-2); font-size: 13px; color: var(--muted); }
+details summary { cursor: pointer; color: var(--accent); font-weight: 500; }
+details summary:hover { text-decoration: underline; }
 /* a card's "What went in": what the desk put into the application, to check at a glance */
 details.went { padding: 2px 0 8px; border-top: 0; }
-details.went summary { cursor: pointer; color: var(--accent); }
 .went-body h4 { font-size: 12px; margin: 10px 0 4px; color: var(--text); }
 .went-body dl { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 3px 10px; margin: 0; }
 .went-body dt { overflow-wrap: anywhere; }
 .went-body dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
 .went-body ul { margin: 0; padding-left: 16px; overflow-wrap: anywhere; }
 .went-body li { margin: 2px 0; }
-footer { max-width: 1240px; margin: 0 auto; padding: 0 16px 24px; color: var(--muted); font-size: 12px; }
-.spin { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -1px; }
-@keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+
+/* What's working: a few lines, then each kind of group as a small table */
+#working { padding: 4px 18px 14px; font-size: 13px; scroll-margin-top: 100vh; }
+#working p { margin: 8px 0 0; }
+#working ul { margin: 6px 0 0; padding-left: 18px; }
+#working table { width: 100%; border-collapse: collapse; margin-top: 4px; font-variant-numeric: tabular-nums; }
+#working caption { text-align: left; font-weight: 600; padding-top: 12px; }
+#working th, #working td { padding: 4px; border-top: 1px solid var(--line-2); text-align: right; }
+#working th:first-child, #working td:first-child { text-align: left; overflow-wrap: anywhere; }
+#working th { font-size: 12px; font-weight: 600; color: var(--muted); }
+/* the common questions, and the cards with a box to save in: passwords, phone alerts */
+.bankq { display: grid; gap: 5px; padding: 12px 18px; border-top: 1px solid var(--line-2); }
+.bankq:first-child { border-top: 0; }
+.bankq > span { font-size: 14px; }
+.bankq select, .bankq input { width: 100%; }
+.pw { padding: 2px 18px 16px; }
+.pw-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+/* (width 0: a choice as long as "SuccessFactors: TSMC Arizona, ..." doesn't widen the page) */
+.pw-row select { flex: 1; min-width: 0; width: 0; }
+.pw-row input { flex: 1; min-width: 0; }
+.pw-row button.link { margin: 0 4px; }
+.pw details { padding: 10px 0 0; border-top: 0; }
+.pw details p { margin: 6px 0 0; }
+.pw ol { padding-left: 20px; }
+.pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
+
+/* windows over the page */
+dialog { max-width: min(760px, calc(100vw - 32px)); border: 1px solid var(--line); border-radius: 14px;
+  background: var(--panel); color: var(--text); padding: 20px; box-shadow: var(--shadow-lg); }
+dialog::backdrop { background: rgba(16,24,40,.45); }
+dialog h2 { font-size: 16px; font-weight: 700; margin: 0 0 8px; }
+dialog pre { max-height: 50vh; overflow: auto; white-space: pre-wrap; font-size: 12px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+dialog .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+/* the Safety window: each setting, its value, and what it means now */
+#safety-body ul { list-style: none; margin: 0; padding: 0; }
+#safety-body li { padding: 8px 0; border-top: 1px solid var(--line-2); overflow-wrap: anywhere; }
+#safety-body li:first-child { border-top: 0; }
+#safety-body .where { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+#ni .actions { margin-top: 12px; }
+/* This week: what the desk's history says of the last 7 days */
+#week h3 { font-size: 14px; margin: 16px 0 4px; }
+#week ul { margin: 0; padding-left: 18px; }
+#week li { margin: 2px 0; overflow-wrap: anywhere; }
+#week-recent li { font-size: 13px; }
+/* What and where to search */
+#area-lists label { display: flex; gap: 8px; align-items: baseline; margin-top: 8px; }
+#area-lists input { align-self: flex-start; margin-top: 3px; }
+#area h3 { font-size: 14px; margin: 16px 0 4px; }
+.chip.pick { display: inline-flex; align-items: center; gap: 4px; background: var(--accent-bg); color: var(--text); font-size: 13px; }
+.chip.pick.extra { background: var(--chip); color: var(--muted); }
+.chip.pick button { height: auto; border: 0; border-radius: 4px; background: none; box-shadow: none; padding: 0 2px;
+  font-size: 14px; line-height: 1; color: inherit; }
+button.idea { height: 24px; font-size: 12px; padding: 0 9px; border-radius: 999px; box-shadow: none; }
+.ideas { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; margin-top: 8px; font-size: 13px; color: var(--muted); }
+#area-error { color: var(--bad); }
+/* Set up your profile: a step at a time */
+#setup h3 { font-size: 14px; margin: 16px 0 4px; }
+#setup-error { color: var(--bad); }
+#setup-filled { color: var(--text); background: var(--info-bg); padding: 8px 10px; border-radius: 8px; }
+.setup-grid, .setup-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0 12px; }
+.setup-row { border: 1px solid var(--line); border-radius: 10px; padding: 2px 10px 8px; margin: 8px 0; }
+.setup-row > .wide { grid-column: 1 / -1; }
+fieldset.yesno { border: 0; padding: 0; margin: 10px 0; }
+fieldset.yesno legend { font-size: 14px; padding: 0; margin-bottom: 4px; }
+fieldset.yesno label { margin-right: 18px; }
+label.consent { display: flex; gap: 8px; align-items: flex-start; margin: 12px 0; }
+label.consent input { margin-top: 3px; }
+
+/* a notice: blue, information (a tip, an update); red, a problem ("Problem: ..."). Yellow is only .waiting's: what
+   waits for you now. They sit above every page's cards */
+#notices { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-bottom: 18px; }
+#notices:empty { display: none; }
+.notice { margin: 0; padding: 10px 14px; border-radius: 10px; background: var(--info-bg); color: var(--text);
+  overflow-wrap: anywhere; }
+.notice.bad { background: var(--bad-bg); border: 1px solid var(--bad); border-color: color-mix(in srgb, var(--bad) 55%, transparent); }
+.notice code { font-size: 13px; }
+.notice.tip { display: flex; align-items: flex-start; gap: 12px; }
+.notice.tip > span { flex: 1; }
+.notice .close { color: var(--muted); font-size: 16px; line-height: 1.3; }
+.waiting { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0; padding: 10px 14px;
+  border-radius: 10px; background: var(--warn-bg); border: 1px solid var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 55%, transparent); }
+.waiting strong { color: var(--warn); }
+.waiting button { height: 30px; padding: 0 11px; font-size: 13px; border-radius: 7px; }
+.waiting button.link { height: auto; padding: 0; }
+/* a word that something happened (Prep me copied): at the foot of the window, gone after a few seconds */
+.toast { position: fixed; left: calc(50% + 122px); bottom: 24px; transform: translateX(-50%); z-index: 20;
+  max-width: calc(100vw - 276px); padding: 9px 14px; border-radius: 10px; background: var(--text); color: var(--bg);
+  font-size: 13.5px; box-shadow: var(--shadow-lg); }
+.toast:empty { display: none; }
+.toast button.link { color: inherit; font-weight: 600; text-decoration: underline; margin-left: 8px; }
 /* Quit the Job Desk went through: the desk has stopped, and the page shows only the words that say so */
 body.stopped > :not(#stopped) { display: none; }
-#stopped { max-width: 1240px; margin: 0 auto; padding: 64px 16px; text-align: center; }
+#stopped { max-width: 520px; margin: 0 auto; padding: 96px 24px; text-align: center; }
+#stopped h1 { margin: 0; font-size: 18px; font-weight: 700; }
 #stopped p { margin: 8px 0 0; color: var(--muted); }
+
+/* narrow windows. Under 1,024 px the side menu is 64 px of icons: each link's name is its tooltip, and the queue's
+   card and the person's name are out of sight (the name still there for a screen reader) */
+@media (max-width: 1023.98px) {
+  .app { grid-template-columns: 64px minmax(0, 1fr); }
+  .side { padding: 14px 10px 10px; align-items: center; }
+  .brand { padding: 2px 0 14px; }
+  .brand b, .nav a .label, .queue { display: none; }
+  .nav { align-self: stretch; }
+  .nav a { justify-content: center; padding: 0; position: relative; }
+  .nav a .count { position: absolute; top: 1px; right: 0; min-width: 16px; margin: 0; padding: 0 4px; font-size: 10px;
+    line-height: 15px; }
+  .nav .sep { margin: 10px 4px; }
+  button.me { justify-content: center; padding: 6px 0; position: relative; }
+  .me-words { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .top { padding: 10px 16px; }
+  .top-l { flex-wrap: wrap; }
+  #area-btn { max-width: 100%; }
+  .content { padding: 16px; }
+  .toast { left: calc(50% + 32px); max-width: calc(100vw - 96px); }
+}
+@media (max-width: 760px) {
+  .cols { grid-template-columns: minmax(0, 1fr); }
+  .item { grid-template-columns: 38px minmax(0, 1fr); }
+  .item .acts { grid-column: 2; flex-wrap: wrap; }
+  .item .acts .btn { white-space: normal; height: auto; min-height: 34px; padding-top: 5px; padding-bottom: 5px; }
+}
 </style>
 </head>
 <body>
-<header>
-  <div class="bar">
-    <h1>Job Desk</h1>
-    <span class="who" id="who"></span>
-    <span id="mode"></span>
-    <span class="spacer"></span>
-    <span class="small" id="searched"></span>
-    <button class="link" id="notes-btn" data-act="notes" title="Notes the desk took where it stopped on something it most likely got wrong, for you to file" hidden>Notes</button>
-    <button class="link" id="alerts" data-act="alerts" hidden>Alert me</button>
-    <button id="pause-btn" data-act="pause" title="The job under way finishes what it is doing; no other job starts until you press Carry on with the queue" hidden>Pause queue</button>
-    <button id="clear-queue-btn" data-act="clear-queue" title="Take the jobs not started yet out of the queue, back to the openings (not skipped); jobs already begun keep their cards" hidden>Clear the queue</button>
-    <button class="link" id="week-btn" data-act="week" title="What the desk did in the last 7 days: jobs filled and sent, where it stopped for you, and how long each job took">This week</button>
-    <button class="link" id="setup-btn" data-act="setup" title="Your resume, contact details, work authorization, jobs and schools, and what the desk may do for you">Your profile</button>
-    <button class="link" id="safety-btn" data-act="safety" title="What the desk does in your name, and what it never does: each setting as it is now, and where to change it">Safety</button>
-    <button id="area-btn" data-act="area" title="What and where Find jobs searches: the job titles, places and employer lists">What and where</button>
-    <button id="find" data-act="find">Find jobs</button>
-    <button id="stop-search" data-act="stop-search" title="The search ends; the openings found before it stay" hidden>Stop search</button>
-  </div>
-</header>
-<main>
-  <div id="notices" style="grid-column: 1 / -1; display: grid; gap: 8px;"></div>
-  <section class="card" aria-labelledby="list-h">
-    <div class="card-head">
-      <h2 id="list-h">Openings</h2>
-      <div class="tabs" role="group" aria-label="Which openings">
-        <button data-filter="recommended" aria-pressed="true">Recommended</button>
-        <button data-filter="all" aria-pressed="false">All</button>
-        <button data-filter="mine" aria-pressed="false">My applications <span id="mine-count"></span></button>
+<!-- the icons, drawn with <svg class="ico"><use href="#i-..."/></svg>; held in the page itself, so nothing is fetched -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#4338ca"/></linearGradient>
+<symbol id="logo" viewBox="0 0 32 32"><rect width="32" height="32" rx="9" fill="url(#lg)"/><rect x="7.5" y="12.5" width="17" height="11.5" rx="2.2" fill="none" stroke="#fff" stroke-width="2"/><path d="M12.5 12.5v-1.8a1.7 1.7 0 0 1 1.7-1.7h3.6a1.7 1.7 0 0 1 1.7 1.7v1.8" fill="none" stroke="#fff" stroke-width="2"/><path d="m12.6 18.4 2.4 2.4 4.4-5" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-home" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20h14V9.5"/><path d="M10 20v-6h4v6"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+<symbol id="i-case" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/><path d="M3 13h18"/></symbol>
+<symbol id="i-send" viewBox="0 0 24 24"><path d="M21 3 10.5 13.5"/><path d="M21 3 14.5 21l-4-7.5L3 9.5 21 3z"/></symbol>
+<symbol id="i-ask" viewBox="0 0 24 24"><path d="M20.5 12a8.5 8.5 0 0 1-12.3 7.6L3.5 20.5l.9-4.7A8.5 8.5 0 1 1 20.5 12z"/><path d="M9.9 9.6a2.2 2.2 0 0 1 4.2.9c0 1.4-2.1 1.9-2.1 3.2"/><path d="M12 16.4h.01"/></symbol>
+<symbol id="i-chart" viewBox="0 0 24 24"><path d="M5 20V11"/><path d="M11 20V5"/><path d="M17 20v-6"/><path d="M3 20h18"/></symbol>
+<symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h9"/><path d="M19 6h1"/><circle cx="16" cy="6" r="2.2"/><path d="M4 12h1"/><path d="M11 12h9"/><circle cx="8" cy="12" r="2.2"/><path d="M4 18h9"/><path d="M19 18h1"/><circle cx="16" cy="18" r="2.2"/></symbol>
+<symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.8 9.6a2.2 2.2 0 0 1 4.2.9c0 1.4-2.1 1.9-2.1 3.2"/><path d="M12 16.6h.01"/></symbol>
+<symbol id="i-inbox" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13L22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/></symbol>
+<symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9"/><path d="m16 7 3 3"/></symbol>
+<symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 7.5 8.5 6 8.5-6"/></symbol>
+<symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.5 3 8.4 7 10 4-1.6 7-5.5 7-10V6z"/><path d="m9 11.8 2.2 2.2 3.8-4.3"/></symbol>
+<symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 2.8 19.5h18.4z"/><path d="M12 10v4.5"/><path d="M12 17.2h.01"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7"/></symbol>
+<symbol id="i-checkc" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12.3 2.7 2.7L16 9.5"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+<symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 17h6"/></symbol>
+<symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17z"/><path d="m14.5 7.5 3 3"/></symbol>
+<symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/></symbol>
+<symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></symbol>
+<symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+<symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></symbol>
+<symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 5v14"/><path d="M15 5v14"/></symbol>
+<symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5v14l11-7z"/></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v5h-5"/></symbol>
+<symbol id="i-sort" viewBox="0 0 24 24"><path d="M7 5v14"/><path d="m3.5 15.5 3.5 3.5 3.5-3.5"/><path d="M17 19V5"/><path d="m13.5 8.5 3.5-3.5 3.5 3.5"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></symbol>
+<symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.2"/><path d="M11 18h2"/></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9.5" rx="2"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></symbol>
+<symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/></symbol>
+</defs></svg>
+<div class="app">
+  <!-- the side menu: the seven pages (route shows the one in the address), how the queue is doing, and the person.
+       Each link's number, the queue's words and the person are drawn by renderMenu -->
+  <aside class="side">
+    <div class="brand"><svg class="logo" aria-hidden="true"><use href="#logo"/></svg><b>Job Desk</b></div>
+    <nav class="nav" aria-label="Pages">
+      <a href="#home" title="Home" aria-label="Home"><svg class="ico" aria-hidden="true"><use href="#i-home"/></svg><span class="label">Home</span><span class="count warn" id="nav-home" hidden></span></a>
+      <a href="#openings" title="Openings" aria-label="Openings"><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg><span class="label">Openings</span><span class="count" id="nav-openings" hidden></span></a>
+      <a href="#applications" title="Applications" aria-label="Applications"><svg class="ico" aria-hidden="true"><use href="#i-send"/></svg><span class="label">Applications</span><span class="count" id="nav-applications" hidden></span></a>
+      <a href="#answers" title="Your answers" aria-label="Your answers"><svg class="ico" aria-hidden="true"><use href="#i-ask"/></svg><span class="label">Your answers</span><span class="count" id="nav-answers" hidden></span></a>
+      <a href="#working" title="What's working" aria-label="What's working"><svg class="ico" aria-hidden="true"><use href="#i-chart"/></svg><span class="label">What's working</span></a>
+      <div class="sep"></div>
+      <a href="#settings" title="Settings" aria-label="Settings"><svg class="ico" aria-hidden="true"><use href="#i-sliders"/></svg><span class="label">Settings</span></a>
+      <a href="#help" title="Help" aria-label="Help"><svg class="ico" aria-hidden="true"><use href="#i-help"/></svg><span class="label">Help</span><span class="count" id="nav-help" hidden></span></a>
+    </nav>
+    <div class="grow"></div>
+    <div class="queue" id="queue-card" role="group" aria-label="The queue" hidden>
+      <div class="r1"><span class="dot" id="queue-dot"></span><span id="queue-said"></span></div>
+      <p id="queue-more"></p>
+      <div class="bar" id="queue-bar" role="progressbar" aria-label="Jobs the desk has taken as far as it can" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"><i></i></div>
+      <button class="btn sm" id="pause-btn" data-act="pause" title="The job under way finishes what it is doing; no other job starts until you press Carry on with the queue" hidden>Pause queue</button>
+      <button class="btn sm ghost" id="clear-queue-btn" data-act="clear-queue" title="Take the jobs not started yet out of the queue, back to the openings (not skipped); jobs already begun keep their cards" hidden>Clear the queue</button>
+    </div>
+    <button class="me" data-act="setup" title="Your profile"><span class="avatar" id="me-avatar" aria-hidden="true"><svg class="ico" aria-hidden="true"><use href="#i-user"/></svg></span><span class="me-words"><b id="who"></b><small id="plugin-version"></small></span></button>
+  </aside>
+  <div class="main">
+    <!-- the top bar, one for all pages: each control in a wrapper that route shows on its pages (data-pages), so the
+         control's own show-and-hide is left alone -->
+    <div class="top">
+      <div class="top-l">
+        <h1 id="page-title">Home</h1>
+        <span data-pages="openings applications" hidden><button class="btn" id="area-btn" data-act="area" title="What and where Find jobs searches: the job titles, places and employer lists">What and where</button></span>
       </div>
-      <label class="openings-only handled-switch" title="Only the employers where, in the plugin's live check, the desk took a test applicant all the way to the application's review page. Bot checks, CAPTCHAs and steps it can't do yet are elsewhere."><input type="checkbox" id="handled-only"> Only where the desk goes all the way</label>
-      <span class="spacer"></span>
-      <span class="openings-only links"><button class="link" data-act="select-recommended">Select recommended</button>
-      <button class="link" data-act="select-none">Clear</button></span>
-      <!-- the switches seldom changed, out of the way; each one on is said in a line under the head (switch-hint) -->
-      <details class="openings-only more" id="more"><summary>More</summary><div class="more-body">
-      <label class="handled-switch" title="To get the desk going at more employers: Find jobs searches every list's employers (yours, and HR jobs too), and only the openings where the desk doesn't go all the way yet show, whatever their fit. Nothing is sent while it's on."><input type="checkbox" id="troubleshoot"> Troubleshooting</label>
-      <label class="handled-switch" title="Off: the desk searches only when you press Find jobs. On: it also searches by itself when the openings are over 12 hours old (on opening, or on a page left open), but not while the queue is paused. The header says when a search is running, with Stop search beside it."><input type="checkbox" id="auto-search"> Search by itself every 12 hours</label>
-      </div></details>
-      <div class="switch-hint" id="switch-hint" hidden></div>
+      <span data-pages="home openings applications"><span class="sub" id="searched"></span></span>
+      <span id="mode"></span>
+      <span data-pages="home working"><button class="btn" id="week-btn" data-act="week" title="What the desk did in the last 7 days: jobs filled and sent, where it stopped for you, and how long each job took">This week</button></span>
+      <span data-pages="home openings applications"><button class="btn" id="stop-search" data-act="stop-search" title="The search ends; the openings found before it stay" hidden>Stop search</button></span>
+      <span data-pages="home openings applications"><button class="btn" id="find" data-act="find">Find jobs</button></span>
     </div>
-    <div class="filters openings-only" id="filters">
-      <span class="group" role="group" aria-label="Sort the openings">Sort
-        <button data-sort="fit" aria-pressed="true" title="Best fit for your profile first">Fit</button><button data-sort="pay" aria-pressed="false" title="Best paid first (over a year), openings whose pay isn't listed last">Pay</button><button data-sort="newest" aria-pressed="false" title="Most recently posted first, openings without a date last">Newest</button></span>
-      <label class="group" title="Hides an opening whose posting gives its pay on its pay line (or in its own data) and the most it pays is below this (hourly pay counted as 2,080 hours a year). One that doesn't list its pay, or whose pay is only read from its text (≈), always stays.">Pay at least $<input type="text" id="min-pay" inputmode="numeric" placeholder="any" aria-label="Pay at least, dollars a year" autocomplete="off">/yr</label>
-      <span class="group" role="group" aria-label="Posted within" title="Hides an opening posted longer ago. One whose site gives no date always stays.">Posted
-        <button data-posted="" aria-pressed="true">Any</button><button data-posted="7" aria-pressed="false">7 days</button><button data-posted="14" aria-pressed="false">14 days</button><button data-posted="30" aria-pressed="false">30 days</button></span>
-      <!-- miles from the person's home town (desk.json's within_miles; places.py): its title says from where, or why it's off -->
-      <span class="group" role="group" aria-label="Within miles of home" id="within-group">Within
-        <button data-within="" aria-pressed="true">Any</button><button data-within="10" aria-pressed="false">10 mi</button><button data-within="25" aria-pressed="false">25 mi</button><button data-within="50" aria-pressed="false">50 mi</button><button data-within="100" aria-pressed="false">100 mi</button>
-        <span class="hint" id="within-why" hidden>needs your home town</span></span>
-      <span class="group" role="group" aria-label="Workplace" title="Shows only the jobs done the ways pressed, and every job that doesn't say. One whose posting only mentions it in its text (likely remote) always stays.">Workplace
-        <button data-chip="workplace" data-value="remote" aria-pressed="false" title="Remote jobs, and every job that doesn't say where it's done">Remote</button><button data-chip="workplace" data-value="hybrid" aria-pressed="false" title="Hybrid jobs, and every job that doesn't say where it's done">Hybrid</button><button data-chip="workplace" data-value="onsite" aria-pressed="false" title="On-site jobs, and every job that doesn't say where it's done">On-site</button></span>
-      <span class="group" role="group" aria-label="Employment type" title="Shows only the jobs of the types pressed, and every job whose job system doesn't say its type. A job system may say a job's hours (full or part time), its kind (contract, temporary, internship, per diem), or both: only what it says is judged, so a full-time internship stays when Internship is pressed.">Type
-        <button data-chip="job_types" data-value="full_time" aria-pressed="false" title="Full-time jobs, and every job that doesn't say its type">Full-time</button><button data-chip="job_types" data-value="part_time" aria-pressed="false" title="Part-time jobs, and every job that doesn't say its type">Part-time</button><button data-chip="job_types" data-value="contract" aria-pressed="false" title="Contract jobs, and every job that doesn't say its type">Contract</button><button data-chip="job_types" data-value="temporary" aria-pressed="false" title="Temporary and seasonal jobs, and every job that doesn't say its type">Temporary</button><button data-chip="job_types" data-value="internship" aria-pressed="false" title="Internships and co-ops, and every job that doesn't say its type">Internship</button><button data-chip="job_types" data-value="per_diem" aria-pressed="false" title="Per diem (PRN) jobs, and every job that doesn't say its type">Per diem</button></span>
-      <span class="group" role="group" aria-label="Requirements" title="Each pressed one hides a job whose posting or title says it doesn't fit. A job that doesn't say, or whose posting isn't read yet, always stays.">Requirements
-        <button data-chip="requirements" data-value="no_clearance" aria-pressed="false" title="Hides a job whose posting has a line labelled with the clearance it asks and its level (Clearance Type: Secret), held now or to be obtained. One that only says it in its text (may need a security clearance), or isn't read yet, always stays.">No clearance needed</button><button data-chip="requirements" data-value="degree" aria-pressed="false" id="degree-chip" title="Hides a job whose posting has a line labelled with the education it requires (Minimum Education: Bachelor's Degree), with no way around it. One that only says it in its text, or isn't read yet, always stays.">No degree required</button><button data-chip="requirements" data-value="day_shift" aria-pressed="false" title="Hides a job whose posting's Shift or Schedule line says nights, evenings, swing, rotating, or a 2nd or 3rd shift. One that only mentions a shift in its text, or doesn't say, always stays.">Day shift</button><button data-chip="requirements" data-value="travel_25" aria-pressed="false" title="Hides a job whose posting says it travels more than 25% of the time. One that doesn't say, or isn't read yet, always stays.">Travel ≤ 25%</button><button data-chip="requirements" data-value="entry_level" aria-pressed="false" title="Hides a job whose title says senior, lead, staff, principal, manager, supervisor or director, or level II and up. One whose title doesn't say always stays.">Entry level</button><button data-chip="requirements" data-value="not_senior" aria-pressed="false" title="Hides a job whose title says senior, lead, staff, principal, manager, supervisor or director, or level III and up. One whose title doesn't say always stays.">Not senior</button></span>
-      <!-- the job systems of the openings listed (desk.system_of), drawn by renderSystems -->
-      <span class="group" role="group" aria-label="Job system" id="system-chips" title="Shows only the jobs applied for on the job systems pressed: the site you apply on, such as Workday or an employer's own site." hidden></span>
-      <!-- the companies chosen (desk.json's companies), drawn by renderCompanies; the box suggests the employers listed -->
-      <span class="group" role="group" aria-label="Company" id="company-group" title="Shows only the openings of the companies chosen. Type any part of a company's name, or pick one, and press Enter; press a company again to let go of it.">Company
-        <span id="company-chips"></span><input type="text" id="company-add" list="company-names" placeholder="type a company" aria-label="Show only this company's openings" autocomplete="off"><datalist id="company-names"></datalist></span>
-    </div>
-    <div class="stops openings-only" id="stops" role="group" aria-label="Show the jobs by where they stand" hidden></div>
-    <div class="stop-hint openings-only" id="stop-hint" hidden></div>
-    <div class="stops" id="app-groups" role="group" aria-label="Show my applications by where they stand" hidden></div>
-    <form class="addbar openings-only" id="add-form">
-      <input type="text" id="add-links" placeholder="Paste job links: LinkedIn, Indeed or a company site" aria-label="Job links to add" autocomplete="off">
-      <button type="submit" id="add-btn">Add</button>
-    </form>
-    <div class="applybar openings-only">
-      <button class="primary" id="apply" data-act="apply" disabled>Apply to selected</button>
-      <span class="hint" id="apply-hint"></span>
-      <label><input type="checkbox" id="auto"> Submit for me when nothing needs me</label>
-      <span class="hint" id="auto-hint"></span>
-      <span class="at-once" role="group" aria-label="Jobs at once" title="How many applications the desk fills at the same time, each in its own tab of the desk's browser window. Never two at one employer's site, and one at a time signs in, makes an account or waits on an emailed code. While a sign-in or code needs you, no other job starts and no other tab comes to the front, unless Don't wait for me is on (then only while the desk reads a code from your inbox, or Claude from your Gmail).">Jobs at once
-        <button data-at-once="1" aria-pressed="false">1</button><button data-at-once="2" aria-pressed="false">2</button><button data-at-once="3" aria-pressed="false">3</button><button data-at-once="4" aria-pressed="false">4</button><button data-at-once="5" aria-pressed="false">5</button></span>
-      <label title="For a desk left to go through the list: a sign-in, or an emailed code only you can read, waits on its card and the other jobs go on, as if you'd pressed Later on each (never another job at the same site). A code the desk reads itself (from your inbox, or Claude from your Gmail) still holds them while it's looked for, a minute as a rule: one code at a time, so it never goes to another job"><input type="checkbox" id="dont-wait"> Don't wait for me</label>
-      <span class="hint" id="dont-wait-hint"></span>
-      <label><input type="checkbox" id="tailor"> Tailor my resume for each job</label>
-      <span class="hint" id="tailor-hint"></span>
-      <label title="Claude writes each one through your own Claude Code sign-in (your Claude plan; no key needed), from your resume, your profile and the job's posting, using only what they say. The first one waits for your OK on its card."><input type="checkbox" id="letters"> Write a cover letter for each job</label>
-      <span class="hint" id="letters-hint"></span>
-    </div>
-    <ul class="rows" id="rows"></ul>
-    <div id="skipped-sites" class="openings-only"></div>
-  </section>
-  <div class="side">
-    <!-- while nothing needs the person, nothing's being filled and nothing's done this visit: one card for all three -->
-    <section class="card" aria-labelledby="idle-h" id="idle-card" hidden>
-      <div class="card-head"><h2 id="idle-h">Nothing needs you</h2></div>
-      <p class="small" style="margin: 12px 14px 0">The desk is idle. Tick openings and press Apply, and what it's working on and what needs you show up here.</p>
-      <div class="counts" id="idle-counts"></div>
-    </section>
-    <section class="card" aria-labelledby="needs-h">
-      <div class="card-head"><h2 id="needs-h">Needs you</h2><span class="pill" id="needs-count"
-        title="Every job stopped for you. Among the openings the bar over the list shows, they're its Bot checks and Questions and sign-ins, the stopped ones among its Stuck, and the ones among its Ready that wait on a Submit or a check of yours">0</span></div>
-      <div id="needs"></div>
-    </section>
-    <section class="card" aria-labelledby="work-h">
-      <div class="card-head"><h2 id="work-h">Working on</h2></div>
-      <div id="work"></div>
-    </section>
-    <section class="card" aria-labelledby="done-h">
-      <div class="card-head"><h2 id="done-h">Ready and done</h2><span class="pill info" id="done-count" title="Filled to the review page: press Submit on each" hidden></span></div>
-      <div id="done"></div>
-      <div class="counts" id="counts"></div>
-    </section>
-    <!-- what's worked: the person's own applications' outcomes by group (outcomes.py), counted on this computer only -->
-    <section class="card" aria-labelledby="working-h" id="working-card" hidden>
-      <div class="card-head"><h2 id="working-h">What's working</h2><span class="pill" id="working-count"></span></div>
-      <div id="working"></div>
-    </section>
-    <!-- the questions most applications ask that a profile doesn't answer: answered once, kept in answers.yaml -->
-    <section class="card" aria-labelledby="bank-h" id="bank-card" hidden>
-      <div class="card-head"><h2 id="bank-h">Common questions</h2><span class="pill" id="bank-count"></span></div>
-      <p class="small" style="margin: 10px 14px 0">Most applications ask these, and your profile doesn't say. Answer once:
-        the desk fills them in at every employer from then on (kept in <code>~/.job-apply/answers.yaml</code>).</p>
-      <div id="bank"></div>
-      <details id="bank-done" hidden><summary>Your answers</summary><div id="bank-given"></div></details>
-    </section>
-    <section class="card" aria-labelledby="pw-h">
-      <div class="card-head"><h2 id="pw-h">Site passwords</h2><span class="pill" id="pw-count"></span></div>
-      <form class="pw" id="pw-form" autocomplete="off">
-        <p class="small">One password per job system: the desk makes your account at each of its employers and signs
-          you in. It stays on this computer; Claude never sees it.</p>
-        <div class="pw-row">
-          <select id="pw-site" aria-label="Job system">
-            <option value="workday">Workday: Intel, Applied, KLA and 10 more</option>
-            <option value="successfactors">SuccessFactors: Edwards, Qorvo, Amkor</option>
-            <option value="icims">iCIMS: Daifuku</option>
-            <option value="applicantstack">ApplicantStack: SCREEN</option>
-            <option value="ukg">UKG Pro: Nikon Precision</option>
-            <option value="infor">Infor: Benchmark</option>
-            <option value="taleo">Taleo</option>
-            <option value="neogov">NEOGOV: Clark County, City of Las Vegas, City of Henderson and 1 more</option>
-            <option value="email">Your email: an app password, to read sign-up codes and password resets</option>
-            <option value="anthropic">Anthropic API key: for cover letters, instead of your Claude login</option>
-          </select>
+    <main class="content" id="content">
+      <div id="notices"></div>
+      <!-- Home: what needs the person at the left, what the desk is working on at the right -->
+      <div class="page" data-pages="home">
+        <div class="cols" id="home-cols">
+          <div class="stack">
+            <section class="card" aria-labelledby="needs-h">
+              <div class="card-head"><h2 id="needs-h">Needs you</h2><span class="pill" id="needs-count"
+                title="Every job stopped for you. Among the openings the bar over the list shows, they're its Bot checks and Questions and sign-ins, the stopped ones among its Stuck, and the ones among its Ready that wait on a Submit or a check of yours">0</span></div>
+              <div id="needs"></div>
+            </section>
+            <section class="card" aria-labelledby="done-h">
+              <div class="card-head"><h2 id="done-h">Ready and done</h2><span class="pill info" id="done-count" title="Filled to the review page: press Submit on each" hidden></span></div>
+              <div id="done"></div>
+              <div class="counts" id="counts"></div>
+            </section>
+          </div>
+          <div class="stack">
+            <section class="card" aria-labelledby="work-h">
+              <div class="card-head"><h2 id="work-h">Working on</h2></div>
+              <div id="work"></div>
+            </section>
+            <!-- while nothing needs the person, nothing's being filled and nothing's done this visit: one card for all three -->
+            <section class="card" aria-labelledby="idle-h" id="idle-card" hidden>
+              <div class="card-head"><h2 id="idle-h">Nothing needs you</h2></div>
+              <p class="small" style="margin: 12px 18px 0">The desk is idle. Tick openings and press Apply, and what it's working on and what needs you show up here.</p>
+              <div class="counts" id="idle-counts"></div>
+            </section>
+          </div>
         </div>
-        <div class="pw-row"><input type="password" id="pw" autocomplete="new-password" aria-label="Password">
-          <button class="primary" type="submit">Save</button></div>
-        <p class="pills" id="pw-state"></p>
-        <details><summary>How this works</summary>
-        <p>Each employer has its own account on its job site. Save one password for a job system and the
-          desk creates your account at each of that system's employers (agreeing to its terms for you) and signs you in,
-          on that system's own sites only; when a site turns the password down, it resets that account's password to this
-          one through the site's "Forgot password" email (unless your profile says <code>manage_accounts: false</code>).
-          It stays on this computer, in its password vault (Windows Credential Manager, the macOS Keychain or your
-          desktop's keyring; <code>~/.job-apply/secrets.yaml</code> where there's none), and Claude never sees it.
-          Use passwords you don't use anywhere else.</p>
-        <p>Your email: with an app password for the address in your profile (for Gmail, make one at
-          <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a>;
-          it needs 2-Step Verification), a job waiting on an emailed code or link gets it from your inbox: only mail from
-          that job's site that arrived after it began waiting, read without marking anything read. Without one, with
-          <code>email_codes: true</code> in your profile and the Gmail connector in Claude, Claude reads it through Gmail
-          while the desk's chat is open (only that job's own mail), and the desk puts it in.</p>
-        <p>An Anthropic API key (make one in the Claude Console,
-          <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>,
-          and add some credit under Billing): with Write a cover letter for each job on, Claude writes each letter
-          through Anthropic's API with it (about 10 to 20 cents a letter, written and checked), so the desk doesn't need Claude Code or your Claude login
-          for them. Each letter is checked against your resume and profile the same way.</p>
-        </details>
-      </form>
-    </section>
-    <!-- phone alerts through ntfy (phone.py): the topic is shown only right after it's made, or on Show the topic, never
-         kept in the page's state -->
-    <section class="card" aria-labelledby="phone-h">
-      <div class="card-head"><h2 id="phone-h">Phone alerts</h2><span class="pill" id="phone-pill" aria-live="polite">Off</span></div>
-      <div class="pw">
-        <p class="small">A push on your phone when a job needs you or is ready for your Submit, and a summary of the day,
-          with this page closed too (while the desk runs). Free, through the ntfy app.</p>
-        <div class="pw-row" id="phone-off"><button class="primary" data-act="phone-make">Turn on phone alerts</button></div>
-        <div id="phone-topic" hidden>
-          <ol class="small">
-            <li>Install the ntfy app on your phone (<a href="https://ntfy.sh" target="_blank" rel="noopener">ntfy.sh</a>:
-              App Store or Google Play).</li>
-            <li>In the app, press + and subscribe to this topic<span id="phone-server-said"></span>:
-              <code id="phone-topic-name"></code></li>
-            <li>Press Send a test.</li>
-          </ol>
-          <p class="small">Keep the topic to yourself: anyone who knows it can read your alerts.</p>
-        </div>
-        <div id="phone-on" hidden>
-          <div class="pw-row"><button data-act="phone-test">Send a test</button>
-            <button class="link" data-act="phone-show">Show the topic</button>
-            <button class="link" data-act="phone-make" title="Make a new topic, for when someone else may know this one">New topic</button>
-            <button class="link" data-act="phone-off">Turn off</button></div>
-          <p class="small"><label><input type="checkbox" id="phone-details"> Say which employer and job</label></p>
-          <p class="small"><label>Summary of the day at <input type="time" id="phone-summary"></label></p>
-        </div>
-        <p class="small" id="phone-held" aria-live="polite" hidden></p>
-        <details><summary>How this works</summary>
-        <p>The alerts go through ntfy's servers to the topic your phone subscribes to. So they say only counts and
-          kinds ("A job needs you: a bot check", "2 applications are ready for your Submit"), never an employer, a job or
-          anything about you, unless you turn on Say which employer and job. The topic is a long random name kept on
-          this computer, with your passwords; Turn off forgets it (a new one is made next time).
-          One alert a job a stop, those that come together in one; the summary at the time you pick (empty: none). To
-          use your own ntfy server, set <code>phone_alerts_server</code> under <code>settings:</code> in your profile.</p>
-        </details>
       </div>
-    </section>
+      <!-- Openings and Applications: one card for both, its My applications tab chosen on Applications (route) -->
+      <div class="page" data-pages="openings applications" hidden>
+        <section class="card" aria-labelledby="list-h">
+          <div class="card-head">
+            <h2 id="list-h">Openings</h2>
+            <div class="tabs" role="group" aria-label="Which openings">
+              <button data-filter="recommended" aria-pressed="true">Recommended</button>
+              <button data-filter="all" aria-pressed="false">All</button>
+              <button data-filter="mine" aria-pressed="false">My applications <span id="mine-count"></span></button>
+            </div>
+            <label class="openings-only handled-switch" title="Only the employers where, in the plugin's live check, the desk took a test applicant all the way to the application's review page. Bot checks, CAPTCHAs and steps it can't do yet are elsewhere."><input type="checkbox" id="handled-only"> Only where the desk goes all the way</label>
+            <span class="spacer"></span>
+            <span class="openings-only links"><button class="link" data-act="select-recommended">Select recommended</button>
+            <button class="link" data-act="select-none">Clear</button></span>
+            <!-- the switches seldom changed, out of the way; each one on is said in a line under the head (switch-hint) -->
+            <details class="openings-only more" id="more"><summary>More</summary><div class="more-body">
+            <label class="handled-switch" title="To get the desk going at more employers: Find jobs searches every list's employers (yours, and HR jobs too), and only the openings where the desk doesn't go all the way yet show, whatever their fit. Nothing is sent while it's on."><input type="checkbox" id="troubleshoot"> Troubleshooting</label>
+            <label class="handled-switch" title="Off: the desk searches only when you press Find jobs. On: it also searches by itself when the openings are over 12 hours old (on opening, or on a page left open), but not while the queue is paused. The header says when a search is running, with Stop search beside it."><input type="checkbox" id="auto-search"> Search by itself every 12 hours</label>
+            </div></details>
+            <div class="switch-hint" id="switch-hint" hidden></div>
+          </div>
+          <div class="filters openings-only" id="filters">
+            <span class="group" role="group" aria-label="Sort the openings">Sort
+              <button data-sort="fit" aria-pressed="true" title="Best fit for your profile first">Fit</button><button data-sort="pay" aria-pressed="false" title="Best paid first (over a year), openings whose pay isn't listed last">Pay</button><button data-sort="newest" aria-pressed="false" title="Most recently posted first, openings without a date last">Newest</button></span>
+            <label class="group" title="Hides an opening whose posting gives its pay on its pay line (or in its own data) and the most it pays is below this (hourly pay counted as 2,080 hours a year). One that doesn't list its pay, or whose pay is only read from its text (≈), always stays.">Pay at least $<input type="text" id="min-pay" inputmode="numeric" placeholder="any" aria-label="Pay at least, dollars a year" autocomplete="off">/yr</label>
+            <span class="group" role="group" aria-label="Posted within" title="Hides an opening posted longer ago. One whose site gives no date always stays.">Posted
+              <button data-posted="" aria-pressed="true">Any</button><button data-posted="7" aria-pressed="false">7 days</button><button data-posted="14" aria-pressed="false">14 days</button><button data-posted="30" aria-pressed="false">30 days</button></span>
+            <!-- miles from the person's home town (desk.json's within_miles; places.py): its title says from where, or why it's off -->
+            <span class="group" role="group" aria-label="Within miles of home" id="within-group">Within
+              <button data-within="" aria-pressed="true">Any</button><button data-within="10" aria-pressed="false">10 mi</button><button data-within="25" aria-pressed="false">25 mi</button><button data-within="50" aria-pressed="false">50 mi</button><button data-within="100" aria-pressed="false">100 mi</button>
+              <span class="hint" id="within-why" hidden>needs your home town</span></span>
+            <span class="group" role="group" aria-label="Workplace" title="Shows only the jobs done the ways pressed, and every job that doesn't say. One whose posting only mentions it in its text (likely remote) always stays.">Workplace
+              <button data-chip="workplace" data-value="remote" aria-pressed="false" title="Remote jobs, and every job that doesn't say where it's done">Remote</button><button data-chip="workplace" data-value="hybrid" aria-pressed="false" title="Hybrid jobs, and every job that doesn't say where it's done">Hybrid</button><button data-chip="workplace" data-value="onsite" aria-pressed="false" title="On-site jobs, and every job that doesn't say where it's done">On-site</button></span>
+            <span class="group" role="group" aria-label="Employment type" title="Shows only the jobs of the types pressed, and every job whose job system doesn't say its type. A job system may say a job's hours (full or part time), its kind (contract, temporary, internship, per diem), or both: only what it says is judged, so a full-time internship stays when Internship is pressed.">Type
+              <button data-chip="job_types" data-value="full_time" aria-pressed="false" title="Full-time jobs, and every job that doesn't say its type">Full-time</button><button data-chip="job_types" data-value="part_time" aria-pressed="false" title="Part-time jobs, and every job that doesn't say its type">Part-time</button><button data-chip="job_types" data-value="contract" aria-pressed="false" title="Contract jobs, and every job that doesn't say its type">Contract</button><button data-chip="job_types" data-value="temporary" aria-pressed="false" title="Temporary and seasonal jobs, and every job that doesn't say its type">Temporary</button><button data-chip="job_types" data-value="internship" aria-pressed="false" title="Internships and co-ops, and every job that doesn't say its type">Internship</button><button data-chip="job_types" data-value="per_diem" aria-pressed="false" title="Per diem (PRN) jobs, and every job that doesn't say its type">Per diem</button></span>
+            <span class="group" role="group" aria-label="Requirements" title="Each pressed one hides a job whose posting or title says it doesn't fit. A job that doesn't say, or whose posting isn't read yet, always stays.">Requirements
+              <button data-chip="requirements" data-value="no_clearance" aria-pressed="false" title="Hides a job whose posting has a line labelled with the clearance it asks and its level (Clearance Type: Secret), held now or to be obtained. One that only says it in its text (may need a security clearance), or isn't read yet, always stays.">No clearance needed</button><button data-chip="requirements" data-value="degree" aria-pressed="false" id="degree-chip" title="Hides a job whose posting has a line labelled with the education it requires (Minimum Education: Bachelor's Degree), with no way around it. One that only says it in its text, or isn't read yet, always stays.">No degree required</button><button data-chip="requirements" data-value="day_shift" aria-pressed="false" title="Hides a job whose posting's Shift or Schedule line says nights, evenings, swing, rotating, or a 2nd or 3rd shift. One that only mentions a shift in its text, or doesn't say, always stays.">Day shift</button><button data-chip="requirements" data-value="travel_25" aria-pressed="false" title="Hides a job whose posting says it travels more than 25% of the time. One that doesn't say, or isn't read yet, always stays.">Travel ≤ 25%</button><button data-chip="requirements" data-value="entry_level" aria-pressed="false" title="Hides a job whose title says senior, lead, staff, principal, manager, supervisor or director, or level II and up. One whose title doesn't say always stays.">Entry level</button><button data-chip="requirements" data-value="not_senior" aria-pressed="false" title="Hides a job whose title says senior, lead, staff, principal, manager, supervisor or director, or level III and up. One whose title doesn't say always stays.">Not senior</button></span>
+            <!-- the job systems of the openings listed (desk.system_of), drawn by renderSystems -->
+            <span class="group" role="group" aria-label="Job system" id="system-chips" title="Shows only the jobs applied for on the job systems pressed: the site you apply on, such as Workday or an employer's own site." hidden></span>
+            <!-- the companies chosen (desk.json's companies), drawn by renderCompanies; the box suggests the employers listed -->
+            <span class="group" role="group" aria-label="Company" id="company-group" title="Shows only the openings of the companies chosen. Type any part of a company's name, or pick one, and press Enter; press a company again to let go of it.">Company
+              <span id="company-chips"></span><input type="text" id="company-add" list="company-names" placeholder="type a company" aria-label="Show only this company's openings" autocomplete="off"><datalist id="company-names"></datalist></span>
+          </div>
+          <div class="stops openings-only" id="stops" role="group" aria-label="Show the jobs by where they stand" hidden></div>
+          <div class="stop-hint openings-only" id="stop-hint" hidden></div>
+          <div class="stops" id="app-groups" role="group" aria-label="Show my applications by where they stand" hidden></div>
+          <form class="addbar openings-only" id="add-form">
+            <input type="text" id="add-links" placeholder="Paste job links: LinkedIn, Indeed or a company site" aria-label="Job links to add" autocomplete="off">
+            <button type="submit" id="add-btn">Add</button>
+          </form>
+          <div class="applybar openings-only">
+            <button class="primary" id="apply" data-act="apply" disabled>Apply to selected</button>
+            <span class="hint" id="apply-hint"></span>
+            <label><input type="checkbox" id="auto"> Submit for me when nothing needs me</label>
+            <span class="hint" id="auto-hint"></span>
+            <span class="at-once" role="group" aria-label="Jobs at once" title="How many applications the desk fills at the same time, each in its own tab of the desk's browser window. Never two at one employer's site, and one at a time signs in, makes an account or waits on an emailed code. While a sign-in or code needs you, no other job starts and no other tab comes to the front, unless Don't wait for me is on (then only while the desk reads a code from your inbox, or Claude from your Gmail).">Jobs at once
+              <button data-at-once="1" aria-pressed="false">1</button><button data-at-once="2" aria-pressed="false">2</button><button data-at-once="3" aria-pressed="false">3</button><button data-at-once="4" aria-pressed="false">4</button><button data-at-once="5" aria-pressed="false">5</button></span>
+            <label title="For a desk left to go through the list: a sign-in, or an emailed code only you can read, waits on its card and the other jobs go on, as if you'd pressed Later on each (never another job at the same site). A code the desk reads itself (from your inbox, or Claude from your Gmail) still holds them while it's looked for, a minute as a rule: one code at a time, so it never goes to another job"><input type="checkbox" id="dont-wait"> Don't wait for me</label>
+            <span class="hint" id="dont-wait-hint"></span>
+            <label><input type="checkbox" id="tailor"> Tailor my resume for each job</label>
+            <span class="hint" id="tailor-hint"></span>
+            <label title="Claude writes each one through your own Claude Code sign-in (your Claude plan; no key needed), from your resume, your profile and the job's posting, using only what they say. The first one waits for your OK on its card."><input type="checkbox" id="letters"> Write a cover letter for each job</label>
+            <span class="hint" id="letters-hint"></span>
+          </div>
+          <ul class="rows" id="rows"></ul>
+          <div id="skipped-sites" class="openings-only"></div>
+        </section>
+      </div>
+      <div class="page narrow" data-pages="answers" hidden>
+        <!-- the questions most applications ask that a profile doesn't answer: answered once, kept in answers.yaml -->
+        <section class="card" aria-labelledby="bank-h" id="bank-card" hidden>
+          <div class="card-head"><h2 id="bank-h">Common questions</h2><span class="pill" id="bank-count"></span></div>
+          <p class="small" style="margin: 12px 18px 0">Most applications ask these, and your profile doesn't say. Answer once:
+            the desk fills them in at every employer from then on (kept in <code>~/.job-apply/answers.yaml</code>).</p>
+          <div id="bank"></div>
+          <details id="bank-done" hidden><summary>Your answers</summary><div id="bank-given"></div></details>
+        </section>
+        <p class="page-none" id="bank-none" hidden>No common questions to show yet.</p>
+      </div>
+      <div class="page narrow" data-pages="working" hidden>
+        <!-- what's worked: the person's own applications' outcomes by group (outcomes.py), counted on this computer only -->
+        <section class="card" aria-labelledby="working-h" id="working-card" hidden>
+          <div class="card-head"><h2 id="working-h">What's working</h2><span class="pill" id="working-count"></span></div>
+          <div id="working"></div>
+        </section>
+        <p class="page-none" id="working-none" hidden>Nothing sent yet. Once you have applied, this page says what is working for you.</p>
+      </div>
+      <div class="page narrow" data-pages="settings" hidden>
+        <section class="card" aria-labelledby="profile-h">
+          <div class="item">
+            <span class="itico gray"><svg class="ico" aria-hidden="true"><use href="#i-user"/></svg></span>
+            <div><h2 class="t" id="profile-h">Your profile</h2>
+              <p class="s">Your details, work history and education, and the answers that go on every application.</p></div>
+            <div class="acts"><button class="btn" id="setup-btn" data-act="setup" title="Your resume, contact details, work authorization, jobs and schools, and what the desk may do for you">Edit your profile</button></div>
+          </div>
+        </section>
+        <section class="card" aria-labelledby="safety-card-h">
+          <div class="item">
+            <span class="itico gray"><svg class="ico" aria-hidden="true"><use href="#i-shield"/></svg></span>
+            <div><h2 class="t" id="safety-card-h">Safety</h2>
+              <p class="s">What the desk may do for you and what it never does, as it is set now.</p></div>
+            <div class="acts"><button class="btn" id="safety-btn" data-act="safety" title="What the desk does in your name, and what it never does: each setting as it is now, and where to change it">See your safety settings</button></div>
+          </div>
+        </section>
+        <section class="card" aria-labelledby="pw-h">
+          <div class="card-head"><h2 id="pw-h">Site passwords</h2><span class="pill" id="pw-count"></span></div>
+          <form class="pw" id="pw-form" autocomplete="off">
+            <p class="small">One password per job system: the desk makes your account at each of its employers and signs
+              you in. It stays on this computer; Claude never sees it.</p>
+            <div class="pw-row">
+              <select id="pw-site" aria-label="Job system">
+                <option value="workday">Workday: Intel, Applied, KLA and 10 more</option>
+                <option value="successfactors">SuccessFactors: Edwards, Qorvo, Amkor</option>
+                <option value="icims">iCIMS: Daifuku</option>
+                <option value="applicantstack">ApplicantStack: SCREEN</option>
+                <option value="ukg">UKG Pro: Nikon Precision</option>
+                <option value="infor">Infor: Benchmark</option>
+                <option value="taleo">Taleo</option>
+                <option value="neogov">NEOGOV: Clark County, City of Las Vegas, City of Henderson and 1 more</option>
+                <option value="email">Your email: an app password, to read sign-up codes and password resets</option>
+                <option value="anthropic">Anthropic API key: for cover letters, instead of your Claude login</option>
+              </select>
+            </div>
+            <div class="pw-row"><input type="password" id="pw" autocomplete="new-password" aria-label="Password">
+              <button class="primary" type="submit">Save</button></div>
+            <p class="pills" id="pw-state"></p>
+            <details><summary>How this works</summary>
+            <p>Each employer has its own account on its job site. Save one password for a job system and the
+              desk creates your account at each of that system's employers (agreeing to its terms for you) and signs you in,
+              on that system's own sites only; when a site turns the password down, it resets that account's password to this
+              one through the site's "Forgot password" email (unless your profile says <code>manage_accounts: false</code>).
+              It stays on this computer, in its password vault (Windows Credential Manager, the macOS Keychain or your
+              desktop's keyring; <code>~/.job-apply/secrets.yaml</code> where there's none), and Claude never sees it.
+              Use passwords you don't use anywhere else.</p>
+            <p>Your email: with an app password for the address in your profile (for Gmail, make one at
+              <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a>;
+              it needs 2-Step Verification), a job waiting on an emailed code or link gets it from your inbox: only mail from
+              that job's site that arrived after it began waiting, read without marking anything read. Without one, with
+              <code>email_codes: true</code> in your profile and the Gmail connector in Claude, Claude reads it through Gmail
+              while the desk's chat is open (only that job's own mail), and the desk puts it in.</p>
+            <p>An Anthropic API key (make one in the Claude Console,
+              <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>,
+              and add some credit under Billing): with Write a cover letter for each job on, Claude writes each letter
+              through Anthropic's API with it (about 10 to 20 cents a letter, written and checked), so the desk doesn't need Claude Code or your Claude login
+              for them. Each letter is checked against your resume and profile the same way.</p>
+            </details>
+          </form>
+        </section>
+        <!-- phone alerts through ntfy (phone.py): the topic is shown only right after it's made, or on Show the topic, never
+             kept in the page's state -->
+        <section class="card" aria-labelledby="phone-h">
+          <div class="card-head"><h2 id="phone-h">Phone alerts</h2><span class="pill" id="phone-pill" aria-live="polite">Off</span></div>
+          <div class="pw">
+            <p class="small">A push on your phone when a job needs you or is ready for your Submit, and a summary of the day,
+              with this page closed too (while the desk runs). Free, through the ntfy app.</p>
+            <div class="pw-row" id="phone-off"><button class="primary" data-act="phone-make">Turn on phone alerts</button></div>
+            <div id="phone-topic" hidden>
+              <ol class="small">
+                <li>Install the ntfy app on your phone (<a href="https://ntfy.sh" target="_blank" rel="noopener">ntfy.sh</a>:
+                  App Store or Google Play).</li>
+                <li>In the app, press + and subscribe to this topic<span id="phone-server-said"></span>:
+                  <code id="phone-topic-name"></code></li>
+                <li>Press Send a test.</li>
+              </ol>
+              <p class="small">Keep the topic to yourself: anyone who knows it can read your alerts.</p>
+            </div>
+            <div id="phone-on" hidden>
+              <div class="pw-row"><button data-act="phone-test">Send a test</button>
+                <button class="link" data-act="phone-show">Show the topic</button>
+                <button class="link" data-act="phone-make" title="Make a new topic, for when someone else may know this one">New topic</button>
+                <button class="link" data-act="phone-off">Turn off</button></div>
+              <p class="small"><label><input type="checkbox" id="phone-details"> Say which employer and job</label></p>
+              <p class="small"><label>Summary of the day at <input type="time" id="phone-summary"></label></p>
+            </div>
+            <p class="small" id="phone-held" aria-live="polite" hidden></p>
+            <details><summary>How this works</summary>
+            <p>The alerts go through ntfy's servers to the topic your phone subscribes to. So they say only counts and
+              kinds ("A job needs you: a bot check", "2 applications are ready for your Submit"), never an employer, a job or
+              anything about you, unless you turn on Say which employer and job. The topic is a long random name kept on
+              this computer, with your passwords; Turn off forgets it (a new one is made next time).
+              One alert a job a stop, those that come together in one; the summary at the time you pick (empty: none). To
+              use your own ntfy server, set <code>phone_alerts_server</code> under <code>settings:</code> in your profile.</p>
+            </details>
+          </div>
+        </section>
+        <!-- alerts on this computer's own screen (announce), while this page is open -->
+        <section class="card" aria-labelledby="alerts-h">
+          <div class="item">
+            <span class="itico gray"><svg class="ico" aria-hidden="true"><use href="#i-inbox"/></svg></span>
+            <div><h2 class="t" id="alerts-h">Alerts on this computer</h2>
+              <p class="s">A note on your screen when a job needs you.</p></div>
+            <div class="acts"><button class="btn" id="alerts" data-act="alerts" hidden>Alert me</button></div>
+          </div>
+        </section>
+        <!-- the version, and what closing the window does: a desk run on its own (state.standalone) carries on in the
+             background, and Quit the Job Desk stops it (/api/quit); one inside Claude stops with Claude (renderProgram) -->
+        <section class="card" aria-labelledby="program-h">
+          <div class="item">
+            <svg class="logo" aria-hidden="true"><use href="#logo"/></svg>
+            <div><h2 class="t" id="program-h">This program</h2>
+              <p class="s" id="program-version"></p>
+              <p class="s" id="program-own" hidden>Closing the window doesn't stop the desk. Jobs it is working on carry on, and opening Job Desk again shows the window.</p>
+              <p class="s" id="program-claude" hidden>The desk runs inside Claude here. It stops when you close Claude.</p></div>
+            <div class="acts"><button class="btn" id="quit-btn" data-act="quit" hidden>Quit the Job Desk</button></div>
+          </div>
+        </section>
+      </div>
+      <div class="page narrow" data-pages="help" hidden>
+        <section class="card" aria-labelledby="how-h">
+          <div class="card-h"><h2 id="how-h">How the desk works</h2></div>
+          <div class="card-b">
+            <ol>
+              <li>Find jobs searches the career sites of the employers on your lists, and ranks what it finds against your profile.</li>
+              <li>You pick openings and press Apply to selected. The desk fills each application in the desk's browser window, up to its review page.</li>
+              <li>When a site needs you (a question, a sign-in, a bot check), the job waits under Needs you on the Home page.</li>
+              <li>Nothing is submitted until you press Submit, unless you turned on "Submit for me". LinkedIn and Indeed are always submitted by you.</li>
+            </ol>
+            <p class="small">Answers you give here are saved in <code>~/.job-apply/answers.yaml</code> unless you untick "remember".</p>
+          </div>
+        </section>
+        <!-- the notes the desk took on its stops, filed by the person (renderNotes): the button shows with notes to file -->
+        <section class="card" aria-labelledby="notes-card-h">
+          <div class="item">
+            <span class="itico gray"><svg class="ico" aria-hidden="true"><use href="#i-file"/></svg></span>
+            <div><h2 class="t" id="notes-card-h">Notes on the desk's stops</h2>
+              <p class="s">Each time a job stops on something the desk most likely got wrong, it takes a note. Filing the notes is how the next version gets better.</p>
+              <p class="s" id="notes-none" hidden>No notes right now.</p></div>
+            <div class="acts"><button class="btn" id="notes-btn" data-act="notes" title="Notes the desk took where it stopped on something it most likely got wrong, for you to file" hidden>Notes</button></div>
+          </div>
+        </section>
+      </div>
+    </main>
   </div>
-</main>
+</div>
 <!-- what and where Find jobs searches: the job titles and places in the profile, the plugin's employer lists in
      companies.yaml -->
 <dialog id="area" aria-labelledby="area-h">
@@ -599,12 +948,6 @@ body.stopped > :not(#stopped) { display: none; }
     <button data-act="notes-close">Close</button>
   </div>
 </dialog>
-<footer>
-  The desk fills applications in the desk's browser window and stops at each review page.
-  It only submits when you press Submit, or when "Submit for me" is on. LinkedIn and Indeed are always submitted by you.
-  Answers you give here are saved in <code>~/.job-apply/answers.yaml</code> unless you untick "remember".
-  <span id="plugin-version"></span>
-</footer>
 <!-- (once the desk has stopped: body.stopped hides everything else of the body's, so this stays the body's own child) -->
 <div id="stopped" hidden>
   <h1>The Job Desk has stopped</h1>
@@ -1070,10 +1413,11 @@ async function applyTicked(urls, auto) {
 }
 
 // See to these first: the card for the first thing said (the Common questions card, or Site passwords with that
-// job system picked), scrolled to
+// job system picked), on its own page (Your answers, Settings), scrolled to
 function seeToFirst(line) {
   if (/common question/i.test(line) && !$("bank-card").hidden) {
     bankAll = true;  // (every one unanswered, not only the most asked four: each stops a job)
+    goTo("answers");  // (its card's page)
     renderBank();
     $("bank-card").scrollIntoView({block: "start"});
     return;
@@ -1082,6 +1426,7 @@ function seeToFirst(line) {
   const system = /email app password/i.test(line) ? [...pick.options].find((o) => o.value === "email")
     : [...pick.options].find((o) => line.startsWith(o.label.split(":")[0] + ":"));
   if (system) pick.value = system.value;
+  goTo("settings");  // (its card's page)
   $("pw-form").closest("section").scrollIntoView({block: "start"});
   $("pw").focus({preventScroll: true});
 }
@@ -1527,6 +1872,7 @@ function renderSide() {
   const idle = !needs.length && !working.length && !queued && !done.length && !state.paused;
   $("idle-card").hidden = !idle;
   for (const id of ["needs-h", "work-h", "done-h"]) $(id).closest("section").hidden = idle;
+  $("home-cols").classList.toggle("lone", idle);  // (that card across the page, not alone in the right-hand column)
 }
 
 // What's working (state.outcomes: outcomes.summary): the person's own applications' outcomes, overall and by group
@@ -1535,6 +1881,7 @@ function renderSide() {
 function renderWorking() {
   const o = state.outcomes;
   $("working-card").hidden = !o;
+  $("working-none").hidden = !!o;  // (its page says so in a line, while there's no card)
   if (!o) return;
   const apps = (n) => `${n} application${n === 1 ? "" : "s"}`;
   const weeks = Math.round(o.settled_days / 7);
@@ -1582,6 +1929,7 @@ let bankAll = false;
 function renderBank() {
   const bank = state.bank || [];
   $("bank-card").hidden = !bank.length;
+  $("bank-none").hidden = !!bank.length;  // (its page says so in a line, while there's no card)
   const open = bank.filter((q) => q.answer == null || q.answer === ""), given = bank.filter((q) => !open.includes(q));
   $("bank-count").textContent = `${given.length} of ${bank.length} answered`;
   $("bank-count").className = "pill " + (open.length ? "warn" : "good");
@@ -1612,13 +1960,15 @@ function searchWords(e, otherwise = "its job list couldn't be read") {
   return otherwise + listed;
 }
 
+// The top bar's controls, the cards' switches, the queue's two buttons and the notices (the old header's: its name stays)
 function renderHeader() {
   const p = state.profile, s = state.settings;
-  $("who").textContent = p.name ? `for ${p.name}` : "";
   const mode = s.dry_run ? ["Practice mode: nothing is sent", "warn"] : s.troubleshoot ? ["Troubleshooting: nothing submitted", "warn"] : state.settings.auto_submit ? ["Submits for you", "bad"] : ["Stops at each review page", "good"];
   $("mode").innerHTML = `<span class="pill ${mode[1]}">${esc(mode[0])}</span>`;
   const sr = state.search;
-  $("find").innerHTML = sr.status === "running" ? `<span class="spin"></span> Searching…` : "Find jobs";
+  const find = sr.status === "running" ? `<span class="spin"></span> Searching…`
+    : `<svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg>Find jobs`;
+  if ($("find").dataset.html !== find) { $("find").innerHTML = find; $("find").dataset.html = find; }  // (focus kept)
   $("find").disabled = sr.status === "running";
   $("stop-search").hidden = sr.status !== "running";
   // Pause queue while jobs are queued or running; Carry on with the queue (with how many wait) while paused
@@ -1679,7 +2029,7 @@ function renderHeader() {
     : "Hides a job whose posting has a line labelled with the education it requires (Minimum Education: Bachelor's Degree), with no way around it. One that only says it in its text, or isn't read yet, always stays.";
   const troubleshootOn = $("troubleshoot");
   if (document.activeElement !== troubleshootOn) troubleshootOn.checked = !!s.troubleshoot;
-  $("plugin-version").textContent = state.version ? `job-apply ${state.version}` : "";
+  $("plugin-version").textContent = state.version ? `Version ${state.version}` : "";
   $("tailor-hint").textContent = s.tailor_resumes ? "On: each job waits for Claude to write a resume for it." : "Off: your usual resume goes with every application.";
   const writer = state.letters_by || "your Claude login";
   $("letters-hint").textContent = !s.cover_letters ? "Off: your usual cover letter, if you have one, goes in."
@@ -1910,11 +2260,65 @@ function renderPhone() {
   $("phone-held").hidden = !ph.held;
 }
 
-// Notes the desk took on its stops (shown only when there are some), filed by the person
+// Notes the desk took on its stops (their button, on the Help page, shown only when there are some), filed by the person
 function renderNotes() {
   const n = state.notes || 0;
   $("notes-btn").hidden = !n;
+  $("notes-none").hidden = !!n;
   $("notes-btn").textContent = `Notes (${n})`;
+}
+
+// The side menu. Each page's number, hidden at 0: Home's is the Needs you card's; Openings', the openings the
+// Recommended tab would list with every filter off, less those begun, done or marked Not interested (the bar's Not
+// started ones); Applications', My applications'; Your answers', the common questions not answered yet; Help's, the
+// notes waiting to be filed. The queue's card: what the queue is doing in two lines, a dot that's green while jobs are
+// being filled, a bar for the share of the jobs the desk has taken as far as it can (neither queued nor being filled),
+// and the queue's two buttons (drawn by renderHeader): hidden when both are. And the person: their initials (the
+// first letters of the first and last words of their name; the person's icon without a name), their name, the version
+function renderMenu() {
+  const runs = allRuns(), bank = state.bank || [];
+  const numbers = {
+    home: runs.filter((r) => r.status === "needs_you").length,
+    openings: (state.listings || []).filter((r) => (r.added || (r.fit && r.fit.recommended)) && !r.not_interested
+      && stopOf(r) === "new").length,
+    applications: (state.applications || []).length,
+    answers: bank.filter((q) => q.answer == null || q.answer === "").length,
+    help: state.notes || 0,
+  };
+  for (const [page, n] of Object.entries(numbers)) {
+    $("nav-" + page).textContent = n;
+    $("nav-" + page).hidden = !n;
+  }
+  const filling = runs.filter((r) => r.status === "running").length, waiting = runs.filter((r) => r.status === "queued").length;
+  const atOnce = `${(state.settings || {}).jobs_at_once || 1} at a time`;
+  const [said, more] = state.paused ? ["Paused", waiting ? `${waiting} waiting` : "Nothing waiting"]
+    : filling ? [`Working on ${jobsSaid(filling)}`, waiting ? `${waiting} more waiting · ${atOnce}` : atOnce]
+    : waiting ? [`${waiting} waiting`, state.queue_note || "Starting soon"]
+    // (only Clear the queue shows: jobs held before they begin, each waiting on its card for the person)
+    : ["Waiting for you", `${jobsSaid(state.clearable || 0)} not started yet`];
+  $("queue-card").hidden = $("pause-btn").hidden && $("clear-queue-btn").hidden;
+  $("queue-said").textContent = said;
+  $("queue-more").textContent = more;
+  $("queue-dot").classList.toggle("on", filling > 0);
+  const taken = runs.filter((r) => r.status !== "queued" && r.status !== "running").length, bar = $("queue-bar");
+  bar.firstElementChild.style.width = `${runs.length ? Math.round(100 * taken / runs.length) : 0}%`;
+  bar.setAttribute("aria-valuemax", runs.length);
+  bar.setAttribute("aria-valuenow", taken);
+  bar.title = `${taken} of ${jobsSaid(runs.length)} taken as far as the desk can`;
+  const name = String((state.profile || {}).name || "").trim(), words = name.split(/\s+/).filter(Boolean);
+  const first = (word) => [...word][0].toUpperCase();
+  const initials = words.length > 1 ? first(words[0]) + first(words[words.length - 1]) : words.map(first).join("");
+  const avatar = initials ? esc(initials) : `<svg class="ico" aria-hidden="true"><use href="#i-user"/></svg>`;
+  if ($("me-avatar").dataset.html !== avatar) { $("me-avatar").innerHTML = avatar; $("me-avatar").dataset.html = avatar; }
+  $("who").textContent = name || "Set up your profile";
+}
+
+// Settings' This program card: the version, and what closing the window does. A desk run on its own carries on in
+// the background, so the card says so and offers Quit the Job Desk; one inside Claude stops with Claude
+function renderProgram() {
+  $("program-version").textContent = state.version ? `Version ${state.version}.` : "";
+  $("program-own").hidden = $("quit-btn").hidden = !state.standalone;
+  $("program-claude").hidden = !!state.standalone;
 }
 
 async function copyNotes() {
@@ -1931,7 +2335,7 @@ async function copyNotes() {
   setTimeout(() => { $("notes-copy").textContent = "Copy all"; }, 2000);
 }
 
-// What and where to search: the button in the header says it (the job titles searched, the places), and its window
+// What and where to search: the button in the top bar says it (the job titles searched, the places), and its window
 // changes it. The window works on a copy (areaDraft), saved only by Save and find jobs
 let areaDraft = null;
 let areaWas = null;  // (the window's values as it opened: only what changed is saved)
@@ -2211,6 +2615,34 @@ $("setup-form").addEventListener("submit", (e) => {
   });
 });
 
+// The pages of the side menu, by the address's "#name", each with its heading in the top bar. route shows the page
+// named (Home for none, or a name that isn't one): everything with data-pages shows on the pages it lists, and the
+// menu's link for the page is marked as the current one. Openings and Applications share the Openings card: on
+// Applications its My applications tab is chosen, and going to Openings while that tab is chosen chooses Recommended
+const PAGES = {home: "Home", openings: "Openings", applications: "Applications", answers: "Your answers",
+               working: "What's working", settings: "Settings", help: "Help"};
+function route() {
+  let page = location.hash.slice(1);
+  if (!Object.prototype.hasOwnProperty.call(PAGES, page)) page = "home";
+  const moved = document.body.dataset.page !== page;
+  document.body.dataset.page = page;
+  $("page-title").textContent = PAGES[page];
+  for (const el of document.querySelectorAll("[data-pages]")) el.hidden = !el.dataset.pages.split(" ").includes(page);
+  for (const a of document.querySelectorAll(".nav a")) {
+    if (a.getAttribute("href") === "#" + page) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+  }
+  if (page === "applications") filter = "mine"; else if (page === "openings" && filter === "mine") filter = "recommended";
+  document.querySelectorAll("[data-filter]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.filter === filter)));
+  if (moved) $("content").scrollTop = 0;  // (a page starts at its top, not where the last one was left)
+  if (state) render();
+}
+// A page shown now, the address with it (the address's own change is heard a moment later, and changes nothing more)
+function goTo(page) {
+  if (location.hash !== "#" + page) location.hash = page;
+  route();
+}
+window.addEventListener("hashchange", route);
+
 function render() {
   if (!state) return;
   botStep();  // (the rounds first: the banner names the job they're on)
@@ -2224,6 +2656,8 @@ function render() {
   renderAlerts();
   renderPhone();
   renderNotes();
+  renderMenu();
+  renderProgram();
   announce();
   // (a profile that lacks what an application needs: Set up your profile, once a visit, over no other window)
   const missing = (state.profile || {}).missing || [];
@@ -2565,9 +2999,9 @@ document.addEventListener("click", (e) => {
     return;
   }
   if (t.dataset.filter) {
+    // (the address follows the tab: My applications is the Applications page, the other two the Openings page)
     filter = t.dataset.filter;
-    document.querySelectorAll("[data-filter]").forEach((b) => b.setAttribute("aria-pressed", String(b === t)));
-    renderRows();
+    goTo(filter === "mine" ? "applications" : "openings");
     return;
   }
   const a = t.dataset.act, job = t.dataset.job, jobAct = t.dataset.jobAct;
@@ -2885,6 +3319,7 @@ $("phone-summary").addEventListener("keydown", (e) => { if (e.key === "Enter") e
 // the link opens GitHub in a new tab; without one (a report being made) it does nothing
 $("report-open").addEventListener("click", (e) => { if (e.currentTarget.href) $("report").close(); });
 
+route();  // (before the first state: the page the address names)
 (async function poll() {
   await refresh();
   if (!stopped) setTimeout(poll, 1500);
