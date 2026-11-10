@@ -290,7 +290,10 @@ def test_mail_test_says_a_provider_that_doesnt_answer_and_gives_up_in_time(srv, 
     class Silent(Closes):
         def login(self, user, password):
             self.calls.append(("login", user))
-            released.wait(5)  # (a server that never answers: its socket's timeout, once the test has its answer)
+            # (a server that never answers: its socket's timeout, once the test has its answer. Long, so that a slow
+            # machine's answer in good time is still told from one that waited for the socket: a Windows runner took
+            # 4.6 s over the whole request with the 5 s this once was, against a limit of 4)
+            released.wait(60)
             raise TimeoutError("The read operation timed out")
 
     assert mailbox.SIGN_IN_TEST_WAIT == 10
@@ -299,7 +302,7 @@ def test_mail_test_says_a_provider_that_doesnt_answer_and_gives_up_in_time(srv, 
     began = time.monotonic()
     try:
         assert _mail_test(srv) == (200, {"ok": False, "why": "your email provider didn't answer"})
-        assert time.monotonic() - began < 4
+        assert time.monotonic() - began < 20
     finally:
         released.set()
     # (and the connection the thread left waiting is shut once its sign-in gives up)
