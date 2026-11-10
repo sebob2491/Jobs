@@ -121,11 +121,12 @@ def test_a_picture_of_the_openings_with_jobs_ticked(srv, job_apply_home, monkeyp
 
 @pytest.mark.parametrize("window", WINDOWS, ids=lambda w: f"{w[0]}x{w[1]}")
 @pytest.mark.parametrize("look", LOOKS)
-@pytest.mark.parametrize("cards", ["closed", "open"])
+@pytest.mark.parametrize("cards", ["closed", "open", "pass"])
 def test_a_picture_of_home_with_many_jobs(srv, job_apply_home, monkeypatch, cards, look, window):
     """Home (the stops state: more than three jobs in Needs you and in Ready to submit, so their cards start closed, the
-    design's C3), as its cards start or with every one opened, in each look and window size, each job stopped some
-    minutes before; saved as stops-home-<closed or open>-<look>-<w>x<h>.png."""
+    design's C3), as its cards start, with every one opened, or going through them (C4: the header's words, the card
+    it's on open and marked now), in each look and window size, each job stopped some minutes before; saved as
+    stops-home-<closed, open or pass>-<look>-<w>x<h>.png."""
     folder = Path(SHOTS)
     folder.mkdir(parents=True, exist_ok=True)
     state = _state("state-stops.json")
@@ -146,6 +147,9 @@ def test_a_picture_of_home_with_many_jobs(srv, job_apply_home, monkeypatch, card
                 if cards == "open":
                     await page.evaluate("() => document.querySelectorAll('[data-open][aria-expanded=false]')"
                                         ".forEach((b) => b.click())")
+                if cards == "pass":
+                    await page.click("#needs-pass [data-act=pass-start]")
+                    await page.wait_for_selector("#needs > .task.now")
                 # (the lists at the window's top: the notices over them fill most of it)
                 await page.evaluate("() => document.getElementById('home-cols').scrollIntoView()")
                 await page.wait_for_timeout(150)
