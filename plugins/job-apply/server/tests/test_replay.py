@@ -44,18 +44,39 @@ def test_every_golden_has_its_page():
     assert sorted(p.stem for p in GOLDEN.glob("*.json")) == [p.name.removesuffix(".expect.json") for p in LIVE]
 
 
+PAIR_TRIES = 40  # times a TCP port and its UDP twin are chosen again before _Listener gives up
+
+
 class _Listener:
     """A port on this computer standing in for the site: every connection made to it counted (a raw TCP accept, before
-    anything is asked: a frame's address is connected to before a request is routed), and closed."""
+    anything is asked: a frame's address is connected to before a request is routed), and closed. The same port's UDP
+    twin hears datagrams. On Windows that UDP port may be held by another program or kept back by Windows (WinError
+    10013: CI's Windows run): then both are closed and the pair chosen again, PAIR_TRIES times at most. `make` makes a
+    socket (socket.socket: a test hands in its own)."""
 
-    def __init__(self) -> None:
-        self.sock = socket.socket()
-        self.sock.bind(("127.0.0.1", 0))
+    def __init__(self, make=socket.socket) -> None:
+        last: OSError | None = None
+        for _ in range(PAIR_TRIES):
+            tcp = make(socket.AF_INET, socket.SOCK_STREAM)
+            udp = None
+            try:
+                tcp.bind(("127.0.0.1", 0))
+                port = tcp.getsockname()[1]
+                udp = make(socket.AF_INET, socket.SOCK_DGRAM)  # (and a STUN request a script's WebRTC sends)
+                udp.bind(("127.0.0.1", port))
+            except OSError as e:
+                last = e
+                tcp.close()
+                if udp is not None:
+                    udp.close()
+                continue
+            break
+        else:
+            assert last is not None
+            raise last
+        self.sock, self.udp, self.port = tcp, udp, port
         self.sock.listen(50)
         self.sock.settimeout(0.2)
-        self.port = self.sock.getsockname()[1]
-        self.udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # (and a STUN request a script's WebRTC sends)
-        self.udp.bind(("127.0.0.1", self.port))
         self.udp.settimeout(0.2)
         self.accepts = self.datagrams = 0
         self.done = threading.Event()
@@ -83,6 +104,37 @@ class _Listener:
         self.done.set()
         self.sock.close()
         self.udp.close()
+
+
+def test_the_stand_in_site_chooses_its_ports_again_when_the_udp_twin_is_refused():
+    """A UDP twin refused (WinError 10013 on Windows: a port another program holds, or one Windows keeps back): both
+    sockets are closed and a fresh pair chosen, until both bind; refused every time, the last error is raised."""
+    made = []
+
+    class Refusing(socket.socket):
+        def bind(self, address):
+            udp_tries = sum(1 for m in made if m.type == socket.SOCK_DGRAM)
+            if self.type == socket.SOCK_DGRAM and udp_tries <= refusals:
+                raise PermissionError(13, "An attempt was made to access a socket in a way forbidden")
+            return super().bind(address)
+
+    def make(*args):
+        made.append(Refusing(*args))
+        return made[-1]
+
+    refusals = 2
+    listener = _Listener(make)
+    try:
+        assert len(made) == 6 and all(m.fileno() == -1 for m in made[:4])  # (the first two pairs closed)
+        assert listener.sock is made[4] and listener.udp is made[5] and listener.udp.getsockname()[1] == listener.port
+    finally:
+        listener.close()
+
+    made.clear()
+    refusals = PAIR_TRIES
+    with pytest.raises(PermissionError):
+        _Listener(make)
+    assert len(made) == 2 * PAIR_TRIES and all(m.fileno() == -1 for m in made)
 
 
 REMOTE_PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Apply</title>
