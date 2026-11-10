@@ -394,15 +394,40 @@ Show all 12
 (hidden)
 
 ## profile-h
-Your profile
+Sam Rivera
 Your details, work history and education, and the answers that go on every application.
 Edit your profile
+Common questions
+0 of 12 answered.
+Answer them
 
 ## panel-search-h
+What and where
+field service +3 · your state
+Change
 Search by itself every 12 hours
 The desk searches again when the openings are over 12 hours old. Never while the queue is paused.
+Learn from what worked
+Once enough of your applications have had an answer, openings like the ones that got answers are listed higher. A job's fit number doesn't change.
+Remind me to follow up
+Days without a reply before an application is marked for a follow-up.
+days
+Let Claude look for replies in my email
+Claude reads replies to your applications through its Gmail connector, and records where each one stands.
 
 ## panel-applying-h
+Submit for me
+Off: the desk stops at every review page, and you press Submit. On: complete applications are submitted without asking.
+Practice mode
+The desk fills everything in and sends nothing. It makes no accounts and agrees to nothing while this is on. Good for a first try.
+Make my accounts
+The desk creates your account at each employer with that job system's password, ticking only the site's terms. When a site refuses your password, it resets it through the site's own Forgot password email.
+Agree to required notices
+The privacy notice, the terms of use and the notice about AI screening that an application can't go on without, and its statement that your information is true. Each one is written in the job's log.
+Cookie banners
+Declined wherever the site lets you. A banner with no way to decline waits for you, unless you choose to accept those.
+Decline
+Accept if there is no other way
 Jobs at once
 How many applications the desk fills at the same time.
 1
@@ -413,9 +438,7 @@ How many applications the desk fills at the same time.
 Don't wait for me
 A sign-in or an emailed code waits on its card, and the other jobs carry on.
 Off: a sign-in or emailed code holds the other jobs until you're done, or 5 minutes pass.
-Safety
-What the desk may do for you and what it never does, as it is set now.
-See your safety settings
+See everything the desk may and may not do
 For fixing the desk
 Troubleshooting
 For getting the desk going at more employers. It searches every list and shows only the openings where the desk doesn't go all the way yet. Nothing is submitted while it is on.
@@ -451,6 +474,29 @@ The alerts go through ntfy's servers to the topic your phone subscribes to. So t
 Alerts on this computer
 A note on your screen when a job needs you.
 Alert me
+
+## alert-server-h
+Your own alert server
+Leave this empty to use ntfy.sh.
+
+## panel-about-h
+Open the desk in
+This applies the next time the desk opens.
+Its own window
+A browser tab
+Look
+Light, dark, or whatever your computer is set to.
+Match my computer
+Light
+Dark
+The browser the desk fills forms in
+The desk uses the first it finds, starting with the one chosen. This applies the next time the desk starts.
+Chrome
+Edge
+Its own
+Your files
+Everything is kept on this computer, in ~/.job-apply.
+Open the folder
 
 ## program-h
 This program

@@ -185,9 +185,10 @@ def test_the_desks_cards_say_what_they_said(srv, job_apply_home, monkeypatch, ca
     seen = _cards(srv, monkeypatch, _state(how["state"]), how.get("storage"), how.get("press", []),
                   how.get("list", "openings"))
     # (every card: Home's six (Version C's This week and Getting started among them), the Openings card, the
-    # Applications card (Version B's B6), Your answers' and What's working's, Settings' seven (Version D's Job search
-    # and Applying cards among them, Safety a row of Applying's), Help's two)
-    assert seen.count("\n## ") + 1 == 19, seen
+    # Applications card (Version B's B6), Your answers' and What's working's, Settings' nine (Version D's Job search
+    # and Applying cards among them, Safety a row of Applying's; D3's Your own alert server under Phone alerts, and the
+    # rows of Updates and about), Help's two)
+    assert seen.count("\n## ") + 1 == 21, seen
     _compare(how["golden"], seen)
 
 

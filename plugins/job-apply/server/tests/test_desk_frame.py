@@ -604,8 +604,8 @@ def test_the_new_settings_and_help_cards_say_the_designs_words(srv):
     desk = _idle_desk(srv)
 
     def card(heading: str) -> str:
-        # (Safety is a row of the Applying panel's card now, under its rows: the design's D3)
-        return ".item:has(#safety-card-h)" if heading == "safety-card-h" else f"section.card[aria-labelledby={heading}]"
+        # (Safety is the Applying panel's button under its rows now: the design's D3)
+        return ".setfoot:has(#safety-btn)" if heading == "safety-card-h" else f"section.card[aria-labelledby={heading}]"
 
     async def words(page, heading: str) -> str:
         return " ".join((await page.inner_text(card(heading))).split())
@@ -641,10 +641,11 @@ def test_the_new_settings_and_help_cards_say_the_designs_words(srv):
             await desk.stop()
 
     seen = run(go())
-    assert seen["profile-h"] == ("Your profile Your details, work history and education, and the answers that go on "
-                                 "every application. Edit your profile"), seen["profile-h"]
-    assert seen["safety-card-h"] == ("Safety What the desk may do for you and what it never does, as it is set now. "
-                                     "See your safety settings"), seen["safety-card-h"]
+    # (Your profile's rows, the design's D3: the person's name; Common questions with its count)
+    assert seen["profile-h"] == ("Sam Rivera Your details, work history and education, and the answers that go on "
+                                 "every application. Edit your profile Common questions "
+                                 f"0 of {len(desk.state()['bank'])} answered. Answer them"), seen["profile-h"]
+    assert seen["safety-card-h"] == "See everything the desk may and may not do", seen["safety-card-h"]
     assert seen["alerts-h"].startswith("Alerts on this computer A note on your screen when a job needs you."), seen
     assert seen["alerts"] == 1
     assert [" ".join(line.split()) for line in seen["how"]] == [

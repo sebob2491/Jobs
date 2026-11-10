@@ -6,6 +6,9 @@
 <!-- (the page's address carries its access token: no link out of it takes the address along, the review of Oct 15) -->
 <meta name="referrer" content="no-referrer">
 <title>Job Desk</title>
+<!-- Look (Settings, Updates and about): Light or Dark, kept in this browser (localStorage's desk-theme), set on <html>
+     here, before the page draws, so it never shows the wrong colors first; Match my computer keeps none -->
+<script>try { const look = localStorage.getItem("desk-theme"); if (look === "light" || look === "dark") document.documentElement.dataset.theme = look; } catch (e) {}</script>
 <!-- (the tab's icon, and the taskbar's for the desk in a window of its own: the logo, held in the page itself, so
      nothing is fetched for it) -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22g%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%221%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%236366f1%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%234338ca%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22url%28%23g%29%22%2F%3E%3Cpath%20d%3D%22M9%2016.5l4.5%204.5L23%2011%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%223%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3C%2Fsvg%3E">
@@ -189,7 +192,7 @@ button.link:hover { background: none; text-decoration: underline; }
 .count.warn { background: var(--warn-bg); color: var(--warn); }
 .count.good { background: var(--good-bg); color: var(--good); }
 /* boxes to type or pick in, and tick boxes */
-input[type=text], input[type=password], input[type=time], input[type=search], select { height: 34px; padding: 0 10px;
+input[type=text], input[type=password], input[type=time], input[type=search], input[type=number], select { height: 34px; padding: 0 10px;
   font: inherit; font-size: 13.5px; border: 1px solid var(--control-line); border-radius: 8px; background: var(--panel);
   color: var(--text); }
 input::placeholder { color: var(--faint); }
@@ -239,6 +242,14 @@ input[type=checkbox]:disabled { opacity: .5; cursor: default; }
 .card-h + .setrow { border-top: 0; }
 .setrow .t { margin: 0; font-size: 14px; font-weight: 600; }
 .setrow .s { margin: 1px 0 0; color: var(--muted); font-size: 13px; }
+/* (a control that takes words or a number, beside its name; and a save the desk refused: its sentence under the row,
+   in red) */
+.setrow .box { display: flex; align-items: center; gap: 8px; color: var(--body); font-size: 13px; }
+.setrow input[type=number] { width: 72px; }
+.setrow input[type=text] { width: 260px; max-width: 100%; }
+.set-err { grid-column: 1 / -1; margin: -6px 0 0; color: var(--bad); font-size: 13px; }
+/* under a card's rows, a button of its own (the Safety window's) */
+.setfoot { padding: 13px 18px; border-top: 1px solid var(--line-2); }
 /* under a card's rows: a closed <details> holding rows seldom needed */
 details.setmore { padding: 0; color: inherit; font-size: inherit; }
 details.setmore > summary { padding: 10px 18px; font-size: 13px; }
@@ -706,6 +717,8 @@ body.stopped > :not(#stopped) { display: none; }
   .item .acts .btn { white-space: normal; height: auto; min-height: 34px; padding-top: 5px; padding-bottom: 5px; }
   .trow { grid-template-columns: 38px minmax(0, 1fr); }
   .trow .acts { grid-column: 2; flex-wrap: wrap; }
+  .setrow { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .setrow > .seg, .setrow > .switch { justify-self: start; }
   .tbody { margin-left: 0; }
 }
 </style>
@@ -977,22 +990,54 @@ body.stopped > :not(#stopped) { display: none; }
           </nav>
           <div class="spanel" id="panel-profile" data-panel="profile">
             <div class="spanel-h"><h2 id="panel-profile-h">Your profile</h2></div>
+            <!-- (D3: the person's name, what the profile still needs while it needs something, the common questions;
+                 drawn by renderSettingsRows) -->
             <section class="card" aria-labelledby="profile-h">
-              <div class="item">
-                <span class="itico gray"><svg class="ico" aria-hidden="true"><use href="#i-user"/></svg></span>
-                <div><h2 class="t" id="profile-h">Your profile</h2>
+              <div class="setrow">
+                <div><h3 class="t" id="profile-h">Your profile</h3>
                   <p class="s">Your details, work history and education, and the answers that go on every application.</p></div>
-                <div class="acts"><button class="btn" id="setup-btn" data-act="setup" title="Your resume, contact details, work authorization, jobs and schools, and what the desk may do for you">Edit your profile</button></div>
+                <button class="btn" id="setup-btn" data-act="setup" title="Your resume, contact details, work authorization, jobs and schools, and what the desk may do for you">Edit your profile</button>
+              </div>
+              <div class="setrow" id="still-row" hidden>
+                <div><p class="t">Still needed</p>
+                  <p class="s" id="still-said"></p></div>
+                <button class="btn" data-act="setup">Finish your profile</button>
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="bank-row-name">Common questions</p>
+                  <p class="s" id="bank-row-said"></p></div>
+                <a class="btn" href="#answers" aria-describedby="bank-row-name">Answer them</a>
               </div>
             </section>
           </div>
           <div class="spanel" id="panel-search" data-panel="search" hidden>
             <div class="spanel-h"><h2 id="panel-search-h">Job search</h2></div>
+            <!-- (D3; a control with data-setting is a profile setting, saved the moment it changes: saveSetting) -->
             <section class="card" aria-labelledby="panel-search-h">
+              <div class="setrow">
+                <div><p class="t" id="area-row-name">What and where</p>
+                  <p class="s" id="area-row-said"></p></div>
+                <button class="btn" data-act="area" aria-describedby="area-row-name area-row-said">Change</button>
+              </div>
               <div class="setrow">
                 <div><p class="t" id="auto-search-name">Search by itself every 12 hours</p>
                   <p class="s" id="auto-search-said">The desk searches again when the openings are over 12 hours old. Never while the queue is paused.</p></div>
                 <input type="checkbox" class="switch" id="auto-search" aria-labelledby="auto-search-name" aria-describedby="auto-search-said">
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="set-learn-name">Learn from what worked</p>
+                  <p class="s" id="set-learn-said">Once enough of your applications have had an answer, openings like the ones that got answers are listed higher. A job's fit number doesn't change.</p></div>
+                <input type="checkbox" class="switch" id="set-learn" data-setting="learn_from_responses" aria-labelledby="set-learn-name" aria-describedby="set-learn-said">
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="set-follow-up-name">Remind me to follow up</p>
+                  <p class="s" id="set-follow-up-said">Days without a reply before an application is marked for a follow-up.</p></div>
+                <label class="box"><input type="number" id="set-follow-up" data-setting="follow_up_days" min="1" max="90" step="1" inputmode="numeric" aria-labelledby="set-follow-up-name" aria-describedby="set-follow-up-said">days</label>
+              </div>
+              <div class="setrow" id="set-email-tracking-row">
+                <div><p class="t" id="set-email-tracking-name">Let Claude look for replies in my email</p>
+                  <p class="s" id="set-email-tracking-said">Claude reads replies to your applications through its Gmail connector, and records where each one stands.</p></div>
+                <input type="checkbox" class="switch" id="set-email-tracking" data-setting="email_tracking" aria-labelledby="set-email-tracking-name" aria-describedby="set-email-tracking-said">
               </div>
             </section>
           </div>
@@ -1003,6 +1048,34 @@ body.stopped > :not(#stopped) { display: none; }
             <div class="spanel-h"><h2 id="panel-applying-h">Applying</h2>
               <p>What the desk may do in your name. It never solves a CAPTCHA, and never signs you up for a newsletter or job alerts.</p></div>
             <section class="card" aria-labelledby="panel-applying-h">
+              <!-- (Submit for me: the twin of the apply bar's #auto, both drawn from the same state, the same question
+                   asked before either turns it on) -->
+              <div class="setrow">
+                <div><p class="t" id="set-auto-name">Submit for me</p>
+                  <p class="s" id="set-auto-said">Off: the desk stops at every review page, and you press Submit. On: complete applications are submitted without asking.</p></div>
+                <input type="checkbox" class="switch" id="set-auto" aria-labelledby="set-auto-name" aria-describedby="set-auto-said">
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="set-practice-name">Practice mode</p>
+                  <p class="s" id="set-practice-said">The desk fills everything in and sends nothing. It makes no accounts and agrees to nothing while this is on. Good for a first try.</p></div>
+                <input type="checkbox" class="switch" id="set-practice" data-setting="submit_mode" data-on="dry_run" data-off="review" aria-labelledby="set-practice-name" aria-describedby="set-practice-said">
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="set-accounts-name">Make my accounts</p>
+                  <p class="s" id="set-accounts-said">The desk creates your account at each employer with that job system's password, ticking only the site's terms. When a site refuses your password, it resets it through the site's own Forgot password email.</p></div>
+                <input type="checkbox" class="switch" id="set-accounts" data-setting="manage_accounts" data-state="manage_accounts_setting" aria-labelledby="set-accounts-name" aria-describedby="set-accounts-said">
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="set-notices-name">Agree to required notices</p>
+                  <p class="s" id="set-notices-said">The privacy notice, the terms of use and the notice about AI screening that an application can't go on without, and its statement that your information is true. Each one is written in the job's log.</p></div>
+                <input type="checkbox" class="switch" id="set-notices" data-setting="accept_notices" aria-labelledby="set-notices-name" aria-describedby="set-notices-said">
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="set-cookies-name">Cookie banners</p>
+                  <p class="s" id="set-cookies-said">Declined wherever the site lets you. A banner with no way to decline waits for you, unless you choose to accept those.</p></div>
+                <span class="seg" id="set-cookies" data-setting="accept_cookies" role="group" aria-labelledby="set-cookies-name" aria-describedby="set-cookies-said">
+                  <button data-value="false" aria-pressed="false">Decline</button><button data-value="true" aria-pressed="false">Accept if there is no other way</button></span>
+              </div>
               <div class="setrow">
                 <div><p class="t" id="at-once-name">Jobs at once</p>
                   <p class="s" id="at-once-said">How many applications the desk fills at the same time.</p></div>
@@ -1015,12 +1088,7 @@ body.stopped > :not(#stopped) { display: none; }
                   <p class="s" id="dont-wait-hint"></p></div>
                 <input type="checkbox" class="switch" id="dont-wait" aria-labelledby="dont-wait-name" aria-describedby="dont-wait-said dont-wait-hint" title="For a desk left to go through the list: a sign-in, or an emailed code only you can read, waits on its card and the other jobs go on, as if you'd pressed Later on each (never another job at the same site). A code the desk reads itself (from your inbox, or Claude from your Gmail) still holds them while it's looked for, a minute as a rule: one code at a time, so it never goes to another job">
               </div>
-              <div class="item">
-                <span class="itico gray"><svg class="ico" aria-hidden="true"><use href="#i-shield"/></svg></span>
-                <div><h3 class="t" id="safety-card-h">Safety</h3>
-                  <p class="s">What the desk may do for you and what it never does, as it is set now.</p></div>
-                <div class="acts"><button class="btn" id="safety-btn" data-act="safety" title="What the desk does in your name, and what it never does: each setting as it is now, and where to change it">See your safety settings</button></div>
-              </div>
+              <div class="setfoot"><button class="btn" id="safety-btn" data-act="safety" title="What the desk does in your name, and what it never does: each setting as it is now, and where to change it">See everything the desk may and may not do</button></div>
               <details class="setmore"><summary>For fixing the desk</summary>
                 <div class="setrow">
                   <div><p class="t" id="troubleshoot-name">Troubleshooting</p>
@@ -1129,12 +1197,48 @@ body.stopped > :not(#stopped) { display: none; }
                 <div class="acts"><button class="btn" id="alerts" data-act="alerts" hidden>Alert me</button></div>
               </div>
             </section>
+            <!-- (D3: the server the phone alerts go through, closed; saved when its box is left) -->
+            <section class="card" aria-labelledby="alert-server-h">
+              <details class="setmore"><summary id="alert-server-h">Your own alert server</summary>
+                <div class="setrow">
+                  <div><p class="s" id="alert-server-said">Leave this empty to use ntfy.sh.</p></div>
+                  <input type="text" id="set-alert-server" data-setting="phone_alerts_server" autocomplete="off" spellcheck="false" placeholder="https://ntfy.example.com" aria-labelledby="alert-server-h" aria-describedby="alert-server-said">
+                </div>
+              </details>
+            </section>
           </div>
           <div class="spanel" id="panel-documents" data-panel="documents" hidden>
             <div class="spanel-h"><h2 id="panel-documents-h">Resume and cover letters</h2></div>
           </div>
           <div class="spanel" id="panel-about" data-panel="about" hidden>
             <div class="spanel-h"><h2 id="panel-about-h">Updates and about</h2></div>
+            <!-- (the update card goes here: the design's Version F) -->
+            <!-- (D3: where the desk opens, its look (this browser's only), the browser it fills forms in, its folder) -->
+            <section class="card" aria-labelledby="panel-about-h">
+              <div class="setrow">
+                <div><p class="t" id="set-window-name">Open the desk in</p>
+                  <p class="s" id="set-window-said">This applies the next time the desk opens.</p></div>
+                <span class="seg" id="set-window" data-setting="desk_window" role="group" aria-labelledby="set-window-name" aria-describedby="set-window-said">
+                  <button data-value='"app"' aria-pressed="false">Its own window</button><button data-value='"tab"' aria-pressed="false">A browser tab</button></span>
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="set-look-name">Look</p>
+                  <p class="s" id="set-look-said">Light, dark, or whatever your computer is set to.</p></div>
+                <span class="seg" id="set-look" role="group" aria-labelledby="set-look-name" aria-describedby="set-look-said">
+                  <button data-look="" aria-pressed="false">Match my computer</button><button data-look="light" aria-pressed="false">Light</button><button data-look="dark" aria-pressed="false">Dark</button></span>
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="set-browser-name">The browser the desk fills forms in</p>
+                  <p class="s" id="set-browser-said">The desk uses the first it finds, starting with the one chosen. This applies the next time the desk starts.</p></div>
+                <span class="seg" id="set-browser" data-setting="browser_channel" role="group" aria-labelledby="set-browser-name" aria-describedby="set-browser-said">
+                  <button data-value='"chrome"' aria-pressed="false">Chrome</button><button data-value='"msedge"' aria-pressed="false">Edge</button><button data-value='"chromium"' aria-pressed="false">Its own</button></span>
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="files-name">Your files</p>
+                  <p class="s" id="files-said"></p></div>
+                <button class="btn" id="open-home" data-act="open-home" aria-describedby="files-name files-said">Open the folder</button>
+              </div>
+            </section>
             <!-- the version, and what closing the window does: a desk run on its own (state.standalone) carries on in the
                  background, and Quit the Job Desk stops it (/api/quit); one inside Claude stops with Claude (renderProgram) -->
             <section class="card" aria-labelledby="program-h">
@@ -3148,7 +3252,9 @@ function renderArea() {
   const titles = areaTitles(area), places = area.places || [];
   const short = (xs, none) => !xs.length ? none : xs.length === 1 ? xs[0] : `${xs[0]} +${xs.length - 1}`;
   const btn = $("area-btn");
-  btn.textContent = `What and where: ${short(titles, "jobs")} · ${short(places, (area.states || []).join(", ") || "your state")}`;
+  const said = `${short(titles, "jobs")} · ${short(places, (area.states || []).join(", ") || "your state")}`;
+  btn.textContent = `What and where: ${said}`;
+  $("area-row-said").textContent = said;  // (Settings, Job search: What and where, worded as the button words it)
   const avoid = area.avoid_titles || [];
   btn.title = `Find jobs looks for ${titles.join(", ") || "the plugin's equipment roles"}`
     + ` in ${places.join("; ") || "your home state"}`
@@ -3475,6 +3581,7 @@ function render() {
   renderNotes();
   renderMenu();
   renderProgram();
+  renderSettingsRows();
   announce();
   // (a profile that lacks what an application needs: Set up your profile, once a visit, over no other window)
   const missing = (state.profile || {}).missing || [];
@@ -3537,6 +3644,87 @@ async function act(fn, hold = true) {
   changes += 1;  // (any state asked before it is out of date: load)
   if (hold) busy = true;  // a long one (reading pasted links) lets the page keep refreshing
   try { await fn(); } catch (e) { alert(e.message); } finally { if (hold) busy = false; await refresh(); }
+}
+
+// The Settings page's saving rule (the design's D1), for every row: a control saves the moment it is changed (`send`,
+// which posts it). While the save is under way the control is disabled (a choice row's buttons, all of them), and the
+// page's refresh doesn't draw it. If the save fails, `undo` puts it back as it was, and the desk's sentence shows
+// under its row in red (.set-err), until a save of that row goes through
+async function saveRow(control, send, undo = () => {}) {
+  const row = control.closest(".setrow");
+  const parts = control.matches(".seg") ? [...control.querySelectorAll("button")] : [control];
+  const focused = parts.includes(document.activeElement) ? document.activeElement : null;
+  control.dataset.saving = "1";
+  parts.forEach((p) => { p.disabled = true; });
+  changes += 1;  // (a state asked before this save is out of date when it comes: load)
+  busy = true;
+  let said = "";
+  try { await send(); } catch (e) { undo(); said = e.message || "That wasn't saved."; } finally {
+    delete control.dataset.saving;
+    parts.forEach((p) => { p.disabled = false; });
+    let err = row && row.querySelector(":scope > .set-err");
+    if (said && row && !err) {
+      err = document.createElement("p");
+      err.className = "set-err";
+      err.setAttribute("role", "alert");
+      row.append(err);
+    }
+    if (err) { err.textContent = said; err.hidden = !said; }
+    if (focused && document.activeElement === document.body) focused.focus();  // (the keyboard stays where it was)
+    busy = false;
+    await refresh();
+  }
+}
+// A setting kept in the profile (the control's data-setting names it) saved through /api/profile/settings, by saveRow
+function saveSetting(control, value, undo) {
+  return saveRow(control, () => api("/api/profile/settings", {key: control.dataset.setting, value}), undo);
+}
+// A POST with no body (Open the folder's: the route reads nothing from the page)
+async function postEmpty(path) {
+  const res = await fetch(path, {method: "POST", headers: {"x-desk-token": token}});
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), {status: res.status, data});
+  return data;
+}
+
+// Look (Updates and about): "light" or "dark" on <html> and kept in this browser, or "" (Match my computer) for none
+const LOOK_KEY = "desk-theme";
+function lookNow() { return document.documentElement.dataset.theme || ""; }
+function setLook(look) {
+  if (look) document.documentElement.dataset.theme = look; else delete document.documentElement.dataset.theme;
+  try { if (look) localStorage.setItem(LOOK_KEY, look); else localStorage.removeItem(LOOK_KEY); } catch (e) {}
+  document.querySelectorAll("[data-look]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.look === look)));
+}
+
+// The Settings page's rows (D3) as the state has them: each profile setting's control (data-setting; data-state when
+// the state names it otherwise), the twin of Submit for me, Your profile's rows, Your files. A control being saved, or
+// one in the person's hands (focused), is left as it is
+function renderSettingsRows() {
+  const s = state.settings || {}, p = state.profile || {};
+  const leave = (el) => el.dataset.saving || el.contains(document.activeElement) && el.matches("input");
+  for (const el of document.querySelectorAll("[data-setting]")) {
+    if (leave(el)) continue;
+    const v = s[el.dataset.state || el.dataset.setting];
+    if (el.matches(".seg")) el.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(JSON.stringify(v) === b.dataset.value)));
+    else if (el.type === "checkbox") el.checked = el.dataset.on ? v === el.dataset.on : !!v;
+    else el.value = v == null ? "" : String(v);
+  }
+  const twin = $("set-auto");
+  if (!twin.dataset.saving) {
+    if (document.activeElement !== twin) twin.checked = !!s.auto_submit;
+    twin.disabled = !!s.dry_run;
+  }
+  $("set-email-tracking-row").hidden = !!state.standalone;  // (only Claude reads the person's email: C7)
+  document.querySelectorAll("[data-look]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.look === lookNow())));
+  $("profile-h").textContent = String(p.name || "").trim() || "Your profile";
+  const missing = p.missing || [];
+  $("still-row").hidden = !missing.length;
+  const still = inWords(missing.map(profileField));
+  $("still-said").textContent = still ? still[0].toUpperCase() + still.slice(1) + "." : "";
+  $("bank-row-said").textContent = bankSaid() + ".";
+  // (the desk's folder: where its profile is kept, from the state; a path is data, never the page's own words)
+  const folder = String(p.path || "").replace(/[\\/][^\\/]*$/, "");
+  $("files-said").textContent = folder ? `Everything is kept on this computer, in ${folder}.` : "";
 }
 
 // Jobs that can still be applied to: in the list, not finished, not already under way. One
@@ -3859,9 +4047,23 @@ document.addEventListener("click", (e) => {
   }
   const a = t.dataset.act, job = t.dataset.job, jobAct = t.dataset.jobAct;
   if (!state && (a || jobAct || t.dataset.atOnce)) return;  // the page hasn't loaded yet
+  const seg = t.closest(".seg[data-setting]");
+  if (seg) {  // a choice of a profile setting's (Cookie banners, Open the desk in, the browser): saved at once
+    if (!state || t.getAttribute("aria-pressed") === "true") return;
+    const buttons = [...seg.querySelectorAll("button")];
+    const was = buttons.find((b) => b.getAttribute("aria-pressed") === "true");
+    const press = (on) => buttons.forEach((b) => b.setAttribute("aria-pressed", String(b === on)));
+    press(t);
+    saveSetting(seg, JSON.parse(t.dataset.value), () => press(was));
+    return;
+  }
+  if (t.dataset.look !== undefined) { setLook(t.dataset.look); return; }  // (this browser's alone: nothing to save)
   if (t.dataset.atOnce) {
-    document.querySelectorAll("[data-at-once]").forEach((b) => b.setAttribute("aria-pressed", String(b === t)));
-    act(() => api("/api/settings", {jobs_at_once: Number(t.dataset.atOnce)}));
+    const buttons = [...document.querySelectorAll("[data-at-once]")];
+    const was = buttons.find((b) => b.getAttribute("aria-pressed") === "true");
+    const press = (on) => buttons.forEach((b) => b.setAttribute("aria-pressed", String(b === on)));
+    press(t);
+    saveRow(t.closest(".seg"), () => api("/api/settings", {jobs_at_once: Number(t.dataset.atOnce)}), () => press(was));
     return;
   }
   if (a === "find") act(() => api("/api/search", {}));
@@ -3885,6 +4087,7 @@ document.addEventListener("click", (e) => {
   if (a === "area-place-add") { areaAdd("places", $("area-place-new").value); $("area-place-new").value = ""; }
   if (a === "area-avoid-add") { areaAdd("avoid_titles", $("area-avoid-new").value); $("area-avoid-new").value = ""; }
   if (a === "pause" || a === "resume") act(() => api(`/api/queue/${a}`, {}));
+  if (a === "open-home") saveRow(t, () => postEmpty("/api/open/home"));  // (the desk's own folder, and only it)
   if (a === "quit" && confirm("Quit the Job Desk? Jobs it is working on stop where they are. The queue is kept for next time.")) {
     act(async () => { await api("/api/quit", {}); stopPage(); });
   }
@@ -4119,14 +4322,30 @@ document.addEventListener("change", (e) => {
   if (t.id === "pick-all" && state) {  // (the header's box: unticked, as Select recommended; otherwise, as Clear)
     if ([...selected].some(selectable)) { selected.clear(); renderRows(); } else selectRecommended();
   }
-  if (t.id === "auto") {
+  if (t.id === "auto" || t.id === "set-auto") {  // (Submit for me, the apply bar's or its twin in Settings: either asks)
     if (t.checked && !confirm("Submit complete applications without asking you first? You can turn this off any time.")) { t.checked = false; return; }
-    act(() => api("/api/settings", {auto_submit: t.checked}));
+    const on = t.checked, twin = $(t.id === "auto" ? "set-auto" : "auto");
+    twin.checked = on;  // (both show it at once)
+    if (t.id === "auto") act(() => api("/api/settings", {auto_submit: on}));
+    else saveRow(t, () => api("/api/settings", {auto_submit: on}), () => { t.checked = twin.checked = !on; });
+  }
+  // a profile setting's switch (Practice mode's writes its data-on and data-off) or its number box: saved at once
+  if (t.dataset.setting && t.type === "checkbox" && state) {
+    const on = t.checked;
+    saveSetting(t, t.dataset.on ? (on ? t.dataset.on : t.dataset.off) : on, () => { t.checked = !on; });
+  }
+  if (t.dataset.setting && t.type === "number" && state) {
+    const was = state.settings[t.dataset.setting], said = t.value.trim();
+    // (a whole number as one; anything else as typed, for the desk to say what it takes)
+    saveSetting(t, /^\d+$/.test(said) ? Number(said) : said, () => { t.value = was == null ? "" : String(was); });
   }
   if (t.id === "tailor") act(() => api("/api/settings", {tailor_resumes: t.checked}));
   if (t.id === "letters") act(() => api("/api/settings", {cover_letters: t.checked}));
-  if (t.id === "auto-search") act(() => api("/api/settings", {auto_search: t.checked}));
-  if (t.id === "dont-wait") act(() => api("/api/settings", {dont_wait: t.checked}));
+  // (the desk's own switches on the Settings page, saved by the same rule as the profile's: saveRow)
+  if (t.id === "auto-search" || t.id === "dont-wait") {
+    const on = t.checked;
+    saveRow(t, () => api("/api/settings", {[t.id === "auto-search" ? "auto_search" : "dont_wait"]: on}), () => { t.checked = !on; });
+  }
   if (t.id === "phone-details") act(() => api("/api/phone/settings", {details: t.checked}));
   if (t.id === "min-pay" && state) {
     // "60000", "$60,000", "60k": dollars a year; empty (or 0) for any pay
@@ -4150,7 +4369,8 @@ document.addEventListener("change", (e) => {
   if (t.id === "troubleshoot") {
     selected.clear();  // (the openings are searched again the other way: none picked carries over)
     if (t.checked) $("handled-only").checked = false;
-    act(() => api("/api/settings", {troubleshoot: t.checked}));
+    const on = t.checked;
+    saveRow(t, () => api("/api/settings", {troubleshoot: on}), () => { t.checked = !on; });
   }
   if (t.dataset.bank) act(() => api("/api/bank", {id: t.dataset.bank, answer: t.value}));
   if (t.id === "report-anonymous" && reportShown) makeReport(reportShown.job, true);
@@ -4166,6 +4386,17 @@ function phoneSummaryDone(box) {
   act(() => api("/api/phone/settings", {summary_at: value}));
 }
 $("phone-summary").addEventListener("blur", (e) => phoneSummaryDone(e.target));
+// a profile setting's text box (Your own alert server): saved when it's left (or Enter pressed), if it changed
+document.addEventListener("focusout", (e) => {
+  const t = e.target;
+  if (!state || !t.dataset || !t.dataset.setting || t.type !== "text" || t.dataset.saving) return;
+  const was = state.settings[t.dataset.setting] ?? "", said = t.value.trim();
+  if (said === String(was)) return;
+  saveSetting(t, said, () => { t.value = String(was); });
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && e.target.dataset && e.target.dataset.setting && e.target.type === "text") e.target.blur();
+});
 $("phone-summary").addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); });
 
 // the link opens GitHub in a new tab; without one (a report being made) it does nothing

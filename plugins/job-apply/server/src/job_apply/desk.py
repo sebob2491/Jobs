@@ -1798,6 +1798,9 @@ class Desk:
             "settings": {"submit_mode": settings.submit_mode, "dry_run": settings.dry_run,
                          "manage_accounts": settings.may_manage_accounts,
                          "manage_accounts_chosen": settings.manage_accounts_chosen,
+                         # (Make my accounts as the profile has it, practice mode or not: Settings' switch shows this,
+                         # where manage_accounts above is whether the desk may make one now)
+                         "manage_accounts_setting": settings.manage_accounts,
                          # (as it works here: off on a desk run on its own, whatever desk.json says)
                          "auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailoring_on(),
                          "cover_letters": self.applier.letters,
