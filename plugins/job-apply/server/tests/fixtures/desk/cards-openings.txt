@@ -1,14 +1,15 @@
 ## start-h
 Getting started
-4 of 7 done
+3 of 7 done
 Hide this
 Set up your profile
 Your details, your work history and your resume.
 Choose what to look for, and where
 The job titles and the places Find jobs searches.
 Choose
-Save your site passwords
-The desk signs in with them and makes your accounts. 1 of 7 saved.
+Make your site passwords
+One strong password for each job system, made and kept by the desk. 1 of 7 saved.
+Make my passwords
 Let the desk read emailed codes
 Optional. Many sites email a code when you sign in. With this, the desk enters it for you.
 Open Settings
@@ -252,20 +253,49 @@ Troubleshooting
 For getting the desk going at more employers. It searches every list and shows only the openings where the desk doesn't go all the way yet. Nothing is submitted while it is on.
 
 ## pw-h
-Site passwords
+Accounts and passwords
 1 of 8 saved
-One password per job system: the desk makes your account at each of its employers and signs you in. It stays on this computer; Claude never sees it.
-Workday: Applied Materials, KLA, Intel and 12 more
-SuccessFactors: TSMC Arizona, Amkor Technology, Edwards Vacuum and 4 more
-iCIMS: Daifuku America, Fujifilm
-ApplicantStack: SCREEN SPE USA
-UKG Pro: Nikon Precision, Ultra Clean Holdings (UCT)
-Infor: Benchmark Electronics
+One strong password for each job system. The desk makes them on this computer and keeps them in your computer's password vault, or in a file only you can read where it has none.
+If you already have an account at an employer with a different password, the desk can't sign in there until you set this password at the site yourself.
+Passwords are shown only when the Job Desk is opened on its own, not inside Claude.
+Make my passwords
+Job system
+Password
+Workday
+Applied Materials, KLA, Intel and 12 more
+Saved by you
+SuccessFactors
+TSMC Arizona, Amkor Technology, Edwards Vacuum and 4 more
+None yet
+Make one
+Type my own
+iCIMS
+Daifuku America, Fujifilm
+None yet
+Make one
+Type my own
+ApplicantStack
+SCREEN SPE USA
+None yet
+Make one
+Type my own
+UKG Pro
+Nikon Precision, Ultra Clean Holdings (UCT)
+None yet
+Make one
+Type my own
+Infor
+Benchmark Electronics
+None yet
+Make one
+Type my own
 Taleo
-Your email: an app password, to read sign-up codes and password resets
-Anthropic API key: for cover letters, instead of your Claude login
-Save
-Workday: saved
+None yet
+Make one
+Type my own
+Anthropic API key
+Optional. For cover letters and for reading your resume, without Claude. Not saved
+Save a key
 How this works
 Each employer has its own account on its job site. Save one password for a job system and the desk creates your account at each of that system's employers (agreeing to its terms for you) and signs you in, on that system's own sites only; when a site turns the password down, it resets that account's password to this one through the site's "Forgot password" email (unless Make my accounts is off in Settings). It stays on this computer, in its password vault (Windows Credential Manager, the macOS Keychain or your desktop's keyring), or in a file only you can read where it has none. Use passwords you don't use anywhere else.
 An Anthropic API key (make one in the Claude Console, console.anthropic.com, and add some credit under Billing): with Write a cover letter for each job on, Claude writes each letter through Anthropic's API with it (about 10 to 20 cents a letter, written and checked).

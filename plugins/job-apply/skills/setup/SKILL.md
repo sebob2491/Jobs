@@ -159,8 +159,8 @@ soon, with the least answered that it needs:
    - It stops at each application's review page for their own Submit ("Submit for me" on
      the desk, in the apply bar or under Settings, Applying, changes that); LinkedIn and Indeed applications are always theirs to submit.
    - **Passwords (optional).** Company sites on Workday and SuccessFactors need an account
-     per company, as do SCREEN's, Nikon Precision's, Benchmark's and Daifuku's. The Site
-     passwords card under **Settings, Accounts and passwords** stores one password per job system, on their computer (in its
+     per company, as do SCREEN's, Nikon Precision's, Benchmark's and Daifuku's. **Make my
+     passwords** under **Settings, Accounts and passwords** makes one strong password per job system, on their computer (in its
      password vault: Windows Credential Manager, the macOS Keychain or a Linux keyring); with
      one saved, the desk makes their accounts and signs them in. Otherwise the user creates
      `~/.job-apply/secrets.yaml` themselves, for example `workday_password: "..."`, and runs

@@ -156,7 +156,7 @@ you didn't is saved as "Some college (no degree)", "Some high school" or the pro
 completed)", never as a degree), and choose the three consents. Save writes `profile.yaml`,
 changing only what you changed and leaving every other line, comments too, as it was (a list
 it changes, such as your jobs or schools, is written anew on one line, without comments of its
-own), then opens What and where. With an Anthropic API key saved in the Site passwords card
+own), then opens What and where. With an Anthropic API key saved
 under Settings, Accounts and passwords,
 **Read my resume** has Claude read it and fill in the boxes that are still empty, each named
 for you to check; without one, you type them. The rest of setup's questions (stage 2) are
@@ -198,7 +198,7 @@ opens a page on your computer (served by the plugin on `127.0.0.1`):
 > 4. Answer what it asks under **Needs you**.
 > 5. Check each review page and press **Submit**: nothing is sent before you do (unless you turn on **Submit for me**).
 >
-> Once: save a password for each job system under **Settings, Accounts and passwords**, and the desk makes your accounts.
+> Once: press **Make my passwords** under **Settings, Accounts and passwords** (one strong password for each job system, made and kept by the desk), and the desk makes your accounts.
 
 1. **Find jobs** searches every employer's career site for your target titles in
    your area. Each opening gets a fit score, with the reasons and concerns under it:
@@ -403,7 +403,7 @@ it, and the desk only reports whether one is saved.
 Gmail, make one at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords);
 it needs 2-Step Verification; Yahoo, iCloud and AOL addresses work the same way, but
 Outlook.com and Hotmail no longer accept app passwords), and **Test it now** there checks that it
-signs in (the Site passwords card takes it too). With it saved, a job waiting on
+signs in. With it saved, a job waiting on
 an emailed code or confirmation link gets it from your inbox:
 - the desk types the code in and presses Verify, Confirm, Continue or Next (never
   Submit), or opens the link in its own browser and reloads the job's tab;
