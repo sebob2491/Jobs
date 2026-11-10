@@ -100,6 +100,7 @@ class AccountsMixin:
 
     if TYPE_CHECKING:  # (the applier's own)
         srv: Any
+        standalone: bool
         _wake: asyncio.Event
 
         def _stop_for_what_is_left(self, run: Run, gaps: str, pending: list[dict[str, Any]],
@@ -636,7 +637,8 @@ class AccountsMixin:
             await self._bring_forward(run)
             self._pause(run, "sign_in", f"Your saved password didn't sign in on {site}, and I {why}. Sign in in the "
                         "desk's browser window and the desk carries on after that; or finish the reset there, to the "
-                        "password you saved on the desk, then press Carry on: the desk signs in with it.", seen=page,
+                        f"password you saved on the desk{pipeline.shown_where(self.standalone)}, then press Carry on: "
+                        "the desk signs in with it.", seen=page,
                         code="sign_in_refused")
             return "paused"
 
@@ -847,9 +849,9 @@ class AccountsMixin:
         watching = (" The desk is watching your inbox for it, and sets your saved password as the new one. If none "
                     f"comes in {pipeline.RESET_MAIL_WAIT // 60} minutes (most likely you have no account there), it "
                     "makes one instead. The other jobs carry on meanwhile."
-                    if watched else " Open the link in the email, set the password you saved on the desk as "
-                    "the new one, then press Carry on: the desk signs in with it (an email app password saved on the "
-                    "desk lets it do all this itself).")
+                    if watched else " Open the link in the email, set the password you saved on the desk"
+                    f"{pipeline.shown_where(self.standalone)} as the new one, then press Carry on: the desk signs in "
+                    "with it (an email app password saved on the desk lets it do all this itself).")
         run.reset_waited = True
         self._pause(run, "email_code",
                     f"{pipeline._site(run, data)} is emailing you a password reset: your saved password didn't "
@@ -1007,8 +1009,8 @@ class AccountsMixin:
                         f"I put your saved password in {site}'s new-password boxes and pressed its button, "
                         f"and it says \u201c{refused.rstrip(' .')}\u201d: it didn't set it as the new one. Reset it "
                         "there (through its \u201cForgot password\u201d again if the link is spent) to the one you "
-                        "saved on the desk, or to another and save that one on the desk, then press Carry on: the desk "
-                        "signs in with it.", seen=after, code="reset_failed")
+                        f"saved on the desk{pipeline.shown_where(self.standalone)}, or to another and save that one "
+                        "on the desk, then press Carry on: the desk signs in with it.", seen=after, code="reset_failed")
             return "paused"
         run.resetting = False
         run.reset_set = run.account_known = True

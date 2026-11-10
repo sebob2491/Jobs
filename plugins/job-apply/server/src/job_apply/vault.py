@@ -52,8 +52,8 @@ NAMES_ENTRY = "job_apply_names"  # the vault's own entry holding the list of nam
 # service for an empty user name)
 NAME = re.compile(r"^[a-z0-9_]+$")
 # What the desk and the doctor say when the vault stops answering
-DIDNT_ANSWER = ("{vault} didn't answer, so saved passwords in it can't be read until it's unlocked and the desk "
-                "restarted ({detail})")
+DIDNT_ANSWER = ("{vault} didn't answer, so saved passwords in it can't be read. Unlock it, then restart the desk "
+                "({detail})")
 
 # The vault's name as a person knows it, by the keyring backend's module
 VAULT_NAMES = {
@@ -219,6 +219,32 @@ def _probe() -> Status:
     if "value" in answer:
         return Status(True, name)
     return Status(False, name, DIDNT_ANSWER.format(vault=name, detail=_detail(answer)), down=True)
+
+
+def try_again() -> bool:
+    """Whether the vault answers, asked once more when it's out of use (down): a person's press on the desk's password
+    panel (Make, Show, Forget), never a loop, so a vault that hangs is waited on VAULT_WAIT seconds per press at most.
+    Asked as the start's probe asks it, under the vault's lock. Once it answers, it's in use again as though it had
+    never been down: problem() is None and what it holds is read afresh. Usable or not, as status() says otherwise."""
+    global _status
+    with _lock:
+        s = status()
+        if not s.down:
+            return s.usable
+        try:
+            kr = _keyring()
+            backends = _backends(kr)
+        except Exception:
+            return False
+        if not backends:
+            return False
+        if "value" not in _run("probe", kr.get_password, service(), PROBE_NAME):
+            return False
+        _status = Status(True, vault_name(backends[0]))
+        _read.clear()
+        _said.discard("down")  # (should it stop answering again, that's said again)
+    log.warning("%s answers again: saved passwords in it are read again", _status.name)
+    return True
 
 
 def problem() -> str | None:

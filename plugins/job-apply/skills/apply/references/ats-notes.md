@@ -8,7 +8,7 @@ the page URL. Use this file for the parts of each flow that `autofill` can't do.
 - First check whether the persistent browser is already signed in. Sign-ins are
   saved in `~/.job-apply/browser` between sessions.
 - **Signing in:** ask the user to sign in in the desk's browser window, then continue.
-  Alternatively, if they saved a password on the desk's Site passwords card or in
+  Alternatively, if a password is saved under the desk's Settings, Accounts and passwords, or in
   `~/.job-apply/secrets.yaml` (for example `workday_password: ...`), fill the email with `fill_form` and the
   password with `fill_secret(field_id, "workday_password")`.
 - **New accounts:** working through the tools with Claude, creating one is the user's

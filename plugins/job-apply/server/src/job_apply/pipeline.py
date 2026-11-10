@@ -4195,9 +4195,9 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             self._pause(run, "sign_in", f"The password reset link from your email opened on {site}'s page "
                         f"saying \u201c{refused.rstrip(' .')}\u201d, so the desk couldn't set your saved "
                         f"password there. Ask {site} for a new reset through its \u201cForgot password\u201d and open "
-                        "the new email's link, set the password you saved on the desk as the new one (or "
-                        "another, and save that one on the desk), then press Carry on: the desk signs in "
-                        "with it.", seen=lap.data, code="reset_failed")
+                        "the new email's link, set the password you saved on the desk"
+                        f"{shown_where(self.standalone)} as the new one (or another, and save that one on the "
+                        "desk), then press Carry on: the desk signs in with it.", seen=lap.data, code="reset_failed")
             return _Then.STOP
         # On the reset's "email sent" page, or back from waiting on an email that didn't come, on whatever
         # page the site left (Workday's reset form stays, filled, with its "if an account exists" note,
@@ -4219,9 +4219,10 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                             "desk opened already (a reset link works once), so it couldn't set your saved "
                             f"password with it. Ask {site} for a new one through its \u201cForgot "
                             "password\u201d in the desk's browser window, or open that email's link "
-                            "yourself; set the password you saved on the desk as the new one (or another, "
-                            "and save that one on the desk), then press "
-                            "Carry on: the desk signs in with it.", seen=lap.data, code="reset_failed")
+                            "yourself; set the password you saved on the desk"
+                            f"{shown_where(self.standalone)} as the new one (or another, and save that one on the "
+                            "desk), then press Carry on: the desk signs in with it.", seen=lap.data,
+                            code="reset_failed")
                 return _Then.STOP
             # Resume pressed on it: the person set the password from the email themselves (or the
             # inbox wait ran out), so back to the sign-in page, where the saved password is tried again.
@@ -4438,7 +4439,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                       f"reset{it_says}. The reset may not have set it")
             self._pause(run, "sign_in", opening + ": a reset link works once, and some sites won't take "
                         "back a password you've used there before. Reset it there to the one you saved on "
-                        "the desk (or another, and save that one on the desk), then press Carry on: the "
+                        f"the desk{shown_where(self.standalone)} (or another, and save that one on the desk), then "
+                        "press Carry on: the "
                         "desk signs in with it.", seen=lap.data, code="reset_failed")
             return _Then.STOP
         if done == "refused":  # and no reset (one was asked for already, or the site has no way to one)
@@ -4451,7 +4453,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                            if run.sign_in_tries >= SIGN_IN_TRIES else "")
                         + " Sign in in the desk's browser window and the desk carries on by itself "
                           "after that; or reset the password through its \u201cForgot password\u201d "
-                          "to the one you saved on the desk, then press "
+                          f"to the one you saved on the desk{shown_where(self.standalone)}, then press "
                           "Carry on: the desk signs in with it.", seen=lap.data, code="sign_in_refused")
             return _Then.STOP
         tip = _password_tip(lap.data["url"])
@@ -7199,15 +7201,23 @@ def _sign_in_ways(data: dict[str, Any]) -> list[dict[str, Any]]:
 DESK_PASSWORDS = config.DESK_PASSWORDS
 
 
+def shown_where(standalone: bool) -> str:
+    """Where the person sees the password they saved on the desk, said in brackets after those words in the stops that
+    ask them to type it by hand (the design's E5): only on a desk run on its own, the one place Settings' Accounts and
+    passwords shows a password (inside Claude its Show answers 409, so the words stay as they were)."""
+    return " (Settings, Accounts and passwords shows it)" if standalone else ""
+
+
 def _password_tip(url: str) -> str:
-    """At a sign-in the person does by hand: that a password saved on the desk would do it
-    for them next time, when one can be saved for this system and none is."""
+    """At a sign-in the person does by hand: that a password made on the desk would do it
+    for them next time, when one can be made for this system and none is saved (the design's E5)."""
     name = password_for(url)
     if name not in DESK_PASSWORDS or _secret(name) is not None:
         return ""
     system = DESK_PASSWORDS[name]
     article = "an" if system[0].lower() in "aeio" else "a"  # an iCIMS, an Infor; a UKG Pro, a Workday
-    return f" Save {article} {system} password on the desk and it fills these in for you next time."
+    return (f" Make {article} {system} password in Settings, under Accounts and passwords, and the desk fills these in "
+            "for you next time.")
 
 
 # ------------------------------- helpers: settings, the test identity, secrets

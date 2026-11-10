@@ -744,6 +744,9 @@ API_KEY_NAME = "anthropic_api_key"
 # never in the desk's state, a log or a problem report. ntfy's own rule for a topic's name, at least 16 long here
 NTFY_TOPIC_NAME = "ntfy_topic"
 NTFY_TOPIC = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
+# What the desk page's Forget takes out (forget_password): each job system's password, the email app password and the
+# Anthropic API key. Never the phone alerts' topic, which its own card turns off (forget_secret), nor any other name
+FORGETTABLE = (*DESK_PASSWORDS, "email_password", API_KEY_NAME)
 
 
 # Held across a save, a forget and the start's move of secrets.yaml into the vault
@@ -808,27 +811,106 @@ def _save_secret(name: str, value: str) -> None:
     path.chmod(0o600)
 
 
+def make_site_password(name: str, replace: bool = False) -> bool:
+    """A password of the desk's own making (passwords.make) saved for the job system `name` (one of DESK_PASSWORDS, by
+    its exact name: never the email app password, the API key, the phone alerts' topic or any other), as a typed one
+    is saved (save_site_password: the vault, the file and their lock). Without `replace`, only where none is saved,
+    wherever get_secret reads one (the environment's too), as the vault has it now and not as it was last read: looked
+    for and saved under the one lock, so a password saved meanwhile is never written over. Whether one was made. It is
+    never returned or logged: whatever needs it afterwards asks get_secret, as for a typed one."""
+    from . import passwords, vault
+
+    if not isinstance(name, str) or name not in DESK_PASSWORDS:
+        raise ValueError(f"not a job system's password: {name!r}")
+    with _SECRETS_LOCK:
+        # (read again: another program's save since the vault was last read, or a vault locked since, found out now)
+        vault.get(name, fresh=True)
+        # A vault out of use can't say what it holds: "none saved" would be a guess, and the made one, kept in the
+        # file, would come before the person's own in it and, at the next start, be moved over it. Never then, with
+        # `replace` or without
+        if (why := vault_unreachable()) is not None:
+            raise VaultUnreachable(why)
+        if not replace and get_secret(name):
+            return False
+        save_site_password(name, passwords.make())
+    return True
+
+
+class VaultUnreachable(Exception):
+    """The computer's password vault is out of use (it failed or didn't answer, locked): what's saved in it can't be
+    read, so the desk neither makes, nor shows as none, nor forgets a password until it answers again. Its words are
+    vault_unreachable's, for the page."""
+
+
+def vault_unreachable() -> str | None:
+    """Why a password can't be made, shown or forgotten just now, in one plain sentence for the page: the computer's
+    password vault is there but out of use (vault.status().down: locked, or not answering). None while it answers, and
+    on a computer with no vault at all (the file is the store there). It doesn't ask the vault again: the desk's
+    routes do that once a press (vault.try_again)."""
+    from . import vault
+
+    s = vault.status()
+    if not s.down:
+        return None
+    named = f" ({s.name})" if s.name and s.name != "The password vault" else ""
+    return (f"Your password vault{named} isn't answering, so the desk can't read the passwords saved in it. Unlock "
+            "it, then try again.")
+
+
 def forget_secret(name: str) -> bool:
     """The secret `name` forgotten (the phone alerts topic, turned off or replaced on the desk): taken out of the
     computer's password vault and its list of names, and its entry out of secrets.yaml, the rest of the file,
     comments included, as written. Whether there was one. A ValueError when the vault won't let it go."""
-    from . import vault
-
     if name != NTFY_TOPIC_NAME:
         raise ValueError(f"not a secret the desk forgets: {name!r}")
+    return _forget(name)
+
+
+def forget_password(name: str) -> bool:
+    """A saved password forgotten on the desk's page (its Forget): a job system's, the email app password or the
+    Anthropic API key (FORGETTABLE, by its exact name), taken out as forget_secret takes the phone alerts' topic out,
+    under the same lock and all or nothing (_forget). Whether there was one. A ValueError for any other name (the
+    topic's too: its own card turns it off), or when the vault won't let it go; VaultUnreachable while the vault is out
+    of use (it can't take out what it can't reach, and the file's line alone going would leave the vault's to come
+    back)."""
+    from . import vault
+
+    if not isinstance(name, str) or name not in FORGETTABLE:
+        raise ValueError(f"not a password the desk forgets: {name!r}")
     with _SECRETS_LOCK:
-        there = vault.get(name, fresh=True) is not None
+        vault.get(name, fresh=True)  # (a vault locked since the last read, found out now)
+        if (why := vault_unreachable()) is not None:
+            raise VaultUnreachable(why)
+        if (path := secrets_path()).exists():
+            read_secrets(path)  # (a file that can't be read stops it here, before the vault's is taken out)
+        return _forget(name)
+
+
+def _forget(name: str) -> bool:
+    """forget_secret's and forget_password's work, for a name each has checked. All or nothing: the vault's entry goes
+    first, then the file's line; should the file's fail (it can't be read or written), the vault's is put back as it
+    was, and the failure is raised. The name leaves the vault's list of names only once both are gone."""
+    from . import vault
+
+    with _SECRETS_LOCK:
+        before = vault.get(name, fresh=True)
         try:
             vault.forget(name)
         except vault.Stuck:
             raise ValueError(f"Your password vault ({vault.status().name}) wouldn't let it go just now (is it "
                              "locked?). Unlock it and try again.") from None
-        vault.unlist(name)
         path = secrets_path()
-        if not path.exists() or name not in read_secrets(path):
-            return there
-        _drop_secrets(path, [name])
-        return True
+        try:
+            dropped = path.exists() and name in read_secrets(path)
+            if dropped:
+                _drop_secrets(path, [name])
+        except BaseException:
+            if before is not None:  # (the vault just answered: it takes its own back)
+                with contextlib.suppress(Exception):
+                    vault.put(name, before)
+            raise
+        vault.unlist(name)
+        return before is not None or dropped
 
 
 def set_setting(key: str, value: Any) -> None:

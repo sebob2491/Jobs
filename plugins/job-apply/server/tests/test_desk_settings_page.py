@@ -24,8 +24,9 @@ SAID = {"applying": "What the desk may do in your name. It never solves a CAPTCH
         "email": "Many job sites email a code or a link when you sign in or make an account. The desk can read it and "
                  "put it in for you."}
 # A part each panel holds that no other does (D3), by its id; Email codes and Resume and cover letters hold only their
-# heading for now
-HOLDS = {"profile": "setup-btn", "search": "auto-search", "applying": "dont-wait", "passwords": "pw-form",
+# heading for now. (Accounts and passwords: its table of job systems; its form shows only in the row whose Type my own
+# was pressed, the design's E4)
+HOLDS = {"profile": "setup-btn", "search": "auto-search", "applying": "dont-wait", "passwords": "pw-rows",
          "email": "panel-email-h", "phone": "phone-h", "documents": "panel-documents-h", "about": "program-h"}
 
 # What the Settings page shows: the page, the panels in sight (by their data-panel), the headings in sight, the side
@@ -175,7 +176,8 @@ def test_the_keyboard_goes_through_settings_menu_and_into_the_panel_in_reading_o
                      "at-once-4", "at-once-5", "dont-wait", "safety-btn", "For fixing the desk"], order
     assert pressed == "#settings/passwords", pressed
     assert ring == "solid", ring  # (the focus ring shows on a menu link reached by the keyboard)
-    assert then == ["#settings/email", "#settings/phone", "#settings/documents", "#settings/about", "pw-site"], then
+    # (the panel's first control: Make my passwords, where the job systems' list was: the design's E4)
+    assert then == ["#settings/email", "#settings/phone", "#settings/documents", "#settings/about", "pw-make-all"], then
 
 
 # ---------------------------------------------------------------- the rows (D3: the design's package 14)
@@ -970,8 +972,9 @@ def test_the_note_about_accounts_names_the_switch_and_keep_it_on_saves_it(srv, j
 
 @pytest.mark.parametrize("standalone", [False, True])
 def test_the_passwords_and_email_codes_words_name_claude_only_where_claude_is(srv, standalone):
-    """Plain wording, Version D: the Site passwords card's first paragraph ends "It stays on this computer; Claude
-    never sees it." with Claude, "It stays on this computer." without; its long paragraph names Make my accounts and
+    """Plain wording, Version D: the Accounts and passwords card's first paragraph (E1's first sentence since Version
+    E) ends "You can see any of them here." without Claude, and at "where it has none." with Claude, where the line
+    under it says passwords are shown only on a desk opened on its own; its long paragraph names Make my accounts and
     no file, and its paragraph about email is in the Email codes panel's How this works, whose sentence about Claude
     reading codes through Gmail shows only with Claude."""
     desk = _idle_desk(srv)
@@ -984,8 +987,9 @@ def test_the_passwords_and_email_codes_words_name_claude_only_where_claude_is(sr
                 page = await browser.new_page(viewport={"width": 1280, "height": 900})
                 await open_desk(page, desk, "settings/passwords")
                 await page.evaluate("() => document.querySelectorAll('details').forEach((d) => { d.open = true; })")
-                seen = {"first": await page.inner_text("#pw-form > p.small"),
-                        "card": await page.inner_text("#pw-form")}
+                seen = {"first": await page.inner_text("#pw-said"),
+                        "card": await page.inner_text("section[aria-labelledby=pw-h]"),
+                        "inside": await page.is_visible("#pw-inside")}
                 await press_menu(page, "settings/email")
                 seen["email"] = await page.inner_text("#panel-email details.setmore")
                 await browser.close()
@@ -994,13 +998,21 @@ def test_the_passwords_and_email_codes_words_name_claude_only_where_claude_is(sr
             await desk.stop()
 
     seen = run(go())
-    start = "One password per job system: the desk makes your account at each of its employers and signs you in. "
-    assert seen["first"] == start + ("It stays on this computer." if standalone else
-                                     "It stays on this computer; Claude never sees it."), seen["first"]
+    start = ("One strong password for each job system. The desk makes them on this computer and keeps them in your "
+             "computer's password vault, or in a file only you can read where it has none.")
+    assert " ".join(seen["first"].split()) == start + (" You can see any of them here." if standalone else ""), seen
+    assert seen["inside"] is not standalone, seen
     card = " ".join(seen["card"].split())
-    assert "(unless Make my accounts is off in Settings)" in card, card
-    assert ("desktop's keyring), or in a file only you can read where it has none. Use passwords you don't use "
-            "anywhere else.") in card, card
+    assert ("Passwords are shown only when the Job Desk is opened on its own, not inside Claude." in card) \
+        is not standalone, card
+    # (the review of the panel: signing in always, an account and a reset only with Make my accounts on)
+    assert ("With it, the desk signs you in at each of that job system's employers. Unless Make my accounts is off in "
+            "Settings, it also creates your account there (agreeing to the site's terms for you), and when a site "
+            "turns the password down, it resets that account's password to this one through the site's "
+            "\"Forgot password\" email.") in card, card
+    # (How this works fits a password the desk makes and one typed: the review of the panel)
+    assert ("desktop's keyring), or in a file only you can read where it has none. A password the desk makes is used "
+            "nowhere else. If you type your own, use one you use nowhere else.") in card, card
     assert card.endswith("(about 10 to 20 cents a letter, written and checked)."), card
     assert "Your email: with an app password" not in card, card
     assert "manage_accounts" not in card and "secrets.yaml" not in card, card

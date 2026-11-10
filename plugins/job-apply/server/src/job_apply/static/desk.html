@@ -636,6 +636,34 @@ details.went { padding: 2px 0 8px; border-top: 0; }
 .pw details p { margin: 6px 0 0; }
 .pw ol { padding-left: 20px; }
 .pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
+/* Accounts and passwords (E4): a row for each job system, as the Applications table's (.apps-head, .row.app), and under
+   it the API key's row; a row's shown password, its form and its problem across the whole row */
+.pw > p.small { margin: 10px 0 0; }
+.pw > .set-err { margin: 8px 0 0; }
+.pw-head, .pw-line { display: grid; grid-template-columns: minmax(0, 1fr) 210px 214px; column-gap: 12px; align-items: center;
+  padding: 0 18px; }
+.pw-head { min-height: 40px; background: var(--side); border-top: 1px solid var(--line-2);
+  border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 600; color: var(--muted); }
+.pw-line { row-gap: 8px; padding-top: 10px; padding-bottom: 10px; border-top: 1px solid var(--line-2); }
+.pw-line:first-child { border-top: 0; }
+.pw-line .t { margin: 0; font-size: 14px; font-weight: 600; }
+.pw-line .s { margin: 1px 0 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.pw-line > .pw-shown, .pw-line > .pw-slot, .pw-line > .set-err { grid-column: 1 / -1; }
+.pw-line > .set-err { margin: 0; }
+.pw-shown { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pw-shown input { flex: 1; min-width: 0; max-width: 320px; font-family: ui-monospace, Consolas, monospace; }
+.pw-slot:empty { display: none; }
+.pw-slot .pw-row { margin-top: 0; }
+#pw-key { border-top: 1px solid var(--line); }
+#pw-key > .pw-slot { grid-column: 1 / -1; }
+#pw-key .s .pill { margin-left: 4px; }
+#panel-passwords details.setmore { border-top: 1px solid var(--line-2); }
+#panel-passwords .setmore-b p { margin: 6px 0 0; }
+@media (max-width: 600px) {
+  .pw-head { display: none; }
+  .pw-line { grid-template-columns: minmax(0, 1fr); }
+  .pw-line .c-acts { justify-content: flex-start; }
+}
 
 /* windows over the page */
 dialog { max-width: min(760px, calc(100vw - 32px)); border: 1px solid var(--line); border-radius: 14px;
@@ -1150,41 +1178,57 @@ body.stopped > :not(#stopped) { display: none; }
           <div class="spanel" id="panel-passwords" data-panel="passwords" hidden>
             <div class="spanel-h"><h2 id="panel-passwords-h">Accounts and passwords</h2></div>
             <section class="card" aria-labelledby="pw-h">
-              <div class="card-head"><h2 id="pw-h">Site passwords</h2><span class="pill" id="pw-count"></span></div>
-              <form class="pw" id="pw-form" autocomplete="off">
-                <p class="small">One password per job system: the desk makes your account at each of its employers and signs
-                  you in. It stays on this computer<span id="pw-claude">; Claude never sees it</span>.</p>
-                <div class="pw-row">
-                  <select id="pw-site" aria-label="Job system">
-                    <option value="workday">Workday: Intel, Applied, KLA and 10 more</option>
-                    <option value="successfactors">SuccessFactors: Edwards, Qorvo, Amkor</option>
-                    <option value="icims">iCIMS: Daifuku</option>
-                    <option value="applicantstack">ApplicantStack: SCREEN</option>
-                    <option value="ukg">UKG Pro: Nikon Precision</option>
-                    <option value="infor">Infor: Benchmark</option>
-                    <option value="taleo">Taleo</option>
-                    <option value="neogov">NEOGOV: Clark County, City of Las Vegas, City of Henderson and 1 more</option>
-                    <option value="email">Your email: an app password, to read sign-up codes and password resets</option>
-                    <option value="anthropic">Anthropic API key: for cover letters, instead of your Claude login</option>
-                  </select>
-                </div>
-                <div class="pw-row"><input type="password" id="pw" autocomplete="new-password" aria-label="Password">
-                  <button class="primary" type="submit">Save</button></div>
-                <p class="pills" id="pw-state"></p>
-                <details><summary>How this works</summary>
-                <p>Each employer has its own account on its job site. Save one password for a job system and the
-                  desk creates your account at each of that system's employers (agreeing to its terms for you) and signs you in,
-                  on that system's own sites only; when a site turns the password down, it resets that account's password to this
-                  one through the site's "Forgot password" email (unless Make my accounts is off in Settings).
-                  It stays on this computer, in its password vault (Windows Credential Manager, the macOS Keychain or your
-                  desktop's keyring), or in a file only you can read where it has none.
-                  Use passwords you don't use anywhere else.</p>
+              <div class="card-head"><h2 id="pw-h">Accounts and passwords</h2><span class="pill" id="pw-count"></span></div>
+              <!-- (E4: the bargain, E1's sentences; Make my passwords while a job system has none; a row for each job
+                   system, drawn by patch() into #pw-rows, but for one whose password shows: renderPasswords) -->
+              <div class="pw">
+                <p class="small" id="pw-said">One strong password for each job system. The desk makes them on this computer
+                  and keeps them in your computer's password vault, or in a file only you can read where it has none.<span
+                  id="pw-see"> You can see any of them here.</span></p>
+                <p class="small" id="pw-accounts"></p>
+                <p class="small" id="pw-inside" hidden>Passwords are shown only when the Job Desk is opened on its own, not inside Claude.</p>
+                <div class="pw-row" id="pw-make-row" hidden><button class="btn primary" id="pw-make-all" data-act="pw-make-all">Make my passwords</button></div>
+                <p class="set-err" id="pw-make-err" role="alert" hidden></p>
+              </div>
+              <div class="pw-table" role="table" aria-labelledby="pw-h">
+                <div class="pw-head" role="row"><span role="columnheader">Job system</span><span role="columnheader">Password</span><span role="columnheader"></span></div>
+                <div id="pw-rows" role="rowgroup"></div>
+              </div>
+              <div class="setrow" id="pw-key" data-pw="anthropic">
+                <div><p class="t" id="pw-key-name">Anthropic API key</p>
+                  <p class="s" id="pw-key-said">Optional. For cover letters and for reading your resume, without Claude.
+                    <span class="pill" id="pw-key-state">Not saved</span></p></div>
+                <div class="acts"><button class="btn sm" data-act="pw-key-save" aria-describedby="pw-key-name">Save a key</button>
+                  <button class="btn sm danger" id="pw-key-forget" data-act="pw-key-forget" aria-describedby="pw-key-name" hidden>Forget</button></div>
+                <div class="pw-slot" id="pw-key-slot"></div>
+                <p class="set-err" id="pw-key-err" role="alert" hidden></p>
+              </div>
+              <!-- (the row's form, E4's Type my own and the key's Save a key: kept here, out of sight, until a row's
+                   button puts it in that row; #pw-state says whether that one is saved) -->
+              <div id="pw-form-home" hidden>
+                <form class="pw-form" id="pw-form" autocomplete="off">
+                  <div class="pw-row"><input type="password" id="pw" autocomplete="new-password" aria-label="Password">
+                    <button class="btn" type="submit">Save</button>
+                    <button class="btn" type="button" data-act="pw-form-close">Close</button></div>
+                  <p class="pills" id="pw-state" hidden></p>
+                </form>
+              </div>
+              <details class="setmore"><summary>How this works</summary>
+                <div class="setmore-b">
+                <p>Each employer has its own account on its job site. The desk keeps one password for each job
+                  system, made by the desk or typed by you, and types it only on that job system's own sites. With it, the desk
+                  signs you in at each of that job system's employers. Unless Make my accounts is off in Settings, it also
+                  creates your account there (agreeing to the site's terms for you), and when a site turns the password down,
+                  it resets that account's password to this one through the site's "Forgot password" email.
+                  Each password stays on this computer, in its password vault (Windows Credential Manager, the macOS Keychain
+                  or your desktop's keyring), or in a file only you can read where it has none.
+                  A password the desk makes is used nowhere else. If you type your own, use one you use nowhere else.</p>
                 <p>An Anthropic API key (make one in the Claude Console,
                   <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>,
                   and add some credit under Billing): with Write a cover letter for each job on, Claude writes each letter
                   through Anthropic's API with it (about 10 to 20 cents a letter, written and checked).</p>
-                </details>
-              </form>
+                </div>
+              </details>
             </section>
           </div>
           <div class="spanel" id="panel-email" data-panel="email" hidden>
@@ -2086,8 +2130,8 @@ async function applyTicked(urls, auto) {
     + out.not_interested.join(", ") + ". Undo on it (under Not interested) brings it back.");
 }
 
-// See to these first: the card for the first thing said (the Common questions card, the email's app password, or Site
-// passwords with that job system picked), on its own page (Your answers, or Settings' Email codes or Accounts and
+// See to these first: the card for the first thing said (the Common questions card, the email's app password, or
+// Accounts and passwords with that job system's form open), on its own page (Your answers, or Settings' Email codes or Accounts and
 // passwords), scrolled to
 function seeToFirst(line) {
   if (/common question/i.test(line) && !$("bank-card").hidden) {
@@ -2102,11 +2146,11 @@ function seeToFirst(line) {
     $("mail-pw").focus();
     return;
   }
-  const pick = $("pw-site");
-  const system = [...pick.options].find((o) => line.startsWith(o.label.split(":")[0] + ":"));
-  if (system) pick.value = system.value;
+  // (a job system's: its row's Type my own opened, Make one beside it)
+  const system = Object.keys(PW_SYSTEMS).find((site) => line.startsWith(PW_SYSTEMS[site] + ":"));
   goTo("settings/passwords");  // (its card's page and panel)
-  $("pw-form").closest("section").scrollIntoView({block: "start"});
+  if (system) { pwFormFor = system; $("pw").value = ""; renderPasswords(); }
+  $("pw-h").closest("section").scrollIntoView({block: "start"});
   $("pw").focus({preventScroll: true});
 }
 
@@ -2873,9 +2917,12 @@ function startLines() {
       act: "setup", button: "Set up", done: !(p.missing || []).length},
     {name: "Choose what to look for, and where", said: "The job titles and the places Find jobs searches.",
       act: "area", button: "Choose", done: !!(area.titles || []).length && !!(area.places || []).length},
-    // (counted, and done, by the job systems' passwords alone: not the inbox's nor the API key, Settings' count has those)
-    {name: "Save your site passwords", said: `The desk signs in with them and makes your accounts. ${systems.filter(([, saved]) => saved).length} of ${systems.length} saved.`,
-      ...settings, done: systems.some(([, saved]) => saved)},
+    // (counted, and done, by the job systems' passwords alone: not the inbox's nor the API key, Settings' count has
+    // those. Done once every job system has one: E4. Make my passwords makes them here, but while the password vault
+    // isn't answering, which the panel's notice explains: there, Open Settings)
+    {name: "Make your site passwords", said: `One strong password for each job system, made and kept by the desk. ${systems.filter(([, saved]) => saved).length} of ${systems.length} saved.`,
+      ...(state.vault_problem ? settings : {act: "pw-make-all", button: "Make my passwords"}),
+      done: systems.length > 0 && systems.every(([, saved]) => saved)},
     {name: "Let the desk read emailed codes",
       said: "Optional. Many sites email a code when you sign in. With this, the desk enters it for you.",
       ...settings, href: "#settings/email", done: !!pws.email},
@@ -3047,6 +3094,272 @@ $("remembered").addEventListener("click", async (e) => {
   }
 });
 
+// Accounts and passwords (E4): a row for each job system (the state's password_systems, in the desk's order), what its
+// password is ("Made by the desk on Nov 10", "Saved by you", "None yet"; "Can't tell right now" while the password
+// vault isn't answering), and its buttons: Show, Copy and a More menu (Type my own, Make a new one, Forget) with one
+// saved, Make one and Type my own with none. Show and Copy only on a desk run on its own (inside Claude the desk
+// refuses them). A row's problem (the route's own sentence) shows under it, and the row stays as it was.
+//
+// A password shown lives in one local variable (showPw's, let go at once) and the read-only box's value, nowhere else:
+// never in the row's HTML (patch's data-html), an attribute, the state, storage, a toast or the address. Its row is
+// left out of patch() while it shows (the HTML drawn with the box empty, kept as it was), and the box is emptied on
+// Hide, after PW_SHOWN_FOR, when the page is hidden, when the person leaves the panel, and when the row is drawn again
+const PW_SHOWN_FOR = 30000;  // ms
+const PW_SYSTEMS = {workday: "Workday", successfactors: "SuccessFactors", icims: "iCIMS", applicantstack: "ApplicantStack",
+                    ukg: "UKG Pro", infor: "Infor", taleo: "Taleo", neogov: "NEOGOV"};
+const PW_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const PW_ASK_NEW = (s) => `Make a new ${s} password? At each ${s} employer where you have an account, the desk resets the password to the new one the next time it signs in.`;
+const PW_ASK_FORGET = (s) => `Forget the ${s} password? The desk stops signing in at ${s} employers until one is saved again. Your accounts at the sites are not touched.`;
+const PW_ASK_FORGET_KEY = "Forget the Anthropic API key? The desk stops using it until one is saved again.";
+const PW_NO_CLIPBOARD = "This browser won't let the desk use the clipboard, so nothing was copied.";
+let pwShown = null;  // the row whose password shows: {name, base (its HTML without it), html, box, timer}; never the value
+let pwFormFor = "";  // the row the form is open in (a job system, or "anthropic" for the key): "" for none
+let pwBusy = "";  // the row whose button is being answered
+const pwErr = new Map();  // a row's problem, by its name (a job system, "anthropic", or "all" for Make my passwords)
+const pwName = (site) => PW_SYSTEMS[site] || (site === "anthropic" ? "Anthropic API key" : site);
+const pwKey = (site) => site === "anthropic" ? "anthropic_api_key" : `${site}_password`;
+function pwMadeOn(day) {  // ("2026-11-10": "Nov 10")
+  const m = /^\d{4}-(\d{2})-(\d{2})$/.exec(String(day || ""));
+  return m ? `${PW_MONTHS[Number(m[1]) - 1]} ${Number(m[2])}` : "";
+}
+function pwRow(o, showing) {
+  const site = o.value, name = PW_SYSTEMS[site] || site, saved = !!(state.passwords || {})[site];
+  const made = saved ? pwMadeOn((state.passwords_made || {})[pwKey(site)]) : "";
+  const cantTell = !saved && !!state.vault_problem, own = !!state.standalone, busy = pwBusy === site ? " disabled" : "";
+  const id = `pw-n-${esc(site)}`, of = ` aria-describedby="${id}"`;
+  const said = saved ? (made ? `Made by the desk on ${made}` : "Saved by you") : cantTell ? "Can't tell right now" : "None yet";
+  const employers = String(o.label || "").startsWith(name + ": ") ? o.label.slice(name.length + 2) : "";
+  const btn = (act, words, cls = "") => `<button class="btn sm${cls}" data-pw-act="${act}" data-pw-site="${esc(site)}"${of}${busy}>${words}</button>`;
+  let acts;
+  if (saved) {
+    const menu = `<details class="menu" data-menu="pw-${esc(site)}"><summary class="btn icon sm" data-menu-button="pw-${esc(site)}" aria-label="More"${of} title="More"><svg class="ico" aria-hidden="true"><use href="#i-more"/></svg></summary>
+      <div class="menu-panel" role="group" aria-label="More">${btn("type", "Type my own")}${btn("new", "Make a new one")}${btn("forget", "Forget")}</div></details>`;
+    acts = (own ? (showing ? "" : btn("show", "Show")) + btn("copy", "Copy") : "") + menu;
+  } else {
+    acts = (cantTell ? "" : btn("make", "Make one")) + btn("type", "Type my own");
+  }
+  const err = pwErr.get(site);
+  return `<div class="pw-line" role="row" data-pw="${esc(site)}">
+    <div role="cell"><p class="t" id="${id}">${esc(name)}</p>${employers ? `<p class="s">${esc(employers)}</p>` : ""}</div>
+    <div role="cell"><span class="pill${saved ? " good" : ""}">${said}</span></div>
+    <div class="c-acts" role="cell">${acts}</div>
+    ${showing ? `<div class="pw-shown" role="cell"><input type="text" readonly data-pw-box autocomplete="off" spellcheck="false" aria-label="${esc(name)} password"><button class="btn sm" data-pw-act="hide" data-pw-site="${esc(site)}"${of}>Hide</button></div>` : ""}
+    ${pwFormFor === site ? `<div class="pw-slot" role="cell"></div>` : ""}
+    ${err ? `<p class="set-err" role="alert">${esc(err)}</p>` : ""}</div>`;
+}
+// Each Show (and Copy) is numbered: a hide, and every Show after it, moves the number on, so an answer that comes for an
+// older one is let go unshown (a second Show, or the panel left, while it was asked), and each Show's 30 seconds are its own
+let pwSeq = 0;
+let pwAsking = "";  // the Show being asked, as "site seq" (a second press there while it is the latest asks nothing more)
+// The shown password let go: the box emptied and the row drawn as it was (`draw` false: by renderPasswords itself)
+function hidePw(draw = true) {
+  pwSeq += 1;
+  pwAsking = "";
+  if (!pwShown) return;
+  clearTimeout(pwShown.timer);
+  if (pwShown.box) pwShown.box.value = "";
+  pwShown = null;
+  if (draw && state) renderPasswords();
+}
+// The row's form closed, what was typed in it let go (Close; the panel left; the desk stopping)
+function closePwForm() {
+  pwFormFor = "";
+  $("pw").value = "";
+  $("pw-form-home").append($("pw-form"));
+}
+// The keyboard put back in a row drawn again, where it would otherwise drop to the page: on `prefer` (a button's
+// data-pw-act, or "menu" for its More button) where the row has it, else on its first button
+function pwFocusRow(site, prefer) {
+  const row = $("pw-rows").querySelector(`[data-pw="${CSS.escape(site)}"]`);
+  if (!row) return;
+  const to = (prefer === "menu" ? row.querySelector("summary") : row.querySelector(`[data-pw-act="${prefer}"]`))
+    || row.querySelector(".c-acts button, .c-acts summary");
+  if (to) to.focus();
+}
+const pwFocusLost = () => !document.activeElement || document.activeElement === document.body;
+function renderPasswords() {
+  if (!state) return;
+  const s = state.settings || {}, own = !!state.standalone, systems = state.password_systems || [];
+  const pws = state.passwords || {}, vaultDown = !!state.vault_problem;
+  $("pw-count").textContent = pwSaid();
+  $("pw-count").className = "pill " + (Object.values(pws).some(Boolean) ? "good" : "");
+  // E1: the bargain (its "You can see any of them here." only where Show is), and the sentence that fits Make my
+  // accounts; inside Claude, why there's no Show
+  $("pw-see").hidden = !own;
+  $("pw-accounts").textContent = s.manage_accounts
+    ? "If you already have an account at an employer with a different password, the desk resets that account's password to this one through the site's own Forgot password email, the first time it signs in there."
+    : "If you already have an account at an employer with a different password, the desk can't sign in there until you set this password at the site yourself.";
+  $("pw-inside").hidden = own;
+  $("pw-make-row").hidden = vaultDown || !systems.some((o) => !pws[o.value]);
+  const allErr = pwErr.get("all") || "";
+  $("pw-make-err").textContent = allErr;
+  $("pw-make-err").hidden = !allErr;
+  $("pw-make-all").disabled = pwBusy === "all";
+  const entries = systems.map((o) => {
+    if (pwShown && pwShown.name === o.value) {
+      const base = pwRow(o, false);
+      if (pwShown.base === null) { pwShown.base = base; pwShown.html = pwRow(o, true); }
+      if (base === pwShown.base) return {key: o.value, html: pwShown.html};  // (left as it is: the box keeps its value)
+      hidePw(false);  // (the row changed: drawn again, and the password let go)
+      return {key: o.value, html: base};
+    }
+    return {key: o.value, html: pwRow(o, false)};
+  });
+  if (pwShown && !systems.some((o) => o.value === pwShown.name)) hidePw(false);
+  // (the form held here: a row drawn again takes the form out of the page with it, and it's put back below)
+  const form = $("pw-form"), box = $("pw"), st = $("pw-state");
+  const formHad = form.contains(document.activeElement);
+  patch($("pw-rows"), entries);
+  // (an open More menu stays open when its row is drawn again: the row's HTML never says whether it's open)
+  for (const d of $("pw-rows").querySelectorAll("details.menu[data-menu]")) d.open = d.dataset.menu === menuOpen;
+  // the form, in the row it was opened in (or kept out of sight), with whether that one is saved
+  if (pwFormFor && pwFormFor !== "anthropic" && !systems.some((o) => o.value === pwFormFor)) pwFormFor = "";
+  const slot = (!pwFormFor ? null : pwFormFor === "anthropic" ? $("pw-key-slot")
+    : $("pw-rows").querySelector(`[data-pw="${CSS.escape(pwFormFor)}"] .pw-slot`)) || $("pw-form-home");
+  if (form.parentElement !== slot) slot.append(form);
+  if (formHad && !form.contains(document.activeElement)) box.focus({preventScroll: true});
+  const on = !!pwFormFor && !!pws[pwFormFor];
+  const pill = on ? `<span class="pill good" data-site="${esc(pwFormFor)}">${esc(pwName(pwFormFor))}: saved</span>` : "";
+  if (st.dataset.html !== pill) { st.innerHTML = pill; st.dataset.html = pill; }
+  st.hidden = !on;
+  box.setAttribute("aria-label", pwFormFor ? `${pwName(pwFormFor)} password` : "Password");
+  // the API key's row
+  const key = !!pws.anthropic;
+  $("pw-key-state").textContent = key ? "Saved" : "Not saved";
+  $("pw-key-state").className = key ? "pill good" : "pill";
+  $("pw-key-forget").hidden = !key;
+  for (const b of $("pw-key").querySelectorAll(".acts button")) b.disabled = pwBusy === "anthropic";
+  const keyErr = pwErr.get("anthropic") || "";
+  $("pw-key-err").textContent = keyErr;
+  $("pw-key-err").hidden = !keyErr;
+  // (the shown password's row drawn again after all: let go, and drawn without it)
+  if (pwShown && pwShown.box && !pwShown.box.isConnected) { hidePw(false); renderPasswords(); }
+}
+// The form opened in a row (Type my own; Save a key): the box emptied, and the keyboard put in it
+function openPwForm(site) {
+  pwFormFor = site;
+  $("pw").value = "";
+  renderPasswords();
+  $("pw").focus();
+}
+// A row's button answered: the row's problem (the route's own sentence) said under it, the row otherwise as it was
+// (and the keyboard back in the row, on `prefer` where it has it, when the row drawn again took it away)
+async function pwSend(site, send, prefer = "") {
+  pwErr.delete(site);
+  pwBusy = site;
+  changes += 1;  // (a state asked before this is out of date when it comes: load)
+  busy = true;
+  renderPasswords();
+  let ok = true;
+  try { await send(); } catch (e) { ok = false; pwErr.set(site, e.message || "That didn't go through."); }
+  pwBusy = "";
+  busy = false;
+  renderPasswords();
+  await refresh();
+  if (prefer && pwFocusLost()) pwFocusRow(site, prefer);
+  return ok;
+}
+// Make my passwords (the panel's and Getting started's): one for each job system that has none
+function makeAllPw() {
+  if (document.body.dataset.panel === "passwords") return pwSend("all", () => api("/api/password/make", {}));
+  return act(() => api("/api/password/make", {}));
+}
+// Show: asked of the desk, put in the row's box, and let go of here at once
+// (an answer still wanted: its Show the latest, on the panel, the page in sight, the desk not stopping)
+const pwOnPanel = () => !stopped && document.body.dataset.panel === "passwords" && document.visibilityState === "visible";
+const pwStillWanted = (seq) => seq === pwSeq && pwOnPanel();
+const PW_ASK_FOR = 15000;  // ms: a Show the desk hasn't answered by then is given up, and its row hears presses again
+async function showPw(site) {
+  if (pwAsking === `${site} ${pwSeq}`) return;  // (pressed again while it's asked: the one answer is enough)
+  hidePw();
+  const seq = ++pwSeq;
+  pwAsking = `${site} ${seq}`;
+  pwErr.delete(site);
+  // (no answer in PW_ASK_FOR: said in the row, and that request's answer let go if it ever comes)
+  const giveUp = setTimeout(() => {
+    if (pwAsking !== `${site} ${seq}`) return;
+    pwAsking = "";
+    pwSeq += 1;
+    pwErr.set(site, "It couldn't be shown.");
+    renderPasswords();
+  }, PW_ASK_FOR);
+  let value = "";
+  try { value = String((await api("/api/password/show", {name: pwKey(site)})).value || ""); } catch (e) {
+    clearTimeout(giveUp);
+    if (seq === pwSeq) { pwAsking = ""; pwErr.set(site, e.message || "It couldn't be shown."); renderPasswords(); }
+    return;
+  }
+  clearTimeout(giveUp);
+  // (another Show, Hide, the panel left or the page hidden while it was asked: let go, never shown)
+  if (!pwStillWanted(seq)) { value = ""; return; }
+  pwAsking = "";
+  pwShown = {name: site, base: null, html: "", box: null, timer: 0, seq};
+  renderPasswords();
+  const box = $("pw-rows").querySelector(`[data-pw="${CSS.escape(site)}"] [data-pw-box]`);
+  if (!pwShown || pwShown.seq !== seq || !box) { value = ""; hidePw(); return; }
+  box.value = value;
+  value = "";
+  pwShown.box = box;
+  // (its own 30 seconds: a timer of an earlier Show never hides this one)
+  pwShown.timer = setTimeout(() => {
+    if (!pwShown || pwShown.seq !== seq) return;
+    hidePw();
+    if (pwFocusLost()) pwFocusRow(site, "show");
+  }, PW_SHOWN_FOR);
+  box.focus();
+}
+// Copy: asked of the desk and put on the clipboard; never drawn on the page. Its own number, which only a newer Copy and
+// the ways out move on (the panel or Settings left, the page hidden, the desk stopping: pwLetGo): a Show, a Hide or the
+// 30 seconds meanwhile never drop it
+let pwCopySeq = 0;
+async function copyPw(site) {
+  pwErr.delete(site);
+  if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
+    pwErr.set(site, PW_NO_CLIPBOARD);
+    renderPasswords();
+    return;
+  }
+  const seq = ++pwCopySeq;
+  let value = "";
+  try {
+    value = String((await api("/api/password/show", {name: pwKey(site)})).value || "");
+  } catch (e) {
+    if (seq === pwCopySeq) { pwErr.set(site, e.message || "It couldn't be copied."); renderPasswords(); }
+    return;
+  }
+  if (seq !== pwCopySeq || !pwOnPanel()) { value = ""; return; }
+  try { await navigator.clipboard.writeText(value); toast("Copied."); } catch (e) { pwErr.set(site, PW_NO_CLIPBOARD); }
+  value = "";
+  renderPasswords();
+}
+// The ways out of the panel (Settings or the panel left, the desk stopping): a shown password let go, a Copy being
+// asked never copied, and the form closed with what was typed in it
+function pwLetGo() {
+  hidePw(false);
+  pwCopySeq += 1;
+  closePwForm();
+}
+$("pw-rows").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-pw-act]");
+  if (!b || b.disabled) return;
+  const site = b.dataset.pwSite, act = b.dataset.pwAct, name = PW_SYSTEMS[site] || site;
+  const menu = b.closest("details.menu");
+  if (menu) {  // (a choice closes its menu, the keyboard back on its button)
+    menuOpen = "";
+    menu.open = false;
+    menu.querySelector("summary").focus();
+  }
+  if (act === "show") showPw(site);
+  else if (act === "hide") { hidePw(); $("pw-rows").querySelector(`[data-pw="${CSS.escape(site)}"] [data-pw-act=show]`)?.focus(); }
+  else if (act === "copy") copyPw(site);
+  else if (act === "make") pwSend(site, () => api("/api/password/make", {name: pwKey(site)}), "show");
+  else if (act === "type") openPwForm(site);
+  else if (act === "new") { if (confirm(PW_ASK_NEW(name))) pwSend(site, () => api("/api/password/make", {name: pwKey(site), replace: true}), "menu"); }
+  else if (act === "forget") { if (confirm(PW_ASK_FORGET(name))) pwSend(site, () => api("/api/password/forget", {name: pwKey(site)}), "menu"); }
+});
+// (the page hidden: a shown password let go, and a Copy being asked never copied)
+document.addEventListener("visibilitychange", () => { if (document.visibilityState !== "visible") { hidePw(); pwCopySeq += 1; } });
+
 // a problem the desk says in a sentence of its own ("The desk couldn't read your email: ..."): "Problem: the desk ..."
 const problemSaid = (html) => "Problem: " + String(html).replace(/^(The|Your|A|This) /, (w) => w.toLowerCase());
 
@@ -3156,25 +3469,6 @@ function renderHeader() {
   $("letters-hint").textContent = !s.cover_letters ? "Off: your usual cover letter, if you have one, goes in."
     : s.cover_letters_approved ? `On: Claude writes one for each job, with ${writer}.`
     : `On: Claude writes one for each job, with ${writer}; the first waits for your OK.`;
-  const systems = {workday: "Workday", successfactors: "SuccessFactors", icims: "iCIMS", applicantstack: "ApplicantStack",
-                   ukg: "UKG Pro", infor: "Infor", taleo: "Taleo", neogov: "NEOGOV", email: "Email", anthropic: "Anthropic API key"};
-  // the systems named with the employers on the person's own lists (the page's own list until then)
-  const pick = $("pw-site");
-  const named = (state.password_systems || []).map((o) => `${o.value}\u0000${o.label}`).join("\n");
-  if (named && pick.dataset.named !== named && document.activeElement !== pick) {
-    const chosen = pick.value;
-    const own = [...pick.options].filter((o) => o.value === "email" || o.value === "anthropic");
-    pick.replaceChildren(...state.password_systems.map((o) => new Option(o.label, o.value)), ...own);
-    pick.value = [...pick.options].some((o) => o.value === chosen) ? chosen : pick.options[0].value;
-    pick.dataset.named = named;
-  }
-  const pws = Object.entries(state.passwords || {});
-  $("pw-count").textContent = pwSaid();
-  $("pw-count").className = "pill " + (pws.some(([, saved]) => saved) ? "good" : "");
-  // a pill for each one saved (the count says how many aren't): no row of grey "not saved" on a first visit
-  $("pw-state").innerHTML = pws.filter(([, saved]) => saved).map(([site]) =>
-    `<span class="pill good" data-site="${esc(site)}">${esc(systems[site] || site)}: saved</span>`).join(" ");
-  $("pw-state").hidden = !pws.some(([, saved]) => saved);
   const notes = [];
   const waiting = allRuns().find((r) => r.blocking);
   // what to do is in its Needs you card; here, only which job the queue is waiting on
@@ -3886,6 +4180,8 @@ function route() {
     if (a.getAttribute("href") === "#" + page) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   }
   if (moved) $("content").scrollTop = 0;  // (a page starts at its top, not where the last one was left)
+  // (Accounts and passwords left: a password shown there let go, and the form closed with what was typed in it)
+  if (panel !== "passwords") pwLetGo();
   // (Your answers' remembered answers: asked of the desk each time the page opens; left, an ID shown is dots again and
   // a change not saved is let go)
   if (moved && page === "answers") loadRemembered();
@@ -3928,6 +4224,7 @@ function render() {
   renderProgram();
   renderUpdate();
   renderSettingsRows();
+  renderPasswords();
   announce();
   // (a profile that lacks what an application needs: Set up your profile, once a visit, over no other window)
   const missing = (state.profile || {}).missing || [];
@@ -3948,6 +4245,7 @@ let loadingAt = -1;  // the changes the refresh under way was asked after
 // say so, and closes its window where the browser lets a page close its own (else the words stay, and say to close it)
 function stopPage() {
   stopped = true;
+  pwLetGo();  // (a password shown on Accounts and passwords let go, and the form closed)
   document.title = "Job Desk";
   document.body.classList.add("stopped");
   $("stopped").hidden = false;
@@ -3993,6 +4291,7 @@ async function load(at = changes) {
     if (updateDown || (e.status === undefined && up && UPDATING.includes(up.progress))) {
       if (e.status === 403) {  // (the updated desk, with its own key and window)
         stopped = true;
+        pwLetGo();  // (as stopPage does)
         $("notices").innerHTML = `<p class="notice info">The Job Desk opened again in a window of its own. You can close this one.</p>`;
         window.close();
         return;
@@ -4097,7 +4396,6 @@ function renderSettingsRows() {
   if (!$("mail-test").dataset.saving) $("mail-test").disabled = !mailSaved;
   $("set-email-codes-row").hidden = !!state.standalone;
   $("mail-claude").hidden = !!state.standalone;  // (Claude reads codes through Gmail only inside Claude)
-  $("pw-claude").hidden = !!state.standalone;  // ("Claude never sees it": only where Claude is)
   // Resume and cover letters: the files' names (never their paths), and the twins of the apply bar's Tailor my resume
   // and Cover letter, from the same state as theirs
   const docs = p.documents || {};
@@ -4494,6 +4792,17 @@ document.addEventListener("click", (e) => {
   if (a === "update-check") saveRow(t, () => api("/api/update/check", {}));  // (Check now: the server keeps its pace)
   if (a === "update-start") updateNow(t);
   if (a === "mail-test") mailTest(t);
+  // Accounts and passwords (E4): Make my passwords (here and in Getting started), the API key's row, the form's Close
+  if (a === "pw-make-all") makeAllPw();
+  if (a === "pw-key-save") openPwForm("anthropic");
+  if (a === "pw-key-forget" && confirm(PW_ASK_FORGET_KEY)) pwSend("anthropic", () => api("/api/password/forget", {name: "anthropic_api_key"}));
+  if (a === "pw-form-close") {
+    const was = pwFormFor;
+    closePwForm();
+    renderPasswords();
+    (was === "anthropic" ? $("pw-key").querySelector("[data-act=pw-key-save]")
+      : $("pw-rows").querySelector(`[data-pw="${CSS.escape(was)}"] [data-pw-act=type], [data-pw="${CSS.escape(was)}"] summary`))?.focus();
+  }
   if (a === "set-resume") $("set-resume-file").click();  // (the file picked: documentPicked)
   if (a === "set-letter") $("set-letter-pick").click();
   if (a === "set-letter-remove") saveRow(t, () => api("/api/profile/document", {kind: "cover_letter", remove: true}));
@@ -4705,13 +5014,14 @@ $("area-form").addEventListener("submit", (e) => {
   });
 });
 
+// The row's form (Type my own; the key's Save a key): what's typed goes to /api/password alone, for the row it's open in,
+// and the box is emptied once it's saved; the form stays open, #pw-state saying it's saved, until Close
 $("pw-form").addEventListener("submit", (e) => {
   e.preventDefault();
-  const box = $("pw"), value = box.value;
-  if (!value.trim()) { alert("Type the password first."); return; }
-  const site = $("pw-site").value;
-  const name = site === "anthropic" ? "anthropic_api_key" : `${site}_password`;
-  act(async () => { await api("/api/password", {name, value}); box.value = ""; });
+  const box = $("pw"), site = pwFormFor;
+  if (!site) return;
+  if (!box.value.trim()) { pwErr.set(site, "Type the password first."); renderPasswords(); return; }
+  pwSend(site, async () => { await api("/api/password", {name: pwKey(site), value: box.value}); box.value = ""; });
 });
 
 // Email codes: the email's app password, saved by the same call as the Site passwords card's (/api/password, to the

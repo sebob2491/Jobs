@@ -210,6 +210,8 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
                 }""", timeout=20000)
 
                 await press_menu(page, "settings/passwords")
+                # (each job system its own row, its Type my own opening the form in it: the design's E4)
+                await page.click("[data-pw=workday] [data-pw-act=type]")
                 await page.fill("#pw", "typed-on-the-page")
                 await page.click("#pw-form button[type=submit]")
                 await page.wait_for_selector("#pw-state [data-site=workday].good")
@@ -220,8 +222,8 @@ def test_desk_page_buttons_reach_the_api(srv, tmp_path):
                 # another system's password (Edwards, Qorvo and Amkor are on SuccessFactors), named
                 # with the employers on the person's lists that use it
                 assert await page.locator("#pw-state [data-site=successfactors].good").count() == 0
-                assert "Edwards" in await page.locator("#pw-site option[value=successfactors]").inner_text()
-                await page.select_option("#pw-site", "successfactors")
+                assert "Edwards" in await page.locator("#pw-rows [data-pw=successfactors]").inner_text()
+                await page.click("[data-pw=successfactors] [data-pw-act=type]")
                 await page.fill("#pw", "another-one")
                 await page.click("#pw-form button[type=submit]")
                 await page.wait_for_selector("#pw-state [data-site=successfactors].good")
@@ -3176,7 +3178,8 @@ def test_the_desk_page_fits_its_window(srv, width):
             async with person_browser() as browser:
                 page = await browser.new_page(viewport={"width": width, "height": 900})
                 await page.goto(desk.url)
-                await page.wait_for_selector("#pw-site option", state="attached")
+                # (each job system's row, named with its employers, where the list's choices were: the design's E4)
+                await page.wait_for_selector("#pw-rows [data-pw]", state="attached")
                 sizes = await page.evaluate("() => [document.documentElement.scrollWidth, "
                                             "document.documentElement.clientWidth]")
                 await browser.close()
@@ -6330,6 +6333,11 @@ def test_the_common_questions_show_the_most_asked_four_and_site_passwords_only_t
                                                               "bs => bs.map((b) => b.dataset.bank)")
                 config.secrets_path().write_text("workday_password: a\n", encoding="utf-8")
                 await press_menu(page, "settings/passwords")
+                # (the form, whose #pw-state says whether its job system's is saved, opened in Workday's row from its
+                # More menu once the row says it's saved: E4)
+                await page.wait_for_selector("[data-pw=workday] summary")
+                await page.click("[data-pw=workday] summary")
+                await page.click("[data-pw=workday] [data-pw-act=type]")
                 await page.wait_for_selector("#pw-state [data-site=workday]")
                 seen["saved"] = await page.eval_on_selector_all("#pw-state .pill", "ps => ps.map((p) => p.innerText)")
                 seen["count_saved"] = await page.inner_text("#pw-count")
@@ -6379,7 +6387,9 @@ def test_the_preflight_dialog_defaults_to_seeing_to_things_first(srv, job_apply_
                 await page.wait_for_selector("#preflight", state="hidden")
                 await page.wait_for_timeout(500)
                 seen["after_enter"] = list(desk.applier.tasks)
-                seen["picked"] = await page.input_value("#pw-site")
+                # (the job system picked: the row its form is open in, the design's E4)
+                seen["picked"] = await page.evaluate("document.getElementById('pw-form').closest('[data-pw]')"
+                                                     ".dataset.pw")
                 seen["pw_focused"] = await page.evaluate("document.activeElement.id")
                 seen["pw_in_view"] = await page.evaluate("(() => { const r = document.getElementById('pw-h')"
                                                          ".getBoundingClientRect(); "

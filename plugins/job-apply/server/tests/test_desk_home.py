@@ -537,16 +537,16 @@ _START = """() => {
       l.querySelector('.itico use').getAttribute('href'),
       [...l.querySelectorAll('.acts .btn')].map((b) => [b.innerText, b.dataset.act || b.getAttribute('href')])]) : []};
 }"""
-_NAMES = ["Set up your profile", "Choose what to look for, and where", "Save your site passwords",
+# (the third line as the design's E4 words it: Make your site passwords, with Make my passwords)
+_NAMES = ["Set up your profile", "Choose what to look for, and where", "Make your site passwords",
           "Let the desk read emailed codes", "Answer the common questions", "Find jobs", "Apply to your first job"]
 _SAID = ["Your details, your work history and your resume.", "The job titles and the places Find jobs searches.",
-         "The desk signs in with them and makes your accounts. {pw}.",
+         "One strong password for each job system, made and kept by the desk. {pw}.",
          "Optional. Many sites email a code when you sign in. With this, the desk enters it for you.",
          "{bank}. Each answer is one stop fewer.", "Search the employers on your lists.",
          "Tick an opening and press Apply. Nothing is sent until you press Submit."]
-# (the two Open Settings to the panel each password is on: the job systems' on Accounts and passwords, the inbox's
-# app password on Email codes: the design's D1 and D3)
-_BUTTONS = [["Set up", "setup"], ["Choose", "area"], ["Open Settings", "#settings/passwords"],
+# (Open Settings to the panel the inbox's app password is on, Email codes: the design's D1 and D3)
+_BUTTONS = [["Set up", "setup"], ["Choose", "area"], ["Make my passwords", "pw-make-all"],
             ["Open Settings", "#settings/email"],
             ["Answer them", "#answers"], ["Find jobs", "find"], ["Go to Openings", "#openings"]]
 
@@ -564,7 +564,8 @@ def _question(n: int, answer: str | None) -> dict:
 def test_getting_started_ticks_each_line_by_its_rule_and_goes_for_good(srv, job_apply_home, monkeypatch):
     """C9's test 9. Getting started, at the top of Home: seven lines, each ticked, dimmed and without its button exactly
     when its rule says, and "n of 7 done" beside the title. Its numbers are the Your answers page's, and the job
-    systems' passwords saved (the line is done with one of them; the inbox's password and the API key aren't counted).
+    systems' passwords saved (the line is done with every one of them, the design's E4; the inbox's password and the
+    API key aren't counted).
     The setup window still opens by itself while the profile is incomplete. The card goes for good once lines 1, 2, 6
     and 7 are done (even if one of them comes undone after), and "Hide this" puts it away across a reload."""
     state = Desk.state
@@ -583,8 +584,9 @@ def test_getting_started_ticks_each_line_by_its_rule_and_goes_for_good(srv, job_
                "passwords": {"workday": False, "icims": False, "email": True, "anthropic": False},
                "bank": [_question(1, "Yes"), _question(2, None), _question(3, "")],
                "search": {"status": "idle", "at": None}, "listings": [], "others": [], "applications": []}
-    # Five done: the profile, what and where, a job system's password, every common question, and an opening found
-    # (the desk's own, below; never searched here); not the inbox's password, and no job begun
+    # Four done: the profile, what and where, every common question, and an opening found (the desk's own, below;
+    # never searched here); one job system's password of two (E4: done with every one), not the inbox's password,
+    # and no job begun
     some = {"profile": {"missing": []}, "area": {"titles": ["Technician"], "places": ["Phoenix, AZ"]},
             "passwords": {"workday": True, "icims": False, "email": False, "anthropic": True},
             "bank": [_question(1, "Yes"), _question(2, "No")], "search": {"status": "idle", "at": None},
@@ -622,6 +624,10 @@ def test_getting_started_ticks_each_line_by_its_rule_and_goes_for_good(srv, job_
                 await open_desk(page, desk, "home")
                 await page.wait_for_selector("#start-lines > .item")
                 seen["some"] = await page.evaluate(_START)
+                # (every job system's password saved: the line done at the next refresh)
+                over.update({"passwords": {"workday": True, "icims": True, "email": False, "anthropic": True}})
+                await page.wait_for_selector("#start-count:text('5 of 7 done')")
+                seen["every"] = await page.evaluate(_START)
                 over.update(four)  # (the card goes at the next refresh)
                 await page.wait_for_selector("#start", state="hidden")
                 seen["four"] = await page.evaluate(_START)
@@ -644,9 +650,12 @@ def test_getting_started_ticks_each_line_by_its_rule_and_goes_for_good(srv, job_
                                                "1 of 3 answered")}, seen["nothing"]
     assert seen["first"] == ["start", "tile-needs"], seen["first"]
     assert seen["hidden"]["shown"] is False, seen["hidden"]
-    assert seen["some"] == {"shown": True, "count": "5 of 7 done",
-                            "lines": _lines([True, True, True, False, True, True, False], "1 of 2 saved",
+    assert seen["some"] == {"shown": True, "count": "4 of 7 done",
+                            "lines": _lines([True, True, False, False, True, True, False], "1 of 2 saved",
                                             "2 of 2 answered")}, seen["some"]
+    assert seen["every"] == {"shown": True, "count": "5 of 7 done",
+                             "lines": _lines([True, True, True, False, True, True, False], "2 of 2 saved",
+                                             "2 of 2 answered")}, seen["every"]
     assert seen["four"]["shown"] is False, seen["four"]
     assert seen["for good"]["shown"] is False, seen["for good"]
 

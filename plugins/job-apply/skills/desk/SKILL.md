@@ -42,8 +42,8 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   Workday's work and education blocks, and stops at each review page. Before they go, it says what will stop
   them: a job system with no saved password, no email app password for sites that email a
   code, common questions not answered yet, in a window whose default button is **See to these
-  first** (it takes the user to the card for the first one: the Site passwords card under
-  Settings, Accounts and passwords with that job system picked, or Common questions; Enter never applies); **Apply anyway** goes ahead.
+  first** (it takes the user to the card for the first one: the Accounts and passwords panel under
+  Settings with that job system's row open, or Common questions; Enter never applies); **Apply anyway** goes ahead.
   A posting the site says has closed or been filled is skipped by itself (its card quotes
   the site; Undo puts it back). A saved draft's **Continue Application** is the way in
   when it's the page's only one and the draft is this job's. Its answers are checked
@@ -122,11 +122,11 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
   Claude, `report_problem(job_id, anonymous=True)`) makes it again with only the job system
   and where it stopped: no employer (by any name a page gives it, its parent group's too), job
   title, place, address or requisition number in the issue or the saved pages. Offer it when the user would rather not show which job they applied for.
-- **Settings, Accounts and passwords** (its Site passwords card) stores one password per job system: Workday, SuccessFactors, iCIMS,
+- **Settings, Accounts and passwords** keeps one password per job system (**Make my passwords** makes a strong one for each that has none; **Type my own** saves one typed): Workday, SuccessFactors, iCIMS,
   ApplicantStack, UKG Pro, Infor, Taleo (Kforce's; where Taleo asks for a user name, the desk
   uses the profile email as it) or NEOGOV (governmentjobs.com: one account for every public agency there). The page names, by each system, the employers on the
   user's own lists that use it (on the semiconductor list, Workday has 15 of them; on the
-  Phoenix list, 27). A pill shows each one saved, and the card's count says how many of
+  Phoenix list, 27). Each job system has its row, saying whether the desk made its password or the user typed it (and, on a desk opened on its own, Show and Copy), and the card's count says how many of
   them are. Each employer has its own account. With a password saved, the desk signs in by itself
   (pressing the sign-in form's own button, whatever it reads: SuccessFactors' says "Submit")
   and creates the account from Create Account forms (email, password, name and country from

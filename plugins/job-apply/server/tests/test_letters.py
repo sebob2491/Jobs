@@ -1863,7 +1863,8 @@ def test_the_desk_saves_an_api_key_and_says_whether_one_is_saved(job_apply_home)
     config.save_site_password(config.API_KEY_NAME, KEY)
     assert config.get_secret(config.API_KEY_NAME) == KEY
     html = (Path(letters.__file__).parent / "static" / "desk.html").read_text(encoding="utf-8")
-    assert '<option value="anthropic">' in html and '"anthropic_api_key"' in html
+    # (the key's own row under Accounts and passwords' table, where the job system list's choice was: the design's E4)
+    assert 'id="pw-key" data-pw="anthropic"' in html and '"anthropic_api_key"' in html
 
 
 def test_an_api_keys_request_stays_within_its_time_and_goes_where_its_key_says(fake_api, loop, monkeypatch):
