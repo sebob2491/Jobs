@@ -114,6 +114,7 @@ class MailMixin:
         mail_watchers: int
         mail_watched_at: float
         _closing: bool
+        updating: bool
         _wake: asyncio.Event
 
         def _inbox_holder(self, run: Run) -> Run | None: ...
@@ -193,7 +194,9 @@ class MailMixin:
 
     async def _check_mail_safely(self, run: Run) -> None:
         """_check_mail, with any surprise in it (a profile.yaml typo, say) kept from stalling the
-        queue: the hold's long-wait release and the other jobs still go on."""
+        queue: the hold's long-wait release and the other jobs still go on. Not while an update holds the applier."""
+        if self.updating:
+            return
         try:
             await self._check_mail(run)
         except Exception as e:
@@ -370,7 +373,10 @@ class MailMixin:
 
     async def _use_mail(self, run: Run, found: mailbox.Found, asked: float) -> None:
         """A code or link found in the job's mail (its inbox's, or the Gmail messages Claude handed back): put in, or
-        opened in its own tab, unless another job's or spent."""
+        opened in its own tab, unless another job's or spent. Never once an update holds the applier (set while the
+        inbox was read): the desk is about to quit."""
+        if self.updating:
+            return
         # (a code, and a reset's link: a confirmation link is the account's, and two jobs on one site share one: the
         # review)
         mail = (found.sender, found.value, found.received) if found.kind in ("code", "reset") else None

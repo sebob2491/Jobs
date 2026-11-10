@@ -2465,8 +2465,12 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         waits."""
         now = time.time()
         for run in [r for r in self.runs.values() if r.retry_at and r.retry_at <= now and r.job_id not in self._slots]:
+            if self.updating:  # (an update's hold: nothing looked at or queued again)
+                return
             try:
                 why = await self._touched_since_stop(run)
+                if self.updating:
+                    return
                 if not run.retry_at:  # (ended meanwhile: Skip, Carry on)
                     continue
                 if why:
@@ -2503,6 +2507,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         """Between jobs: carry on with any the queue went on without whose tab the person has
         since got past its sign-in, check or code. A closed tab waits for Resume."""
         for run in [r for r in self.runs.values() if r.left and r.status == "needs_you" and not r.blocking]:
+            if self.updating:  # (an update's hold, set before or during a look: nothing typed in or carried on)
+                return
             if run.page is None or self.srv.browser.lost(run.page):
                 continue
             if run.job_id in self._slots:  # (its pass isn't over: the page it stopped on is being saved in its tab)
@@ -2517,6 +2523,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                     moved = await self._past_pause(run)
                 except Exception:  # a tab mid-way through loading: looked at again next time, not holding the rest
                     continue
+            if self.updating:
+                return
             if moved and run.left and run.status == "needs_you":
                 # (carried on by itself: the person may have changed later pages of a saved draft by hand in its tab,
                 # or put a file of their own in its upload)
@@ -2831,11 +2839,18 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         self._resume_tailored()
         self._letters_retry()
         await self._retry_due()  # (a job stopped on the site's error, its try by itself due: back in the queue)
+        # (and after every await below: an update's hold set meanwhile ends the tick there, nothing begun or put in)
+        if self.updating:
+            return
         await self._front_next()
+        if self.updating:
+            return
         # the person at a job in a round (a bot check, a review page): nothing else started over it, a solved check
         # noticed; a Submit they pressed (the round's own "Submit this one") still goes
         if self._in_round() and not any(t[0] == "submit" for t in self.tasks):
             await self._pick_up_left()
+            if self.updating:
+                return
             self._wake.clear()
             await self._sleep(POLL_SECONDS)
             return
@@ -2853,6 +2868,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                 # paused for the person while they were at another job's tab: theirs now, its tab brought up (once
                 # they're done there), and the wait for them in it begins then
                 await self._bring_forward(blocker)
+                if self.updating:
+                    return
                 if blocker.job_id not in self._behind:
                     blocker.active_at = time.time()
             if blocker.need == "email_code":
@@ -2861,6 +2878,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                 moved = await self._strict(self._moved_on(blocker))
             except Exception:  # a tab that can't be read just now (mid-load, crashed): not past it, and the
                 moved = False  # idle and long-wait releases below still apply
+            if self.updating:
+                return
             if not moved and self._reset_overdue(blocker):
                 blocker.reset_no_mail = moved = True  # (none it could use: as above)
             if time.time() - blocker.paused_at > HANDS_ON_TIMEOUT:
@@ -2892,6 +2911,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                 await self._sleep(self._poll_for([blocker]))
                 return
         await self._pick_up_left()
+        if self.updating:
+            return
         if not self.tasks:
             self._wake.clear()
             # with a job left waiting on the person, look at its tab again soon
@@ -2926,6 +2947,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         if task is None:  # each waits for a job under way on its site
             self._wake.clear()
             await self._sleep(POLL_SECONDS)
+            return
+        if self.updating:  # (the point of no return: no await since the last look, but said here too)
             return
         self.pressed.discard(task[1])
         self._first.discard(task[1])
@@ -5966,7 +5989,10 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
     async def _bring_forward(self, run: Run) -> None:
         """Bring the job's tab to the front for the person: never over another job's tab they're at for the desk (a
         round, a pause that needs their hands, or a sign-in they're still at work in after the queue went on): this one
-        is brought up after that (_front_next, or as it holds the queue in turn)."""
+        is brought up after that (_front_next, or as it holds the queue in turn). Never while an update holds the
+        applier."""
+        if self.updating:
+            return
         if self._person_at(run) is not None:
             self._behind.add(run.job_id)
             return

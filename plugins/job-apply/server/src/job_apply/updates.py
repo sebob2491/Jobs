@@ -66,10 +66,6 @@ MAX_REDIRECTS = 5
 # could leave a copy that won't open), for the person alone (never an administrator), no restart, and the desk opened
 # again afterwards (JobDeskSetup.iss: Relaunch). /LOG= follows, with a path under `updates`
 INSTALLER_ARGS = ("/SILENT", "/NOCANCEL", "/CURRENTUSER", "/NORESTART", "/RELAUNCH=1")
-# What of the desk's environment the installer isn't handed (besides letters.child_env's: the desk's secrets, the live
-# check's, the Claude Code session's marks): what signs in to Anthropic. It needs none of it, and the desk it opens
-# again reads the key the person saved on the desk
-INSTALLER_ENV_DROPS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
 UNDER_WAY = ("downloading", "installing", "updating")
 UPDATED_TO = "updated-to"  # (in `updates`: the version an installer was started for, said once by the desk it opens)
 INSTALLER_SETTLE = 5.0  # seconds the installer is watched before the desk stops for it: one that ended by then didn't
@@ -166,22 +162,18 @@ def updates_folder() -> Path:
     return config.home() / "updates"
 
 
-def installer_env() -> dict[str, str]:
-    """The environment the installer is started with: the desk's, less what letters.child_env leaves out of any child
-    (the desk's secrets, the live check's, the Claude Code session's marks) and INSTALLER_ENV_DROPS. What Windows and
-    the installer need (SystemRoot, TEMP, LOCALAPPDATA, USERPROFILE, PATH and the like) goes as it is."""
-    return {k: v for k, v in letters.child_env().items() if k.upper() not in INSTALLER_ENV_DROPS}
-
-
 def start_installer(installer: Path, log: Path, popen: Callable[..., Any] | None = None) -> Any:
     """Start a downloaded installer on its own (window.start_detached: it outlives the desk, out of the desk's job),
-    with exactly INSTALLER_ARGS and /LOG=`log`, never through a shell, nothing of the desk's in its input or output,
-    and installer_env() for its environment. Gives back what `popen` (subprocess.Popen) gave. Where Windows won't start
+    with exactly INSTALLER_ARGS and /LOG=`log`, never through a shell, nothing of the desk's in its input or output.
+    Gives back what `popen` (subprocess.Popen) gave. Where Windows won't start
     it outside the desk's job, nothing is started (window.BreakawayRefused): inside it, the desk's stopping could take
     the installer with it part-way. The installer workflow's update step calls this too, with the installer it built."""
+    # (the desk's own environment, as it is: the installer opens the desk again and hands it on, so a password or key
+    # set there would be lost to the reopened desk until its next start; and a desk started from the Start menu has
+    # just what a double-clicked installer gets, so leaving them out of the installer would keep nothing from it)
     process, _ = window.start_detached([str(installer), *INSTALLER_ARGS, f"/LOG={log}"], popen=popen, fallback=False,
                                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                       stderr=subprocess.DEVNULL, env=installer_env())
+                                       stderr=subprocess.DEVNULL)
     return process
 
 

@@ -687,10 +687,14 @@ class Desk:
 
     def _filling(self) -> bool:
         """Is a job being filled now, or about to be: its pass's task made (the applier's _slots, from the moment the
-        queue begins it, before its first step runs), its step holding the browser, or its run running?"""
+        queue begins it, before its first step runs), its step holding the browser, its run running, or what the
+        person asked for that waits its turn in the applier's tasks and goes even while the queue is paused (a Submit
+        they pressed, a job they pressed Carry on for or answered: pressed)? A job merely queued isn't: the update's
+        pause holds it, and it's kept for after."""
         a = self.applier
         return (a.current is not None or bool(a._slots)
-                or any(run.status == "running" for run in a.runs.values()))
+                or any(run.status == "running" for run in a.runs.values())
+                or any(kind == "submit" or job_id in a.pressed for kind, job_id in a.tasks))
 
     def _pause_for_update(self) -> Callable[[], None]:
         """The queue paused for an update, as the Pause queue button pauses it (queue_view), and the applier held

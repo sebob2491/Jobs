@@ -567,24 +567,20 @@ def test_an_installer_windows_wont_start_outside_the_desks_job_fails_the_update_
     assert (_folder() / "JobDeskSetup-0.4.4.exe").read_bytes() == INSTALLER  # (kept, for Update now again)
 
 
-def test_the_installer_is_handed_none_of_the_desks_secrets(copy, loop, monkeypatch):
-    """The installer gets the environment any child of the desk's that mustn't see its secrets gets
-    (letters.child_env), less what signs in to Anthropic: never a saved password's variable, the live check's, or the
-    API key. What Windows needs to run it goes as it is."""
-    secrets = {"JOB_APPLY_SECRET_WORKDAY": "made-up-1", "LIVE_TEST_EMAIL_PASSWORD": "made-up-2",
-               "ANTHROPIC_API_KEY": "made-up-3", "CLAUDE_CODE_OAUTH_TOKEN": "made-up-4", "CLAUDECODE": "made-up-5"}
-    for k, v in secrets.items():
+def test_the_installer_is_handed_the_desks_environment_as_it_is(copy, loop, monkeypatch):
+    """The installer opens the desk again and hands it its own environment: a password or key set there (made up here)
+    reaches the reopened desk, as it reaches one started from the Start menu (which has what a double-clicked installer
+    gets). So the installer is started with the desk's environment as it is: none given (Popen hands on the process's
+    own), or one holding all of it."""
+    made_up = {"JOB_APPLY_SECRET_WORKDAY": "made-up-1", "ANTHROPIC_API_KEY": "made-up-2",
+               "JOB_DESK_MADE_UP_SETTING": "made-up-3"}
+    for k, v in made_up.items():
         monkeypatch.setenv(k, v)
-    monkeypatch.setenv("JOB_DESK_MADE_UP_SETTING", "kept")
-    # (what Windows and the installer need, as this computer has it: handed on as it is)
-    kept = {k: v for k, v in os.environ.items() if k.upper() in (
-        "SYSTEMROOT", "TEMP", "TMP", "LOCALAPPDATA", "USERPROFILE", "PATH", "HOME", "JOB_DESK_MADE_UP_SETTING")}
     check, steps, popen = _installed_update(copy, _site())
     assert steps == ["pause", "installer", "quit"]
     [(_, options)] = popen.calls
-    env = {k.upper(): v for k, v in options["env"].items()}  # (Windows' own names are upper case)
-    assert not {k.upper() for k in secrets} & set(env) and not set(secrets.values()) & set(env.values())
-    assert "JOB_DESK_MADE_UP_SETTING" in kept and {k: env.get(k.upper()) for k in kept} == kept
+    handed = os.environ if options.get("env") is None else options["env"]
+    assert {k: handed.get(k) for k in made_up} == made_up
 
 
 def test_a_queue_paused_before_the_update_stays_paused_when_the_installer_ends_at_once(srv, copy):
@@ -678,6 +674,87 @@ def test_while_an_update_holds_the_applier_a_submit_or_a_pressed_job_is_refused_
     assert a.runs[asking].status == "needs_you" and a.round_job is None
     assert not any(t[0] == "submit" for t in a.tasks) and began == [] and not a._slots
     assert config.saved_answers() == []
+
+
+class _Tab:
+    """A job's tab that's never a browser's: open, and nothing done to it."""
+
+    def is_closed(self):
+        return False
+
+    async def bring_to_front(self):  # (brought up: noted by the test that hands it in)
+        raise AssertionError("brought to the front during the update's hold")
+
+
+@pytest.mark.parametrize("need", ["sign_in", "email_code"])
+def test_a_tick_whose_look_the_update_lands_in_starts_nothing_and_types_nothing(srv, copy, monkeypatch, need):
+    """The update's pause may land while a tick that began before it awaits a tab or the inbox: a job left waiting on
+    the person, past its sign-in by the look the hold landed in, is neither carried on nor begun, and an emailed code
+    found by the look the hold landed in is never typed in."""
+    from job_apply import pipeline
+    from job_apply.mailbox import Found
+
+    monkeypatch.setattr(pipeline, "POLL_SECONDS", 0.01)
+    desk, (_, left, _), began = _held_desk(srv)
+    a = desk.applier
+    run_ = a.runs[left]
+    run_.left, run_.need, run_.page = True, need, _Tab()
+    monkeypatch.setattr(srv.browser, "lost", lambda tab: "")
+    typed = []
+
+    async def past_pause(r):  # (the look the update's pause lands in)
+        desk._pause_for_update()
+        return True
+
+    async def check_mail(r):  # (the inbox read the update's pause lands in, then the code it found)
+        desk._pause_for_update()
+        await a._use_mail(r, Found("code", "123456", "example.com", time.time()), r.paused_at)
+
+    async def enter_code(r, found):
+        typed.append(found.value)
+        return True
+
+    monkeypatch.setattr(a, "_past_pause", past_pause)
+    monkeypatch.setattr(a, "_check_mail", check_mail)
+    monkeypatch.setattr(a, "_enter_code", enter_code)
+
+    async def go():
+        await a._tick()
+
+    run(go())
+    assert a.updating and began == [] and typed == [] and not a._slots
+    assert not a.tasks and left not in a.pressed and run_.status == "needs_you"
+
+
+def test_a_submit_waiting_its_turn_counts_as_being_filled(srv, copy):
+    """A Submit the person pressed, still waiting in the applier's tasks (or a job they pressed on, which goes even
+    while the queue is paused), is a job about to be filled: /api/update/start answers its 409 until it has gone."""
+    copy.installed(True)
+    check = updates.UpdateCheck(transport=_site(), popen=lambda *a, **k: pytest.fail("nothing starts"))
+    check.latest = "0.4.4"
+    desk, (ready, signing_in, _), began = _held_desk(srv)
+    desk.updates = check
+    desk.standalone = True
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            h = {"x-desk-token": desk.token}
+            said = []
+            async with _client(desk) as c:
+                desk.applier.submit_now(ready)  # (pressed: waiting its turn, not begun)
+                answer = await c.post("/api/update/start", headers=h, json={})
+                said.append((answer.status_code, answer.json()))
+                desk.applier.tasks.clear()
+                desk.applier.resume(signing_in)  # (Carry on pressed: goes even while paused)
+                answer = await c.post("/api/update/start", headers=h, json={})
+                said.append((answer.status_code, answer.json()))
+            return said
+        finally:
+            await desk.stop()
+
+    assert run(go()) == [(409, {"error": updates.FILLING})] * 2
+    assert began == [] and check.progress is None
 
 
 def test_a_failed_update_lets_go_of_the_applier(srv, copy):
