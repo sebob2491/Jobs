@@ -1603,7 +1603,7 @@ class Desk:
         for name, n in sorted(by_system.items(), key=lambda kv: (-kv[1], kv[0])):
             if not saved[name]:
                 lines.append(f"{DESK_PASSWORDS[name]}: no password saved, so {n} of these jobs "
-                             f"{'stop' if n != 1 else 'stops'} at the sign-in for you. Save one in Settings, under "
+                             f"{'stop' if n != 1 else 'stops'} at the sign-in for you. Make one in Settings, under "
                              "Accounts and passwords, and the desk signs in itself.")
         if mailing and not saved["email_password"]:
             lines.append("No email app password saved: a site that emails a sign-up code or link waits for you to "

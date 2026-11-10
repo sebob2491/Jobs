@@ -5680,7 +5680,7 @@ def test_taleos_saved_password_goes_on_its_career_sections_only():
                 "https://www.kforce.com/careers/"):
         assert pipeline.password_for(url) is None, url
     assert pipeline._CREATE_ACCOUNT.match("New User")  # Taleo's way to a new account
-    assert "Save a Taleo password" in pipeline._password_tip(TALEO_LOGIN)  # (none saved in the test's home)
+    assert "Make a Taleo password" in pipeline._password_tip(TALEO_LOGIN)  # (none saved in the test's home)
 
 
 def test_taleo_signs_in_with_its_saved_password_and_the_email_as_user_name(srv, monkeypatch, job_apply_home):
@@ -11143,13 +11143,13 @@ def test_a_sign_in_by_hand_mentions_the_password_the_desk_could_save(monkeypatch
     """The tip at a sign-in names the system whose password the desk page saves; none for a
     system it doesn't, or once that password is saved."""
     monkeypatch.setattr(pipeline, "_secret", lambda name: None)
-    assert "Save a SuccessFactors password" in pipeline._password_tip("https://career8.successfactors.com/career?x=1")
-    assert "Save a Workday password" in pipeline._password_tip("https://intel.wd1.myworkdayjobs.com/External/login")
-    assert "Save an Infor password" in pipeline._password_tip("https://css-benchmark-prd.inforcloudsuite.com/sso/"
+    assert "Make a SuccessFactors password" in pipeline._password_tip("https://career8.successfactors.com/career?x=1")
+    assert "Make a Workday password" in pipeline._password_tip("https://intel.wd1.myworkdayjobs.com/External/login")
+    assert "Make an Infor password" in pipeline._password_tip("https://css-benchmark-prd.inforcloudsuite.com/sso/"
                                                               "SSOServlet")
-    assert "Save an ApplicantStack password" in pipeline._password_tip("https://seus.applicantstack.com/x/login")
-    assert "Save a UKG Pro password" in pipeline._password_tip("https://signin-us.ultipro.com/u/login")
-    assert "Save a Taleo password" in pipeline._password_tip("https://acme.taleo.net/careersection/iam/login.jsf")
+    assert "Make an ApplicantStack password" in pipeline._password_tip("https://seus.applicantstack.com/x/login")
+    assert "Make a UKG Pro password" in pipeline._password_tip("https://signin-us.ultipro.com/u/login")
+    assert "Make a Taleo password" in pipeline._password_tip("https://acme.taleo.net/careersection/iam/login.jsf")
     assert pipeline._password_tip("https://sjobs.brassring.com/TGnewUI/Home") == ""  # not offered on the page
     assert pipeline._password_tip("https://example.com/careers/login") == ""
     monkeypatch.setattr(pipeline, "_secret", lambda name: "saved")
