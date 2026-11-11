@@ -326,3 +326,12 @@ this file says otherwise, it wins.
   - Never from a stop for a bot check, a CAPTCHA, a sign-in, an emailed code, security questions, a notice, an
     agreement, an assessment or a submit; never anything typed; never a click the desk or Claude's tools made.
     Each learned press is logged on the job's card and can be forgotten there or in Settings, Applying.
+- **Suggested answers:** with `settings.suggest_similar` (on unless the person turns it off; never in practice
+  mode, with `JOB_APPLY_NEVER_SUBMIT=1` or for the live check's test identity; nothing without a model) a model
+  may say that a new question means the same as one the person answered. It is sent only questions' words and
+  choices: never which answer is the person's, the employer, the job, or a question holding anything of the
+  profile; and it never writes an answer. A match is shown to the person and used only after their yes, and only
+  where the earlier answer is one of the new question's own choices.
+  - Never for a notice, consent or acknowledgement, a security question, an ID, an answer about one employer,
+    self-identification (gender, race, veteran, disability, age, religion, marital status, origin, health), pay,
+    or a criminal record or background check (`similar.may_ask`, `similar.candidates`, `similar.sensitive`).

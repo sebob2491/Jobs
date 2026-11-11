@@ -984,7 +984,7 @@ def written_by() -> str:
 
 
 async def _ask_api(key: ApiKey, system: str, content: list[dict[str, Any]], model: str, timeout: float,
-                   schema: dict[str, Any] | None = None) -> str:
+                   schema: dict[str, Any] | None = None, effort: bool = True) -> str:
     """One request to Anthropic's Messages API: the same system prompt and message the claude -p path sends, and no
     tools. Its text, or why there's none: Unavailable for what stops every letter (the key turned down, no credit, the
     rate limit, no connection, a model the key can't use), LetterError for this one's. Within `timeout` in all, the
@@ -995,7 +995,7 @@ async def _ask_api(key: ApiKey, system: str, content: list[dict[str, Any]], mode
 
     ask: dict[str, Any] = {"model": model, "max_tokens": MAX_TOKENS, "system": system,
                            "messages": [{"role": "user", "content": content}]}
-    output: dict[str, Any] = {"effort": "medium"} if model.startswith(_EFFORT_MODELS) else {}
+    output: dict[str, Any] = {"effort": "medium"} if effort and model.startswith(_EFFORT_MODELS) else {}
     if schema is not None:
         output["format"] = {"type": "json_schema", "schema": schema}
     if output:
@@ -1063,6 +1063,12 @@ def _runnable(path: Path) -> bool:
 def find_claude() -> str | None:
     """The claude command: on the PATH, else the one Claude Code says it runs from (CLAUDE_CODE_EXECPATH, in the
     environment it starts the plugin's server with), else where its installers put it."""
+    return claude_on_hand()
+
+
+def claude_on_hand() -> str | None:
+    """find_claude's look, on its own: the page's line about suggested answers asks it with every poll of the state,
+    where the letters' own count of looks is none of its business."""
     found = shutil.which("claude")
     if found:
         return found
@@ -1078,8 +1084,12 @@ def child_env() -> dict[str, str]:
     return {k: v for k, v in os.environ.items() if k not in _CHILD_DROPS and not _CHILD_SECRET.match(k)}
 
 
-def cli_args(exe: str, model: str, folder: Path) -> list[str]:
-    return [exe, *CLI_FLAGS, "--mcp-config", str(folder / "mcp.json"), "--model", model,
+def cli_args(exe: str, model: str, folder: Path, effort: bool = True) -> list[str]:
+    """The child's command. `effort` False leaves out "--effort medium", which not every model takes (suggested
+    answers' small model: similar.py); letters keep it."""
+    flags = CLI_FLAGS if effort else [f for i, f in enumerate(CLI_FLAGS)
+                                      if f != "--effort" and (i == 0 or CLI_FLAGS[i - 1] != "--effort")]
+    return [exe, *flags, "--mcp-config", str(folder / "mcp.json"), "--model", model,
             "--system-prompt-file", str(folder / "system.md")]
 
 
@@ -1128,7 +1138,8 @@ def read_output(code: int, stdout: str, stderr: str, model: str) -> str:
 
 
 def _run_child(exe: str, system: str, content: list[dict[str, Any]], model: str, timeout: float,
-               started: list[subprocess.Popen] | None = None, dropped: threading.Event | None = None) -> str:
+               started: list[subprocess.Popen] | None = None, dropped: threading.Event | None = None,
+               effort: bool = True) -> str:
     """claude -p, in an empty folder of its own (its system prompt and its empty MCP config there), the message on its
     stdin; its letter, or why there's none. The child goes in `started` as it starts, and is ended at once if the
     letter was dropped (`dropped` set) before then: one dropped later is ended by write_letter."""
@@ -1139,9 +1150,10 @@ def _run_child(exe: str, system: str, content: list[dict[str, Any]], model: str,
         message = json.dumps({"type": "user", "message": {"role": "user", "content": content}})
         try:
             # (a group of its own, ended whole on a timeout: npm's claude.cmd, or a shell's, runs it as a child)
-            child = subprocess.Popen(cli_args(exe, model, folder), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                     stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", cwd=folder,
-                                     env=child_env(), creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            child = subprocess.Popen(cli_args(exe, model, folder, effort), stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                                     errors="replace", cwd=folder, env=child_env(),
+                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                                      start_new_session=os.name != "nt")
         except OSError as e:
             raise Unavailable(not_started(e.strerror or type(e).__name__)) from None
@@ -1188,15 +1200,17 @@ def model_of(prof: config.Profile) -> str:
     return prof.settings.cover_letter_model or DEFAULT_MODEL
 
 
-async def _ask(exe: str | ApiKey, system: str, content: list[dict[str, Any]], model: str, timeout: float) -> str:
+async def _ask(exe: str | ApiKey, system: str, content: list[dict[str, Any]], model: str, timeout: float,
+               effort: bool = True) -> str:
     """One claude -p call, off the event loop: its answer (or, with an API key, one request to Anthropic's API:
     _ask_api). Dropped meanwhile (the switch turned off, the job skipped, the desk stopping), its child is ended, off
     the event loop (Windows' taskkill takes a moment), and the letter's place is let go only once it has."""
     if isinstance(exe, ApiKey):
-        return await _ask_api(exe, system, content, model, timeout)
+        return await _ask_api(exe, system, content, model, timeout, effort=effort)
     started: list[subprocess.Popen] = []
     dropped = threading.Event()
-    work = asyncio.ensure_future(asyncio.to_thread(_run_child, exe, system, content, model, timeout, started, dropped))
+    work = asyncio.ensure_future(asyncio.to_thread(_run_child, exe, system, content, model, timeout, started, dropped,
+                                                 effort))
     # (a letter dropped while it's written ends in an error nobody awaits: read here, not left for the log's "Task
     # exception was never retrieved")
     work.add_done_callback(lambda done: done.cancelled() or done.exception())

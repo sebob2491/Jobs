@@ -307,6 +307,9 @@ A sign-in or an emailed code waits on its card, and the other jobs carry on.
 Off: a sign-in or emailed code holds the other jobs until you're done, or 5 minutes pass.
 Learn from what I do when the desk is stuck
 When the desk can't find the button that moves a step on and you press it yourself, it remembers that button's words for that employer's page and presses it next time. It never learns a Submit, an agreement, a sign-in or anything you type.
+Suggest answers I've given to similar questions
+When a form asks something in new words, the desk asks a model whether it means the same as a question you've answered. Only the questions' words are sent, never your answers or anything about you, and nothing is filled until you say yes.
+Needs your API key or Claude: with neither, nothing is suggested.
 What the desk has learned
 Nothing yet.
 See everything the desk may and may not do
