@@ -341,25 +341,22 @@ _OTHER_FILE = re.compile(_OTHER_DOCUMENT.pattern + r"|\b(?:additional|supporting
                          r"(?:documents?|files?|attachments?)\b", re.I)
 
 
-def _slots_said(files: list[dict[str, Any]], last: bool, folder: Path | None = None, standalone: bool = False) -> str:
+def _slots_said(files: list[dict[str, Any]], last: bool, folder: Path | None = None) -> str:
     """Required file boxes for the profile's other documents (autofill.documents_asked) that it has none of, as a stop
-    says them: what each asks for and its words, then where to add it, or the person's attach ("your transcripts
-    (“Please upload your Unofficial Transcripts”): ask Claude to add the file to your profile, or attach it in the
-    desk's browser window"); `last`, the stop's own sentence, ending in its Carry on. The desk's page has no place for
-    these three (Settings, Resume and cover letters holds the resume and the usual cover letter): inside Claude, Claude
-    adds the file to the profile; a desk on its own (`standalone`) has only the attach. Never the profile's key for it
-    (the live run of Nov 11: "add documents.certificates to your profile"). A file the profile names that isn't there
-    says so. A reference list's names the references: entries the desk makes a page of; where the profile has them, why
-    there's no page of them (in the job's `folder`: one that ran past a page, or one the desk couldn't make just now,
-    which the next fill makes again)."""
+    says them: what each asks for and its words, then where to add it, or the person's attach (“your transcripts
+    (“Please upload your Unofficial Transcripts”). Add it in Settings, under Resume and documents, or attach it in the
+    desk's browser window”); `last`, the stop's own sentence, ending in its Carry on. The desk's page has a place for
+    each (Settings, Resume and documents), so a desk on its own and one inside Claude say the same. Never the profile's
+    key for it (the live run of Nov 11: "add documents.certificates to your profile"). A file the profile names that
+    isn't there says so. A reference list's names the references: entries the desk makes a page of; where the profile
+    has them, why there's no page of them (in the job's `folder`: one that ran past a page, or one the desk couldn't
+    make just now, which the next fill makes again)."""
     prof = config.Profile.load()
     wanted = " and ".join(f"your {' or '.join(config.EXTRA_DOCUMENTS[s] for s in documents_asked(f))} "
                           f"(“{clean_label(f.get('label') or '').rstrip(' .')}”)" for f in files)
     slots = list(dict.fromkeys(s for f in files for s in documents_asked(f)))
     too_long = folder is not None and any(folder.glob("*References.too-long"))
     entries = "references" in slots and not prof.document_paths("references") and bool(prof.references())
-    refs = (" (or your references, which the desk makes a page of)"
-            if "references" in slots and not prof.document_paths("references") and not entries else "")
     why = ("" if not entries else
            " (the references in your profile run past one page, so the desk's page of them isn't sent: shorten "
            "them)" if too_long else
@@ -369,10 +366,9 @@ def _slots_said(files: list[dict[str, Any]], last: bool, folder: Path | None = N
                  + " and ".join(f"your {config.EXTRA_DOCUMENTS[s]}" for s in gone)
                  + f" {'is' if len(gone) == 1 else 'are'}n't there)" if gone else "")
     them = "it" if len(files) == 1 else "them"
-    where = (f"{gone_said}{why}: attach {them}" if standalone else
-             f": ask Claude to add the {'file' if len(files) == 1 else 'files'}{refs} to your profile{gone_said}{why}, "
-             f"or attach {them}")
-    return f"{wanted}{where} in the desk's browser window" + (", then press Carry on." if last else "")
+    add = (f"{them} in Settings, under Resume and documents, or attach {them} in the desk's browser window")
+    return (f"{wanted}{gone_said}{why}. Add {add}, then press Carry on." if last
+            else f"{wanted}{gone_said}{why}: add {add}")
 
 
 _PASSWORD_USED = re.compile(r"\bpasswords?\b[^.!?\n]{0,40}?\b(?:(?:recently|previously) used|used (?:recently|before|"
@@ -3516,12 +3512,12 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         if missing_files:
             self._pause(run, "stuck", ("The form wants a file (" + ", ".join(f["label"] for f in documents)
                                        + ") and your profile doesn't have one. Add it in Settings, under "
-                                       "Resume and cover letters, then press Carry on."
-                                       + (f" It also wants {_slots_said(slotted, False, folder, self.standalone)}."
+                                       "Resume and documents, then press Carry on."
+                                       + (f" It also wants {_slots_said(slotted, False, folder)}."
                                           if slotted else "")
                                        + (f" It also wants {noplace}: {named}: {attach}." if others else "")
                                        if documents else
-                                       f"The form wants {_slots_said(slotted, True, folder, self.standalone)}"
+                                       f"The form wants {_slots_said(slotted, True, folder)}"
                                        + (f" It also wants {noplace}: {named}: {attach}." if others else "")
                                        if slotted else
                                        f"The form wants {noplace}: {named}. "

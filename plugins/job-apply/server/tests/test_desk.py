@@ -5332,11 +5332,11 @@ def test_the_safety_window_says_where_each_switch_is_since_the_openings_table(sr
     assert where["email_codes"] == where["email_password"] == "Settings, Email codes"
     assert where["jobs_at_once"] == "Settings, Applying: Jobs at once"
     assert where["troubleshoot"] == "Settings, Applying: For fixing the desk"
-    assert where["cover_letters"] == "Settings, Resume and cover letters: Write a cover letter for each job"
+    assert where["cover_letters"] == "Settings, Resume and documents: Write a cover letter for each job"
     assert where["boards"] == where["bot_checks"] == where["passwords"] == "Not a setting: always so"
     # (each that isn't "Not a setting" names a panel of the Settings page, which the page links to)
     panels = ("Your profile", "Job search", "Applying", "Accounts and passwords", "Email codes", "Phone alerts",
-              "Resume and cover letters", "Updates and about")
+              "Resume and documents", "Updates and about")
     assert all(said == "Not a setting: always so" or said.startswith(tuple(f"Settings, {p}" for p in panels))
                for said in where.values()), where
 

@@ -253,7 +253,7 @@ def test_the_window_has_one_name_and_so_has_i_submitted_it():
     assert not re.search(r">I submitted it(?! myself)|\"I submitted it(?! myself)", desk)
 
 
-PANEL = "Resume and cover letters"  # (the Settings page's panel for the resume and the letters: the documents)
+PANEL = "Resume and documents"  # (the Settings page's panel for the resume and the letters: the documents)
 
 
 def test_the_job_button_is_carry_on_and_resume_is_only_the_document():
@@ -265,7 +265,7 @@ def test_the_job_button_is_carry_on_and_resume_is_only_the_document():
         said += [(f"{name}:{line}", text) for line, text in
                  _said(ast.parse((PIPELINE.parent / name).read_text(encoding="utf-8")))]
     # (the document's own label, "Resume", a file's name, "<First>_<Last>_Resume.pdf", and the Settings page's panel for
-    # the documents, "Resume and cover letters" (Version D), stay)
+    # the documents, "Resume and documents" (Version D), stay)
     button = [(line, text[:120]) for line, text in said
               if text.strip() != "Resume" and re.search(r"(?<![\w/])Resume\b(?![/._])", text.replace(PANEL, ""))]
     assert not button, button

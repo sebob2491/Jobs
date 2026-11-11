@@ -29,6 +29,9 @@ Each company in data/companies.yaml may carry a `search` block naming one of:
                                             https://linde.csod.com/ux/ats/careersite/23/home?c=linde)
     phenom:          {host: careers.emdgroup.com, country: us, lang: en_us}
                                             (Phenom career sites' own search: EMD Electronics)
+    paylocity:       https://recruiting.paylocity.com/recruiting/jobs/All/<id>/<name>
+                                            (Paylocity job boards, one page: AGS)
+    google_careers:  {location: "Henderson, NV, USA"}  (Google's own careers site: one place's first page only)
     icims:           <portal name>          (read in the browser)
     paycom:          <career portal key>    (read in the browser)
     ukg:             <job board address>    (UKG Pro / UltiPro; read in the browser)
@@ -84,7 +87,8 @@ FETCH_WHEN_FILTERING = 60  # results to scan per search when filtering by locati
 EMPLOYERS_AT_ONCE = 8  # employers searched at the same time (each its own site; ~50 s for the Phoenix list, not ~100)
 EMPLOYER_SECONDS = 120  # one employer's searches, all its wordings, at most (the slowest take ~30 s); then they stop
 CLIENT_SIDE = {"greenhouse", "lever", "applicantstack", "paycom", "ukg", "sfclassic", "infor", "phoenixchildrens",
-               "jobvite", "randstad", "kpmg", "neogov"}  # whole board at once; titles filtered here
+               "jobvite", "randstad", "kpmg", "neogov", "paylocity",
+               "google_careers"}  # whole board at once; titles filtered here
 # Searches that take the whole query and pace its wordings themselves (the State of Arizona's
 # site, whose bot check a quick run of requests sets off; Avature portals, which read an
 # opening's places once however many wordings find it)
@@ -2744,6 +2748,134 @@ def _oracle_places(req: dict[str, Any]) -> list[str]:
     return places
 
 
+# ----------------------------------------------------------------- Paylocity job boards (AGS)
+PAYLOCITY_HOST = "recruiting.paylocity.com"
+_PAYLOCITY_DATA = re.compile(r"\bwindow\.pageData\s*=\s*(?=\{)")
+
+
+def _paylocity_place(loc: Any) -> str:
+    """An opening's place from its JobLocation: the city, else its metro area ("Las Vegas" for a field technician
+    working from home there), then the state, unless the metro already says it ("Las Vegas, NV")."""
+    if not isinstance(loc, dict):
+        return ""
+    where = str(loc.get("City") or loc.get("Metro") or "").strip()
+    state = str(loc.get("State") or "").strip()
+    if where and state and not re.search(rf",\s*{re.escape(state)}$", where, re.I):
+        where = f"{where}, {state}"
+    return where or state
+
+
+def parse_paylocity(page: str) -> list[Listing]:
+    """A Paylocity board's openings, from the page's data (`window.pageData = {...}`, its Jobs: each with a place
+    that may be missing, and a posting's own page). None there is an empty board; no data, or a Jobs that isn't a
+    list, is a page the parser no longer reads."""
+    m = _PAYLOCITY_DATA.search(page)
+    try:
+        data, _ = json.JSONDecoder().raw_decode(page, m.end()) if m else (None, 0)
+    except ValueError:
+        data = None
+    jobs = data.get("Jobs") if isinstance(data, dict) else None
+    if not isinstance(jobs, list):
+        raise SearchError("No job list in the Paylocity board's page (its window.pageData has no Jobs)")
+    out: list[Listing] = []
+    for job in jobs:
+        if not isinstance(job, dict):
+            continue
+        title, jid = str(job.get("JobTitle") or "").strip(), str(job.get("JobId") or "").strip()
+        if not title or not jid.isdigit():
+            continue
+        place = _paylocity_place(job.get("JobLocation"))
+        remote = job.get("IsRemote") is True
+        out.append(Listing(company="", title=title, ats="custom", external_id=jid,
+                           url=f"https://{PAYLOCITY_HOST}/Recruiting/Jobs/Details/{jid}",
+                           location=place or ("Remote" if remote else ""), posted=posted_date(job.get("PublishedDate")),
+                           **(wplace.fields("remote", True) if remote else {})))
+    return out
+
+
+async def _paylocity(client: httpx.AsyncClient, cfg: Any, query: str, limit: int, terms: list[str]) -> list[Listing]:
+    """Paylocity's job boards (recruiting.paylocity.com/recruiting/jobs/All/<id>/<name>, AGS's) hold every opening
+    in one page's data; the board's address is the block (a block without one fails loudly). Titles are matched here."""
+    url = str(cfg["url"] if isinstance(cfg, dict) else cfg).strip()
+    if httpx.URL(url).host != PAYLOCITY_HOST:
+        raise SearchError(f"{url!r} isn't a {PAYLOCITY_HOST} board address")
+    return _titled(parse_paylocity(await _board_page(client, url)), query)
+
+
+# ------------------------------------------------------------ Google's own careers site (the Henderson data center)
+GOOGLE_RESULTS = "https://www.google.com/about/careers/applications/jobs/results/"
+_GOOGLE_DATA = re.compile(r"AF_initDataCallback\(\{key: 'ds:1',[^{\[]*?\bdata:\s*")
+
+
+def _google_slug(title: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+
+
+def _google_wants(place: str) -> tuple[str, str]:
+    """The city and state a block's place names ("Henderson, NV, USA": ("henderson", "nv"))."""
+    parts = [p.strip().lower() for p in place.split(",") if p.strip()]
+    return (parts[0] if parts else "", parts[1].split()[0] if len(parts) > 1 else "")
+
+
+def parse_google_careers(page: str, place: str) -> list[Listing]:
+    """The openings on Google's careers results page (its data, `AF_initDataCallback({key: 'ds:1', ... data:
+    [[job, ...], null, total, page size]})`) that name `place` ("Henderson, NV, USA") among their places: each job
+    is an array with its id [0], title [1], places [9] and when it was posted [12]. Any shape this doesn't expect is
+    said, not read as none."""
+    m = _GOOGLE_DATA.search(page)
+    try:
+        data, _ = json.JSONDecoder().raw_decode(page, m.end()) if m else (None, 0)
+    except ValueError:
+        data = None
+    total = data[2] if isinstance(data, list) and len(data) > 2 and isinstance(data[2], int) else None
+    jobs = data[0] if isinstance(data, list) and data else None
+    if jobs is None and total == 0:  # (a place with no openings: the list is null, its total 0)
+        jobs = []
+    if not isinstance(jobs, list):
+        raise SearchError("No job list in Google's careers page (its data 'ds:1' isn't a list of openings)")
+    city, state = _google_wants(place)
+    out: list[Listing] = []
+    for job in jobs:
+        if not isinstance(job, list) or len(job) < 10 or not isinstance(job[9], list):
+            raise SearchError("No job list in Google's careers page (an opening in it isn't shaped as expected)")
+        title, jid = str(job[1] or "").strip(), str(job[0] or "").strip()
+        if not title or not jid.isdigit():
+            raise SearchError("No job list in Google's careers page (an opening in it has no id or title)")
+        named = []
+        for loc in job[9]:
+            text = str(loc[0] if isinstance(loc, list) and loc else loc or "")
+            parts = [x.strip() for x in text.split(",")]
+            states = [p.split()[0].lower() for p in parts[1:] if p]
+            if parts and parts[0].lower() == city and (not state or state in states):
+                named.append(", ".join(parts[:2]))
+        if not named:
+            continue
+        stamp = job[12] if len(job) > 12 and isinstance(job[12], list) and job[12] else None
+        out.append(Listing(company="", title=title, ats="custom", external_id=jid, location=named[0],
+                           url=f"{GOOGLE_RESULTS}{jid}-{_google_slug(title)}",
+                           posted=posted_date(stamp[0]) if stamp and isinstance(stamp[0], int) else "",
+                           notes=[f"Google lists {total} openings for the place; only the first page's {len(jobs)} "
+                                  "are read"] if total is not None and total > len(jobs) else []))
+    return out
+
+
+async def _google_careers(client: httpx.AsyncClient, cfg: Any, query: str, limit: int,
+                          terms: list[str]) -> list[Listing]:
+    """Google's own careers site: one request for the one place the block names (`location: "Henderson, NV, USA"`),
+    whose results page carries its openings as data. Its robots.txt disallows the paged forms (?page=), so only that
+    first page is ever read; a place with more openings than a page holds says so on each. Asked once, no retries,
+    and a bot check (Google's /sorry/ page) ends the search: it is never got around."""
+    place = str(cfg["location"] if isinstance(cfg, dict) else cfg).strip()
+    if not place:
+        raise SearchError("The google_careers search names no location")
+    url = f"{GOOGLE_RESULTS}?" + urlencode({"location": place})
+    r = await client.request("GET", url)
+    if "/sorry/" in r.url.path or r.status_code == 429:
+        raise SearchError("www.google.com answered with a bot check; search it on its own page")
+    _raise_for(r, url)
+    return _titled(parse_google_careers(r.text, place), query)
+
+
 SEARCHERS: dict[str, Callable[[httpx.AsyncClient, Any, str, int, list[str]], Awaitable[list[Listing]]]] = {
     "workday": _workday,
     "greenhouse": _greenhouse,
@@ -2768,6 +2900,8 @@ SEARCHERS: dict[str, Callable[[httpx.AsyncClient, Any, str, int, list[str]], Awa
     "avature": _avature,
     "csod": _csod,
     "phenom": _phenom,
+    "paylocity": _paylocity,
+    "google_careers": _google_careers,
 }
 
 

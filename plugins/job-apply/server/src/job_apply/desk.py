@@ -1192,19 +1192,29 @@ class Desk:
     async def profile_document_view(self, request: Request) -> Response:
         """The usual cover letter, picked on the Settings page ({kind: "cover_letter", name, data: its bytes in
         base64}), saved as profile_setup.save_resume saves the resume; or, with `remove`, documents.cover_letter
-        emptied (the file stays). Any other kind is refused. Answers with the documents' file names."""
+        emptied (the file stays). The same for the transcripts, reference list and certificates ({kind: "transcripts" |
+        "references" | "certificates", name, data} adds one file to the list; {kind, remove: "<file name>"} takes
+        one out, its file staying). Any other kind is refused. Answers with the documents' file names."""
         if not self._allowed(request, api=True):
             return self._forbidden()
         try:
             body = await self._body(request)
-            if body.get("kind") != "cover_letter":
-                raise ValueError("Only the usual cover letter is saved here.")
+            kind = body.get("kind")
+            if kind not in ("cover_letter", *config.EXTRA_DOCUMENTS):
+                raise ValueError("That kind of document isn't saved here.")
             if not config.profile_path().exists():
                 raise ValueError("Set up your profile first.")
-            if body.get("remove") is True:
-                await asyncio.to_thread(profile_setup.forget_cover_letter)
+            if kind == "cover_letter":
+                if body.get("remove") is True:
+                    await asyncio.to_thread(profile_setup.forget_cover_letter)
+                else:
+                    await asyncio.to_thread(profile_setup.save_cover_letter, body.get("name"), body.get("data"))
+            elif "remove" in body:
+                if not isinstance(body["remove"], str) or not body["remove"]:
+                    raise ValueError("Say which file to remove.")
+                await asyncio.to_thread(profile_setup.forget_extra_document, kind, body["remove"])
             else:
-                await asyncio.to_thread(profile_setup.save_cover_letter, body.get("name"), body.get("data"))
+                await asyncio.to_thread(profile_setup.save_extra_document, kind, body.get("name"), body.get("data"))
             documents = document_names(config.Profile.load())
         except (ValueError, OSError) as e:
             return self._bad(e)
@@ -2486,9 +2496,9 @@ class Desk:
                     "Nothing is sent while your profile can't be read." if unread else "The desk applies for real.")
         line("troubleshoot", "Troubleshooting", "on" if a.hold_submits else "off", said,
              applying + "For fixing the desk")
-        letters_box = "Settings, Resume and cover letters: Write a cover letter for each job"
+        letters_box = "Settings, Resume and documents: Write a cover letter for each job"
         if a.letters:
-            # (what writes them, as the Resume and cover letters panel's row says it: Version D)
+            # (what writes them, as the Resume and documents panel's row says it: Version D)
             by_key = tell(lambda: letters.api_key() is not None)
             line("cover_letters", "Cover letters", "on" if a.letters_approved else "on (the first waits for your OK)",
                  ("Written through Anthropic's API with your key, about 10 to 20 cents a letter." if by_key else
@@ -2504,7 +2514,7 @@ class Desk:
                  letters_box + ", and Which model writes the letters")
         else:
             line("cover_letters", "Cover letters", "off",
-                 "No cover letter is written for you: your usual one (Settings, Resume and cover letters), if you have "
+                 "No cover letter is written for you: your usual one (Settings, Resume and documents), if you have "
                  "one, goes with every application that asks.", letters_box)
         line("bot_checks", "Bot checks and CAPTCHAs", "always yours",
              "The desk never gets around a bot check and never solves a CAPTCHA: it pauses the job and brings its tab "
@@ -2597,10 +2607,15 @@ def profile_settings(s: config.Settings) -> dict[str, Any]:
     return {key: getattr(s, key) for key in PROFILE_SETTINGS}
 
 
-def document_names(prof: config.Profile) -> dict[str, str | None]:
-    """The resume's and the usual cover letter's file names, for the Resume and cover letters panel: the first of each
-    that's there (never its path, which names the person's folders); None for none."""
-    return {slot: next((p.name for p in prof.document_files(slot)), None) for slot in ("resume", "cover_letter")}
+def document_names(prof: config.Profile) -> dict[str, Any]:
+    """The Resume and documents panel's file names (never a path, which names the person's folders): the resume's and
+    the usual cover letter's first one that's there (None for none), and the lists of the transcripts', reference
+    list's and certificates' files that are there."""
+    names: dict[str, Any] = {slot: next((p.name for p in prof.document_files(slot)), None)
+                             for slot in ("resume", "cover_letter")}
+    for slot in config.EXTRA_DOCUMENTS:
+        names[slot] = [p.name for p in prof.document_files(slot)]
+    return names
 
 
 def _profile_jobs_at_once() -> Any:

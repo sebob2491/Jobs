@@ -607,6 +607,134 @@ def forget_cover_letter() -> None:
         config.write_text_atomic(path, text)
 
 
+# The profile's other documents (config.EXTRA_DOCUMENTS), picked on the Settings page: each a list of files, kept in a
+# folder of their own beside the resume (documents/<kind>/), so a file named "resume.pdf" never replaces the resume
+EXTRA_KINDS = (".pdf", ".docx", ".jpg", ".jpeg", ".png")
+EXTRA_FILES_MOST = 10  # a kind's most files
+_UNSAFE_NAME = re.compile(r"[^\w .()\-]+")
+_RESERVED_NAME = re.compile(r"con|prn|aux|nul|com[0-9]|lpt[0-9]", re.I)
+
+
+def _safe_file_name(name: Any) -> str:
+    """The file's name as the page gave it, made safe to save: only its last part (never a folder), unusual characters
+    made _, no leading dot, at most 80 characters before its type. "" when nothing is left."""
+    last = re.split(r"[\\/]", str(name or ""))[-1].strip()
+    suffix = Path(last).suffix.lower()
+    stem = _UNSAFE_NAME.sub("_", last[:len(last) - len(suffix)]).strip(" .")[:80].strip(" .")
+    if _RESERVED_NAME.fullmatch(stem.split(".")[0].strip()):
+        stem = "_" + stem  # (Windows keeps con, nul, com1 and the like for itself, whatever follows their first dot)
+    return f"{stem}{suffix}" if stem else ""
+
+
+def _own(slot: str, written: str) -> bool:
+    """Is this entry of documents.<slot> a file of the desk's own folder for it (documents/<slot>/), not one the
+    person wrote in by hand from somewhere else?"""
+    folder = config.home() / "documents" / slot
+    with contextlib.suppress(OSError, ValueError):
+        return Path(config.expand(written) or written).resolve().parent == folder.resolve()
+    return False
+
+
+def _extra_written(slot: str) -> tuple[list[str], str]:
+    """documents.<slot> as written (its strings: anything else in it isn't a file, and the list is written again
+    without it), and the profile's text."""
+    path = config.profile_path()
+    if not path.exists():
+        raise ValueError("Set up your profile first.")
+    written = config.Profile.load(path).get(f"documents.{slot}")
+    kept = [] if isinstance(written, dict) else [r.strip() for r in config.listed(written)
+                                                 if isinstance(r, str) and r.strip()]
+    return kept, path.read_text(encoding="utf-8")
+
+
+def _set_extra(slot: str, text: str, paths: list[str]) -> str:
+    try:
+        return config.set_yaml_value(text, ("documents", slot), paths)
+    except ValueError as e:
+        raise ValueError(f"Your profile couldn't be changed here ({e}). Change it in {config.profile_path()} by "
+                         "hand.") from None
+
+
+def _name_of(written: str) -> str:
+    return Path(config.expand(written) or written).name
+
+
+def save_extra_document(slot: str, name: Any, data: Any) -> Path:
+    """One file added to documents.<slot> ("transcripts", "references" or "certificates"): the page's file name and
+    its bytes in base64, checked as the resume is (a PDF, Word, JPG or PNG inside; RESUME_MOST) and saved under its
+    own (made safe) name in ~/.job-apply/documents/<slot>/. A file of that name already there is replaced; the list
+    takes EXTRA_FILES_MOST at most. Any other file in the list is kept as written, and the newest is first."""
+    if slot not in config.EXTRA_DOCUMENTS:
+        raise ValueError(f"not a document: {slot!r}")
+    what = config.EXTRA_DOCUMENTS[slot]
+    safe = _safe_file_name(name)
+    suffix = Path(safe).suffix
+    if suffix not in EXTRA_KINDS:
+        raise ValueError(f"Pick your {what} as a PDF, Word (.docx), JPG or PNG file")
+    if not isinstance(data, str) or len(data) > (RESUME_MOST + 2) // 3 * 4:
+        raise ValueError(f"That file is bigger than {RESUME_MOST // (1024 * 1024)} MB: pick a smaller copy")
+    try:
+        raw = base64.b64decode(data, validate=True)
+    except (binascii.Error, ValueError):
+        raise ValueError("The file didn't come through whole: pick it again") from None
+    if not raw:
+        raise ValueError("That file is empty")
+    inside = {".pdf": raw.startswith(b"%PDF-"), ".png": raw.startswith(b"\x89PNG\r\n\x1a\n"),
+              ".jpg": raw.startswith(b"\xff\xd8\xff"), ".jpeg": raw.startswith(b"\xff\xd8\xff")}
+    if suffix in inside and not inside[suffix]:
+        raise ValueError(f"That file isn't a {suffix[1:].upper()} inside: pick the file itself, or save it as a PDF")
+    if suffix == ".docx":
+        try:
+            zipfile.ZipFile(io.BytesIO(raw)).getinfo("word/document.xml")
+        except (zipfile.BadZipFile, KeyError):
+            raise ValueError("That file isn't a Word document inside: save it as .docx or PDF and pick that") from None
+    config.ensure_home()
+    with config.PROFILE_LOCK:
+        kept, text = _extra_written(slot)
+        names = [_name_of(r) for r in kept]
+        # a file of this name the desk saved before is replaced (in any letters' case: Windows keeps "A.pdf" and
+        # "a.pdf" as one file); one the person wrote into the list by hand, from another folder, is never taken out
+        same = [i for i, n in enumerate(names) if n.casefold() == safe.casefold()]
+        before = [i for i in same if _own(slot, kept[i])]
+        if len(same) > len(before):
+            raise ValueError(f"Your {what} already has a file of that name: remove it first, or give the new file "
+                             "another name")
+        if before:
+            safe = names[before[0]]
+        elif len(kept) >= EXTRA_FILES_MOST:
+            raise ValueError(f"Your {what} already has {EXTRA_FILES_MOST} files, the most the desk keeps: remove one "
+                             "first")
+        target = config.home() / "documents" / slot / safe
+        mine = _profile_path_of(target)
+        paths = [mine if i in before else r for i, r in enumerate(kept)]  # (a replaced file keeps its place)
+        if not before:
+            paths.insert(0, mine)
+        text = _set_extra(slot, text, list(dict.fromkeys(paths)))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _write_bytes_atomic(target, raw)
+        config.write_text_atomic(config.profile_path(), text)
+    return target
+
+
+def forget_extra_document(slot: str, name: Any) -> None:
+    """The file named `name` taken out of documents.<slot>'s list (the file itself stays where it is)."""
+    if slot not in config.EXTRA_DOCUMENTS:
+        raise ValueError(f"not a document: {slot!r}")
+    with config.PROFILE_LOCK:
+        kept, text = _extra_written(slot)
+        named = [i for i, r in enumerate(kept) if _name_of(r) == name]
+        if not named:
+            raise ValueError("That file isn't in the list any more.")
+        # (one of that name: the desk's own before one written in by hand; two written in by hand are the person's)
+        mine = [i for i in named if _own(slot, kept[i])]
+        if len(named) > 1 and len(mine) != 1:
+            raise ValueError("Two files in the list have that name. Ask Claude to take the one you mean out of "
+                             "your profile.")
+        gone = mine[0] if mine else named[0]
+        left = [r for i, r in enumerate(kept) if i != gone]
+        config.write_text_atomic(config.profile_path(), _set_extra(slot, text, left))
+
+
 def _save_document(slot: str, what: str, name: Any, data: Any) -> Path:
     """save_resume's work for documents.<slot> ("resume" or "cover_letter"), its sentences naming the file as `what`:
     saved in the desk's own folder as <slot>.pdf or <slot>.docx, never under a name from the page."""

@@ -110,17 +110,18 @@ companies:
                               # Software Engineer IV in Las Vegas
     search: {paycom: 01350CF494085F3FF60A45E3AB7A67DE}
   - name: AGS (PlayAGS)
-    careers_url: https://jobs.jobvite.com/agscareer
-    ats: jobvite              # playags.com links to this Jobvite board
-    nv_sites: Las Vegas (HQ)
-    confidence: medium        # page seen, Oct 2026: 19 openings, Las Vegas among their places
-    no_search: its Jobvite board lists openings as rows a script opens, with no link in their names, which the plugin's Jobvite reader doesn't read (its search came back empty, Oct 2026)
+    careers_url: https://recruiting.paylocity.com/recruiting/jobs/All/22740a18-014a-4a4a-9639-34a52f9679c4/AGS
+    ats: custom               # playags.com's Careers link opens this Paylocity board (its old Jobvite board, jobs.jobvite.com/agscareer,
+                              # says it has no positions); the plugin searches Paylocity boards but the desk doesn't apply on them
+    nv_sites: Las Vegas (HQ), North Las Vegas (warehouse)
+    confidence: medium        # live check, Nov 11, 2026: 19 openings on the board, 9 of them in the Las Vegas area
+    search: {paylocity: https://recruiting.paylocity.com/recruiting/jobs/All/22740a18-014a-4a4a-9639-34a52f9679c4/AGS}
   - name: PlayStudios
     careers_url: https://jobs.dayforcehcm.com/en-US/playstudios/CANDIDATEPORTAL
     ats: custom               # dayforce; playstudios.com/careers links to this Dayforce board
     nv_sites: Las Vegas (HQ; mobile casino games)
     confidence: medium        # page seen, Oct 2026
-    no_search: Dayforce isn't a system the plugin searches
+    no_search: its Dayforce board loads its openings with a search call that answered 403 (HTTP Forbidden) when asked in Nov 2026, so the plugin doesn't read it
   # Data centers, tech, and the airline headquartered here (checked Oct 2026).
   - name: Switch
     careers_url: https://www.switch.com/careers/current-openings/
@@ -133,8 +134,10 @@ companies:
     careers_url: https://www.google.com/about/careers/applications/jobs/results/?location=Henderson%2C%20NV%2C%20USA
     ats: custom               # Google's own job site
     nv_sites: Henderson (data center)
-    confidence: medium        # page seen, Oct 2026: Data Center Technician openings in Henderson
-    no_search: Google's own job site isn't a system the plugin searches
+    confidence: medium        # live check, Nov 11, 2026: Data Center Technician and Operations Manager openings in Henderson
+    # one request, for that one place's first page of results only: Google's robots.txt disallows the paged forms
+    # (results?page=...), so the search never asks for a second page (a place with more openings than a page says so)
+    search: {google_careers: {location: "Henderson, NV, USA"}}
   - name: Allegiant Air
     careers_url: https://www.allegiantair.jobs/
     ats: lever                # allegiantair.com answered with a Cloudflare challenge; allegiantair.jobs lists its
@@ -148,7 +151,7 @@ companies:
     ats: custom               # jobs.zappos.com opens amazon.jobs' search for Zappos (an Amazon company)
     nv_sites: Las Vegas (HQ downtown)
     confidence: medium        # page seen, Oct 2026
-    no_search: amazon.jobs' search, as the plugin runs it, can't be narrowed to Zappos
+    no_search: amazon.jobs' search can be narrowed to Zappos (its subsidiaries filter with base_query=zappos), and did so on Nov 11, 2026, but it found no openings near Las Vegas, so the plugin has no search for it
   # Utilities, public agencies and schools (checked Oct 2026).
   - name: NV Energy
     careers_url: https://careers.nvenergy.com/
@@ -254,7 +257,7 @@ companies:
     nv_sites: Las Vegas, Henderson, North Las Vegas
     confidence: medium        # page seen, Oct 2026
     # (its iCIMS Jibe site lists only its own staff's jobs: recruiters and account managers)
-    no_search: insightglobal.com's own job search isn't one the plugin reads
+    no_search: insightglobal.com's job board reads its openings from a service that needs a sign-in, so the plugin can't read them
   # Federal and defense IT around Nellis AFB and the Nevada National Security Site (checked Oct 2026).
   - name: Mission Support and Test Services (NNSS)
     careers_url: https://nnss.gov/careers/

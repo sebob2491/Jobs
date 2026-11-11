@@ -17,13 +17,13 @@ pytestmark = pytest.mark.skipif(not browser_available(), reason="no Playwright C
 # D1's panels, in the menu's order: each with its address's name and its heading
 PANELS = {"profile": "Your profile", "search": "Job search", "applying": "Applying",
           "passwords": "Accounts and passwords", "email": "Email codes", "phone": "Phone alerts",
-          "documents": "Resume and cover letters", "about": "Updates and about"}
+          "documents": "Resume and documents", "about": "Updates and about"}
 # The sentence under a panel's heading, where D3 gives one
 SAID = {"applying": "What the desk may do in your name. It never solves a CAPTCHA, and never signs you up for a "
                     "newsletter or job alerts.",
         "email": "Many job sites email a code or a link when you sign in or make an account. The desk can read it and "
                  "put it in for you."}
-# A part each panel holds that no other does (D3), by its id; Email codes and Resume and cover letters hold only their
+# A part each panel holds that no other does (D3), by its id; Email codes and Resume and documents hold only their
 # heading for now. (Accounts and passwords: its table of job systems; its form shows only in the row whose Type my own
 # was pressed, the design's E4)
 HOLDS = {"profile": "setup-btn", "search": "auto-search", "applying": "dont-wait", "passwords": "pw-rows",
@@ -526,7 +526,7 @@ def test_submit_for_me_in_settings_and_in_the_apply_bar_always_agree_and_setting
     assert seen["on there"] == [[True, True], True, 3], seen
 
 
-# ---------------------------------------------------------------- Email codes, Resume and cover letters (package 15)
+# ---------------------------------------------------------------- Email codes, Resume and documents (package 15)
 
 APP_PASSWORD = "wxyz abcd efgh ijkl"  # (a made-up app password, as Gmail shows one)
 LETTER_PDF = b"%PDF-1.4\n% a made-up cover letter\n"
@@ -589,7 +589,7 @@ def test_the_cover_letter_rows_sentence_says_what_would_write_the_letters(srv, m
 
 @pytest.mark.parametrize("standalone", [True, False])
 def test_email_codes_and_documents_rows_only_with_claude_are_absent_on_a_desk_run_on_its_own(srv, standalone):
-    """The design's D7, test 5, for Email codes and Resume and cover letters: "Let Claude read codes through Gmail" and
+    """The design's D7, test 5, for Email codes and Resume and documents: "Let Claude read codes through Gmail" and
     "Tailor my resume for each job" show only when the desk runs inside Claude (state.standalone false)."""
     desk = _idle_desk(srv)
     desk.standalone = standalone
@@ -613,15 +613,16 @@ def test_email_codes_and_documents_rows_only_with_claude_are_absent_on_a_desk_ru
 
     shown = run(go())
     email = ["Your email's app password", "Test it"]
-    documents = ["Your resume", "Your usual cover letter", "Write a cover letter for each job"]
+    files = ["Transcripts", "Reference list", "Certificates and licenses"]
+    documents = ["Your resume", "Your usual cover letter", *files, "Write a cover letter for each job"]
     if standalone:
         assert shown == {"email": email, "documents": documents}, shown
     else:
         assert shown == {"email": [*email, "Let Claude read codes through Gmail"],
-                         "documents": [*documents[:2], "Tailor my resume for each job", documents[2]]}, shown
+                         "documents": [*documents[:5], "Tailor my resume for each job", documents[5]]}, shown
 
 
-# What the rows of Email codes and Resume and cover letters show: each switch on or off, the letters' model's box, and
+# What the rows of Email codes and Resume and documents show: each switch on or off, the letters' model's box, and
 # the sentence in red under a row where one shows, by its control's id; and the apply bar's twins
 _MY_ROWS = """() => {
   const $ = (id) => document.getElementById(id);
@@ -638,7 +639,7 @@ _MY_ROWS = """() => {
 
 def test_email_codes_and_documents_switches_show_the_state_save_on_a_press_and_go_back_after_a_refused_save(
         srv, job_apply_home, monkeypatch):
-    """The design's D7, test 3, for Email codes and Resume and cover letters: Let Claude read codes through Gmail
+    """The design's D7, test 3, for Email codes and Resume and documents: Let Claude read codes through Gmail
     (email_codes), Tailor my resume and Write a cover letter (the desk's own, the twins of the apply bar's) and the
     letters' model (cover_letter_model, saved when its box is left) show the state, save at once (held while saving),
     and after a refused save are back where they were with the desk's sentence under the row; nothing changes then."""
@@ -773,7 +774,7 @@ def test_the_email_app_password_saves_shows_saved_with_the_box_empty_and_is_nowh
 
 
 def test_the_usual_cover_letter_and_the_resume_are_picked_named_and_removed_on_the_page(srv, job_apply_home):
-    """Resume and cover letters: the usual cover letter picked (a PDF, then a Word file) shows its file's name and
+    """Resume and documents: the usual cover letter picked (a PDF, then a Word file) shows its file's name and
     Remove, and Remove takes it away (the file stays); a file the desk refuses says the desk's sentence under the row,
     and nothing changes; Your resume names the resume, and Replace replaces it."""
     desk = _idle_desk(srv)

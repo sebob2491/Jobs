@@ -442,7 +442,8 @@ def test_every_job_system_has_a_fixture_or_is_listed_as_waiting():
 
 def _mentions(path: Path) -> set[str]:
     """The words a test file names: each underscore-separated part of its names, attributes, functions and imports
-    (search_module._careerpages, sfclassic_search, RMK_ANSWER), and the words of its strings, lowercased."""
+    (search_module._careerpages, sfclassic_search, RMK_ANSWER), and the words of its strings (and the
+    underscored names in them, a kind like "google_careers"), lowercased."""
     import ast
     import re
 
@@ -453,7 +454,8 @@ def _mentions(path: Path) -> set[str]:
         if named:
             words |= {w for w in named.lower().split("_") if w}
         elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-            words |= set(re.findall(r"[a-z]+", node.value.lower()))
+            text = node.value.lower()
+            words |= set(re.findall(r"[a-z]+", text)) | set(re.findall(r"[a-z]+(?:_[a-z]+)+", text))  # "google_careers"
     return words
 
 

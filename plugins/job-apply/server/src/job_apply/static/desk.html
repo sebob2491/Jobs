@@ -264,6 +264,10 @@ input[type=checkbox]:disabled { opacity: .5; cursor: default; }
   .setrow.stack { grid-template-columns: minmax(0, 1fr); gap: 10px; }
   .setrow.stack > form { justify-self: start; }
 }
+/* (the files of a document kind in Settings, Resume and documents: each its name, with a small Remove) */
+.docfiles { list-style: none; margin: 4px 0 0; padding: 0; }
+.docfile { display: flex; align-items: center; gap: 8px; margin: 2px 0; color: var(--body); font-size: 13px; }
+.docfile span { min-width: 0; overflow-wrap: anywhere; }
 .set-err { grid-column: 1 / -1; margin: -6px 0 0; color: var(--bad); font-size: 13px; }
 /* (a save the desk took: Saved, in green, where the sentence in red would be) */
 .set-ok { grid-column: 1 / -1; margin: -6px 0 0; color: var(--good); font-size: 13px; }
@@ -1081,7 +1085,7 @@ body.stopped > :not(#stopped) { display: none; }
             <a href="#settings/passwords">Accounts and passwords</a>
             <a href="#settings/email">Email codes</a>
             <a href="#settings/phone">Phone alerts</a>
-            <a href="#settings/documents">Resume and cover letters</a>
+            <a href="#settings/documents">Resume and documents</a>
             <a href="#settings/about">Updates and about</a>
           </nav>
           <div class="spanel" id="panel-profile" data-panel="profile">
@@ -1370,7 +1374,7 @@ body.stopped > :not(#stopped) { display: none; }
             </section>
           </div>
           <div class="spanel" id="panel-documents" data-panel="documents" hidden>
-            <div class="spanel-h"><h2 id="panel-documents-h">Resume and cover letters</h2></div>
+            <div class="spanel-h"><h2 id="panel-documents-h">Resume and documents</h2></div>
             <!-- (D3: the files' names from the state, never their paths; a file picked is sent as the profile window
                  sends the resume (/api/profile/resume; the usual cover letter, /api/profile/document). Tailor and
                  Write a cover letter are the twins of the apply bar's #tailor and #letters, drawn from the same state;
@@ -1389,6 +1393,27 @@ body.stopped > :not(#stopped) { display: none; }
                 <div class="acts"><input type="file" id="set-letter-pick" accept=".pdf,.docx" hidden>
                   <button class="btn" id="set-letter" data-act="set-letter" aria-describedby="set-letter-name set-letter-file">Choose a file</button>
                   <button class="btn" id="set-letter-remove" data-act="set-letter-remove" aria-describedby="set-letter-name set-letter-file" hidden>Remove</button></div>
+              </div>
+              <div class="setrow" id="set-transcripts-row">
+                <div><p class="t" id="set-transcripts-name">Transcripts</p>
+                  <p class="s" id="set-transcripts-said">Optional. They go in where a site asks for a transcript.</p>
+                  <ul class="docfiles" id="set-transcripts-files" aria-label="Transcripts: files"></ul></div>
+                <div class="acts"><input type="file" id="set-transcripts-pick" data-doc-kind="transcripts" accept=".pdf,.docx,.jpg,.jpeg,.png" hidden>
+                  <button class="btn" id="set-transcripts" data-act="set-doc" data-doc-kind="transcripts" aria-describedby="set-transcripts-name set-transcripts-said">Add a file</button></div>
+              </div>
+              <div class="setrow" id="set-references-row">
+                <div><p class="t" id="set-references-name">Reference list</p>
+                  <p class="s" id="set-references-said">Optional. It goes in where a site asks for a list of references as a file.</p>
+                  <ul class="docfiles" id="set-references-files" aria-label="Reference list: files"></ul></div>
+                <div class="acts"><input type="file" id="set-references-pick" data-doc-kind="references" accept=".pdf,.docx,.jpg,.jpeg,.png" hidden>
+                  <button class="btn" id="set-references" data-act="set-doc" data-doc-kind="references" aria-describedby="set-references-name set-references-said">Add a file</button></div>
+              </div>
+              <div class="setrow" id="set-certificates-row">
+                <div><p class="t" id="set-certificates-name">Certificates and licenses</p>
+                  <p class="s" id="set-certificates-said">Optional. Diplomas, licenses and certificates: name each file for what it is, so the right one goes in where a site asks.</p>
+                  <ul class="docfiles" id="set-certificates-files" aria-label="Certificates and licenses: files"></ul></div>
+                <div class="acts"><input type="file" id="set-certificates-pick" data-doc-kind="certificates" accept=".pdf,.docx,.jpg,.jpeg,.png" hidden>
+                  <button class="btn" id="set-certificates" data-act="set-doc" data-doc-kind="certificates" aria-describedby="set-certificates-name set-certificates-said">Add a file</button></div>
               </div>
               <div class="setrow" id="set-tailor-row">
                 <div><p class="t" id="set-tailor-name">Tailor my resume for each job</p>
@@ -4638,7 +4663,7 @@ function renderSettingsRows() {
   if (!$("mail-test").dataset.saving) $("mail-test").disabled = !mailSaved;
   $("set-email-codes-row").hidden = !!state.standalone;
   $("mail-claude").hidden = !!state.standalone;  // (Claude reads codes through Gmail only inside Claude)
-  // Resume and cover letters: the files' names (never their paths), and the twins of the apply bar's Tailor my resume
+  // Resume and documents: the files' names (never their paths), and the twins of the apply bar's Tailor my resume
   // and Cover letter, from the same state as theirs
   const docs = p.documents || {};
   $("set-resume-said").textContent = docs.resume || "None yet.";
@@ -4646,6 +4671,10 @@ function renderSettingsRows() {
   $("set-letter-file").textContent = docs.cover_letter || "";
   $("set-letter-file").hidden = !docs.cover_letter;
   $("set-letter-remove").hidden = !docs.cover_letter;
+  for (const kind of ["transcripts", "references", "certificates"]) {  // (each kind's files, one line each: Remove)
+    patch($(`set-${kind}-files`), (Array.isArray(docs[kind]) ? docs[kind] : []).map((name) => ({key: name,
+      html: `<li class="docfile"><span>${esc(name)}</span><button class="btn sm" data-act="doc-remove" data-doc-kind="${kind}" data-doc-name="${esc(name)}" aria-label="Remove ${esc(name)}">Remove</button></li>`})));
+  }
   $("set-tailor-row").hidden = !!state.standalone;  // (only Claude writes a tailored resume: C7)
   const byKey = state.letters_by === "your Anthropic API key";  // (letters.BY_KEY: what would write the letters)
   $("set-letters-said").textContent = byKey
@@ -5047,6 +5076,8 @@ document.addEventListener("click", (e) => {
   }
   if (a === "set-resume") $("set-resume-file").click();  // (the file picked: documentPicked)
   if (a === "set-letter") $("set-letter-pick").click();
+  if (a === "set-doc") $(`set-${t.dataset.docKind}-pick`).click();  // (the file picked: documentPicked)
+  if (a === "doc-remove") documentRemove(t);
   if (a === "set-letter-remove") saveRow(t, () => api("/api/profile/document", {kind: "cover_letter", remove: true}));
   if (a === "quit" && confirm("Quit the Job Desk? Jobs it is working on stop where they are. The queue is kept for next time.")) {
     act(async () => { await api("/api/quit", {}); stopPage(); });
@@ -5292,14 +5323,14 @@ function mailTest(btn) {
       : `It didn't work: ${out.why}.`;
   });
 }
-// Resume and cover letters: a file picked for the resume (/api/profile/resume, as the profile window sends it) or the
+// Resume and documents: a file picked for the resume (/api/profile/resume, as the profile window sends it) or the
 // usual cover letter (/api/profile/document), its bytes in base64; what the desk refuses said under the row
 function documentPicked(input) {
   const file = input.files[0];
   input.value = "";  // (the same file picked again is a change too)
   if (!file) return;
-  const resume = input.id === "set-resume-file";
-  saveRow($(resume ? "set-resume" : "set-letter"), async () => {
+  const resume = input.id === "set-resume-file", kind = input.dataset.docKind;
+  saveRow($(kind ? `set-${kind}` : resume ? "set-resume" : "set-letter"), async () => {
     const data = await new Promise((done, failed) => {
       const reader = new FileReader();
       reader.onload = () => done(String(reader.result).split(",")[1] || "");
@@ -5307,8 +5338,17 @@ function documentPicked(input) {
       reader.readAsDataURL(file);
     });
     await (resume ? api("/api/profile/resume", {name: file.name, data})
-      : api("/api/profile/document", {kind: "cover_letter", name: file.name, data}));
+      : api("/api/profile/document", {kind: kind || "cover_letter", name: file.name, data}));
   });
+}
+// A file taken out of the transcripts, reference list or certificates (the file itself stays on the computer): the
+// keyboard goes on to the next file's Remove, or to the row's Add a file when it was the last
+async function documentRemove(button) {
+  const kind = button.dataset.docKind, name = button.dataset.docName;
+  const at = (((state.profile || {}).documents || {})[kind] || []).indexOf(name);
+  await saveRow(button, () => api("/api/profile/document", {kind, remove: name}));
+  const next = [...$(`set-${kind}-files`).querySelectorAll("[data-doc-name]")][Math.max(at, 0)];
+  (next || $(`set-${kind}`)).focus();
 }
 
 // a company typed into the Company box (Enter, or leaving it) or picked from its suggestions: chosen, once
@@ -5347,7 +5387,7 @@ document.addEventListener("change", (e) => {
     // (a whole number as one; anything else as typed, for the desk to say what it takes)
     saveSetting(t, /^\d+$/.test(said) ? Number(said) : said, () => { t.value = was == null ? "" : String(was); });
   }
-  // Tailor my resume and Cover letter, the apply bar's or their twins in Settings (Resume and cover letters): both show
+  // Tailor my resume and Cover letter, the apply bar's or their twins in Settings (Resume and documents): both show
   // a press at once
   const twins = {tailor: "set-tailor", letters: "set-letters", "set-tailor": "tailor", "set-letters": "letters"};
   if (twins[t.id]) {
@@ -5357,7 +5397,7 @@ document.addEventListener("change", (e) => {
     if (t.id.startsWith("set-")) saveRow(t, send, () => { t.checked = twin.checked = !on; });
     else act(send);
   }
-  if (t.id === "set-resume-file" || t.id === "set-letter-pick") documentPicked(t);
+  if (t.id === "set-resume-file" || t.id === "set-letter-pick" || t.dataset.docKind && t.type === "file") documentPicked(t);
   // (the desk's own switches on the Settings page, saved by the same rule as the profile's: saveRow)
   if (t.id === "auto-search" || t.id === "dont-wait") {
     const on = t.checked;

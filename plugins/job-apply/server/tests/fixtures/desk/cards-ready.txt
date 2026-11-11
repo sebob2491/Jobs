@@ -404,6 +404,15 @@ Replace
 Your usual cover letter
 Optional. It goes in where a site asks for one and no letter was written for the job.
 Choose a file
+Transcripts
+Optional. They go in where a site asks for a transcript.
+Add a file
+Reference list
+Optional. It goes in where a site asks for a list of references as a file.
+Add a file
+Certificates and licenses
+Optional. Diplomas, licenses and certificates: name each file for what it is, so the right one goes in where a site asks.
+Add a file
 Tailor my resume for each job
 Each job waits for Claude to write a resume for it.
 Write a cover letter for each job
