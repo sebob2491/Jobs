@@ -38,7 +38,7 @@ from collections.abc import Awaitable, Callable, Iterator
 from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
-from . import config, history, letters, mailbox, report, similar, vault
+from . import config, history, mailbox, report, similar, vault
 from . import learned as learned_buttons
 from .search import every_employer
 from .tracker import city_key, title_key
@@ -2263,8 +2263,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
 
     def _similar_on(self) -> bool:
         """May a model be asked about a stop's questions? Their setting, never in practice mode's hard switch
-        (JOB_APPLY_NEVER_SUBMIT=1) nor the live check's test identity, and only where there is a model to ask (an API
-        key, or the person's Claude login)."""
+        (JOB_APPLY_NEVER_SUBMIT=1) nor the live check's test identity. (With no model to ask, similar.suggest asks
+        nothing: it looks for one only when there is a question to ask about.)"""
         if not self.suggest_similar or config.never_submit():
             return False
         try:
@@ -2272,7 +2272,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                 return False
         except Exception:  # (a profile that doesn't read: nothing asked)
             return False
-        return letters.api_key() is not None or letters.find_claude() is not None
+        return True
 
     def _suggest_soon(self, run: Run, need: str) -> None:
         """A new stop: the last one's task ended, and at a stop with questions one background task asks the model

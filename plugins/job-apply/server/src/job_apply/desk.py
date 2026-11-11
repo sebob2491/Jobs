@@ -1960,7 +1960,7 @@ class Desk:
                     continue
                 try:
                     config.save_answer(label, kept, run.company, at=run.company if own_id else "",
-                                       matched=used.get(question_key(label), {}).get("match", ""))
+                                       matched=used.get(question_key(label), {}).get("earlier", ""))
                     if kept == value:
                         run.once.pop(question_key(label), None)  # an earlier answer for this application only
                         continue
@@ -2403,11 +2403,12 @@ class Desk:
         if suggests is None:
             line("suggest_similar", similar_name, unknown, busy, similar_where)
         elif suggests:
-            line("suggest_similar", similar_name, "on", similar_said, similar_where)
+            line("suggest_similar", similar_name, "on" if _similar_by() else "on, with no model to ask", similar_said,
+                 similar_where)
         else:
             line("suggest_similar", similar_name,
-                 "off in practice mode" if a.suggest_similar and (config.never_submit() or identity) else
-                 "off" if not a.suggest_similar else "on, with no model to ask", similar_said, similar_where)
+                 "off in practice mode" if a.suggest_similar and (config.never_submit() or identity) else "off",
+                 similar_said, similar_where)
         where = "Settings, Email codes"
         if s.email_codes and not unread:
             line("email_codes", "Emailed codes (Claude)", "on",
@@ -2799,7 +2800,7 @@ def _companies(value: Any) -> list[str] | None:
 def _similar_by() -> str | None:
     """What suggested answers ask (letters.written_by's words), or None where there's no model to ask."""
     try:
-        return letters.written_by() if letters.api_key() is not None or letters.find_claude() is not None else None
+        return letters.written_by() if letters.api_key() is not None or letters.claude_on_hand() else None
     except Exception:
         return None
 

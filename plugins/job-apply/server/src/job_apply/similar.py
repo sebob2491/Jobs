@@ -50,7 +50,8 @@ SYSTEM = (
     "maps each new question's number, as a string, to the number of one earlier question or to null. No other text.")
 
 # a consent or notice, by the words the page's own test uses (desk.html's question()), besides autofill's
-_CONSENT_WORDS = re.compile(r"agree|consent|certif|acknowledg|terms|attest|authori[sz]|privacy|signature|waiver", re.I)
+_CONSENT_WORDS = re.compile(r"agree|consent|certif|acknowledg|terms|attest|authori[sz]|privacy|signature|waiver|"
+                            r"\bnotices?\b|disclosures?|\bpolic(?:y|ies)\b", re.I)
 # "legally authorized to work" asks about the person, it agrees to nothing
 _WORK_AUTHORIZATION = re.compile(r"\b(?:legally |lawfully )?(?:authori[sz]ed|permitted|eligible|allowed) to work\b|"
                                  r"\bwork authori[sz]ation\b", re.I)

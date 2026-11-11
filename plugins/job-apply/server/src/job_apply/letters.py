@@ -1063,6 +1063,12 @@ def _runnable(path: Path) -> bool:
 def find_claude() -> str | None:
     """The claude command: on the PATH, else the one Claude Code says it runs from (CLAUDE_CODE_EXECPATH, in the
     environment it starts the plugin's server with), else where its installers put it."""
+    return claude_on_hand()
+
+
+def claude_on_hand() -> str | None:
+    """find_claude's look, on its own: the page's line about suggested answers asks it with every poll of the state,
+    where the letters' own count of looks is none of its business."""
     found = shutil.which("claude")
     if found:
         return found
