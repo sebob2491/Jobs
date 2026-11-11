@@ -669,6 +669,7 @@ def test_a_learned_press_after_which_the_page_says_it_went_in_stops_for_the_pers
     r = over(applier, body)
     assert (r.status, r.need, r.code) == ("needs_you", "check_submit", "check_submit"), (r.code, r.reason, r.log)
     assert "“Continue to next step”, as you did here before" in r.reason and "I submitted it myself" in r.reason
+    assert "the page now says \u201capplication has been received\u201d" in r.reason  # (the confirmation's own words)
     assert r.pressed_before and learned.all() == []  # (never pressed again, there or anywhere)
     assert srv.tracker().get(job["id"])["status"] != "applied"
 
@@ -864,6 +865,8 @@ def test_the_listener_goes_into_the_pages_own_frames_and_never_another_sites(srv
         tab = await _tab(srv, f"http://127.0.0.1:{own.server_address[1]}/apply")
         await tab.wait_for_load_state("load")
         await learned.listen(tab, None, lambda source, words: heard.append(words))
+        put = {f.url.rsplit("/", 1)[-1]: await f.evaluate("typeof window.__jdHandOff") for f in tab.frames}
+        assert put == {"apply": "function", "own": "function", "frame": "undefined"}, put  # (never into another site's)
         await tab.frame_locator("#o").locator("#x").click()
         await tab.frame_locator("#s").locator("#y").click()
         await tab.click("#z")
