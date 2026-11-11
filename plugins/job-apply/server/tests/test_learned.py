@@ -151,7 +151,9 @@ def test_a_press_at_a_no_step_button_stop_that_moves_the_step_on_is_kept(srv, jo
 CODES = ["bot_check", "captcha", "account_theirs", "sign_in_refused", "email_code", "security_questions",
          "notice_theirs", "agreement_theirs", "assessment", "your_submit", "cookie_banner"]
 NEEDS = {"bot_check": "bot_check", "captcha": "captcha", "email_code": "email_code", "your_submit": "your_submit"}
-MOVED = {"url": "https://acme.example/careers/apply", "headings": ["References"], "fields": [], "actions": []}
+# (the step the press led to: a further one of the application, a box to fill on it)
+MOVED = {"url": "https://acme.example/careers/apply", "headings": ["References"],
+         "fields": [{"id": "r", "label": "Reference name", "kind": "text"}], "actions": []}
 
 
 def _stopped(srv, code="no_step_button"):
@@ -575,6 +577,24 @@ TABLE = {
     "Create account": False, "Register and continue": False, "I'm not a robot": False, "Continue to my profile": False,
     "Yes, continue": False, "OK": False, "Subscribe and continue": False, "Save": False, "Done, next": False,
     "Next to job alerts": False, "Confirm and continue": False, "Finish and review": False,
+    # the second review's: an end in other words, and words that leave the application
+    "Continue and Finalize": False, "Proceed to finalise": False, "Continue to final step": False,
+    "Next, Lodge application": False, "Next: eSignature": False, "Proceed with application": False,
+    "Next job": False, "Go to next job": False, "Next opening": False, "Go to my applications": False,
+    "Go to home": False, "Go to dashboard": False, "Continue later": False, "Save for later and continue": False,
+    "Continue and logout": False, "Leave and continue": False, "Continue without saving": False,
+    "Continue anyway": False, "Proceed anyway": False, "Continue to Video Interview": False,
+    "Proceed to interview scheduling": False, "Forward to a friend": False, "Next position": False,
+    "Continue to search": False, "Close and continue": False, "Continue to all steps": False,
+    "Continue to list": False, "Next menu": False, "Share and continue": False, "Continue to survey": False,
+    # look-alike and invisible characters, and a button not in English
+    "Continue to \u0405ubmit": False, "Sub\u200bmit and continue": False, "Sub\u00admit and continue": False,
+    "Continuer": False, "Weiter \u00bb": False, "Siguiente paso": False, "N\u0435xt": False,
+    "Next \u00e9tape": False, "Continue \u2192 \u00e9tape suivante": False,
+    # no step word at all, nothing refused either: the allow-list alone keeps these out
+    "Learn more": False, "Details": False, "Help": False, "Print": False, "Edit": False,
+    "Show more": False, "Expand": False, "Hide": False, "Change": False, "Update": False, "Select": False,
+    "Choose": False, "Go": False, "Proceeding": False, "Nextdoor": False, "Reviewed": False, "Stepped": False,
 }
 
 
@@ -956,3 +976,177 @@ def test_a_click_of_the_tools_in_the_paused_tab_teaches_nothing(srv, job_apply_h
         return r
 
     assert over(applier, body).hand_press == "Continue reading"
+
+
+# ============================================================== the second review: positive evidence of a further step
+# -------------------------------------------------------------------- 1: no further step shown, nothing kept or counted
+@pytest.mark.parametrize("after", ["thanks in other words", "only a search box", "a sign-in form", "a step's button"])
+def test_a_press_is_kept_only_where_the_page_after_it_shows_a_further_step(srv, job_apply_home, monkeypatch, after):
+    """"Not a confirmation" is no proof a press sent nothing ("Application sent", a thanks in another language): a press
+    is kept only where the page after it shows a box of the application's to fill, or a step's button."""
+    monkeypatch.setattr(Applier, "_looks_past", lambda *a: True)
+    applier, r = _stopped(srv)
+    _hand(r, "no_step_button")
+    _going_on(r)
+    page = {"url": MOVED["url"], "headings": ["Application sent"], "fields": [], "actions": []}
+    if after == "only a search box":
+        page = {**page, "headings": ["Open positions"], "fields": [{"id": "q", "label": "Search jobs", "kind": "text"}]}
+    elif after == "a sign-in form":
+        page = {**page, "headings": ["Welcome back"], "fields": [{"id": "e", "label": "Email", "kind": "text"},
+                                                                 {"id": "p", "label": "Password", "kind": "password"}]}
+    elif after == "a step's button":
+        page = {**page, "headings": ["Voluntary disclosures"], "actions": [{"id": "n", "text": "Next"}]}
+    run(applier._learn_from_hand(r, page, "Application sent"))
+    assert (learned.lookup(PLACE, "0123456789abcdef") is not None) == (after == "a step's button")
+
+
+def test_what_counts_as_a_further_step():
+    box = {"id": "r", "label": "Reference name", "kind": "text"}
+    assert pipeline._further_step({"fields": [box]})
+    assert pipeline._further_step({"actions": [{"text": "Save and Continue"}]})
+    nav = [{"text": "Back to jobs"}, {"text": "Next", "site_nav": True}]
+    assert not pipeline._further_step({"fields": [], "actions": nav})
+    greyed = [{"text": "Next", "disabled": True}, {"text": "Submit", "is_submit": True}]
+    assert not pipeline._further_step({"actions": greyed})
+    assert not pipeline._further_step({"fields": [box], "actions": [{"text": "Next", "sign_in_form": True}]})
+    assert not pipeline._further_step({"fields": [{"id": "k", "label": "Keywords", "kind": "text"}]})
+
+
+# A step whose way on, "Continue to next step", sends the application: the page after says so in words confirmations()
+# doesn't know
+SENT_UNSAID = SENDS.replace("<h1>Thank you for applying</h1><p>Your application has been received.</p>",
+                            "<h1>Application sent</h1>")
+
+
+@needs_browser
+def test_a_learned_press_after_which_the_page_shows_no_further_step_stops_for_the_person_to_check(
+        srv, job_apply_home, quick, tmp_path):
+    assert SENT_UNSAID != SENDS
+    folder = tmp_path / "acme"
+    folder.mkdir()
+    (folder / "apply.html").write_text(SENT_UNSAID, encoding="utf-8")
+    url = (folder / "apply.html").resolve().as_uri()
+    seed(srv, url, words="Continue to next step")
+    job = job_at(srv, url)
+    applier = Applier(srv)
+
+    async def body(applier):
+        r = applier.enqueue(job["id"])
+        await until(lambda: r.status not in ("queued", "running"), about=state(r))
+        return r
+
+    r = over(applier, body)
+    assert (r.status, r.need, r.code) == ("needs_you", "check_submit", "check_submit"), (r.code, r.reason, r.log)
+    assert "shows no further step of this application" in r.reason and "I submitted it myself" in r.reason
+    assert r.pressed_before and learned.all() == []
+    assert srv.tracker().get(job["id"])["status"] != "applied"
+
+
+# -------------------------------------------------------------------- 3: characters that show nothing
+def test_the_words_drop_characters_that_show_nothing():
+    assert learned.words_of("Sub​mit") == "Submit" and learned.words_of("Sub­mit") == "Submit"
+    assert learned.words_of("​Go to next⁠ section﻿") == WORDS
+
+
+# -------------------------------------------------------------------- 4: a script's click, another site's frame
+@needs_browser
+def test_a_click_made_by_the_pages_script_is_not_heard(srv, tmp_path):
+    page = tmp_path / "listened.html"
+    page.write_text(LISTENED, encoding="utf-8")
+    heard: list[str] = []
+
+    async def go():
+        tab = await _tab(srv, page.resolve().as_uri())
+        await learned.listen(tab, None, lambda source, words: heard.append(words))
+        await tab.evaluate("document.getElementById('go').click()")  # (isTrusted false)
+        await asyncio.sleep(0.3)
+        await tab.click("#go")
+        await asyncio.sleep(0.3)
+
+    run(go())
+    assert heard == [WORDS]
+
+
+@needs_browser
+def test_a_report_from_another_sites_frame_is_dropped(srv, tmp_path):
+    """The binding is reachable from every frame of the tab: another site's frame calling it is never heard."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    def server(pages):
+        class Site(BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = pages.get(self.path.split("?")[0], "").encode("utf-8")
+                self.send_response(200 if body else 404)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+        site = ThreadingHTTPServer(("127.0.0.1", 0), Site)
+        threading.Thread(target=site.serve_forever, daemon=True).start()
+        return site
+
+    other = server({"/frame": "<p>an embed</p>"})
+    own_pages: dict[str, str] = {"/own": "<p>ours</p>"}
+    own = server(own_pages)
+    own_pages["/apply"] = (f"<h1>Apply</h1><iframe id='o' src='http://127.0.0.1:{other.server_address[1]}/frame'>"
+                           "</iframe><iframe id='s' src='/own'></iframe>")
+    heard: list[str] = []
+
+    async def go():
+        tab = await _tab(srv, f"http://127.0.0.1:{own.server_address[1]}/apply")
+        await tab.wait_for_load_state("load")
+        await learned.listen(tab, None, lambda source, words: heard.append(words))
+        for frame in tab.frames:
+            if frame is not tab.main_frame:
+                said = "From " + ("ours" if frame.url.endswith("/own") else "there")
+                await frame.evaluate("(w) => window.__jdHand && window.__jdHand(w)", said)
+        await tab.evaluate("window.__jdHand('From the page')")
+        await asyncio.sleep(0.3)
+
+    try:
+        run(go())
+    finally:
+        other.shutdown()
+        own.shutdown()
+    assert sorted(heard) == ["From ours", "From the page"]
+
+
+# -------------------------------------------------------------------- 5: the person's other names, employers, schools
+def test_may_learn_refuses_the_persons_other_names_employers_and_schools(job_apply_home):
+    import yaml
+
+    path = job_apply_home / "profile.yaml"
+    prof = yaml.safe_load(path.read_text(encoding="utf-8"))
+    prof["personal"].update({"middle_name": "Jo", "preferred_name": "Sammy"})
+    prof["history"]["previous_employers"] = ["Intel", "Microchip Technology"]
+    path.write_text(yaml.safe_dump(prof), encoding="utf-8")
+    for words in ("Next for Jo", "Next, Sammy", "Continue to Intel", "Continue to Microchip", "Next: Arizona",
+                  "Continue to University", "Next for Fab"):
+        assert not _may_learn(words, [_b(words)]), words
+    for words in ("Next for Al", "Continue to Tech"):  # (two letters and not a name; a word that's part of one)
+        assert _may_learn(words, [_b(words)]), words
+
+
+# -------------------------------------------------------------------- 6: the checks of _learn_from_hand, each alone
+@pytest.mark.parametrize("which", ["practice mode turned on", "the same page", "not past the stop"])
+def test_each_check_of_learn_from_hand_alone_keeps_a_press_out(srv, job_apply_home, monkeypatch, which):
+    """The press of test_only_a_no_step_button_stop_teaches, with one thing otherwise: practice mode turned on during
+    the stop (_learning_on), the page after it of the same shape as the stop's (its key), or the tab not past the stop
+    as _looks_past tells it (its look the same as the page it paused on)."""
+    applier, r = _stopped(srv)
+    _hand(r, "no_step_button")
+    _going_on(r)
+    if which == "practice mode turned on":
+        monkeypatch.setattr(Applier, "_looks_past", lambda *a: True)
+        monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
+    elif which == "the same page":
+        monkeypatch.setattr(Applier, "_looks_past", lambda *a: True)
+        r.hand_stop["page"] = pipeline._learn_page_key(MOVED)
+    else:
+        r.pause_sig = pipeline._page_sig(MOVED)
+    run(applier._learn_from_hand(r, MOVED, ""))
+    assert learned.all() == []
