@@ -99,15 +99,15 @@ def page_key_sync(srv, url):
     return run(go())
 
 
-def seed(srv, url, words=WORDS, day=DAY, **kept):
-    """What the desk learned at this page on an earlier visit."""
+def seed(srv, url, words=WORDS, day=DAY, company="Acme"):
+    """What the desk learned at this page of this employer's on an earlier visit."""
     key = page_key_sync(srv, url)
-    assert learned.remember(learned.place_of(url), "company_site", key, words, day)
+    assert learned.remember(learned.place_key(url, company), "company_site", key, words, day)
     return key
 
 
-def job_at(srv, url, n=0):
-    return srv.add_job(url=url + (f"?n={n}" if n else ""), title="Technician", company="Acme")["job"]
+def job_at(srv, url, n=0, company="Acme"):
+    return srv.add_job(url=url + (f"?n={n}" if n else ""), title="Technician", company=company)["job"]
 
 
 # -------------------------------------------------------------------- 1: a press that moves the step on is kept
@@ -140,6 +140,7 @@ def test_a_press_at_a_no_step_button_stop_that_moves_the_step_on_is_kept(srv, jo
     assert (entry["button"], entry["system"]) == (WORDS, "company_site")
     assert (entry["worked"], entry["failed"]) == (0, 0)
     assert len(entry["page"]) == 16 and entry["place"].startswith("file:") and entry["on"] == time.strftime("%Y-%m-%d")
+    assert entry["place"].endswith("|acme")  # (the employer, as the tracker names it: one host serves many)
     for never in ("acme-careers", "apply.html", "Years of experience", "Your experience", "Sam", "4471", "rivera",
                   "example.com", "Tell us about it", "References"):
         assert never not in text, never
@@ -162,10 +163,18 @@ def _stopped(srv, code="no_step_button"):
     return applier, r
 
 
-def _hand(r, code):
-    r.hand_stop = {"code": code, "place": learned.place_of(MOVED["url"]), "system": "", "page": "0123456789abcdef",
-                   "buttons": [{"text": WORDS}]}
-    r.hand_press = WORDS
+def _hand(r, code, words=WORDS):
+    r.hand_stop = {"code": code, "place": learned.place_key(MOVED["url"], "Acme"), "system": "",
+                   "page": "0123456789abcdef", "buttons": [{"text": words}]}
+    r.hand_press, r.hand_heard = words, {words.casefold()}
+
+
+def _going_on(r):
+    """The run as the first look of the pass after Carry on finds it."""
+    r.status, r.need, r.reason = "running", "", "Working on it"
+
+
+PLACE = learned.place_key(MOVED["url"], "Acme")
 
 
 def test_every_stop_code_there_is_for_the_cases_below_is_a_real_one():
@@ -178,8 +187,9 @@ def test_only_a_no_step_button_stop_teaches(srv, job_apply_home, monkeypatch, co
     monkeypatch.setattr(Applier, "_looks_past", lambda *a: True)
     applier, r = _stopped(srv, code)
     _hand(r, code)
+    _going_on(r)
     run(applier._learn_from_hand(r, MOVED, ""))
-    kept = learned.lookup(learned.place_of(MOVED["url"]), "0123456789abcdef")
+    kept = learned.lookup(PLACE, "0123456789abcdef")
     assert (kept is not None) == (code == "no_step_button")
     assert r.hand_stop is None and r.hand_press == ""
 
@@ -443,7 +453,7 @@ def test_the_listener_hears_only_a_buttons_words_and_only_while_the_stop_lasts(s
         await applier._stop_hearing(r)
         await r.page.click("#go")
         await asyncio.sleep(0.5)
-        assert r.hand_press == "" and await r.page.evaluate("window.__jdHandOn") is False
+        assert r.hand_press == "" and await r.page.evaluate("typeof window.__jdHandOff") == "undefined"
         return r
 
     r = over(applier, body)
@@ -460,7 +470,7 @@ def test_a_press_heard_while_the_run_is_at_a_stop_of_another_kind_is_ignored(srv
         await settle(r)
         applier._pause(r, "bot_check", "Over to you.", code="bot_check")  # (the page's flag is still on)
         r.hand_stop = {"code": "no_step_button", "place": "x", "system": "", "page": "0" * 16, "buttons": []}
-        assert await r.page.evaluate("window.__jdHandOn") is True
+        assert await r.page.evaluate("typeof window.__jdHandOff") == "function"  # (the page's listener still on)
         await r.page.click("#go")
         await asyncio.sleep(0.5)
         return r
@@ -470,7 +480,8 @@ def test_a_press_heard_while_the_run_is_at_a_stop_of_another_kind_is_ignored(srv
 
 def test_the_listener_script_reports_nothing_but_a_buttons_words():
     js = learned.LISTEN_JS
-    assert re.findall(r"addEventListener\('(\w+)'", js) == ["click"] and "}, true);" in js  # (the capture phase)
+    assert re.findall(r"addEventListener\('(\w+)'", js) == ["click"]
+    assert "addEventListener('click', heard, true)" in js  # (the capture phase)
     for banned in ("clientX", "clientY", "pageX", "location", "href", "key", "cookie", "storage", "fetch"):
         assert banned not in js, banned
     assert js.count("window.__jdHand(") == 1  # (one report, of the words)
@@ -545,3 +556,403 @@ def test_the_setting_is_kept_in_desk_json_and_on_in_the_state(srv, job_apply_hom
     desk2 = _desk(srv)
     desk2._load()
     assert desk2.applier.learn_from_me is False
+
+
+# ================================================================= the review of the learned press (its eight faults)
+# -------------------------------------------------------------------- 1: a learned press never sends
+TABLE = {
+    # the step words, alone or with others: allowed
+    "Next": True, "Continue": True, "Save and Continue": True, "Save & Continue": True, "Go to next section": True,
+    "Review": True, "Next: Voluntary Disclosures": True, "Proceed": True, "Continue to next step": True,
+    "Next ›": True,
+    # an end, a send, an agreement, a way back or out, something added, another site's sign-in, an account, an answer
+    "Proceed to step 3": False, "Review and Submit": False, "Done": False, "Finish": False,
+    "Complete application": False, "Place my application": False, "Send": False, "Apply": False, "Confirm": False,
+    "I agree": False, "Accept all": False, "Back": False, "Go back": False, "Previous step": False, "Cancel": False,
+    "Skip this step": False, "Delete": False, "Add another": False, "Upload and continue": False,
+    "Start assessment": False, "Continue with Google": False, "Continue with LinkedIn": False,
+    "Continue as Sam Rivera": False, "Continue as guest": False, "Sign in": False, "Sign in and continue": False,
+    "Create account": False, "Register and continue": False, "I'm not a robot": False, "Continue to my profile": False,
+    "Yes, continue": False, "OK": False, "Subscribe and continue": False, "Save": False, "Done, next": False,
+    "Next to job alerts": False, "Confirm and continue": False, "Finish and review": False,
+}
+
+
+@pytest.mark.parametrize("words", list(TABLE))
+def test_may_learn_allows_a_steps_words_and_nothing_that_ends_sends_or_leaves_the_step(words):
+    """Allowed, not merely not refused: the words must say they go on to a step, and say nothing of an end, a send, a
+    way back or out, something added, another site's sign-in, an account or an answer (the review: a plain "Done" that
+    sent the application was learned, and pressed at the next job there)."""
+    assert _may_learn(words, [_b(words), _b("Back")]) is TABLE[words], words
+
+
+@pytest.mark.parametrize("words", ["Continue to step 2", "Next for jo@example.org", "Continue: resume_final.pdf",
+                                   "Continue to careers.example", "Continue on to the next part of this form",
+                                   "Next, Rivera", "Continue in Chandler", "Next for Sam"])
+def test_may_learn_refuses_words_that_may_be_the_persons_own(words):
+    """A number, an email, a file's or a site's name, a sentence, or a word of the person's name, email or city (the
+    test profile's: Sam Rivera, sam.rivera@..., Chandler)."""
+    assert not _may_learn(words, [_b(words)])
+    assert not _may_learn("Continue to Tempe", [_b("Continue to Tempe")], personal={"tempe"})
+    assert _may_learn("Continue to Tempe", [_b("Continue to Tempe")], personal={"chandler"})
+
+
+@pytest.mark.parametrize("how", ["confirmation", "ended", "submit pressed", "two buttons pressed"])
+def test_a_press_is_not_kept_after_a_confirmation_an_end_a_submit_or_with_two_buttons_pressed(srv, job_apply_home,
+                                                                                              monkeypatch, how):
+    """The same press as kept at test_only_a_no_step_button_stop_teaches, but the page after it says the application
+    went in; the run ended (marked applied, or skipped); a Submit was pressed for it; or the person pressed two
+    different buttons at the stop (the last of them may not be the one that moved the step on)."""
+    monkeypatch.setattr(Applier, "_looks_past", lambda *a: True)
+    applier, r = _stopped(srv)
+    _hand(r, "no_step_button")
+    _going_on(r)
+    text = ""
+    if how == "confirmation":
+        text = "Thank you for applying. Your application has been received. We will be in touch."
+    elif how == "ended":
+        r.status = "submitted"
+    elif how == "submit pressed":
+        r.pressed_before = True
+    else:
+        r.hand_heard = {"add another", WORDS.casefold()}
+    run(applier._learn_from_hand(r, MOVED, text))
+    assert learned.lookup(PLACE, "0123456789abcdef") is None
+
+
+# A step whose way on is "Continue to next step", and pressing it sends the application: the page thanks the person
+SENDS = """<!doctype html><html><head><title>Apply</title></head><body>
+<h1 id="h">Your experience</h1>
+<label for="y">Years of experience</label><input id="y" type="text" value="3">
+<button type="button" id="go" onclick="document.body.innerHTML=document.getElementById('thanks').innerHTML"
+>Continue to next step</button>
+<template id="thanks"><h1>Thank you for applying</h1><p>Your application has been received.</p></template>
+</body></html>"""
+
+
+@needs_browser
+def test_a_learned_press_after_which_the_page_says_it_went_in_stops_for_the_person_to_check(srv, job_apply_home, quick,
+                                                                                           tmp_path):
+    folder = tmp_path / "acme"
+    folder.mkdir()
+    (folder / "apply.html").write_text(SENDS, encoding="utf-8")
+    url = (folder / "apply.html").resolve().as_uri()
+    seed(srv, url, words="Continue to next step")
+    job = job_at(srv, url)
+    applier = Applier(srv)
+
+    async def body(applier):
+        r = applier.enqueue(job["id"])
+        await until(lambda: r.status not in ("queued", "running"), about=state(r))
+        return r
+
+    r = over(applier, body)
+    assert (r.status, r.need, r.code) == ("needs_you", "check_submit", "check_submit"), (r.code, r.reason, r.log)
+    assert "“Continue to next step”, as you did here before" in r.reason and "I submitted it myself" in r.reason
+    assert r.pressed_before and learned.all() == []  # (never pressed again, there or anywhere)
+    assert srv.tracker().get(job["id"])["status"] != "applied"
+
+
+@needs_browser
+@pytest.mark.parametrize("how", ["never_submit", "dry_run"])
+def test_a_learned_press_is_never_made_in_practice_mode(srv, job_apply_home, quick, tmp_path, monkeypatch, how):
+    """JOB_APPLY_NEVER_SUBMIT=1 (the live check, its test identity) or submit_mode: dry_run: what was learned is left
+    as it is, and not pressed."""
+    url = site(tmp_path / "acme")
+    seed(srv, url)
+    before = learned_file(job_apply_home).read_text(encoding="utf-8")
+    if how == "never_submit":
+        monkeypatch.setenv("JOB_APPLY_NEVER_SUBMIT", "1")
+    else:
+        monkeypatch.setattr(config.Settings, "dry_run", property(lambda s: True))
+    applier = Applier(srv)
+
+    async def body(applier):
+        r = applier.enqueue(job_at(srv, url)["id"])
+        await until(lambda: r.status not in ("queued", "running"), about=state(r))
+        return r
+
+    r = over(applier, body)
+    assert not any("as you did here" in line for line in r.log), r.log
+    assert r.learned_press is None and r.status != "submitted"
+    assert learned_file(job_apply_home).read_text(encoding="utf-8") == before
+
+
+# -------------------------------------------------------------------- 2: another employer on the same host
+@needs_browser
+def test_a_press_learned_for_one_employer_is_not_made_for_another_on_the_same_host(srv, job_apply_home, quick,
+                                                                                   tmp_path):
+    """Two employers on one job system's host, their pages of the same shape (jobs.smartrecruiters.com's, say): what
+    was learned at Acme's is never pressed at Bolt's."""
+    url = site(tmp_path / "shared")
+    seed(srv, url, company="Acme")
+    applier = Applier(srv)
+
+    async def body(applier):
+        r = applier.enqueue(job_at(srv, url, company="Bolt Industries")["id"])
+        await until(lambda: r.status not in ("queued", "running"), about=state(r))
+        return r
+
+    _not_used(over(applier, body))
+    assert [e["worked"] for e in learned.all()] == [0]
+
+
+def test_where_a_press_is_kept_names_the_employer_and_nothing_with_none(job_apply_home):
+    url = "https://jobs.smartrecruiters.com/AcmeCorp/123-technician"
+    assert learned.place_key(url, "Acme, Inc.") == learned.place_of(url) + "|acmeinc"
+    assert learned.place_key(url, "Bolt") != learned.place_key(url, "Acme")
+    assert learned.place_key(url, "") == "" and learned.place_key(url, " ,. ") == ""
+    assert learned.place_key("", "Acme") == ""
+    assert learned.shown_place("acme.example|acme") == "acme.example"
+
+
+@pytest.mark.parametrize("where", ["another host", "another employer"])
+def test_a_press_is_not_kept_where_the_page_after_it_is_another_place(srv, job_apply_home, monkeypatch, where):
+    """The page the person's press led to is at another place, or the job is another employer's (the place check in
+    _learn_from_hand: taken out, this fails)."""
+    monkeypatch.setattr(Applier, "_looks_past", lambda *a: True)
+    applier, r = _stopped(srv)
+    _hand(r, "no_step_button")
+    _going_on(r)
+    moved = MOVED
+    if where == "another host":
+        moved = {**MOVED, "url": "https://other.example/careers/apply"}
+    else:
+        r.company = "Bolt"
+    run(applier._learn_from_hand(r, moved, ""))
+    assert learned.all() == []
+
+
+# -------------------------------------------------------------------- 3: only a button's visible words are heard
+LISTENED = """<!doctype html><html><body><h1>Your experience</h1>
+<button type="button" id="icon" aria-label="Sam Rivera resume.pdf" title="sam.rivera@example.com"><svg width="9"
+ height="9"></svg></button>
+<a id="link" href="#" title="Continue as Sam Rivera"><img alt="" width="9" height="9"></a>
+<input type="submit" id="sub" value="Next step" onclick="return false">
+<button type="button" id="go">Go to next section</button></body></html>"""
+
+
+async def _tab(srv, url):
+    await srv.browser.goto(url)
+    return srv.browser.current_tab
+
+
+@needs_browser
+def test_the_listener_hears_a_buttons_visible_words_and_never_an_aria_label_or_title(srv, tmp_path):
+    page = tmp_path / "listened.html"
+    page.write_text(LISTENED, encoding="utf-8")
+    heard: list[str] = []
+
+    async def go():
+        tab = await _tab(srv, page.resolve().as_uri())
+        await learned.listen(tab, None, lambda source, words: heard.append(words))
+        for which in ("#icon", "#link", "#sub", "#go"):
+            await tab.click(which)
+        await asyncio.sleep(0.3)
+
+    run(go())
+    assert heard == ["Next step", "Go to next section"]
+
+
+# -------------------------------------------------------------------- 4: the press that moved the step on
+@needs_browser
+def test_two_different_buttons_pressed_at_the_stop_teach_nothing(srv, job_apply_home, quick, tmp_path):
+    url = site(tmp_path / "acme", extra="<button type='button' id='add'>Add another</button>")
+    applier = Applier(srv)
+
+    async def body(applier):
+        r = applier.enqueue(job_at(srv, url)["id"])
+        await settle(r)
+        await r.page.click("#add")
+        await until(lambda: r.hand_press, about=state(r))
+        await r.page.click("#go")
+        await until(lambda: r.hand_press == WORDS, about=state(r))
+        await carry_on(applier, r)
+        return r
+
+    r = over(applier, body)
+    assert r.status == "ready", (r.status, r.reason)
+    assert not learned_file(job_apply_home).exists() or learned.all() == []
+
+
+# A first step the desk goes on from by itself (its Next), then a step whose only way on, "Go to next section", leads
+# back to the first: a learned press that goes nowhere new
+CIRCLE = """<!doctype html><html><head><title>Apply</title></head><body>
+<div id="a"><h1>Your details</h1><label for="fn">First name</label><input id="fn" type="text">
+<button type="button" id="next" onclick="document.getElementById('a').hidden=true;
+  document.getElementById('b').hidden=false">Next</button></div>
+<div id="b" hidden><h1>Your experience</h1><label for="y">Years of experience</label><input id="y" type="text">
+<button type="button" id="go" onclick="document.getElementById('b').hidden=true;
+  document.getElementById('a').hidden=false">Go to next section</button></div>
+</body></html>"""
+
+
+@needs_browser
+def test_a_learned_press_that_leads_back_to_a_step_already_gone_through_counts_as_failed(srv, job_apply_home, quick,
+                                                                                         tmp_path):
+    folder = tmp_path / "acme"
+    folder.mkdir()
+    (folder / "apply.html").write_text(CIRCLE, encoding="utf-8")
+    url = (folder / "apply.html").resolve().as_uri()
+    key = learned.page_key(["Your experience"], ["Years of experience"])
+    assert learned.remember(learned.place_key(url, "Acme"), "company_site", key, WORDS, DAY)
+    applier = Applier(srv)
+
+    async def body(applier):
+        r = applier.enqueue(job_at(srv, url)["id"])
+        await until(lambda: r.status not in ("queued", "running"), about=state(r))
+        return r
+
+    r = over(applier, body)
+    assert SAID in r.log, r.log
+    assert (r.status, r.code) == ("needs_you", "no_step_button"), (r.status, r.code, r.reason, r.log)
+    [entry] = learned.all()
+    assert (entry["worked"], entry["failed"]) == (0, 1)
+
+
+# -------------------------------------------------------------------- 5: never in another site's frame
+@needs_browser
+def test_the_listener_goes_into_the_pages_own_frames_and_never_another_sites(srv, tmp_path):
+    """A frame of the page's own origin is heard; one of another origin (another port: another site) never is."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    def server(pages):
+        class Site(BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = pages.get(self.path.split("?")[0], "").encode("utf-8")
+                self.send_response(200 if body else 404)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+        site = ThreadingHTTPServer(("127.0.0.1", 0), Site)
+        threading.Thread(target=site.serve_forever, daemon=True).start()
+        return site
+
+    other = server({"/frame": "<button id='x'>Next over there</button>"})
+    own_pages: dict[str, str] = {"/own": "<button id='y'>Next in here</button>"}
+    own = server(own_pages)
+    own_pages["/apply"] = (f"<h1>Apply</h1><iframe id='o' src='http://127.0.0.1:{other.server_address[1]}/frame'>"
+                           "</iframe><iframe id='s' src='/own'></iframe><button id='z'>Next on the page</button>")
+    heard: list[str] = []
+
+    async def go():
+        tab = await _tab(srv, f"http://127.0.0.1:{own.server_address[1]}/apply")
+        await tab.wait_for_load_state("load")
+        await learned.listen(tab, None, lambda source, words: heard.append(words))
+        await tab.frame_locator("#o").locator("#x").click()
+        await tab.frame_locator("#s").locator("#y").click()
+        await tab.click("#z")
+        await asyncio.sleep(0.3)
+
+    try:
+        run(go())
+    finally:
+        other.shutdown()
+        own.shutdown()
+    assert heard == ["Next in here", "Next on the page"]
+
+
+# -------------------------------------------------------------------- 6: a page with nothing to know it by
+def test_a_page_with_no_headings_and_no_labels_has_no_key():
+    assert pipeline._learn_page_key({"headings": [], "fields": []}) == ""
+    assert pipeline._learn_page_key({"headings": [" "], "fields": [{"label": ""}]}) == ""
+    assert pipeline._learn_page_key({"headings": [], "fields": [{"label": "Years"}]}) != ""
+
+
+BARE = """<!doctype html><html><head></head><body>
+<div id="one"><input id="y" type="text" value="">
+<button type="button" id="go" onclick="document.getElementById('one').hidden=true;
+  document.getElementById('two').hidden=false">Go to next section</button></div>
+<div id="two" hidden><h1>References</h1><label for="r">Reference name</label><input id="r" type="text">
+<button type="submit">Submit application</button></div>
+</body></html>"""
+
+
+@needs_browser
+def test_a_press_on_a_page_with_no_headings_and_no_labels_is_not_kept(srv, job_apply_home, quick, tmp_path):
+    folder = tmp_path / "acme"
+    folder.mkdir()
+    (folder / "apply.html").write_text(BARE, encoding="utf-8")
+    url = (folder / "apply.html").resolve().as_uri()
+    applier = Applier(srv)
+
+    async def body(applier):
+        r = applier.enqueue(job_at(srv, url)["id"])
+        await settle(r, listening=False)
+        assert (r.status, r.code) == ("needs_you", "no_step_button"), state(r)()
+        assert r.hand_stop is None and not r.hand_listening  # (nothing to know the page by: not listened to)
+        await r.page.click("#go")
+        await asyncio.sleep(0.5)
+        await carry_on(applier, r)
+        return r
+
+    over(applier, body)
+    assert not learned_file(job_apply_home).exists() or learned.all() == []
+
+
+# -------------------------------------------------------------------- 7: what's left in the page
+@needs_browser
+def test_the_listener_is_taken_out_of_the_page_when_the_stop_ends(srv, tmp_path):
+    page = tmp_path / "listened.html"
+    page.write_text(LISTENED, encoding="utf-8")
+    heard: list[str] = []
+
+    async def go():
+        tab = await _tab(srv, page.resolve().as_uri())
+        await learned.listen(tab, None, lambda source, words: heard.append(words))
+        await learned.listen(tab, tab, lambda source, words: heard.append(words))  # (a second stop: one listener)
+        await tab.click("#go")
+        await asyncio.sleep(0.3)
+        await learned.mute(tab)
+        left = await tab.evaluate("[typeof window.__jdHandOff, typeof window.__jdHandOn, typeof window.__jdHandHears,"
+                                  " typeof window.__jdHand]")
+        await tab.click("#go")
+        await asyncio.sleep(0.3)
+        return left
+
+    left = run(go())
+    assert left == ["undefined", "undefined", "undefined", "function"]  # (the binding stays: Playwright keeps it)
+    assert heard == [WORDS]
+
+
+@needs_browser
+def test_with_the_setting_turned_off_at_a_stop_a_tab_already_listening_reports_nothing(srv, job_apply_home, quick,
+                                                                                       tmp_path):
+    url = site(tmp_path / "acme")
+    applier = Applier(srv)
+
+    async def body(applier):
+        r = applier.enqueue(job_at(srv, url)["id"])
+        await settle(r)
+        applier.set_learn_from_me(False)
+        await r.page.click("#go")
+        await asyncio.sleep(0.5)
+        return r
+
+    assert over(applier, body).hand_press == ""
+
+
+# -------------------------------------------------------------------- 8: a click of the desk's or Claude's tools
+@needs_browser
+def test_a_click_of_the_tools_in_the_paused_tab_teaches_nothing(srv, job_apply_home, quick, tmp_path):
+    url = site(tmp_path / "acme", extra="<button type='button' id='more'>Continue reading</button>")
+    applier = Applier(srv)
+
+    async def body(applier):
+        r = applier.enqueue(job_at(srv, url)["id"])
+        await settle(r)
+        assert srv.browser.use_tab(r.page)
+        got = await srv.click("Continue reading")  # (Claude's click tool, at the stop)
+        assert got.get("clicked") is True, got
+        await asyncio.sleep(0.5)
+        assert r.hand_press == "" and r.hand_heard == set()
+        await r.page.click("#more")  # (the person's own press there is heard)
+        await until(lambda: r.hand_press, about=state(r))
+        return r
+
+    assert over(applier, body).hand_press == "Continue reading"
