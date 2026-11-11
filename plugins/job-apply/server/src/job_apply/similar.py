@@ -71,15 +71,35 @@ _DATE_PART = re.compile(r"^(?:month|day|year)$", re.I)
 #   and its pronouns rule, and besides them ethnicity, military status, age and date of birth;
 _SELF_ID = re.compile("|".join(f"(?:{pattern})" for name, pattern, *_ in RULES if name in _EEO_RULES | {"pronouns"})
                       + r"|\bethnic|\bdisabilit|\bmilitary status\b|\bage\b|\bdate of birth\b|\bbirth ?date\b|"
-                        r"\bdob\b|\bhow old\b|\bpronoun", re.I)
+                        r"\bdob\b|\bhow old\b|\bpronoun|\bbirthday|\b(?:over|under) (?:the age of )?\d+\b|"
+                        r"\btransgender|\breligio|\bfaith\b|\bmarital|\bmarried\b|\bspouse|\bnational origin\b|"
+                        r"\bnationalit|\bmedical|\bpregnan|\bhealth condition", re.I)
 # - pay;
 _PAY = re.compile(r"\bsalar|\bcompensation\b|\bpay ?(rate|range|expectations?|requirements?)\b|\bwages?\b|"
                   r"\b(expected|desired|minimum|target|hourly) (pay|rate|salary|wage)|\bhourly rate\b", re.I)
 # - a criminal record and the checks of one, a background check or a drug test
-_RECORD = re.compile(r"\bfelon|\bconvict|\bcrimes?\b|\bcriminal\b|\bmisdemeanou?r|\barrest|"
+_RECORD = re.compile(r"\bfelon|\bconvict|\bcrimes?\b|\bcriminal\b|\bmisdemeanou?r|\barrest|\boffen[cs]es?\b|"
+                     r"\bcharged\b|\bprobation\b|\bparole\b|\bpending (?:case|charge)|\bguilty\b|\bplea\b|"
+                     r"\bincarcerat|\bjail|\bprison|"
                      r"\bbackground (check|screen|investigation)|\bdrug (test|screen)", re.I)
 # (the profile's values that are no one's own: a choice every form has)
 _EVERYDAY = {"yes", "no", "true", "false", "none", "n a", "na", "other", "mobile", "home", "work", "cell"}
+# Names that are everyday words too: one of these as the person's refuses a question only where it stands as a name
+# (capitalized, and not as a sentence's first word: "Will you relocate?" names nobody, "Thanks, Will" does). The cost
+# of the list being short is a question not suggested for; of it being long, a name at a sentence's start sent
+_WORD_NAMES = frozenset(
+    "will long may mark grant bill rose art young white brown green black king price best day case love hope joy "
+    "grace april june august summer dawn guy frank rich miles page penny chase drew gene herb jack lance norm pat "
+    "rob sue wade bob don ray dean earl faith ivy lily iris amber crystal ruby pearl olive holly heather daisy "
+    "autumn winter angel christian major sterling cash colt ford reed stone woods hill field banks rivers brooks "
+    "lane park west north south east church bishop baker cook carpenter mason miller smith taylor carter fisher "
+    "hunter porter shepherd walker weaver wright knight noble wise sharp strong small little rich power".split())
+
+
+def _apart(text: str) -> str:
+    """Words run together shown apart: "Will_Long-Resume.pdf" and "WillLong" as "Will Long Resume pdf" and
+    "Will Long" (a file's name in a list of resumes holds the person's)."""
+    return re.sub(r"(?<=[a-z])(?=[A-Z])|(?<=\w)[_\-.]+(?=\w)", " ", str(text or ""))
 
 
 def sensitive(text: str) -> bool:
@@ -121,6 +141,7 @@ class Personal:
 
     def __init__(self, values: Iterable[str]):
         words: set[str] = set()
+        names: set[str] = set()
         self.figures: set[str] = set()
         for value in values:
             said = " ".join(str(value).split())
@@ -131,27 +152,40 @@ class Personal:
                 if len(digits) >= 3:
                     self.figures.add(digits)
                 continue
-            words.add(said.casefold())
+            (names if said.casefold() in _WORD_NAMES else words).add(said.casefold())
         listed = sorted(words, key=len, reverse=True)
         self.words = re.compile("(?<!\\w)(?:" + "|".join(r"\s+".join(re.escape(w) for w in v.split()) for v in listed)
                                 + ")(?!\\w)", re.I) if listed else None
+        # (as a name: its first letter a capital, the rest as written or all capitals)
+        self.names = re.compile("(?<!\\w)(?:" + "|".join(
+            f"{re.escape(n.capitalize())}|{re.escape(n.upper())}" for n in sorted(names))
+            + ")(?!\\w)") if names else None
 
     @classmethod
     def of(cls, prof: config.Profile | None, title: str = "") -> Personal:
-        values: list[str] = [title] if title else []
+        values: list[str] = []
+        titles: list[str] = [title]
         if prof is not None:
             values += report_strings(prof)
             values += [v for v in _strings(prof.get("personal"), ("country", "phone_country_code", "phone_type"))]
-            values += [str(prof.get("experience.current_title") or "")]
-            values += [str(e.get("title") or "") for e in prof.get("work_history") or [] if isinstance(e, dict)]
+            titles += [str(prof.get("experience.current_title") or "")]
+            titles += [str(e.get("title") or "") for e in prof.get("work_history") or [] if isinstance(e, dict)]
             for ref in prof.references():
                 values += [str(v) for v in ref.values() if v]
+        # (a title of one word, "Technician", is the trade's word, in half the questions a technician is asked: only
+        # a title of two words or more is the person's or the job's own)
+        values += [t for t in titles if len(t.split()) > 1]
         return cls(v for v in values if v)
 
     def holds(self, text: str) -> bool:
-        said = str(text or "")
+        said = _apart(text)
         if self.words is not None and self.words.search(said):
             return True
+        if self.names is not None:
+            for m in self.names.finditer(said):
+                before = said[:m.start()].rstrip()
+                if before and before[-1] not in ".?!:;":  # (not a sentence's first word)
+                    return True
         if self.figures:
             for run in re.findall(r"\d[\d\s().+\-/]*\d|\d", said):
                 digits = re.sub(r"\D", "", run)

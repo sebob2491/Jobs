@@ -691,6 +691,12 @@ SENSITIVE = [
     "Do you have a criminal record?", "Will you pass a background check?", "Will you take a drug test?",
     "Will you take a drug screen?", "Do you understand the duties?", "Will you e-sign your application?",
     "May we use your electronic signature?", "Do you release us from claims?", "Do you waive a jury trial?",
+    # the confirming review's: a record in other words, and more that is nobody's business to carry
+    "Have you ever been charged with an offense?", "Are you on probation or parole?", "Do you have a pending case?",
+    "Have you ever pleaded guilty?", "Have you ever been incarcerated?", "What is your religion?",
+    "What is your marital status?", "What is your national origin?", "What is your nationality?",
+    "Do you have a medical condition?", "Are you pregnant?", "Do you identify as transgender?", "Are you over 40?",
+    "Is your birthday in the next 30 days?",
 ]
 
 
@@ -728,7 +734,7 @@ def test_an_earlier_question_naming_its_own_employer_or_a_known_one_is_never_off
 
 
 # (5) the stale-stop check and the duplicate-label skip
-@pytest.mark.parametrize("moved", ["status", "need", "questions"])
+@pytest.mark.parametrize("moved", ["status", "need", "questions", "paused_at"])
 def test_an_answer_that_comes_after_the_stop_moved_on_attaches_nothing(model, srv, job_apply_home, moved):
     remember(RELOCATE_EARLIER, "Yes")
     applier = Applier(srv)
@@ -739,6 +745,8 @@ def test_an_answer_that_comes_after_the_stop_moved_on_attaches_nothing(model, sr
             r.status = "running"
         elif moved == "need":
             r.need = "stuck"
+        elif moved == "paused_at":
+            r.paused_at += 1  # (the same card said again as a later stop: the offers were for the earlier one)
         else:
             r.questions = [box(RELOCATE)]
         return '{"1": 1}'
@@ -891,3 +899,26 @@ def test_the_api_call_asks_with_no_effort(fake_api, loop, job_apply_home, monkey
     fake_api.answers[:] = ['{"1": 1}']
     run(similar.suggest([box(RELOCATE)], COMPANY))
     assert "output_config" not in fake_api.asked[0]
+
+
+# -------------------------------------------------------------------- the confirming review: names run together,
+# and names that are everyday words
+def test_a_name_run_together_in_a_files_name_is_the_persons(job_apply_home):
+    held = similar.Personal(["Willa", "Longfellow", "Prior Works"])
+    for text in ("Willa_Longfellow_Resume.pdf", "WillaLongfellow_CV", "resume-willa.docx", "Prior-Works", "PriorWorks"):
+        assert held.holds(text), text
+    assert not held.holds("Would you be willing to relocate?")
+
+
+def test_a_name_that_is_an_everyday_word_refuses_only_where_it_stands_as_a_name(job_apply_home):
+    held = similar.Personal(["Will", "Long"])
+    for text in ("Will you relocate?", "How long have you driven?", "Is this long-term work for you? Will you stay?",
+                 "Are you willing to work long hours?"):
+        assert not held.holds(text), text
+    for text in ("Thanks, Will", "Is Will Long your legal name?", "Resume of WILL LONG", "Will_Long.pdf"):
+        assert held.holds(text), text
+
+
+def test_a_title_of_one_word_is_the_trades_word_and_one_of_more_is_the_jobs(job_apply_home):
+    assert not similar.Personal.of(None, "Technician").holds("Have you worked as a technician before?")
+    assert similar.Personal.of(None, "Equipment Technician").holds("Experience as an Equipment Technician?")
