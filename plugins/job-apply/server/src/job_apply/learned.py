@@ -23,6 +23,7 @@ import hashlib
 import json
 import re
 import threading
+import unicodedata
 from collections.abc import Callable, Iterable
 from typing import Any
 from urllib.parse import urlsplit
@@ -39,8 +40,11 @@ _PAGE = re.compile(r"[0-9a-f]{16}")
 
 
 def words_of(text: Any) -> str:
-    """A button's words as kept and compared: its visible text, whitespace collapsed, WORDS_LONGEST characters."""
-    return " ".join(str(text or "").split())[:WORDS_LONGEST].strip()
+    """A button's words as kept and compared: its visible text, without the characters that show nothing (Unicode's
+    format characters: a zero-width space or a soft hyphen inside "Sub\u200bmit"), whitespace collapsed,
+    WORDS_LONGEST characters."""
+    shown = "".join(c for c in str(text or "") if unicodedata.category(c) != "Cf")
+    return " ".join(shown.split())[:WORDS_LONGEST].strip()
 
 
 def same_words(a: Any, b: Any) -> bool:
@@ -280,10 +284,24 @@ async def _in_frames(page: Any, script: str) -> None:
 async def listen(page: Any, bound: Any, on_words: Callable[[Any, Any], Any]) -> Any:
     """Start hearing, in `page`'s every frame Playwright reaches, which button the person presses: the tab's binding
     exposed if it isn't (`bound`: the page it was exposed on already; returns the page now bound), then the script
-    installed. `on_words(source, words)` is called for each report. Whatever goes wrong, nothing is heard."""
+    installed. `on_words(source, words)` is called for each report from a frame of the main frame's origin. Whatever
+    goes wrong, nothing is heard."""
+
+    def own(source: Any, words: Any) -> Any:
+        # (the binding is reachable from every frame of the tab, another site's too: only a report from a frame of the
+        # main frame's own origin is passed on)
+        try:
+            frame = source["frame"] if isinstance(source, dict) else getattr(source, "frame", None)
+            tab = source["page"] if isinstance(source, dict) else getattr(source, "page", None)
+            if frame is None or tab is None or _origin(frame.url) != _origin(tab.main_frame.url):
+                return None
+        except Exception:
+            return None
+        return on_words(source, words)
+
     if bound is not page:
         try:
-            await page.expose_binding(BINDING, on_words)
+            await page.expose_binding(BINDING, own)
         except Exception as e:  # (a binding the tab already has, from this run's earlier stop: the same callback)
             if "already" not in str(e).lower():
                 return bound
