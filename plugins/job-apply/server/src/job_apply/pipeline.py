@@ -38,7 +38,7 @@ from collections.abc import Awaitable, Callable, Iterator
 from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
-from . import config, history, mailbox, report, vault
+from . import config, history, letters, mailbox, report, similar, vault
 from . import learned as learned_buttons
 from .search import every_employer
 from .tracker import city_key, title_key
@@ -1145,6 +1145,9 @@ class Run:
     # record only)
     last_action: dict[str, Any] | None = None
     questions: list[dict[str, Any]] = field(default_factory=list)
+    # earlier answers offered for the stop's new questions (similar.py), by question key: {"earlier", "answer",
+    # "match"}. Never in public(): the page asks for them (/api/similar), and the card's questions only say `similar`
+    similar: dict[str, dict[str, str]] = field(default_factory=dict)
     log: list[str] = field(default_factory=list)
     logged: int = 0  # lines ever logged (the log keeps the last 40): something done since
     url: str = ""
@@ -1402,7 +1405,7 @@ class Run:
                                 "letter_text", "letter_wait", "asked_once", "skipped_on", "site_retries",
                                 "fresh_retry", "retry_stop", "retry_mark", "no_retry", "retry_tabs", "email_step",
                                 "seen_sent", "review_retyped", "hand_stop", "hand_press", "hand_heard",
-                                "hand_listening", "hand_bound", "learned_tried")},
+                                "hand_listening", "hand_bound", "learned_tried", "similar")},
                 # (its try by itself after the site's error, on its card alone: Try now; and a try called off where its
                 # tab said it went in: I submitted it myself first)
                 "retry_at": self.retry_at if self.status == "needs_you" else 0.0,
@@ -1819,6 +1822,10 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         # "Learn from my presses" (desk.json, default on): the desk hears the button the person presses at a stop where
         # it found no step button, and presses it itself at the same employer's page (learned.py)
         self.learn_from_me = True
+        # "Suggest answers I gave to similar questions" (desk.json, default on): at a stop with questions, a model is
+        # asked which earlier question a new one repeats (similar.py); each task is the job's, ended with its stop
+        self.suggest_similar = True
+        self._similar_tasks: dict[int, asyncio.Task] = {}
         self.jobs_at_once: int | None = None  # the desk's own "Jobs at once" (desk.json); None: the profile's setting
         # the jobs under way, each in a task of its own (_run_task), and how many have begun (their order: Run.began)
         self._slots: dict[int, asyncio.Task] = {}
@@ -1911,6 +1918,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                     task.result()
         self._worker_task = None
         self._slots.clear()
+        for job_id in list(self._similar_tasks):
+            self._end_similar(job_id)
         await self._stop_letters()
         with contextlib.suppress(AttributeError):
             if self.srv.browser.keep_front == self._front_tab:
@@ -2247,6 +2256,58 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         is left as it is."""
         self.learn_from_me = on
 
+    def set_suggest_similar(self, on: bool) -> None:
+        """Suggested answers, turned on or off (desk.json). Off, no question's words go to a model from now on; an offer
+        already on a card stays until its stop ends."""
+        self.suggest_similar = on
+
+    def _similar_on(self) -> bool:
+        """May a model be asked about a stop's questions? Their setting, never in practice mode's hard switch
+        (JOB_APPLY_NEVER_SUBMIT=1) nor the live check's test identity, and only where there is a model to ask (an API
+        key, or the person's Claude login)."""
+        if not self.suggest_similar or config.never_submit():
+            return False
+        try:
+            if config.Profile.load().settings.test_identity:
+                return False
+        except Exception:  # (a profile that doesn't read: nothing asked)
+            return False
+        return letters.api_key() is not None or letters.find_claude() is not None
+
+    def _suggest_soon(self, run: Run, need: str) -> None:
+        """A new stop: the last one's task ended, and at a stop with questions one background task asks the model
+        (similar.suggest). Nothing waits for it: the card is up as it is, and an offer that comes marks its question."""
+        self._end_similar(run.job_id)
+        if run.similar:
+            run.similar = {}
+        if need != "questions" or not self.suggest_similar or not self._similar_on():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._similar_tasks[run.job_id] = loop.create_task(self._suggest_for(run, run.questions))
+
+    def _end_similar(self, job_id: int) -> None:
+        task = self._similar_tasks.pop(job_id, None)
+        if task is not None and not task.done():
+            task.cancel()
+
+    async def _suggest_for(self, run: Run, questions: list[dict[str, Any]]) -> None:
+        try:
+            offers = await similar.suggest(questions, run.company)
+            # (only at the stop it was asked for: an answer, a skip or a later stop has ended it)
+            if not offers or run.status != "needs_you" or run.need != "questions" or run.questions is not questions:
+                return
+            run.similar = {k: {"earlier": o.earlier, "answer": o.answer, "match": o.match} for k, o in offers.items()}
+            for q in questions:
+                if question_key(q.get("label") or "") in run.similar:
+                    q["similar"] = True
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logging.getLogger(__name__).debug("suggested answers: failed", exc_info=False)
+
     def _learning_on(self) -> bool:
         """May the desk hear, keep and make again the person's presses? Their setting, and never in practice mode
         (submit_mode: dry_run, or JOB_APPLY_NEVER_SUBMIT=1: the live check and its test identity too): nothing there
@@ -2401,6 +2462,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         if ("submit", job_id) in self.tasks and job_id in self.runs:
             self.runs[job_id].submit_pressed = False  # (the person's Submit, waiting its turn, is gone with its task)
         self.tasks = deque(t for t in self.tasks if t[1] != job_id)
+        if self._similar_tasks:
+            self._end_similar(job_id)  # (its stop ends: Carry on, an answer, Skip, Later)
         self.pressed.discard(job_id)  # (a press for a task that's gone isn't one for the next: the re-check of 0.3.196)
         self._first.discard(job_id)  # (and a solved check's place beside the others is that task's alone)
 
@@ -3698,6 +3761,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             self._draft_off(run)
         if need in NOTED or need == "questions" and any(q.get("error") for q in run.questions):
             self._take_note(run)
+        if need == "questions" or self._similar_tasks or run.similar:
+            self._suggest_soon(run, need)
 
     def _take_note(self, run: Run) -> None:
         """A note on this stop, for the person to file on the desk's Notes. Whatever goes wrong

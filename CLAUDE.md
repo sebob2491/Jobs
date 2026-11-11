@@ -326,3 +326,4 @@ this file says otherwise, it wins.
   - Never from a stop for a bot check, a CAPTCHA, a sign-in, an emailed code, security questions, a notice, an
     agreement, an assessment or a submit; never anything typed; never a click the desk or Claude's tools made.
     Each learned press is logged on the job's card and can be forgotten there or in Settings, Applying.
+- **Suggested answers:** a model may say that a new question means the same as one the person answered; it is never sent an answer, the person's details, the employer or the job, and it never writes an answer. A match is shown to the person and used only after their yes, and only where the earlier answer is one of the new question's own choices. Never for a notice or consent, a security question, an ID, or an answer about one employer.

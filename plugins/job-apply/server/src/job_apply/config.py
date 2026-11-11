@@ -290,6 +290,16 @@ def _cover_letter_model(raw: Any) -> tuple[str, str]:
                 "using the usual one.")
 
 
+def _model_setting(raw: Any, key: str, example: str) -> tuple[str, str]:
+    """A settings key that names a model ("" for the usual one), and what to say of one that can't be a model's name."""
+    if raw is None or isinstance(raw, str) and not raw.strip():
+        return "", ""
+    said = str(raw).strip()
+    if isinstance(raw, str) and _MODEL_NAME.match(said):
+        return said, ""
+    return "", f"settings.{key} should be a model's name, such as {example}, not {raw!r}; using the usual one."
+
+
 # Phone alerts (phone.py, the owner's choice of Nov 2): the daily summary's time where the profile doesn't say (this
 # computer's clock, 24-hour)
 PHONE_SUMMARY_DEFAULT = "18:00"
@@ -368,7 +378,7 @@ def _desk_window(raw: Any) -> tuple[str, str]:
 KNOWN_SETTINGS = ("submit_mode", "auto_submit_ats", "browser_channel", "headless", "email_codes", "email_tracking",
                   "accept_cookies", "manage_accounts", "accept_notices", "jobs_at_once", "follow_up_days",
                   "cover_letter_model", "phone_alert_details", "phone_summary_at", "phone_alerts_server",
-                  "learn_from_responses", "desk_window")
+                  "learn_from_responses", "desk_window", "similar_model")
 
 
 @dataclass
@@ -399,6 +409,8 @@ class Settings:
     # the model Claude Code writes the desk's cover letters with (the desk's "Write a cover letter for each job"; "":
     # letters.DEFAULT_MODEL)
     cover_letter_model: str = ""
+    # the model that says whether a new question repeats one the person answered (similar.py; "": similar.SIMILAR_MODEL)
+    similar_model: str = ""
     # Phone alerts (phone.py; on once the desk's Phone alerts card made a topic, kept in secrets.yaml): whether they
     # name the employer and the job (off: only counts and kinds go through ntfy's servers), the daily summary's time
     # ("HH:MM"; "" for none) and the ntfy server ("" for ntfy.sh). Never in practice mode, which sends nothing
@@ -433,11 +445,12 @@ class Settings:
         follow_up, follow_up_said = _whole_number(d.get("follow_up_days"), "follow_up_days", FOLLOW_UP_DAYS_DEFAULT,
                                                   FOLLOW_UP_DAYS_MAX)
         letter_model, letter_model_said = _cover_letter_model(d.get("cover_letter_model"))
+        similar_model, similar_model_said = _model_setting(d.get("similar_model"), "similar_model", "claude-haiku-5-5")
         summary_at, summary_said = _phone_summary_at(d.get("phone_summary_at"))
         phone_server, phone_server_said = _phone_alerts_server(d.get("phone_alerts_server"))
         desk_window, desk_window_said = _desk_window(d.get("desk_window"))
-        warnings += [said for said in (at_once_said, follow_up_said, letter_model_said, summary_said, phone_server_said,
-                                       desk_window_said)
+        warnings += [said for said in (at_once_said, follow_up_said, letter_model_said, similar_model_said,
+                                       summary_said, phone_server_said, desk_window_said)
                      if said]
         for key in d:  # a key the desk doesn't read, a letter short of one it does (the review of Oct 15): said
             if str(key) not in KNOWN_SETTINGS:
@@ -461,6 +474,7 @@ class Settings:
             jobs_at_once=at_once,
             follow_up_days=follow_up,
             cover_letter_model=letter_model,
+            similar_model=similar_model,
             # (what goes through ntfy's servers: the employer and job only for a real true, as written)
             phone_alert_details=d.get("phone_alert_details") is True,
             phone_summary_at=summary_at,
@@ -1391,10 +1405,11 @@ def _write_answers(data: dict[str, Any], entries: list[Any]) -> None:
                                                               allow_unicode=True))
 
 
-def save_answer(label: str, answer: Any, source: str = "", at: str = "") -> dict[str, Any]:
+def save_answer(label: str, answer: Any, source: str = "", at: str = "", matched: str = "") -> dict[str, Any]:
     """Remember the answer to a question for every later application that asks it; with `at`, only for those at that
     employer (the person's ID there: autofill.same_employer_as tells the employer), and with no answer (None) that the
-    person left it empty there (it isn't asked at that employer again).
+    person left it empty there (it isn't asked at that employer again). `matched`: the earlier question's words this
+    one was taken to repeat (the person said yes to a suggested answer: similar.py), kept beside it.
     Everything else in answers.yaml stays; a file that doesn't parse is left untouched
     (ValueError) rather than overwritten."""
     from .autofill import same_employer_as  # (autofill reads this module)
@@ -1425,6 +1440,8 @@ def save_answer(label: str, answer: Any, source: str = "", at: str = "") -> dict
             entry["from"] = source
         if at.strip():
             entry["at"] = at.strip()
+        if matched.strip():
+            entry["matched"] = matched.strip()
         _put_answer(data, replaced, entry, [entry, *entries])
     return entry
 
@@ -1522,7 +1539,8 @@ def remembered_answers() -> list[dict[str, Any]]:
                     # (an ID's value never in the list: private_answer gives it, when the person presses Show)
                     "answer": None if private else
                     answer if answer is None or isinstance(answer, (str, list)) else str(answer),
-                    "empty": _left_empty(answer), "at": str(a.get("at") or "").strip(), "private": private})
+                    "empty": _left_empty(answer), "at": str(a.get("at") or "").strip(), "private": private,
+                    **({"matched": str(a["matched"])} if a.get("matched") else {})})
     return out
 
 

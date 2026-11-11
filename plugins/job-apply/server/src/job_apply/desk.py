@@ -41,7 +41,7 @@ from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Redire
 from starlette.routing import Route
 
 from . import (autofill, config, employment, history, letters, mailbox, outcomes, pay, phone, places, profile_setup,
-               report, vault, window, workplace)
+               report, similar, vault, window, workplace)
 from . import learned as learned_buttons
 from .browser import _cookie_setting
 from .pipeline import (DESK_PASSWORDS, MAIL_WATCH_MAX, QUEUE_NO_LOCK, Applier, _may_accept_notices,
@@ -309,6 +309,7 @@ class Desk:
                 self.phone.summary_day = saved["phone_summary_day"]
             self.applier.dont_wait = saved.get("dont_wait") is True
             self.applier.learn_from_me = saved.get("learn_from_me") is not False  # (on unless turned off)
+            self.applier.suggest_similar = saved.get("suggest_similar") is not False  # (on unless turned off)
             self.troubleshoot = saved.get("troubleshoot") is True and not self.handled_only
             self.applier.hold_submits = self.troubleshoot
             # "Jobs at once" as chosen on the desk, while profile.yaml's settings.jobs_at_once is still as it was
@@ -338,6 +339,7 @@ class Desk:
                                                 "auto_search": self.auto_search,
                                                 "dont_wait": self.applier.dont_wait,
                                                 "learn_from_me": self.applier.learn_from_me,
+                                                "suggest_similar": self.applier.suggest_similar,
                                                 "jobs_at_once": self.applier.jobs_at_once,
                                                 "jobs_at_once_profile": self._at_once_profile,
                                                 "phone_summary_day": self.phone.summary_day,
@@ -436,6 +438,8 @@ class Desk:
             r("/api/profile/document", self.profile_document_view, methods=["POST"]),
             r("/api/learned", self.learned_view),
             r("/api/learned/forget", self.learned_forget_view, methods=["POST"]),
+            r("/api/similar", self.similar_view),
+            r("/api/similar/decline", self.similar_decline_view, methods=["POST"]),
             r("/api/answers", self.answers_view),
             r("/api/answers/{action}", self.answers_change_view, methods=["POST"]),
             r("/api/mail/test", self.mail_test_view, methods=["POST"]),
@@ -1050,6 +1054,8 @@ class Desk:
             self.applier.set_dont_wait(body["dont_wait"] is True)
         if "learn_from_me" in body:
             self.applier.set_learn_from_me(body["learn_from_me"] is True)
+        if "suggest_similar" in body:
+            self.applier.set_suggest_similar(body["suggest_similar"] is True)
         if "troubleshoot" in body:
             was, self.troubleshoot = self.troubleshoot, body["troubleshoot"] is True
             self.handled_only = self.handled_only and not self.troubleshoot
@@ -1059,8 +1065,8 @@ class Desk:
                 self._forget_openings()
         self.applier.hold_submits = self.troubleshoot
         if any(k in body for k in ("auto_submit", "tailor_resumes", "cover_letters", "handled_only", "troubleshoot",
-                                   "auto_search", "dont_wait", "learn_from_me", "jobs_at_once", "min_pay",
-                                   "posted_within", "within_miles", "companies", *CHIP_FILTERS)):
+                                   "auto_search", "dont_wait", "learn_from_me", "suggest_similar", "jobs_at_once",
+                                   "min_pay", "posted_within", "within_miles", "companies", *CHIP_FILTERS)):
             self._save_settings()
         return JSONResponse({"auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailoring_on(),
                              "cover_letters": self.applier.letters,
@@ -1069,6 +1075,7 @@ class Desk:
                              "within_miles": self.within_miles, **self.chips, "companies": self.companies,
                              "auto_search": self.auto_search, "dont_wait": self.applier.dont_wait,
                              "learn_from_me": self.applier.learn_from_me,
+                             "suggest_similar": self.applier.suggest_similar,
                              "jobs_at_once": self.applier.at_once()})
 
     def _forget_openings(self) -> None:
@@ -1227,6 +1234,49 @@ class Desk:
         except ValueError as e:
             return self._bad(e)
         return JSONResponse({"forgotten": await asyncio.to_thread(learned_buttons.forget_id, which)})
+
+    async def similar_view(self, request: Request) -> Response:
+        """The earlier answers offered for a job's questions (Run.similar): {"offers": [{"label", "earlier",
+        "answer"}]}, the page's only way to them (never in /api/state, nor a report). Shown on the card; used only after
+        the person's yes (/api/answer's use_similar)."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        try:
+            job_id = int(request.query_params.get("job_id", ""))
+        except ValueError:
+            return self._bad(ValueError("job_id should be a job number"))
+        run = self.applier.runs.get(job_id)
+        offers = []
+        if run is not None and run.status == "needs_you" and run.need == "questions":
+            for q in run.questions:
+                offer = run.similar.get(question_key(q.get("label") or ""))
+                if offer is not None and q.get("similar"):
+                    offers.append({"label": q.get("label") or "", "earlier": offer["earlier"],
+                                   "answer": offer["answer"]})
+        return JSONResponse({"offers": offers}, headers={"Cache-Control": "no-store"})
+
+    async def similar_decline_view(self, request: Request) -> Response:
+        """The person said no to an offer: {job_id, label}. That pair is kept (similar.decline) and never offered again,
+        and the offer is dropped."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        try:
+            body = await self._body(request)
+            job_id, label = body.get("job_id"), body.get("label")
+            if not isinstance(job_id, int) or isinstance(job_id, bool) or not isinstance(label, str):
+                raise ValueError("job_id should be a job number and label a question")
+            run = self.applier.runs.get(job_id)
+            offer = run.similar.get(question_key(label)) if run is not None else None
+            if run is None or offer is None:
+                raise ValueError("That question has no suggested answer any more.")
+            await asyncio.to_thread(similar.decline, label, offer["match"])
+        except (ValueError, OSError) as e:
+            return self._bad(e)
+        run.similar.pop(question_key(label), None)
+        for q in run.questions:
+            if question_key(q.get("label") or "") == question_key(label):
+                q.pop("similar", None)
+        return JSONResponse({"ok": True})
 
     async def answers_view(self, request: Request) -> Response:
         """The Your answers page's Answers the desk remembers (config.remembered_answers), newest first. Asked by the
@@ -1833,6 +1883,15 @@ class Desk:
             # nothing is remembered for a job that isn't asking (a stale page)
             raise ValueError("That job isn't waiting for answers any more.")
         problem = None
+        # (an answer sent as "use it" for a suggested one: its value is the offer's, taken here, never the page's; one
+        # with no offer refuses the whole answer before anything is filled)
+        used: dict[str, dict[str, str]] = {}
+        for a in answers:
+            if a.get("use_similar") is True:
+                offer = run.similar.get(question_key(str(a.get("label") or "")))
+                if offer is None:
+                    raise ValueError("That question has no suggested answer any more.")
+                used[question_key(str(a.get("label") or ""))] = offer
         # an account form's security questions, the person's for that form alone: kept apart (Run.account_answers),
         # never remembered, never among the application's answers, never shown again. By each box's own key, as the
         # card sends it, or by its label alone where that's one box's (a page from before)
@@ -1854,6 +1913,8 @@ class Desk:
             label, value = str(a.get("label") or ""), a.get("value")
             if not label or question_key(label) in account:
                 continue
+            if question_key(label) in used:
+                value = used[question_key(label)]["answer"]
             if value in (None, ""):
                 # (an optional ID at this employer left empty on a questions card with Remember ticked, sent with
                 # Fill these in: left empty at this employer from now on. Carry on leaves it for this job alone)
@@ -1898,7 +1959,8 @@ class Desk:
                     run.once[question_key(label)] = value
                     continue
                 try:
-                    config.save_answer(label, kept, run.company, at=run.company if own_id else "")
+                    config.save_answer(label, kept, run.company, at=run.company if own_id else "",
+                                       matched=used.get(question_key(label), {}).get("match", ""))
                     if kept == value:
                         run.once.pop(question_key(label), None)  # an earlier answer for this application only
                         continue
@@ -2118,6 +2180,7 @@ class Desk:
                          "within_miles": self.within_miles, **self.chips, "companies": self.companies,
                          "auto_search": self.auto_search, "dont_wait": self.applier.dont_wait,
                          "learn_from_me": self.applier.learn_from_me,
+                         "suggest_similar": self.applier.suggest_similar, "similar_by": _similar_by(),
                          "jobs_at_once": self.applier.at_once(),
                          "follow_up_days": settings.follow_up_days,
                          "learn_from_responses": settings.learn_from_responses,
@@ -2331,6 +2394,20 @@ class Desk:
         else:
             line("learn_from_me", "Learns from you", "off in practice mode" if dry and a.learn_from_me else
                  fix if unread and a.learn_from_me else "off", learn_said, learn_where)
+        # suggested answers (similar.py): their switch, and never in practice mode's hard switch nor the test identity
+        suggests = tell(a._similar_on)
+        similar_where = applying + "Suggest answers I gave to similar questions"
+        similar_name = "Suggests answers you gave to similar questions"
+        similar_said = ("Only the questions' words go to the model, never an answer or anything about you; used only "
+                        "after your yes.")
+        if suggests is None:
+            line("suggest_similar", similar_name, unknown, busy, similar_where)
+        elif suggests:
+            line("suggest_similar", similar_name, "on", similar_said, similar_where)
+        else:
+            line("suggest_similar", similar_name,
+                 "off in practice mode" if a.suggest_similar and (config.never_submit() or identity) else
+                 "off" if not a.suggest_similar else "on, with no model to ask", similar_said, similar_where)
         where = "Settings, Email codes"
         if s.email_codes and not unread:
             line("email_codes", "Emailed codes (Claude)", "on",
@@ -2717,6 +2794,14 @@ def _companies(value: Any) -> list[str] | None:
     for v in value:
         names.setdefault(" ".join(v.split()).casefold(), " ".join(v.split()))
     return list(names.values())
+
+
+def _similar_by() -> str | None:
+    """What suggested answers ask (letters.written_by's words), or None where there's no model to ask."""
+    try:
+        return letters.written_by() if letters.api_key() is not None or letters.find_claude() is not None else None
+    except Exception:
+        return None
 
 
 def _min_pay(value: Any) -> int | None:
