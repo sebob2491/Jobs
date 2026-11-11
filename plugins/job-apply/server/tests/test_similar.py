@@ -38,8 +38,9 @@ class Model:
         self.reply = "{}"
         self.slow = 0.0
 
-    async def ask(self, exe, system, content, model, timeout):
-        self.calls.append({"exe": exe, "system": system, "content": content, "model": model, "timeout": timeout})
+    async def ask(self, exe, system, content, model, timeout, effort=True):
+        self.calls.append({"exe": exe, "system": system, "content": content, "model": model, "timeout": timeout,
+                           "effort": effort})
         if self.slow:
             await asyncio.sleep(self.slow)
         said = self.reply(self.calls[-1]) if callable(self.reply) else self.reply
@@ -80,8 +81,8 @@ def pause(applier, run_, questions):
     applier._pause(run_, "questions", "your profile doesn't answer", questions, code="questions")
 
 
-def new_run(srv, applier, questions, company=COMPANY):
-    job = srv.add_job(url="https://example.com/jobs/1", title=TITLE, company=company)["job"]
+def new_run(srv, applier, questions, company=COMPANY, url="https://example.com/jobs/1"):
+    job = srv.add_job(url=url, title=TITLE, company=company)["job"]
     r = Run(job["id"], TITLE, company)
     applier.runs[job["id"]] = r
     return job["id"], r, questions
@@ -233,7 +234,8 @@ def test_an_offer_changes_nothing_until_the_person_says_yes_and_is_in_no_state_o
     run(go())
     assert r.status == "needs_you" and r.need == "questions" and r.once == {}
     assert r.similar == {question_key("How far could you relocate?"): {
-        "earlier": RELOCATE_EARLIER, "answer": "Within 100 miles", "match": config.question_pattern(RELOCATE_EARLIER)}}
+        "earlier": RELOCATE_EARLIER, "answer": "Within 100 miles", "match": config.question_pattern(RELOCATE_EARLIER),
+        "stop": repr(r.paused_at)}}
     assert [q.get("similar") for q in r.questions] == [True, None]  # (the flag alone, on the card's question)
     assert answers_text(job_apply_home) == before
     # (the state, a problem report and a note: no earlier question, no `similar`, and the earlier answer as it was
@@ -583,3 +585,309 @@ def test_the_key_and_the_prompt_appear_in_no_log_line(fake_api, srv,  # noqa: F8
         assert held not in text, held
     assert not [x for x in caplog.records if x.levelno >= logging.INFO and x.name == similar.__name__]
     assert KEY not in repr(letters.api_key()) and KEY not in json.dumps(Desk(srv).state()["settings"])
+
+
+# ------------------------------------------------------------------ the review's findings
+# (1) a stop's preparation: each file read once, off the event loop
+def _many_remembered(home, n):
+    entries = [{"match": config.question_pattern(f"Can you cover rotation {i} on weekends?"),
+                "question": f"Can you cover rotation {i} on weekends?", "answer": "Yes", "from": "Other Fab"}
+               for i in range(n)]
+    (home / "answers.yaml").write_text(yaml.safe_dump({"answers": entries}), encoding="utf-8")
+
+
+def test_a_stop_reads_answers_and_declines_once_off_the_event_loop(model, job_apply_home, monkeypatch):
+    import pathlib
+    import threading
+
+    _many_remembered(job_apply_home, 400)
+    similar.decline("Some other question", "x")
+    config.Profile.load()  # (the profile read before, as at any stop: its own cache)
+    asked = [box(f"Would you cover rotation {i} on weekends?") for i in range(30)]
+    reads = {"answers": [], "declined": []}
+    real_answers, real_read = config._answers_file, pathlib.Path.read_text
+
+    def answers_file():
+        reads["answers"].append(threading.get_ident())
+        return real_answers()
+
+    def read_text(self, *a, **kw):
+        if self.name == "similar.json":
+            reads["declined"].append(threading.get_ident())
+        return real_read(self, *a, **kw)
+
+    monkeypatch.setattr(config, "_answers_file", answers_file)
+    monkeypatch.setattr(pathlib.Path, "read_text", read_text)
+    loop_thread = threading.get_ident()
+    run(similar.suggest(asked, COMPANY))
+    assert len(reads["answers"]) == 1 and len(reads["declined"]) == 1, reads
+    assert loop_thread not in reads["answers"] + reads["declined"]  # (read in a thread: the loop is never held)
+    [call] = model.calls
+    assert len(json.loads(model.prompts[0])["new_questions"]) == similar.MOST_QUESTIONS
+
+
+# (2) the person's details and the job's never reach the model
+PERSONAL_NEW = {
+    "a phone number as a choice": box("Which number should we call?", ["(480) 555-0123", "Another number"]),
+    "the phone's figures alone": box("Which number should we call?", ["4805550123", "Another number"]),
+    "the first name in a label": box("Do you go by Sam at work?"),
+    "a school as a choice": box("Where did you study?", ["Arizona State University", "Elsewhere"]),
+    "an employer the person had": box("Did you run etch tools at intel?"),
+    "the person's city": box("Would you commute from Chandler?"),
+}
+
+
+@pytest.mark.parametrize("kind", PERSONAL_NEW)
+def test_a_question_holding_the_persons_details_is_never_asked_about(model, job_apply_home, kind):
+    remember("Which number is best?", "Another number")
+    remember("Can we call you on that number?", "Yes")
+    q = PERSONAL_NEW[kind]
+    assert similar.may_ask(q, COMPANY) is False
+    assert run(similar.suggest([q], COMPANY)) == {} and model.calls == []
+
+
+def test_a_question_holding_the_jobs_title_is_never_asked_about(model, job_apply_home):
+    remember("Have you done lithography lead work?", "Yes")
+    q = box("Have you led as a Lithography Lead?")
+    assert run(similar.suggest([q], COMPANY, "Lithography Lead")) == {} and model.calls == []
+    assert run(similar.suggest([q], COMPANY, "Packaging Planner")) == {} and len(model.calls) == 1
+
+
+@pytest.mark.parametrize("question, answer", [
+    ("Do you go by Sam at work?", "Yes"),  # (the first name in the earlier question)
+    ("Where did you study?", "Arizona State University"),  # (a school as the answer)
+    ("What is the best number?", "480-555-0123"),  # (a phone number as the answer)
+    ("Would you commute from Chandler?", "Yes"),
+])
+def test_an_earlier_question_or_answer_holding_the_persons_details_is_never_offered(model, job_apply_home, question,
+                                                                                    answer):
+    remember(question, answer)
+    choices = ["Yes", "No", "Arizona State University", "(480) 555-0123"]
+    assert similar.candidates(box("Do you have a preference?", choices), COMPANY) == []
+
+
+def test_the_prompt_of_a_mixed_card_holds_none_of_the_profiles_values(model, job_apply_home):
+    remember(RELOCATE_EARLIER, "Yes")
+    remember("Do you go by Sam at work?", "Yes")
+    remember("What is the best number?", "480-555-0123")
+    remember("Where did you study?", "Arizona State University")
+    asked = [box(RELOCATE), *PERSONAL_NEW.values(), box("Have you led as a Lithography Lead?")]
+    run(similar.suggest(asked, COMPANY, "Lithography Lead"))
+    [text] = model.prompts
+    assert [n["question"] for n in json.loads(text)["new_questions"]] == [RELOCATE]
+    for held in ("Sam", "Rivera", "sam.rivera", "480", "555", "0123", "85225", "100 W Main", "Chandler", "Arizona",
+                 "Intel", "Example Fab", "Technician", "Lithography", "samrivera", COMPANY):
+        assert held.casefold() not in text.casefold(), held
+
+
+# (3) kinds of question whose answer never travels, on either side
+SENSITIVE = [
+    "What is your gender?", "What is your sex?", "What is your race?", "Your ethnicity, please",
+    "Are you Hispanic or Latino?", "Are you a protected veteran?", "What is your military status?",
+    "Do you have a disability?", "Which pronouns do you use?", "What is your sexual orientation?",
+    "Are you at least 18 years of age?", "What is your date of birth?", "What are your salary expectations?",
+    "Is the compensation acceptable?", "Is the pay rate acceptable?", "Is the hourly wage acceptable?",
+    "Is your expected pay above $20?", "Have you been convicted of a felony?", "Have you committed a crime?",
+    "Do you have a criminal record?", "Will you pass a background check?", "Will you take a drug test?",
+    "Will you take a drug screen?", "Do you understand the duties?", "Will you e-sign your application?",
+    "May we use your electronic signature?", "Do you release us from claims?", "Do you waive a jury trial?",
+]
+
+
+@pytest.mark.parametrize("question", SENSITIVE)
+def test_a_sensitive_question_is_never_sent_on_either_side(model, job_apply_home, question):
+    assert similar.may_ask(box(question), COMPANY) is False
+    remember(question, "Yes")
+    assert similar.candidates(box("Do you hold a valid forklift license?"), COMPANY) == []
+
+
+def test_work_authorization_and_sponsorship_stay_askable(model, job_apply_home):
+    sponsorship = "Will you now or in the future require sponsorship for employment visa status?"
+    remember("Will you require visa sponsorship now or later?", "No")
+    assert similar.may_ask(box(sponsorship), COMPANY) is True
+    assert [c["question"] for c in similar.candidates(box(sponsorship), COMPANY)] == [
+        "Will you require visa sponsorship now or later?"]
+    assert similar.may_ask(box("Are you legally authorized to work in the United States?"), COMPANY) is True
+
+
+# (4) an earlier question naming the employer it was given at, or any employer the tracker knows
+def test_an_earlier_question_naming_its_own_employer_or_a_known_one_is_never_offered(model, srv, job_apply_home):
+    remember("Would you relocate to the Acme Mesa site?", "Yes", "Acme Semiconductor")
+    remember("Would you relocate to a Northwind Devices site?", "Yes")  # (no employer of its own)
+    remember(RELOCATE_EARLIER, "Yes", "Acme Semiconductor")
+    q = box(RELOCATE)
+    known = ["Northwind Devices", COMPANY]
+    assert [c["question"] for c in similar.candidates(q, COMPANY, known)] == [RELOCATE_EARLIER]
+    # (and so through the hook, with the tracker's employers)
+    applier = Applier(srv)
+    srv.add_job(url="https://example.com/jobs/9", title="Planner", company="Northwind Devices")
+    _, r, questions = new_run(srv, applier, [q])
+    run(stopped(applier, r, questions))
+    [n] = json.loads(model.prompts[0])["new_questions"]
+    assert [e["question"] for e in n["earlier_questions"]] == [RELOCATE_EARLIER]
+
+
+# (5) the stale-stop check and the duplicate-label skip
+@pytest.mark.parametrize("moved", ["status", "need", "questions"])
+def test_an_answer_that_comes_after_the_stop_moved_on_attaches_nothing(model, srv, job_apply_home, moved):
+    remember(RELOCATE_EARLIER, "Yes")
+    applier = Applier(srv)
+    _, r, questions = new_run(srv, applier, [box(RELOCATE)])
+
+    def meanwhile(call):  # (the run moves on while the model answers, its task not called off)
+        if moved == "status":
+            r.status = "running"
+        elif moved == "need":
+            r.need = "stuck"
+        else:
+            r.questions = [box(RELOCATE)]
+        return '{"1": 1}'
+
+    model.reply = meanwhile
+    run(stopped(applier, r, questions))
+    assert len(model.calls) == 1 and r.similar == {}
+    assert not any(q.get("similar") for q in questions + r.questions)
+
+
+def test_two_questions_with_the_same_label_are_not_asked_about(model, job_apply_home):
+    remember(RELOCATE_EARLIER, "Yes")
+    asked = [box(RELOCATE), box(RELOCATE + " ", ["Yes", "No", "Maybe"]), box("Are you ready to relocate?")]
+    run(similar.suggest(asked, COMPANY))
+    assert [n["question"] for n in json.loads(model.prompts[0])["new_questions"]] == ["Are you ready to relocate?"]
+    model.calls.clear()
+    assert run(similar.suggest(asked[:2], COMPANY)) == {} and model.calls == []
+
+
+# (6) an offer is the stop's own
+def test_use_it_from_a_stale_page_after_the_stop_was_said_again_is_refused(model, srv, job_apply_home):
+    remember(RELOCATE_EARLIER, "Yes")
+    desk = _desk(srv)
+    job_id, r, questions = new_run(srv, desk.applier, [box(RELOCATE)])
+    model.reply = '{"1": 1}'
+    run(stopped(desk.applier, r, questions))
+    assert r.similar
+    before = answers_text(job_apply_home)
+    desk.applier._stop_again(r, "")
+    assert r.similar == {} and r.status == "needs_you"
+    sent = {"job_id": job_id, "answers": [{"label": RELOCATE, "use_similar": True, "remember": True}]}
+    [(status, said)] = _calls(desk, [("POST", "/api/answer", sent)])
+    assert status == 400 and "no suggested answer" in said["error"]
+    assert r.once == {} and answers_text(job_apply_home) == before
+
+
+def test_use_it_is_refused_for_an_offer_made_at_another_stop(model, srv, job_apply_home):
+    remember(RELOCATE_EARLIER, "Yes")
+    desk = _desk(srv)
+    job_id, r, questions = new_run(srv, desk.applier, [box(RELOCATE)])
+    model.reply = '{"1": 1}'
+    run(stopped(desk.applier, r, questions))
+    offer = dict(r.similar[question_key(RELOCATE)])
+    r.paused_at += 5  # (the same card, stopped at again: the offer kept from before isn't this stop's)
+    with pytest.raises(ValueError, match="no suggested answer"):
+        desk.answer(job_id, [{"label": RELOCATE, "use_similar": True, "remember": False}])
+    r.similar = {question_key(RELOCATE): offer}
+    r.questions[0].pop("similar")  # (nor one whose question the card doesn't mark)
+    r.paused_at -= 5
+    with pytest.raises(ValueError, match="no suggested answer"):
+        desk.answer(job_id, [{"label": RELOCATE, "use_similar": True, "remember": False}])
+    assert r.once == {}
+
+
+def test_the_end_of_a_stop_drops_its_offers(model, srv, job_apply_home):
+    remember(RELOCATE_EARLIER, "Yes")
+    applier = Applier(srv)
+    _, r, questions = new_run(srv, applier, [box(RELOCATE)])
+    model.reply = '{"1": 1}'
+    run(stopped(applier, r, questions))
+    assert r.similar and questions[0]["similar"] is True
+    applier._cancel(r.job_id)
+    assert r.similar == {} and "similar" not in questions[0]
+
+
+# (7) practice mode by the profile, and the switch turned off
+def test_practice_mode_by_the_profile_never_asks(model, srv, job_apply_home):
+    path = job_apply_home / "profile.yaml"
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
+    profile["settings"]["submit_mode"] = "dry_run"
+    path.write_text(yaml.safe_dump(profile), encoding="utf-8")
+    task, r, questions = _stop_and_count(model, srv, Applier(srv))
+    assert task is None and model.calls == [] and r.similar == {}
+    desk = _desk(srv)
+    desk.applier.suggest_similar = True
+    assert {x["key"]: x for x in desk.safety()["lines"]}["suggest_similar"]["value"] == "off in practice mode"
+
+
+def test_turning_the_switch_off_calls_off_a_call_and_drops_the_offers(model, srv, job_apply_home):
+    remember(RELOCATE_EARLIER, "Yes")
+    applier = Applier(srv)
+    _, r, questions = new_run(srv, applier, [box(RELOCATE)])
+    _, r2, questions2 = new_run(srv, applier, [box(RELOCATE)], url="https://example.com/jobs/2")
+    assert r2.job_id != r.job_id
+    model.reply = '{"1": 1}'
+    run(stopped(applier, r2, questions2))
+    assert r2.similar
+
+    async def go():
+        model.slow = 5
+        pause(applier, r, questions)
+        task = applier._similar_tasks[r.job_id]
+        await asyncio.sleep(0.05)
+        applier.set_suggest_similar(False)
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    run(go())
+    assert applier._similar_tasks == {} and r.similar == {} and r2.similar == {}
+    assert not any(q.get("similar") for q in questions + questions2)
+
+
+# (8) cost: the same card asks once, and the state's poll looks for a model once a minute
+def test_the_same_card_stopped_at_again_makes_no_new_call(model, srv, job_apply_home):
+    remember(RELOCATE_EARLIER, "Yes")
+    applier = Applier(srv)
+    _, r, questions = new_run(srv, applier, [box(RELOCATE), box("Shift you prefer", ["Days", "Nights"])])
+    model.reply = '{"1": 1}'
+    run(stopped(applier, r, questions))
+    again = [box(RELOCATE), box("Shift you prefer", ["Days", "Nights"])]
+    run(stopped(applier, r, again))
+    assert len(model.calls) == 1 and list(r.similar) == [question_key(RELOCATE)] and again[0]["similar"] is True
+    # (a new candidate changes the card as asked: asked again)
+    remember("Would you move for a new job?", "No")
+    run(stopped(applier, r, [box(RELOCATE)]))
+    assert len(model.calls) == 2
+
+
+def test_the_states_poll_looks_for_a_model_once_a_minute(model, srv, job_apply_home, monkeypatch):
+    import time
+
+    from job_apply import desk as desk_module
+
+    looks = []
+    monkeypatch.setattr(desk_module, "_similar_by", lambda: looks.append(1) or letters.BY)
+    desk = _desk(srv)
+    for _ in range(5):
+        assert desk.state()["settings"]["similar_by"] == letters.BY
+    assert len(looks) == 1
+    desk._similar_by_said = (time.monotonic() - desk_module.SIMILAR_BY_SECONDS - 1, letters.BY)
+    desk.state()
+    assert len(looks) == 2
+
+
+# (9) the small model is asked without an effort it may not take
+def test_the_call_leaves_out_the_effort_and_letters_keep_it(model, job_apply_home, tmp_path):
+    remember(RELOCATE_EARLIER, "Yes")
+    run(similar.suggest([box(RELOCATE)], COMPANY))
+    assert model.calls[0]["effort"] is False
+    with_effort = letters.cli_args("claude", "m", tmp_path)
+    without = letters.cli_args("claude", "m", tmp_path, effort=False)
+    assert with_effort[with_effort.index("--effort") + 1] == "medium" and "--effort" not in without
+    assert [a for a in with_effort if a not in ("--effort", "medium")] == without
+
+
+def test_the_api_call_asks_with_no_effort(fake_api, loop, job_apply_home, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(letters, "find_claude", lambda: None)
+    config.save_site_password(config.API_KEY_NAME, KEY)
+    remember(RELOCATE_EARLIER, "Yes")
+    fake_api.answers[:] = ['{"1": 1}']
+    run(similar.suggest([box(RELOCATE)], COMPANY))
+    assert "output_config" not in fake_api.asked[0]

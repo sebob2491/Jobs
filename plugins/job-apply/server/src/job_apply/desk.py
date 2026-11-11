@@ -226,6 +226,8 @@ class Desk:
         # list's employers, for the profile's titles and HR ones, and the page shows only the openings where the desk
         # doesn't go all the way yet, whatever their fit. Nothing is sent meanwhile (Applier.hold_submits)
         self.troubleshoot = False
+        # what suggested answers would ask (_similar_by), and when that was looked at (time.monotonic)
+        self._similar_by_said: tuple[float, str | None] | None = None
         # profile.yaml's settings.jobs_at_once as written when "Jobs at once" was chosen on the desk (_load)
         self._at_once_profile: Any = None
         # Find jobs searches when the person presses it. With this on (off unless they turn it on: issue #112, note
@@ -1235,6 +1237,14 @@ class Desk:
             return self._bad(e)
         return JSONResponse({"forgotten": await asyncio.to_thread(learned_buttons.forget_id, which)})
 
+    def _similar_by(self) -> str | None:
+        """_similar_by's answer, kept SIMILAR_BY_SECONDS: the page's polls of the state look in neither the password
+        vault nor the PATH each time."""
+        now = time.monotonic()
+        if self._similar_by_said is None or now - self._similar_by_said[0] >= SIMILAR_BY_SECONDS:
+            self._similar_by_said = (now, _similar_by())
+        return self._similar_by_said[1]
+
     async def similar_view(self, request: Request) -> Response:
         """The earlier answers offered for a job's questions (Run.similar): {"offers": [{"label", "earlier",
         "answer"}]}, the page's only way to them (never in /api/state, nor a report). Shown on the card; used only after
@@ -1885,13 +1895,18 @@ class Desk:
         problem = None
         # (an answer sent as "use it" for a suggested one: its value is the offer's, taken here, never the page's; one
         # with no offer refuses the whole answer before anything is filled)
+        # (and only while the job is at the questions stop the offer was made for, the question on its card: a stale
+        # page's "use it" fills nothing)
         used: dict[str, dict[str, str]] = {}
+        offered = {question_key(q.get("label") or "") for q in run.questions if q.get("similar")}
         for a in answers:
             if a.get("use_similar") is True:
-                offer = run.similar.get(question_key(str(a.get("label") or "")))
-                if offer is None:
+                key = question_key(str(a.get("label") or ""))
+                offer = run.similar.get(key)
+                if offer is None or run.need != "questions" or key not in offered \
+                        or offer.get("stop") != repr(run.paused_at):
                     raise ValueError("That question has no suggested answer any more.")
-                used[question_key(str(a.get("label") or ""))] = offer
+                used[key] = offer
         # an account form's security questions, the person's for that form alone: kept apart (Run.account_answers),
         # never remembered, never among the application's answers, never shown again. By each box's own key, as the
         # card sends it, or by its label alone where that's one box's (a page from before)
@@ -2180,7 +2195,7 @@ class Desk:
                          "within_miles": self.within_miles, **self.chips, "companies": self.companies,
                          "auto_search": self.auto_search, "dont_wait": self.applier.dont_wait,
                          "learn_from_me": self.applier.learn_from_me,
-                         "suggest_similar": self.applier.suggest_similar, "similar_by": _similar_by(),
+                         "suggest_similar": self.applier.suggest_similar, "similar_by": self._similar_by(),
                          "jobs_at_once": self.applier.at_once(),
                          "follow_up_days": settings.follow_up_days,
                          "learn_from_responses": settings.learn_from_responses,
@@ -2403,11 +2418,11 @@ class Desk:
         if suggests is None:
             line("suggest_similar", similar_name, unknown, busy, similar_where)
         elif suggests:
-            line("suggest_similar", similar_name, "on" if _similar_by() else "on, with no model to ask", similar_said,
-                 similar_where)
+            line("suggest_similar", similar_name, "on" if self._similar_by() else "on, with no model to ask",
+                 similar_said, similar_where)
         else:
             line("suggest_similar", similar_name,
-                 "off in practice mode" if a.suggest_similar and (config.never_submit() or identity) else "off",
+                 "off in practice mode" if a.suggest_similar and (dry or identity) else "off",
                  similar_said, similar_where)
         where = "Settings, Email codes"
         if s.email_codes and not unread:
@@ -2803,6 +2818,9 @@ def _similar_by() -> str | None:
         return letters.written_by() if letters.api_key() is not None or letters.claude_on_hand() else None
     except Exception:
         return None
+
+
+SIMILAR_BY_SECONDS = 60.0  # how long the desk keeps _similar_by's answer (the vault and the PATH aren't read per poll)
 
 
 def _min_pay(value: Any) -> int | None:

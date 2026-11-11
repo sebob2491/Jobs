@@ -16,16 +16,22 @@ import json
 import logging
 import re
 import threading
+from collections import Counter
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from . import config, letters
+from .report import report_strings
 from .autofill import (
+    _EEO_RULES,
     _EMPLOYER_SPECIFIC,
     _POINTS_AWAY,
+    RULES,
     _asks_an_id,
     _bare_question,
+    _employer_key,
     _notice_of_consent,
     _this_employers_names,
     clean_label,
@@ -40,6 +46,7 @@ MOST_QUESTIONS = 12  # new questions in one call
 MOST_CANDIDATES = 8  # earlier questions offered the model for one new question
 MOST_CHOICES = 25  # a list longer than this isn't one to suggest for
 MOST_DECLINED = 500  # declined pairs kept
+MOST_KEPT = 200  # a run's kept results (Applier's, by card question: a re-pause of the same card asks nothing again)
 
 SYSTEM = (
     "You compare the wording of form questions. You are given JSON: a list of new questions, each with its choices and "
@@ -49,14 +56,35 @@ SYSTEM = (
     "whether you do and one that asks whether you do not). When unsure, say null. Reply with only a JSON object that "
     "maps each new question's number, as a string, to the number of one earlier question or to null. No other text.")
 
-# a consent or notice, by the words the page's own test uses (desk.html's question()), besides autofill's
+# a consent or notice, by the words the page's own test uses (desk.html's question()), besides autofill's; and what
+# reads as one: an understanding, an e-signature, a release or a waiver
 _CONSENT_WORDS = re.compile(r"agree|consent|certif|acknowledg|terms|attest|authori[sz]|privacy|signature|waiver|"
-                            r"\bnotices?\b|disclosures?|\bpolic(?:y|ies)\b", re.I)
+                            r"\bnotices?\b|disclosures?|\bpolic(?:y|ies)\b|understand|\be-?sign|\breleas\w*|\bwaiv\w*",
+                            re.I)
 # "legally authorized to work" asks about the person, it agrees to nothing
 _WORK_AUTHORIZATION = re.compile(r"\b(?:legally |lawfully )?(?:authori[sz]ed|permitted|eligible|allowed) to work\b|"
                                  r"\bwork authori[sz]ation\b", re.I)
 _PLACEHOLDER = re.compile(r"^(?:select|choose|--|no selection$)", re.I)
 _DATE_PART = re.compile(r"^(?:month|day|year)$", re.I)
+# The kinds no answer of which ever travels, on either side:
+# - self-identification: autofill's own EEO rules (gender, hispanic, race, veteran, disability, sexual orientation)
+#   and its pronouns rule, and besides them ethnicity, military status, age and date of birth;
+_SELF_ID = re.compile("|".join(f"(?:{pattern})" for name, pattern, *_ in RULES if name in _EEO_RULES | {"pronouns"})
+                      + r"|\bethnic|\bdisabilit|\bmilitary status\b|\bage\b|\bdate of birth\b|\bbirth ?date\b|"
+                        r"\bdob\b|\bhow old\b|\bpronoun", re.I)
+# - pay;
+_PAY = re.compile(r"\bsalar|\bcompensation\b|\bpay ?(rate|range|expectations?|requirements?)\b|\bwages?\b|"
+                  r"\b(expected|desired|minimum|target|hourly) (pay|rate|salary|wage)|\bhourly rate\b", re.I)
+# - a criminal record and the checks of one, a background check or a drug test
+_RECORD = re.compile(r"\bfelon|\bconvict|\bcrimes?\b|\bcriminal\b|\bmisdemeanou?r|\barrest|"
+                     r"\bbackground (check|screen|investigation)|\bdrug (test|screen)", re.I)
+# (the profile's values that are no one's own: a choice every form has)
+_EVERYDAY = {"yes", "no", "true", "false", "none", "n a", "na", "other", "mobile", "home", "work", "cell"}
+
+
+def sensitive(text: str) -> bool:
+    """A self-identification, pay, or a criminal record or background check question: never sent, never offered."""
+    return bool(_SELF_ID.search(text) or _PAY.search(text) or _RECORD.search(text))
 
 
 def _security(text: str) -> bool:
@@ -81,7 +109,71 @@ def _names(text: str, names: set[str]) -> bool:
 def _fit(text: str) -> bool:
     """A question's words that may go to the model at all, on either side."""
     return not (_asks_an_id(text) or _security(text) or _consent(text) or _EMPLOYER_SPECIFIC.search(text)
-                or _POINTS_AWAY.search(text))
+                or _POINTS_AWAY.search(text) or sensitive(text))
+
+
+class Personal:
+    """The person's details and the job's, as a question's words may hold them: every value of the profile a report
+    takes out (report.report_strings: names, contact, address, references, IDs, schools, employers), the rest of its
+    personal: section, the titles the person held, and the job's title. Each of 3 characters or more, found as whole
+    words in any case; one of figures alone (a phone, a postal code, an ID) found with its separators taken out, so
+    "(555) 010-1234" holds "5550101234"."""
+
+    def __init__(self, values: Iterable[str]):
+        words: set[str] = set()
+        self.figures: set[str] = set()
+        for value in values:
+            said = " ".join(str(value).split())
+            if len(said) < 3 or norm(said) in _EVERYDAY:
+                continue
+            if re.fullmatch(r"[\d\s().+\-/]+", said):
+                digits = re.sub(r"\D", "", said)
+                if len(digits) >= 3:
+                    self.figures.add(digits)
+                continue
+            words.add(said.casefold())
+        listed = sorted(words, key=len, reverse=True)
+        self.words = re.compile("(?<!\\w)(?:" + "|".join(r"\s+".join(re.escape(w) for w in v.split()) for v in listed)
+                                + ")(?!\\w)", re.I) if listed else None
+
+    @classmethod
+    def of(cls, prof: config.Profile | None, title: str = "") -> Personal:
+        values: list[str] = [title] if title else []
+        if prof is not None:
+            values += report_strings(prof)
+            values += [v for v in _strings(prof.get("personal"), ("country", "phone_country_code", "phone_type"))]
+            values += [str(prof.get("experience.current_title") or "")]
+            values += [str(e.get("title") or "") for e in prof.get("work_history") or [] if isinstance(e, dict)]
+            for ref in prof.references():
+                values += [str(v) for v in ref.values() if v]
+        return cls(v for v in values if v)
+
+    def holds(self, text: str) -> bool:
+        said = str(text or "")
+        if self.words is not None and self.words.search(said):
+            return True
+        if self.figures:
+            for run in re.findall(r"\d[\d\s().+\-/]*\d|\d", said):
+                digits = re.sub(r"\D", "", run)
+                if any(f == digits or len(f) >= 7 and f in digits for f in self.figures):
+                    return True
+        return False
+
+
+def _strings(value: Any, leave: tuple[str, ...] = ()) -> list[str]:
+    """Every text in a profile section, however deep (but the keys in `leave`)."""
+    if isinstance(value, dict):
+        return [s for k, v in value.items() if str(k) not in leave for s in _strings(v, leave)]
+    if isinstance(value, list):
+        return [s for v in value for s in _strings(v, leave)]
+    return [value.strip()] if isinstance(value, str) and value.strip() else []
+
+
+def _profile() -> config.Profile | None:
+    try:
+        return config.Profile.load()
+    except Exception:  # (a profile that doesn't read: its details unknown, so nothing is sent: see _prepare)
+        return None
 
 
 def choices_of(q: dict[str, Any]) -> list[str]:
@@ -107,13 +199,16 @@ def _own(text: str) -> str:
     return " ".join(str(text).split()).casefold()
 
 
-def may_ask(q: dict[str, Any], company: str) -> bool:
+def may_ask(q: dict[str, Any], company: str, personal: Personal | None = None) -> bool:
     """May the model be asked whether this new question means the same as an earlier one? Only a question with
     choices; never one of the person's own details (an ID, a reference), an account form's, a consent, a notice, a
-    security question, one about this employer, one that points at the page's other words, or one the card answers by
-    its box (a label shared with another box, a date's part): its answer is never remembered by its words."""
+    security question, a self-identification, pay or a criminal record, one about this employer, one whose words or
+    choices hold the person's details or the job's (`personal`: the profile's, read here when not given), one that
+    points at the page's other words, or one the card answers by its box (a label shared with another box, a date's
+    part): its answer is never remembered by its words."""
     label = str(q.get("label") or "")
-    if not label.strip() or " | " in label or not choices_of(q) or len(choices_of(q)) > MOST_CHOICES:
+    choices = choices_of(q)
+    if not label.strip() or " | " in label or not choices or len(choices) > MOST_CHOICES:
         return False
     if q.get("kind") == "checkbox_group":  # (several may be picked: one of them is not its answer)
         return False
@@ -124,7 +219,10 @@ def may_ask(q: dict[str, Any], company: str) -> bool:
     if not _fit(label):
         return False
     names = _this_employers_names({"company": company})
-    return not (_names(label, names) or any(_names(c, names) for c in choices_of(q)))
+    if _names(label, names) or any(_names(c, names) for c in choices):
+        return False
+    personal = personal if personal is not None else Personal.of(_profile())
+    return not (personal.holds(label) or any(personal.holds(c) for c in choices))
 
 
 @dataclass(frozen=True)
@@ -170,49 +268,129 @@ def decline(label: str, match: str) -> None:
 
 
 # ------------------------------------------------------------------ the earlier questions that may be offered
-def candidates(q: dict[str, Any], company: str) -> list[dict[str, Any]]:
-    """The person's remembered answers (answers.yaml) that may be offered for this new question: each with its
-    question's words and a non-empty answer, never one that's an ID, kept for an employer (`at`), a notice or consent,
-    a security question, about one employer, or already declined for these words; and only one whose answer is one
-    of the new question's own choices, word for word apart from case and spacing. Each is {"question", "answer" (the
-    choice as the new question spells it), "match"}, the likeliest first."""
+@dataclass(frozen=True)
+class _Earlier:
+    """A remembered answer that may be offered for some new question (_earlier's checks passed), its rank its place in
+    answers.yaml (newest first)."""
+    rank: int
+    question: str
+    answer: str
+    match: str
+    bare: str
+    words: frozenset[str]
+    source: frozenset[str]  # (the names of the employer it was given at: its `from`)
+
+
+def _employers_named(employers: Iterable[str]) -> set[str]:
+    """The tracker's employers' names, whole (norm()'s and _employer_key's forms: never a first word or initials, which
+    a question's everyday words share), for an answer kept with no employer of its own."""
+    out: set[str] = set()
+    for name in employers:
+        out |= {norm(str(name)), _employer_key(str(name))}
+    return {n for n in out if len(n) >= 3}
+
+
+def _earlier(entries: list[Any], at: list[int], personal: Personal, employers: set[str]) -> list[_Earlier]:
+    """The remembered answers that may be offered for any new question: each with its question's words and a
+    non-empty answer, never one that's an ID, kept for an employer (`at`), a notice or consent, a security question, a
+    self-identification, pay or a criminal record, about one employer (the one it was given at, `from`, or any the
+    tracker names), or whose question or answer holds the person's details or the job's."""
+    out: list[_Earlier] = []
+    for rank, i in enumerate(at):
+        e = entries[i]
+        question, answer = str(e.get("question") or "").strip(), e.get("answer")
+        if not question or not isinstance(answer, str) or not answer.strip():
+            continue
+        if str(e.get("at") or "").strip() or config._private(e):
+            continue
+        if not _fit(question) or personal.holds(question) or personal.holds(answer):
+            continue
+        source = str(e.get("from") or "").strip()
+        named = _this_employers_names({"company": source}) if source else set()
+        if named and (_names(question, named) or _names(answer, named)):
+            continue  # (given at one employer and naming it: "relocate to the Example Fab Chandler site?")
+        if employers and _names(question, employers):
+            continue
+        out.append(_Earlier(rank, question, answer, str(e["match"]), _bare_question(question),
+                            frozenset(norm(question).split()), frozenset(named)))
+    return out
+
+
+def _candidates(q: dict[str, Any], company: str, earlier: list[_Earlier],
+                declined: set[tuple[str, str]]) -> list[dict[str, Any]]:
+    """Of `earlier`, those for this new question: only one whose answer is one of its own choices, word for word apart
+    from case and spacing, not its own words again, not naming this employer, and not declined for these words."""
     label = str(q.get("label") or "")
     choices = {_own(c): c for c in choices_of(q)}
-    try:
-        entries, at = config._remembered(config._answers_file())
-    except (ValueError, OSError):
-        return []
     names = _this_employers_names({"company": company})
-    declined = _declined()
     here = _bare_question(label)
     words = set(norm(label).split())
     found: list[tuple[int, int, dict[str, Any]]] = []
     seen: set[str] = set()
-    for rank, i in enumerate(at):
-        e = entries[i]
-        question, answer = str(e.get("question") or "").strip(), e.get("answer")
-        if not question or not isinstance(answer, str) or not answer.strip() or _own(answer) not in choices:
+    for e in earlier:
+        if _own(e.answer) not in choices or e.bare == here or e.bare in seen or (here, e.match) in declined:
             continue
-        if str(e.get("at") or "").strip() or config._private(e):
+        if _names(e.question, names) or e.source and _names(label, set(e.source)):
             continue
-        bare = _bare_question(question)
-        if bare == here or bare in seen or (here, str(e["match"])) in declined:
-            continue
-        if not _fit(question) or _names(question, names):
-            continue
-        source = norm(str(e.get("from") or ""))
-        if source and (source in norm(question) or source in norm(label)
-                       or source.split()[0] in norm(answer).split()):
-            continue  # (given for one employer, or naming it)
-        seen.add(bare)
-        found.append((-len(words & set(norm(question).split())), rank,
-                      {"question": question, "answer": choices[_own(answer)], "match": str(e["match"])}))
+        seen.add(e.bare)
+        found.append((-len(words & e.words), e.rank,
+                      {"question": e.question, "answer": choices[_own(e.answer)], "match": e.match}))
     found.sort(key=lambda t: t[:2])
     return [c for _, _, c in found[:MOST_CANDIDATES]]
 
 
+def candidates(q: dict[str, Any], company: str, employers: Iterable[str] = ()) -> list[dict[str, Any]]:
+    """The person's remembered answers (answers.yaml) that may be offered for this new question (_earlier's and
+    _candidates' checks), each {"question", "answer" (the choice as the new question spells it), "match"}, the
+    likeliest first. (One question's: a stop's are prepared together, each file read once: _prepare.)"""
+    try:
+        entries, at = config._remembered(config._answers_file())
+    except (ValueError, OSError):
+        return []
+    prof = _profile()
+    if prof is None:
+        return []
+    earlier = _earlier(entries, at, Personal.of(prof), _employers_named(employers))
+    return _candidates(q, company, earlier, _declined())
+
+
+Asked = list[tuple[str, dict[str, Any], list[dict[str, Any]]]]
+
+
+def _prepare(questions: list[dict[str, Any]], company: str, title: str,
+             employers: Callable[[], Iterable[str]] | None) -> tuple[Asked, Any, str]:
+    """A stop's questions to ask about, each with its candidates; and what to ask with and which model. Off the event
+    loop (suggest runs it in a thread): the profile, answers.yaml and similar.json each read once, the questions
+    may_ask refuses dropped first and the rest cut to MOST_QUESTIONS before any is matched."""
+    prof = _profile()
+    if prof is None:  # (the person's details unknown: nothing could be checked against them, so nothing goes)
+        return [], None, SIMILAR_MODEL
+    model = prof.settings.similar_model or SIMILAR_MODEL
+    personal = Personal.of(prof, title)
+    keys = [question_key(str(q.get("label") or "")) for q in questions]
+    twice = Counter(keys)
+    askable = [(k, q) for k, q in zip(keys, questions) if twice[k] == 1 and may_ask(q, company, personal)]
+    askable = askable[:MOST_QUESTIONS]
+    if not askable:
+        return [], None, model
+    try:
+        entries, at = config._remembered(config._answers_file())
+    except (ValueError, OSError):
+        return [], None, model
+    try:
+        known = list(employers()) if employers is not None else []
+    except Exception:
+        known = []
+    earlier = _earlier(entries, at, personal, _employers_named(known))
+    declined = _declined()
+    asked = [(k, q, found) for k, q in askable if (found := _candidates(q, company, earlier, declined))]
+    if not asked:
+        return [], None, model
+    return asked, letters.api_key() or letters.find_claude(), model
+
+
 # ------------------------------------------------------------------ the one call
-def _prompt(asked: list[tuple[str, dict[str, Any], list[dict[str, Any]]]]) -> tuple[str, dict[int, dict[int, dict]]]:
+def _prompt(asked: Asked) -> tuple[str, dict[int, dict[int, dict]]]:
     """The message: JSON of the new questions (a number, the words, the choices) and each one's earlier questions (a
     number, the words), and nothing else. Also, for each new question's number, the earlier questions offered it, by
     their numbers."""
@@ -231,18 +409,18 @@ def _prompt(asked: list[tuple[str, dict[str, Any], list[dict[str, Any]]]]) -> tu
     return json.dumps({"new_questions": listed}, ensure_ascii=False), offered
 
 
-def _read(said: str, offered: dict[int, dict[int, dict]]) -> dict[int, int]:
+def _read(said: str, offered: dict[int, dict[int, dict]]) -> dict[int, int] | None:
     """The reply's matches, {new number: earlier number}: only a JSON object with just the new numbers as keys, each
     mapped to null or to one earlier question's number that was offered for it. Anything else for a question is no
-    match; a reply that isn't such an object, or has another key, is none at all."""
+    match; a reply that isn't such an object, or has another key, is none at all (None: nothing of it is kept)."""
     text = said.strip()
     fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, re.S | re.I)
     try:
         data = json.loads(fenced.group(1) if fenced else text)
     except ValueError:
-        return {}
+        return None
     if not isinstance(data, dict) or {str(k) for k in data} - {str(n) for n in offered}:
-        return {}
+        return None
     out: dict[int, int] = {}
     for key, value in data.items():
         number = int(key) if str(key).isdigit() else 0
@@ -251,30 +429,54 @@ def _read(said: str, offered: dict[int, dict[int, dict]]) -> dict[int, int]:
     return out
 
 
-async def suggest(questions: list[dict[str, Any]], company: str) -> dict[str, Offer]:
+def _kept_key(q: dict[str, Any], found: list[dict[str, Any]]) -> tuple:
+    """A card question as asked: its words, its choices and its candidates (a decline or a new answer changes it)."""
+    return (" ".join(str(q.get("label") or "").split()), tuple(choices_of(q)),
+            tuple((c["question"], c["answer"], c["match"]) for c in found))
+
+
+async def suggest(questions: list[dict[str, Any]], company: str, title: str = "",
+                  employers: Callable[[], Iterable[str]] | None = None,
+                  kept: dict[tuple, Offer | None] | None = None) -> dict[str, Offer]:
     """The earlier answers to offer for a stop's new questions, by each question's key (question_key): one call to a
     model, with the questions' words alone. {} where there's nothing to ask, no model, or the call fails, takes too long
-    (SIMILAR_TIMEOUT) or answers anything but what it was asked for: the card is then as it was."""
+    (SIMILAR_TIMEOUT) or answers anything but what it was asked for: the card is then as it was. `title`: the job's,
+    never sent (a question holding it isn't asked about); `employers`: the tracker's, read with the rest off the loop;
+    `kept`: the run's results so far, by _kept_key (a question asked before just as it is now isn't asked again)."""
     try:
-        keys = [question_key(str(q.get("label") or "")) for q in questions]
-        asked = [(k, q, found) for k, q in zip(keys, questions)
-                 if keys.count(k) == 1 and may_ask(q, company) and (found := candidates(q, company))]
-        asked = asked[:MOST_QUESTIONS]
+        asked, exe, model = await asyncio.to_thread(_prepare, questions, company, title, employers)
         if not asked:
             return {}
-        exe = letters.api_key() or letters.find_claude()
+        out: dict[str, Offer] = {}
+        fresh = []
+        for item in asked:
+            key = _kept_key(item[1], item[2])
+            if kept is not None and key in kept:
+                if (offer := kept[key]) is not None:
+                    out[item[0]] = offer
+            else:
+                fresh.append(item)
+        if not fresh:
+            return out
         if exe is None:
             return {}
-        try:
-            model = config.Profile.load().settings.similar_model or SIMILAR_MODEL
-        except Exception:
-            model = SIMILAR_MODEL
-        message, offered = _prompt(asked)
-        said = await asyncio.wait_for(
-            letters._ask(exe, SYSTEM, [{"type": "text", "text": message}], model, SIMILAR_TIMEOUT), SIMILAR_TIMEOUT)
+        message, offered = _prompt(fresh)
+        said = await asyncio.wait_for(letters._ask(exe, SYSTEM, [{"type": "text", "text": message}], model,
+                                                   SIMILAR_TIMEOUT, effort=False), SIMILAR_TIMEOUT)
         matches = _read(said, offered)
-        return {asked[number - 1][0]: Offer(c["question"], c["answer"], c["match"])
-                for number, which in matches.items() for c in [offered[number][which]]}
+        if matches is None:  # (not an answer to what was asked: nothing offered for these, nothing kept)
+            return out
+        for number, (qkey, q, found) in enumerate(fresh, 1):
+            which = matches.get(number)
+            offer = Offer(offered[number][which]["question"], offered[number][which]["answer"],
+                          offered[number][which]["match"]) if which is not None else None
+            if offer is not None:
+                out[qkey] = offer
+            if kept is not None:
+                if len(kept) >= MOST_KEPT:
+                    kept.clear()
+                kept[_kept_key(q, found)] = offer
+        return out
     except asyncio.CancelledError:
         raise
     except Exception as e:  # (a timeout, no connection, a refusal, a reply that can't be read: no offer; no word of it)

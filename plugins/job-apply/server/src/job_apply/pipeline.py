@@ -1146,7 +1146,8 @@ class Run:
     last_action: dict[str, Any] | None = None
     questions: list[dict[str, Any]] = field(default_factory=list)
     # earlier answers offered for the stop's new questions (similar.py), by question key: {"earlier", "answer",
-    # "match"}. Never in public(): the page asks for them (/api/similar), and the card's questions only say `similar`
+    # "match", "stop" (the stop's paused_at, as repr writes it)}. Never in public(): the page asks for them
+    # (/api/similar), and the card's questions only say `similar`
     similar: dict[str, dict[str, str]] = field(default_factory=dict)
     log: list[str] = field(default_factory=list)
     logged: int = 0  # lines ever logged (the log keeps the last 40): something done since
@@ -1826,6 +1827,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         # asked which earlier question a new one repeats (similar.py); each task is the job's, ended with its stop
         self.suggest_similar = True
         self._similar_tasks: dict[int, asyncio.Task] = {}
+        # (each run's results so far, by card question as asked: similar.suggest's `kept`)
+        self._similar_kept: dict[int, dict[tuple, similar.Offer | None]] = {}
         self.jobs_at_once: int | None = None  # the desk's own "Jobs at once" (desk.json); None: the profile's setting
         # the jobs under way, each in a task of its own (_run_task), and how many have begun (their order: Run.began)
         self._slots: dict[int, asyncio.Task] = {}
@@ -2257,22 +2260,27 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         self.learn_from_me = on
 
     def set_suggest_similar(self, on: bool) -> None:
-        """Suggested answers, turned on or off (desk.json). Off, no question's words go to a model from now on; an offer
-        already on a card stays until its stop ends."""
+        """Suggested answers, turned on or off (desk.json). Off, no question's words go to a model from now on: a call
+        under way is called off, and the offers on the cards are gone."""
         self.suggest_similar = on
+        if not on:
+            for job_id in list(self._similar_tasks):
+                self._end_similar(job_id)
+            for run in self.runs.values():
+                self._drop_similar(run)
 
     def _similar_on(self) -> bool:
-        """May a model be asked about a stop's questions? Their setting, never in practice mode's hard switch
-        (JOB_APPLY_NEVER_SUBMIT=1) nor the live check's test identity. (With no model to ask, similar.suggest asks
-        nothing: it looks for one only when there is a question to ask about.)"""
+        """May a model be asked about a stop's questions? Their setting, never in practice mode (submit_mode: dry_run,
+        or its hard switch JOB_APPLY_NEVER_SUBMIT=1) nor the live check's test identity: _learning_on's test, with a
+        switch of its own. (With no model to ask, similar.suggest asks nothing: it looks for one only when there is a
+        question to ask about.)"""
         if not self.suggest_similar or config.never_submit():
             return False
         try:
-            if config.Profile.load().settings.test_identity:
-                return False
+            settings = config.Profile.load().settings
         except Exception:  # (a profile that doesn't read: nothing asked)
             return False
-        return True
+        return not settings.dry_run and not settings.test_identity
 
     def _suggest_soon(self, run: Run, need: str) -> None:
         """A new stop: the last one's task ended, and at a stop with questions one background task asks the model
@@ -2293,13 +2301,29 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         if task is not None and not task.done():
             task.cancel()
 
+    @staticmethod
+    def _drop_similar(run: Run) -> None:
+        """A stop's offers gone (it ended, or the switch was turned off), and their marks on its card."""
+        if run.similar:
+            run.similar = {}
+            for q in run.questions:
+                q.pop("similar", None)
+
+    def _employers(self) -> list[str]:
+        """Every employer the tracker's jobs name (for suggested answers: an earlier question naming one isn't sent)."""
+        return self.srv.tracker().companies()
+
     async def _suggest_for(self, run: Run, questions: list[dict[str, Any]]) -> None:
+        stop = repr(run.paused_at)  # (the stop the offers are for: Desk.answer takes one only while it's still up)
         try:
-            offers = await similar.suggest(questions, run.company)
+            kept = self._similar_kept.setdefault(run.job_id, {})
+            offers = await similar.suggest(questions, run.company, run.title, self._employers, kept)
             # (only at the stop it was asked for: an answer, a skip or a later stop has ended it)
-            if not offers or run.status != "needs_you" or run.need != "questions" or run.questions is not questions:
+            if not offers or run.status != "needs_you" or run.need != "questions" or run.questions is not questions \
+                    or repr(run.paused_at) != stop or not self.suggest_similar:
                 return
-            run.similar = {k: {"earlier": o.earlier, "answer": o.answer, "match": o.match} for k, o in offers.items()}
+            run.similar = {k: {"earlier": o.earlier, "answer": o.answer, "match": o.match, "stop": stop}
+                           for k, o in offers.items()}
             for q in questions:
                 if question_key(q.get("label") or "") in run.similar:
                     q["similar"] = True
@@ -2463,7 +2487,9 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             self.runs[job_id].submit_pressed = False  # (the person's Submit, waiting its turn, is gone with its task)
         self.tasks = deque(t for t in self.tasks if t[1] != job_id)
         if self._similar_tasks:
-            self._end_similar(job_id)  # (its stop ends: Carry on, an answer, Skip, Later)
+            self._end_similar(job_id)  # (its stop ends: Carry on, an answer, Skip, Undo, Mark applied)
+        if job_id in self.runs:
+            self._drop_similar(self.runs[job_id])
         self.pressed.discard(job_id)  # (a press for a task that's gone isn't one for the next: the re-check of 0.3.196)
         self._first.discard(job_id)  # (and a solved check's place beside the others is that task's alone)
 
@@ -2571,6 +2597,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         own, nor noted again), with why it wasn't tried (the person has been at its tab meanwhile): theirs."""
         run.status, run.need = "needs_you", "stuck"
         run.reason, run.code = run.retry_stop[0] or run.reason, run.retry_stop[1] or run.code
+        self._end_similar(run.job_id)  # (a questions stop's offers end with it: its card asks nothing now)
+        self._drop_similar(run)
         run.questions, run.blocking, run.left = [], False, False
         run.paused_at = run.active_at = time.time()
         run.no_retry = True
