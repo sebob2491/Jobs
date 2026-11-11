@@ -1211,7 +1211,8 @@ class Desk:
         rows = await asyncio.to_thread(learned_buttons.all)
         return JSONResponse({"learned": [
             {"id": learned_buttons.entry_id(e["place"], e["page"]),
-             "employer": "an application saved on this computer" if e["place"].startswith("file:") else e["place"],
+             "employer": "an application saved on this computer" if e["place"].startswith("file:")
+             else learned_buttons.shown_place(e["place"]),
              "system": ATS_NAMES.get(e["system"], ""), "button": e["button"], "on": e["on"], "worked": e["worked"]}
             for e in rows]}, headers={"Cache-Control": "no-store"})
 

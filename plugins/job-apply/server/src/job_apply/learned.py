@@ -2,7 +2,8 @@
 the desk found no step button (stop code no_step_button), kept for the same employer's site and the same page.
 
 learned.json, in the person's job-apply folder, theirs alone. Each entry holds only:
-  {"place": the employer's place (pipeline_accounts.account_place: a host, with a tenant on a shared one),
+  {"place": the employer's place (place_key: pipeline_accounts.account_place, a host with a tenant on a shared one,
+            then "|" and the employer's name as company_key gives it: one host serves many employers),
    "system": the job system's key, or "",
    "page": a short hash of the page's headings and its boxes' labels (never the words themselves, nor the address),
    "button": the button's words (60 characters at most),
@@ -24,6 +25,7 @@ import re
 import threading
 from collections.abc import Callable, Iterable
 from typing import Any
+from urllib.parse import urlsplit
 
 from . import config
 
@@ -62,6 +64,25 @@ def place_of(url: str) -> str:
     if place.startswith("file:"):
         return "file:" + hashlib.sha256(place.encode("utf-8")).hexdigest()[:16]
     return place
+
+
+def company_key(company: Any) -> str:
+    """An employer's name as a learned press is kept by: lower-case, its letters and digits alone ("Acme, Inc." is
+    "acmeinc")."""
+    return "".join(c for c in str(company or "").casefold() if c.isalnum())
+
+
+def place_key(url: str, company: Any) -> str:
+    """Where a learned press is kept: the address's place (place_of) and the job's employer (company_key), as
+    "place|company". A job system many employers share is one place for all of them (jobs.smartrecruiters.com, a
+    Taleo's ?org=), so the employer is named too. "" with either unknown: then nothing is learned or used."""
+    place, company = place_of(url), company_key(company)
+    return f"{place}|{company}" if place and company else ""
+
+
+def shown_place(place: str) -> str:
+    """A kept place as the page shows it: the address's part alone (the employer's name is the tracker's)."""
+    return place.partition("|")[0]
 
 
 def entry_id(place: str, page: str) -> str:
@@ -184,42 +205,63 @@ def all() -> list[dict[str, Any]]:
 # --------------------------------------------------------- hearing the person's press in the paused tab
 # The page's one reporting function (Playwright's expose_binding on the tab, the run's own: a binding per page) and the
 # script that calls it. The script listens for `click` in the capture phase and reports ONLY the visible words (60
-# characters at most) of the nearest button, link or role=button the click was on: nothing for any other element, no
-# key or input event, no value, no coordinate, no address. It reports only while window.__jdHandOn is true, which
-# mute() sets false when the stop ends; a page navigated meanwhile has no listener at all (its script is gone with it)
+# characters at most) of the nearest button, link or role=button the click was on (an input button's value): never an
+# aria-label or a title (which can say anything, a name or a file's), nothing for any other element, no key or input
+# event, no value of a box, no coordinate, no address. mute() takes the listener out of the page again when the stop
+# ends, and what it put on `window` with it; a page navigated meanwhile has no listener at all (its script is gone with
+# it). The binding itself stays on the tab (Playwright can't take one off): the pipeline ignores what it says while no
+# such stop waits
 BINDING = "__jdHand"
 LISTEN_JS = """() => {
-  window.__jdHandOn = true;
-  if (window.__jdHandHears) return;
-  window.__jdHandHears = true;
+  if (typeof window.__jdHandOff === 'function') window.__jdHandOff();
   const clean = (s) => (s || '').replace(/\\s+/g, ' ').trim();
-  document.addEventListener('click', (e) => {
+  const heard = (e) => {
     try {
-      if (!window.__jdHandOn || !e.isTrusted || !(e.target instanceof Element)) return;
+      if (!e.isTrusted || !(e.target instanceof Element)) return;
       const b = e.target.closest('button, input[type="button"], input[type="submit"], a, [role="button"]');
       if (!b) return;
-      const said = b.innerText || b.textContent || (b.tagName === 'INPUT' ? b.value : '');
-      const words = clean(said || b.getAttribute('aria-label') || '').slice(0, %d);
+      const said = b.tagName === 'INPUT' ? b.value : b.innerText;
+      const words = clean(said).slice(0, %d);
       if (words && typeof window.%s === 'function') window.%s(words);
     } catch (_) { /* never the page's trouble */ }
-  }, true);
+  };
+  document.addEventListener('click', heard, true);
+  window.__jdHandOff = () => {
+    document.removeEventListener('click', heard, true);
+    try { delete window.__jdHandOff; } catch (_) { window.__jdHandOff = undefined; }
+  };
 }""" % (WORDS_LONGEST, BINDING, BINDING)
-MUTE_JS = "() => { window.__jdHandOn = false; }"
+MUTE_JS = "() => { if (typeof window.__jdHandOff === 'function') window.__jdHandOff(); }"
 _WAIT = 4.0  # seconds a frame is given for either script
 
 
+def _origin(url: Any) -> tuple[str, str]:
+    """An address's origin as compared here: its scheme and its host with its port."""
+    try:
+        parts = urlsplit(str(url or ""))
+        return parts.scheme.lower(), parts.netloc.lower()
+    except ValueError:
+        return "", ""
+
+
 def _frames(page: Any) -> list[Any]:
-    """The tab's frames a script may go into: not a detached one, a blank one but the main frame, nor a CAPTCHA's or a
-    media player's."""
+    """The tab's frames a script may go into: its main frame, and frames of the main frame's own origin (never another
+    site's frame in it: what's pressed there isn't the employer's form's), not a detached one, a blank one, nor a
+    CAPTCHA's or a media player's."""
     from .browser import _CAPTCHA_FRAME, _MEDIA_FRAME
 
     out = []
+    try:
+        main = page.main_frame
+        own = _origin(main.url)
+    except Exception:
+        return []
     for frame in page.frames:
         try:
             if frame.is_detached():
                 continue
-            if frame is not page.main_frame and (not frame.url or frame.url == "about:blank"
-                                                  or _MEDIA_FRAME.match(frame.url)):
+            if frame is not main and (not frame.url or frame.url == "about:blank" or _MEDIA_FRAME.match(frame.url)
+                                      or _origin(frame.url) != own):
                 continue
             if _CAPTCHA_FRAME.match(frame.url):
                 continue
@@ -251,8 +293,8 @@ async def listen(page: Any, bound: Any, on_words: Callable[[Any, Any], Any]) -> 
 
 
 async def mute(page: Any) -> None:
-    """Stop the listener reporting, in every frame (the binding stays on the tab: the pipeline ignores a report that
-    comes when no stop is waiting)."""
+    """Take the listener out of every frame it went into, and what it put on `window` (the binding stays on the tab:
+    the pipeline ignores a report that comes when no stop is waiting)."""
     if page is not None:
         await _in_frames(page, MUTE_JS)
 
