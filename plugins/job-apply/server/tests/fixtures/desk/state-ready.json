@@ -161,6 +161,7 @@
     "questions": [],
     "log": [],
     "log_at": [],
+    "learned_press": {"button": "Go to next section", "on": "2026-10-03", "id": "0123456789abcdef"},
     "went_in": {
      "answers": [
       {

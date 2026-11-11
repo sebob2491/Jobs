@@ -327,7 +327,8 @@ def test_safety_opens_with_each_setting_as_the_desk_acts_on_it(srv, job_apply_ho
             return calls, keys, first
 
     calls, keys, first = run(go())
-    assert calls == [("GET", "/api/safety", None)], calls
+    # (the Applying panel asks for What the desk has learned as it opens; Safety's press asks /api/safety once)
+    assert calls == [("GET", "/api/learned", None), ("GET", "/api/safety", None)], calls
     assert keys == [line["key"] for line in lines] and len(keys) > 3, keys
     assert (first.startswith(f"{lines[0]['name']}: {lines[0]['value']}.")
             and f"Where: {lines[0]['where']}." in first), first

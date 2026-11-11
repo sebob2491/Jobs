@@ -282,9 +282,10 @@ def test_next_visit_the_desk_presses_the_button_the_person_pressed(srv, job_appl
     r = over(applier, body)
     assert r.status == "ready", (r.status, r.code, r.reason, r.log)
     assert SAID in r.log
-    shown = {"button": WORDS, "on": DAY}
-    assert r.learned_press == shown and r.public()["learned_press"] == shown
     [entry] = learned.all()
+    # (and the id of the entry, for the page's Don't do that again)
+    shown = {"button": WORDS, "on": DAY, "id": learned.entry_id(entry["place"], entry["page"])}
+    assert r.learned_press == shown and r.public()["learned_press"] == shown
     assert (entry["worked"], entry["failed"], entry["on"]) == (1, 0, DAY)
 
 

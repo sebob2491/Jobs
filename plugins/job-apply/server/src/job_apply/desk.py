@@ -2319,6 +2319,18 @@ class Desk:
              "Cookie banners are declined; one with no way to decline is accepted for you." if cookies else
              "Cookie banners are declined, or left to you when there's no way to decline: never accepted.",
              applying + "Cookie banners")
+        # what it learns from the person's presses (learned.py): their switch, and never in practice mode
+        learns = tell(a._learning_on)
+        learn_where = applying + "Learn from what I do when the desk is stuck"
+        learn_said = ("Only a step button's words, at that employer's page; never a Submit, an agreement, a sign-in or "
+                      "anything typed.")
+        if learns is None:
+            line("learn_from_me", "Learns from you", unknown, busy, learn_where)
+        elif learns:
+            line("learn_from_me", "Learns from you", "on", learn_said, learn_where)
+        else:
+            line("learn_from_me", "Learns from you", "off in practice mode" if dry and a.learn_from_me else
+                 fix if unread and a.learn_from_me else "off", learn_said, learn_where)
         where = "Settings, Email codes"
         if s.email_codes and not unread:
             line("email_codes", "Emailed codes (Claude)", "on",

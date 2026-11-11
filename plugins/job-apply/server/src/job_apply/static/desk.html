@@ -265,6 +265,19 @@ input[type=checkbox]:disabled { opacity: .5; cursor: default; }
   .setrow.stack > form { justify-self: start; }
 }
 .set-err { grid-column: 1 / -1; margin: -6px 0 0; color: var(--bad); font-size: 13px; }
+/* (a save the desk took: Saved, in green, where the sentence in red would be) */
+.set-ok { grid-column: 1 / -1; margin: -6px 0 0; color: var(--good); font-size: 13px; }
+/* Settings, Applying's What the desk has learned: a heading, a row each, Forget at the right */
+.learned { border-top: 1px solid var(--line-2); padding: 13px 18px 6px; }
+.learned h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.learned .setrow { padding: 9px 0; }
+.learned .setrow:first-child { border-top: 0; }
+.learned .setrow .t { font-weight: 400; font-size: 13px; overflow-wrap: anywhere; }
+.learned > .small { margin: 6px 0 9px; }
+.learned > .set-err { margin: 6px 0 9px; }
+/* (a card's line of the button the desk pressed as the person did, and its Don't do that again) */
+.learned-line { margin: 6px 0 0; }
+.learned-line .btn { margin: 2px 0 0; }
 /* the update card (Version F, the mockup's .update): the program's mark, what the update is doing, its buttons */
 .setrow.update { grid-template-columns: 38px minmax(0, 1fr) auto; gap: 14px; padding: 15px 18px; }
 .setrow.update > .logo { width: 38px; height: 38px; }
@@ -1164,6 +1177,20 @@ body.stopped > :not(#stopped) { display: none; }
                   <p class="s" id="dont-wait-said">A sign-in or an emailed code waits on its card, and the other jobs carry on.</p>
                   <p class="s" id="dont-wait-hint"></p></div>
                 <input type="checkbox" class="switch" id="dont-wait" aria-labelledby="dont-wait-name" aria-describedby="dont-wait-said dont-wait-hint" title="For a desk left to go through the list: a sign-in, or an emailed code only you can read, waits on its card and the other jobs go on, as if you'd pressed Later on each (never another job at the same site). A code the desk reads itself (from your inbox, or Claude from your Gmail) still holds them while it's looked for, a minute as a rule: one code at a time, so it never goes to another job">
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="learn-me-name">Learn from what I do when the desk is stuck</p>
+                  <p class="s" id="learn-me-said">When the desk can't find the button that moves a step on and you press it yourself, it remembers that button's words for that employer's page and presses it next time. It never learns a Submit, an agreement, a sign-in or anything you type.</p></div>
+                <input type="checkbox" class="switch" id="learn-me" aria-labelledby="learn-me-name" aria-describedby="learn-me-said">
+                <p class="set-ok" id="learn-me-ok" role="status" hidden>Saved</p>
+              </div>
+              <!-- (what the desk has learned: asked of the desk (/api/learned) when this panel opens and after each Forget,
+                   never part of the state; drawn by renderLearned) -->
+              <div class="learned" id="learned" aria-labelledby="learned-h">
+                <h3 id="learned-h" tabindex="-1">What the desk has learned</h3>
+                <p class="set-err" id="learned-err" role="alert" hidden></p>
+                <p class="small" id="learned-none" hidden>Nothing yet.</p>
+                <div id="learned-list"></div>
               </div>
               <div class="setfoot"><button class="btn" id="safety-btn" data-act="safety" title="What the desk does in your name, and what it never does: each setting as it is now, and where to change it">See everything the desk may and may not do</button></div>
               <details class="setmore"><summary>For fixing the desk</summary>
@@ -2081,6 +2108,81 @@ function renderSafety(s) {
 // (a "where" pressed: the window closes, and its address opens the panel)
 $("safety-body").addEventListener("click", (e) => { if (e.target.closest("a[href^='#settings/']")) $("safety").close(); });
 
+// What the desk learned from the person's presses (learned.py): a job's card says when the desk pressed a button as the
+// person did (r.learned_press: its words, the day, the entry's id), with Don't do that again; Settings, Applying lists
+// them all (/api/learned), asked when that panel opens and after each Forget, never from the state
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function dayWords(iso) {  // ("2026-10-11" as "Oct 11": by its digits, never through a time zone)
+  const m = /^\d{4}-(\d{2})-(\d{2})$/.exec(String(iso || ""));
+  return m && MONTHS[Number(m[1]) - 1] ? `${MONTHS[Number(m[1]) - 1]} ${Number(m[2])}` : "";
+}
+const learnedForgot = new Set(), learnedRunErr = new Map();  // (a card's press forgotten from it: its entry's id; why not)
+function learnedLine(r) {
+  const p = r.learned_press;
+  if (!p || !p.button) return "";
+  const id = String(p.id || "");
+  if (learnedForgot.has(id)) return `<p class="small learned-line" role="status" tabindex="-1" data-learned-done="${esc(id)}">Forgotten.</p>`;
+  const day = dayWords(p.on), err = learnedRunErr.get(id);
+  return `<p class="small learned-line">The desk pressed \u201c${esc(p.button)}\u201d here, as you did${day ? ` on ${esc(day)}` : ""}.`
+    + (id ? ` <button class="btn sm ghost" data-learned-run="${esc(id)}">Don't do that again</button>` : "")
+    + `</p>${err ? `<p class="set-err" role="alert">${esc(err)}</p>` : ""}`;
+}
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest?.("[data-learned-run]");
+  if (!b || b.disabled) return;
+  const id = b.dataset.learnedRun;
+  b.disabled = true;
+  try {
+    await api("/api/learned/forget", {id});
+    learnedForgot.add(id);
+    learnedRunErr.delete(id);
+  } catch (err) { learnedRunErr.set(id, err.message || "That wasn't forgotten."); }
+  if (state) renderSide();
+  [...document.querySelectorAll("[data-learned-done]")].find((el) => el.dataset.learnedDone === id)?.focus();
+});
+
+let learned = null, learnedAsked = 0, learnedBusy = false;
+async function loadLearned() {
+  const asked = ++learnedAsked;
+  let got = null, problem = "";
+  try { got = (await api("/api/learned")).learned || []; } catch (e) { problem = e.message || "the desk didn't answer"; }
+  if (asked !== learnedAsked) return;
+  if (got) learned = got;
+  $("learned-err").textContent = problem;
+  $("learned-err").hidden = !problem;
+  renderLearned();
+  $("learned").dataset.loaded = "1";
+}
+function learnedRow(e) {
+  const id = esc(e.id), worked = Number(e.worked) > 0 ? ` · worked ${e.worked} time${Number(e.worked) === 1 ? "" : "s"}` : "";
+  const said = [esc(e.employer), e.system ? esc(e.system) : "", `\u201c${esc(e.button)}\u201d`, esc(dayWords(e.on))].filter(Boolean).join(" · ");
+  return {key: e.id, html: `<div class="setrow" data-learned="${id}"><p class="t">${said}${worked}</p>
+    <div class="acts"><button class="btn sm danger" data-learned-forget="${id}">Forget</button></div></div>`};
+}
+function renderLearned() {
+  const list = learned || [];
+  patch($("learned-list"), list.map(learnedRow));
+  $("learned-none").hidden = learned === null || list.length > 0;
+}
+$("learned-list").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-learned-forget]");
+  if (!b || learnedBusy) return;
+  const id = b.dataset.learnedForget, at = (learned || []).findIndex((x) => x.id === id);
+  learnedBusy = true;
+  let problem = "";
+  try { await api("/api/learned/forget", {id}); } catch (err) { problem = err.message || "That wasn't forgotten."; }
+  learnedBusy = false;
+  if (problem) {  // (the line stays, and the route's sentence says why)
+    $("learned-err").textContent = problem;
+    $("learned-err").hidden = false;
+    return;
+  }
+  await loadLearned();
+  // (the keyboard on to the line that took its place; the heading when it was the last)
+  const rows = learned || [], next = rows[at] && $("learned-list").querySelector(`[data-learned-forget="${CSS.escape(rows[at].id)}"]`);
+  (next || $("learned-h")).focus();
+});
+
 // Not interested: the opening picked, and its window asking why (optional)
 let niUrl = null;
 function askNotInterested(url) {
@@ -2671,7 +2773,7 @@ function taskCard(r, list) {
     <div><h3>${esc(r.title)} <span class="small">· ${esc(r.company)}</span> <span class="pill ${cls}">${esc(said)}</span></h3>
     <p class="tline">${esc(r.reason)}</p></div>
     <div class="acts">${since}${button}<button class="btn sm ghost icon" data-open="${id}" aria-label="Open or close this card"><svg class="ico" aria-hidden="true"><use href="#i-chev"/></svg></button></div></div>`;
-  const body = `<div class="tbody" data-body="${id}"><p>${esc(r.reason)}</p>${gmail}${wentPanel(r)}${before}${
+  const body = `<div class="tbody" data-body="${id}"><p>${esc(r.reason)}</p>${learnedLine(r)}${gmail}${wentPanel(r)}${before}${
     jobButtons(r, which.filter((a) => a !== act))}</div>`;
   const key = list === "needs" ? `${id}:${r.need}:${qs.map((q) => q.label).join("|")}` : `${list[0]}${id}${r.status}`;
   return {key, html: `<div class="task ${r.blocking ? "hands" : ""}" data-code="${esc(r.code || "")}" data-task="${id}">${row}${body}</div>`};
@@ -2777,7 +2879,7 @@ function workCard(r) {
     <div class="head"><b>${esc(r.title)}</b><span>${esc(r.company)}</span>${since}</div>
     <div class="steps" aria-hidden="true">${STEPS.map((_, i) => `<i class="${i < at ? "done" : i === at ? "now" : ""}"></i>`).join("")}</div>
     <div class="steplabels">${STEPS.map((s, i) => `<span${i === at ? ` class="on" aria-current="step"` : ""}>${s}</span>`).join("")}</div>
-    <ul class="log">${logLines(r, 4)}</ul>${jobButtons(r, [])}</div>`};
+    <ul class="log">${logLines(r, 4)}</ul>${learnedLine(r)}${jobButtons(r, [])}</div>`};
 }
 let queueOpen = false;  // (the jobs waiting their turn: open or closed, as the person left it)
 document.addEventListener("toggle", (e) => { if (e.target.id === "queue-list") queueOpen = e.target.open; }, true);
@@ -3420,6 +3522,8 @@ function renderHeader() {
   $("dont-wait-hint").textContent = s.dont_wait
     ? "On: a sign-in, or a code only you can read, waits on its card while the rest go on."
     : "Off: a sign-in or emailed code holds the other jobs until you're done, or 5 minutes pass.";
+  const learnMe = $("learn-me");
+  if (document.activeElement !== learnMe && !learnMe.dataset.saving) learnMe.checked = !!s.learn_from_me;
   const tailor = $("tailor");
   if (document.activeElement !== tailor) tailor.checked = !!s.tailor_resumes;
   tailor.closest("label").hidden = !!state.standalone;  // (only Claude writes a tailored resume: C7)
@@ -4185,6 +4289,7 @@ function route() {
   // (Your answers' remembered answers: asked of the desk each time the page opens; left, an ID shown is dots again and
   // a change not saved is let go)
   if (moved && page === "answers") loadRemembered();
+  if (moved && page === "settings" && (panel || "profile") === "applying") loadLearned();  // (What the desk has learned)
   if (page !== "answers" && (rememberedShown.size || rememberedEdit)) {
     rememberedShown.clear();
     rememberedEdit = null;
@@ -5118,6 +5223,14 @@ document.addEventListener("change", (e) => {
   if (t.id === "auto-search" || t.id === "dont-wait") {
     const on = t.checked;
     saveRow(t, () => api("/api/settings", {[t.id === "auto-search" ? "auto_search" : "dont_wait"]: on}), () => { t.checked = !on; });
+  }
+  if (t.id === "learn-me") {  // (saved like the others, and says Saved, or why not, in its row)
+    const on = t.checked, ok = $("learn-me-ok");
+    ok.hidden = true;
+    saveRow(t, () => api("/api/settings", {learn_from_me: on}), () => { t.checked = !on; }).then(() => {
+      const err = t.closest(".setrow").querySelector(":scope > .set-err");
+      ok.hidden = !!(err && !err.hidden);
+    });
   }
   if (t.id === "phone-details") act(() => api("/api/phone/settings", {details: t.checked}));
   if (t.id === "min-pay" && state) {

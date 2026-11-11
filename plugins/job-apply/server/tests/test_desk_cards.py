@@ -151,6 +151,8 @@ def _cards(srv, monkeypatch, state: dict, storage: dict | None = None, press: li
                             await page.click(selector)
                     if at == "answers":
                         await page.wait_for_selector("#remembered-card[data-loaded]", state="attached")
+                    if at == "settings/applying":  # (What the desk has learned, asked of the desk when the panel opens)
+                        await page.wait_for_selector("#learned[data-loaded]", state="attached")
                     await page.evaluate("() => document.querySelectorAll('details').forEach((d) => { d.open = true; })")
                     # (and every job's card opened, as a person would, by its chevron: four or more in a list start
                     # closed, the design's C3)

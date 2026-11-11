@@ -5365,7 +5365,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         if clicked.get("clicked") is False:  # a guard of the driver's click refused it: never learned from again
             learned_buttons.forget(place, key)
             return None
-        run.learned_press = {"button": words, "on": entry["on"]}
+        run.learned_press = {"button": words, "on": entry["on"], "id": learned_buttons.entry_id(place, key)}
         self._log(run, f"pressed \u201c{words}\u201d, as you did here on {_day_said(entry['on'])}")
         run.page = srv.browser.current_tab or run.page
         if _fingerprint(clicked) == looked:
