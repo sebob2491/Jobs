@@ -3665,3 +3665,163 @@ def test_exclude_leaves_out_a_title_that_has_one_of_its_words_whole(srv, monkeyp
     assert out["excluded_titles"] == 3 and out["count"] == 3
     full = asyncio.run(server.search_company_jobs("field service", exclude=[]))
     assert len(full["results"]) == 6 and "excluded_titles" not in full
+
+
+# ----------------------------------------------------------------- Paylocity (AGS) and Google's careers site
+
+FIXTURES = Path(__file__).parent / "fixtures" / "search"
+PAYLOCITY_PAGE = (FIXTURES / "paylocity_ags.html").read_text(encoding="utf-8")
+PAYLOCITY_BOARD = "https://recruiting.paylocity.com/recruiting/jobs/All/22740a18-014a-4a4a-9639-34a52f9679c4/AGS"
+GOOGLE_PAGE = (FIXTURES / "google_careers_henderson.html").read_text(encoding="utf-8")
+GOOGLE_CFG = {"location": "Henderson, NV, USA"}
+
+
+def test_a_paylocity_board_is_read_from_its_pages_data():
+    """AGS's Paylocity board holds all its openings in one page's data (window.pageData, Nov 2026): the posting's
+    page, a place from its city or its metro, and the date. The state's filter keeps the Las Vegas area's."""
+    asked = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        asked.append(str(request.url))
+        return httpx.Response(200, text=PAYLOCITY_PAGE)
+    out = one_search("paylocity", PAYLOCITY_BOARD, answer, query="", location="Las Vegas, NV")
+    assert asked == [PAYLOCITY_BOARD] and out["errors"] == {}
+    rows = {r["title"]: r for r in out["results"]}
+    # (the Duluth, Georgia opening is left out; the field technician working from home in Las Vegas has no city, so the
+    # metro names it; the remote one names no place and stays, said to be one to check)
+    assert set(rows) == {"VP of Data & Analytics", "Field Service Technician - Las Vegas, NV",
+                         "Logistics Supervisor", "Technical Operations Specialist"}
+    vp = rows["VP of Data & Analytics"]
+    assert (vp["location"], vp["posted"], vp["external_id"], vp["url"]) == (
+        "Las Vegas, NV", "2026-11-06", "4648558", "https://recruiting.paylocity.com/Recruiting/Jobs/Details/4648558")
+    assert rows["Field Service Technician - Las Vegas, NV"]["location"] == "Las Vegas, NV"
+    assert rows["Logistics Supervisor"]["location"] == "North Las Vegas, NV"
+    remote = rows["Technical Operations Specialist"]
+    assert (remote["location"], remote["workplace"], remote["workplace_source"]) == ("Remote", "remote", "structured")
+    assert not any(r["ats"] != "custom" for r in out["results"])  # (the desk doesn't drive Paylocity)
+    out = one_search("paylocity", PAYLOCITY_BOARD, answer, query="logistics")  # (titles are matched here)
+    assert [r["title"] for r in out["results"]] == ["Logistics Supervisor"]
+
+
+def test_a_paylocity_opening_with_no_place_is_kept_to_check():
+    page = PAYLOCITY_PAGE.replace('"IsRemote": true', '"IsRemote": false')
+    page = re.sub(r'"JobLocation": \{[^}]*"Duluth"[^}]*\}', '"JobLocation": null', page, count=1)
+    out = one_search("paylocity", PAYLOCITY_BOARD, lambda request: httpx.Response(200, text=page), query="",
+                     location="Las Vegas, NV")
+    nowhere = [r for r in out["results"] if r["location"] == ""]
+    assert [r["title"] for r in nowhere] == ["Technical Operations Specialist", "Technical Project Manager"]
+    assert all(r["notes"] == ["no location given; check the posting"] for r in nowhere)
+
+
+def test_a_paylocity_board_that_is_empty_or_not_read_or_refused_is_said():
+    cfg = PAYLOCITY_BOARD
+    page = 'window.pageData = {"Jobs": [], "ModuleTitle": "AGS"};'
+    out = one_search("paylocity", cfg, lambda request: httpx.Response(200, text=page))
+    assert out["results"] == [] and out["errors"] == {}  # (none is none)
+    said = {"X Co": "SearchError: No job list in the Paylocity board's page (its window.pageData has no Jobs)"}
+    for bad in (CHANGED, 'window.pageData = {"Jobs": null};', 'window.pageData = {"Jobs": ', 'window.pageData = [];'):
+        assert one_search("paylocity", cfg, lambda request, text=bad: httpx.Response(200, text=text))["errors"] == said
+    out = one_search("paylocity", cfg, lambda request: httpx.Response(403, text="Access denied"))
+    assert out["errors"] == {"X Co": f"SearchError: HTTP 403 from {cfg}"}
+    out = one_search("paylocity", "https://example.com/jobs", lambda request: httpx.Response(200, text=PAYLOCITY_PAGE))
+    assert "isn't a recruiting.paylocity.com board address" in out["errors"]["X Co"]
+
+
+def test_googles_careers_page_is_read_for_the_one_place_it_was_asked_for():
+    """Google's results page for Henderson carries its openings as data (AF_initDataCallback 'ds:1', Nov 2026), each
+    listing the places it is open in; those that name Henderson stay, and only the one page is asked for."""
+    asked = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        asked.append(str(request.url))
+        return httpx.Response(200, text=GOOGLE_PAGE)
+    out = one_search("google_careers", GOOGLE_CFG, answer, query="", location="Henderson, NV")
+    assert asked == ["https://www.google.com/about/careers/applications/jobs/results/"
+                     "?location=Henderson%2C+NV%2C+USA"] and out["errors"] == {}
+    # (the Ohio one, the state-wide Nevada ones and Utah's aren't Henderson; "Nevada, USA" is no city)
+    assert [(r["title"], r["location"], r["external_id"], r["posted"], r["url"]) for r in out["results"]] == [
+        ("Data Center Operations Manager", "Henderson, NV", "111617309763609286", "2026-10-30",
+         "https://www.google.com/about/careers/applications/jobs/results/111617309763609286-data-center-operations-manager"),
+        ("Data Center Technician III, Cloud Services", "Henderson, NV", "140848925899662022", "2026-10-30",
+         "https://www.google.com/about/careers/applications/jobs/results/140848925899662022-"
+         "data-center-technician-iii-cloud-services")]
+    assert all(r["ats"] == "custom" and not r["notes"] for r in out["results"])
+    out = one_search("google_careers", GOOGLE_CFG, answer, query="manager")
+    assert [r["title"] for r in out["results"]] == ["Data Center Operations Manager"]
+    assert len(asked) == 2  # (one request a search, whatever its wordings)
+
+
+def test_googles_place_is_the_block_s_and_a_longer_list_than_its_page_is_said_on_each_opening():
+    page = GOOGLE_PAGE.replace("}, sideChannel", "}, sideChannel").replace('], null, 5, 20]', '], null, 31, 20]')
+    assert page != GOOGLE_PAGE
+    out = one_search("google_careers", GOOGLE_CFG, lambda request: httpx.Response(200, text=page), query="")
+    assert [r["notes"] for r in out["results"]] == [["Google lists 31 openings for the place; only the first page's 5 "
+                                                     "are read"]] * 2
+    out = one_search("google_careers", {"location": "Mesa, AZ, USA"},  # (another place of the same page's openings)
+                     lambda request: httpx.Response(200, text=GOOGLE_PAGE), query="")
+    assert {r["title"]: r["location"] for r in out["results"]} == {
+        "Data Center Technician III, Cloud Services": "Mesa, AZ", "Data Center Operations Manager": "Mesa, AZ"}
+
+
+def test_googles_page_that_is_empty_or_not_read_or_refused_is_said():
+    cfg = GOOGLE_CFG
+    none = "AF_initDataCallback({key: 'ds:1', hash: '2', data:[null, null, 0, 20], sideChannel: {}});"
+    out = one_search("google_careers", cfg, lambda request: httpx.Response(200, text=none))
+    assert out["results"] == [] and out["errors"] == {}  # (a place with no openings)
+    said = "SearchError: No job list in Google's careers page (its data 'ds:1' isn't a list of openings)"
+    for bad in (CHANGED, "AF_initDataCallback({key: 'ds:0', hash: '2', data:[[]], sideChannel: {}});",
+                "AF_initDataCallback({key: 'ds:1', hash: '2', data:{}, sideChannel: {}});",
+                "AF_initDataCallback({key: 'ds:1', hash: '2', data:[null, null, 7, 20], sideChannel: {}});",
+                "AF_initDataCallback({key: 'ds:1', hash: '2', data:[[", "AF_initDataCallback({key: 'ds:1', data:"):
+        out = one_search("google_careers", cfg, lambda request, text=bad: httpx.Response(200, text=text))
+        assert out["results"] == [] and out["errors"] == {"X Co": said}, bad
+    shaped = "SearchError: No job list in Google's careers page (an opening in it isn't shaped as expected)"
+    for bad in ('[["1", "Data Center Technician"]]', '["not a job"]', '[["1", "T", 3, 4, 5, 6, 7, 8, "Google", "x"]]'):
+        page = f"AF_initDataCallback({{key: 'ds:1', hash: '2', data:[{bad}, null, 1, 20], sideChannel: {{}}}});"
+        out = one_search("google_careers", cfg, lambda request, text=page: httpx.Response(200, text=text))
+        assert out["errors"] == {"X Co": shaped}, bad
+    page = ("AF_initDataCallback({key: 'ds:1', hash: '2', "
+            "data:[[[null, \"T\", 3, 4, 5, 6, 7, 8, 9, []]], null, 1, 20], sideChannel: {}});")
+    out = one_search("google_careers", cfg, lambda request: httpx.Response(200, text=page))
+    assert out["errors"] == {"X Co": "SearchError: No job list in Google's careers page (an opening in it has no id "
+                                     "or title)"}
+    out = one_search("google_careers", cfg, lambda request: httpx.Response(403, text="Forbidden"))
+    assert out["errors"] == {"X Co": "SearchError: HTTP 403 from " + search_module.GOOGLE_RESULTS}
+    out = one_search("google_careers", {}, lambda request: httpx.Response(200, text=GOOGLE_PAGE))
+    assert "KeyError" in out["errors"]["X Co"]
+
+
+def test_googles_bot_check_ends_its_search_and_is_never_asked_again():
+    """Google's /sorry/ page (a redirect that answers 429) is a bot check: said, never retried or worked around."""
+    asked = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        asked.append(str(request.url))
+        if request.url.path.startswith("/sorry/"):
+            return httpx.Response(429, text="unusual traffic")
+        return httpx.Response(302, headers={"Location": "https://www.google.com/sorry/index?continue=x"})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(answer), follow_redirects=True) as client:
+            return await search_companies("technician", client=client, companies=[
+                {"name": "X Co", "search": {"google_careers": GOOGLE_CFG}}])
+    out = asyncio.run(go())
+    assert out["results"] == [] and out["errors"] == {
+        "X Co": "SearchError: www.google.com answered with a bot check; search it on its own page"}
+    assert len(asked) == 2  # (the page, and where it sent the request: no retry)
+
+
+def test_the_las_vegas_list_searches_ags_and_googles_henderson_site_through_their_readers():
+    import yaml as _yaml
+
+    from job_apply.search import employer_lists
+
+    entries = {c["name"]: c for c in _yaml.safe_load(
+        employer_lists()["las-vegas"].read_text(encoding="utf-8"))["companies"]}
+    ags, google = entries["AGS (PlayAGS)"], entries["Google (Henderson data center)"]
+    assert ags["search"] == {"paylocity": PAYLOCITY_BOARD} and "no_search" not in ags
+    assert ags["careers_url"] == PAYLOCITY_BOARD and ags["ats"] == "custom"
+    assert google["search"] == {"google_careers": GOOGLE_CFG} and "no_search" not in google
+    assert {"paylocity", "google_careers"} <= set(search_module.CLIENT_SIDE)
+    assert search_module.wordings_for("google_careers", "data center technician") == ["data center technician"]
+
