@@ -140,7 +140,7 @@ class Personal:
     takes out (report.report_strings: names, contact, address, references, IDs, schools, employers), the rest of its
     personal: section, the titles the person held, and the job's title. Each of 3 characters or more, found as whole
     words in any case; one of figures alone (a phone, a postal code, an ID) found with its separators taken out, so
-    "(555) 010-1234" holds "5550101234"."""
+    a phone written with brackets, spaces and dashes holds the same one written as figures alone."""
 
     def __init__(self, values: Iterable[str]):
         words: set[str] = set()
