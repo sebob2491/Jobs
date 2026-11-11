@@ -34,6 +34,7 @@ class StandIn:
     """The desk's `updates`, standing in for updates.UpdateCheck: what the routes ask of it, and what they asked."""
 
     updated_to = None
+    unpause_queue = False
 
     def __init__(self, state: dict, why: str | None = None) -> None:
         self.canned, self.why, self.checked, self.started = state, why, 0, 0

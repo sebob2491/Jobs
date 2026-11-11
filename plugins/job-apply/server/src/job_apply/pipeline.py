@@ -2066,6 +2066,19 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         self._wake.set()
         self._save_queue()
 
+    def end_update_pause(self) -> None:
+        """The desk's start after an update that didn't finish, whose pause was the only one (the queue was going
+        before it: updates.note_updated): the queue as any restart leaves it. Going on; or, with jobs back from before
+        the restart, held for the person's Carry on as those always are, a pause that ends with them (_restore_held),
+        never the person's own Pause queue."""
+        if not self.paused:
+            return
+        if any(kind == "apply" and job_id in self._restored_ids for kind, job_id in self.tasks):
+            self._restore_held = True
+            self._save_queue()
+        else:
+            self.resume_queue()
+
     def clearable(self) -> list[int]:
         """The jobs Clear the queue takes out: each the desk never began, waiting its turn or held before its tab opens
         (for its tailored resume, its first cover letter's say, or a check that it may be begun elsewhere), none under
