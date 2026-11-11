@@ -357,8 +357,6 @@ def _slots_said(files: list[dict[str, Any]], last: bool, folder: Path | None = N
     slots = list(dict.fromkeys(s for f in files for s in documents_asked(f)))
     too_long = folder is not None and any(folder.glob("*References.too-long"))
     entries = "references" in slots and not prof.document_paths("references") and bool(prof.references())
-    refs = (" (or your references, which the desk makes a page of)"
-            if "references" in slots and not prof.document_paths("references") and not entries else "")
     why = ("" if not entries else
            " (the references in your profile run past one page, so the desk's page of them isn't sent: shorten "
            "them)" if too_long else
@@ -368,7 +366,7 @@ def _slots_said(files: list[dict[str, Any]], last: bool, folder: Path | None = N
                  + " and ".join(f"your {config.EXTRA_DOCUMENTS[s]}" for s in gone)
                  + f" {'is' if len(gone) == 1 else 'are'}n't there)" if gone else "")
     them = "it" if len(files) == 1 else "them"
-    add = (f"{them}{refs} in Settings, under Resume and documents, or attach {them} in the desk's browser window")
+    add = (f"{them} in Settings, under Resume and documents, or attach {them} in the desk's browser window")
     return (f"{wanted}{gone_said}{why}. Add {add}, then press Carry on." if last
             else f"{wanted}{gone_said}{why}: add {add}")
 

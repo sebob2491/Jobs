@@ -612,6 +612,7 @@ def forget_cover_letter() -> None:
 EXTRA_KINDS = (".pdf", ".docx", ".jpg", ".jpeg", ".png")
 EXTRA_FILES_MOST = 10  # a kind's most files
 _UNSAFE_NAME = re.compile(r"[^\w .()\-]+")
+_RESERVED_NAME = re.compile(r"con|prn|aux|nul|com[0-9]|lpt[0-9]", re.I)
 
 
 def _safe_file_name(name: Any) -> str:
@@ -620,7 +621,18 @@ def _safe_file_name(name: Any) -> str:
     last = re.split(r"[\\/]", str(name or ""))[-1].strip()
     suffix = Path(last).suffix.lower()
     stem = _UNSAFE_NAME.sub("_", last[:len(last) - len(suffix)]).strip(" .")[:80].strip(" .")
+    if _RESERVED_NAME.fullmatch(stem.split(".")[0].strip()):
+        stem = "_" + stem  # (Windows keeps con, nul, com1 and the like for itself, whatever follows their first dot)
     return f"{stem}{suffix}" if stem else ""
+
+
+def _own(slot: str, written: str) -> bool:
+    """Is this entry of documents.<slot> a file of the desk's own folder for it (documents/<slot>/), not one the
+    person wrote in by hand from somewhere else?"""
+    folder = config.home() / "documents" / slot
+    with contextlib.suppress(OSError, ValueError):
+        return Path(config.expand(written) or written).resolve().parent == folder.resolve()
+    return False
 
 
 def _extra_written(slot: str) -> tuple[list[str], str]:
@@ -677,16 +689,25 @@ def save_extra_document(slot: str, name: Any, data: Any) -> Path:
         except (zipfile.BadZipFile, KeyError):
             raise ValueError("That file isn't a Word document inside: save it as .docx or PDF and pick that") from None
     config.ensure_home()
-    target = config.home() / "documents" / slot / safe
     with config.PROFILE_LOCK:
         kept, text = _extra_written(slot)
         names = [_name_of(r) for r in kept]
-        if safe not in names and len(kept) >= EXTRA_FILES_MOST:
+        # a file of this name the desk saved before is replaced (in any letters' case: Windows keeps "A.pdf" and
+        # "a.pdf" as one file); one the person wrote into the list by hand, from another folder, is never taken out
+        same = [i for i, n in enumerate(names) if n.casefold() == safe.casefold()]
+        before = [i for i in same if _own(slot, kept[i])]
+        if len(same) > len(before):
+            raise ValueError(f"Your {what} already has a file of that name: remove it first, or give the new file "
+                             "another name")
+        if before:
+            safe = names[before[0]]
+        elif len(kept) >= EXTRA_FILES_MOST:
             raise ValueError(f"Your {what} already has {EXTRA_FILES_MOST} files, the most the desk keeps: remove one "
                              "first")
+        target = config.home() / "documents" / slot / safe
         mine = _profile_path_of(target)
-        paths = [mine if n == safe else r for r, n in zip(kept, names)]
-        if mine not in paths:
+        paths = [mine if i in before else r for i, r in enumerate(kept)]  # (a replaced file keeps its place)
+        if not before:
             paths.insert(0, mine)
         text = _set_extra(slot, text, list(dict.fromkeys(paths)))
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -701,9 +722,16 @@ def forget_extra_document(slot: str, name: Any) -> None:
         raise ValueError(f"not a document: {slot!r}")
     with config.PROFILE_LOCK:
         kept, text = _extra_written(slot)
-        left = [r for r in kept if _name_of(r) != name]
-        if len(left) == len(kept):
+        named = [i for i, r in enumerate(kept) if _name_of(r) == name]
+        if not named:
             raise ValueError("That file isn't in the list any more.")
+        # (one of that name: the desk's own before one written in by hand; two written in by hand are the person's)
+        mine = [i for i in named if _own(slot, kept[i])]
+        if len(named) > 1 and len(mine) != 1:
+            raise ValueError("Two files in the list have that name. Ask Claude to take the one you mean out of "
+                             "your profile.")
+        gone = mine[0] if mine else named[0]
+        left = [r for i, r in enumerate(kept) if i != gone]
         config.write_text_atomic(config.profile_path(), _set_extra(slot, text, left))
 
 

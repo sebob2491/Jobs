@@ -74,11 +74,11 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     particular certificate gets only a file whose name says so (suggest naming them for what they are).
     With no reference list file but `references:` entries, the desk lays those out on one page in the
     job's folder and uploads that, only while it holds the entries as they are. Missing one, the card
-    asks for it ("ask Claude to add the file to your profile, or attach it in the desk's browser
-    window"): set the slot in profile.yaml once the user says where the file is (references only as
-    the user gives them, never made up), and they press Carry on (the resume and the usual cover letter
-    they can also choose themselves under Settings, Resume and documents; the other three are the
-    file's only);
+    asks for it ("Add it in Settings, under Resume and documents, or attach it in the desk's browser
+    window"): the user adds the file there themselves (Transcripts, Reference list, Certificates and
+    licenses, beside the resume and the usual cover letter), or you set the slot in profile.yaml once
+    they say where the file is (references only as the user gives them, never made up), and they
+    press Carry on;
   - a dialog open over a form, which the user answers in the desk's browser window before pressing
     Carry on (the boxes behind it are filled after that). With `settings.accept_notices` (on
     unless the user turns it off; never in practice mode) the desk agrees for the user to an

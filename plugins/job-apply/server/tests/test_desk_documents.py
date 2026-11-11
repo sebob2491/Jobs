@@ -239,3 +239,62 @@ def test_the_stop_says_the_same_on_a_desk_on_its_own_and_inside_claude(srv, job_
     assert said[0] == said[1] and "Add it in Settings, under Resume and documents, or attach it in the desk's " \
         "browser window, then press Carry on." in said[0], said
     assert "ask Claude" not in said[0] and "documents." not in said[0]
+
+
+# -------------------------------------------------------------------- the review: what the person wrote by hand stays
+def _write_list(home: Path, kind: str, entries: list[str]) -> None:
+    import yaml
+
+    path = home / "profile.yaml"
+    prof = yaml.safe_load(path.read_text(encoding="utf-8"))
+    prof.setdefault("documents", {})[kind] = entries
+    path.write_text(yaml.safe_dump(prof, sort_keys=False), encoding="utf-8")
+
+
+def test_a_file_the_person_wrote_in_by_hand_is_never_taken_out_by_an_add_of_its_name(srv, job_apply_home, tmp_path):
+    theirs = tmp_path / "elsewhere" / "Example-Transcript.pdf"
+    theirs.parent.mkdir()
+    theirs.write_bytes(PDF)
+    _write_list(job_apply_home, "transcripts", [str(theirs)])
+    before = (job_apply_home / "profile.yaml").read_bytes()
+    said = _calls(_desk(srv), [_add("transcripts", "Example-Transcript.pdf", PDF + b"new")])
+    assert said == [(400, {"error": "Your transcripts already has a file of that name: remove it first, or give the "
+                                    "new file another name"})]
+    assert (job_apply_home / "profile.yaml").read_bytes() == before and theirs.read_bytes() == PDF
+    assert not (job_apply_home / "documents" / "transcripts" / "Example-Transcript.pdf").exists()
+
+
+def test_remove_takes_the_desks_own_file_and_says_so_where_two_by_hand_share_a_name(srv, job_apply_home, tmp_path):
+    a, b = tmp_path / "a" / "Example-Cert.pdf", tmp_path / "b" / "Example-Cert.pdf"
+    for f in (a, b):
+        f.parent.mkdir()
+        f.write_bytes(PDF)
+    _write_list(job_apply_home, "certificates", [str(a), str(b)])
+    before = (job_apply_home / "profile.yaml").read_bytes()
+    take = ("POST", "/api/profile/document", {"kind": "certificates", "remove": "Example-Cert.pdf"})
+    said = _calls(_desk(srv), [take])
+    assert said == [(400, {"error": "Two files in the list have that name. Ask Claude to take the one you mean out of "
+                                    "your profile."})]
+    assert (job_apply_home / "profile.yaml").read_bytes() == before
+    # one by hand and none of the desk's: that one goes
+    _write_list(job_apply_home, "certificates", [str(a)])
+    assert _calls(_desk(srv), [("POST", "/api/profile/document",
+                                {"kind": "certificates", "remove": "Example-Cert.pdf"})])[0][0] == 200
+    assert _written(job_apply_home)["certificates"] == [] and a.exists()
+
+
+@pytest.mark.parametrize("name", ["con.pdf", "NUL.PDF", "com1.pdf", "lpt9.docx", "aux.backup.pdf"])
+def test_a_name_windows_keeps_for_itself_is_saved_under_another(name):
+    from job_apply import profile_setup
+
+    safe = profile_setup._safe_file_name(name)
+    assert safe.startswith("_") and safe.lower().endswith(Path(name).suffix.lower()), safe
+    assert profile_setup._safe_file_name("console.pdf") == "console.pdf"  # (only the whole name)
+
+
+def test_a_name_that_differs_only_in_its_letters_case_replaces_the_file_there(srv, job_apply_home):
+    _calls(_desk(srv), [_add("transcripts", "Example-A.pdf")])
+    said = _calls(_desk(srv), [_add("transcripts", "example-a.PDF", PDF + b"newer")])
+    assert said[0][0] == 200
+    assert _names(srv)["transcripts"] == ["Example-A.pdf"] and len(_written(job_apply_home)["transcripts"]) == 1
+    assert (job_apply_home / "documents" / "transcripts" / "Example-A.pdf").read_bytes() == PDF + b"newer"
