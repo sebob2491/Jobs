@@ -49,6 +49,12 @@ name: live-nightly
 # changes), and nothing of it goes to the issues. The shapes job compares it with the plain pipeline check of the same
 # run in the run's summary (scripts/nightly_summary.py --compare-shapes): where it got less far, and the values audit's
 # warnings only it drew (the design of Oct 18, A7).
+# And every full run (and by hand with checks "windows"), the Windows check: the pipeline check again on a Windows
+# machine, the owner's platform, with the fake profile, never the test identity, so no accounts and nothing on the
+# test inbox. Its artifact is os-windows, never live-*: the compare job never reads it, and nothing of it goes to the
+# issues. The platforms job compares it with the Linux pipeline check of the same run in the run's summary
+# (scripts/nightly_summary.py --compare-platforms): where Windows got less far. A site answers two machines
+# differently now and then, so one employer less far on one night is noise; the same one several nights is the desk's.
 
 on:
   # GitHub starts this schedule hours late (5 to 10, Oct 2026), so a routine dispatches the run at 3:17 AM in Arizona
@@ -66,7 +72,7 @@ on:
         required: false
         default: ""
       checks:
-        description: "Only these checks (comma-separated: pipeline, hr, search, accounts, probes, awkward): a probe, not compared"
+        description: "Only these checks (comma-separated: pipeline, hr, search, accounts, probes, awkward, windows): a probe, not compared"
         required: false
         default: ""
       plus:
@@ -281,6 +287,111 @@ jobs:
           name: ${{ matrix.artifact || format('live-{0}', matrix.slot || matrix.check) }}
           path: plugins/job-apply/server/live-${{ matrix.slot || matrix.check }}
           retention-days: 7
+
+  # The pipeline check on Windows (see the top of this file): a full run's, or a manual run whose checks name it.
+  # No PYTHONUTF8, as in tests.yml: a text file written without an encoding shows here as it would on the owner's
+  # computer. PYTHONIOENCODING only lets the script's own lines through the pipe to the log.
+  windows:
+    needs: fresh
+    if: >-
+      needs.fresh.outputs.go == 'true' && (contains(format(',{0},', github.event.inputs.checks), ',windows,')
+      || (github.event.inputs.checks == '' && github.event.inputs.companies == '' && github.event.inputs.plus != 'true'))
+    name: windows check
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+        working-directory: plugins/job-apply/server
+    env:
+      JOB_APPLY_NEVER_SUBMIT: "1"
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: plugins/job-apply/server/uv.lock
+      - run: uv sync --frozen
+      - uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('plugins/job-apply/server/uv.lock') }}
+      - run: uv run --frozen playwright install chromium
+      - name: Run the check
+        id: run
+        continue-on-error: true
+        timeout-minutes: 40
+        env:
+          COMPANIES: ${{ github.event.inputs.companies }}
+          # the test inbox's address alone, as the pipeline check has it (for the employers that refuse example.com:
+          # live_identity.INBOX_AT); never its password, and no accounts are made
+          LIVE_TEST_EMAIL: ${{ secrets.LIVE_TEST_EMAIL }}
+        run: |
+          set -o pipefail
+          mkdir -p os-windows
+          uv run --frozen python scripts/live_smoke.py --pipeline --fake-passwords --parallel 4 \
+            ${COMPANIES:+--companies "$COMPANIES"} --out os-windows 2>&1 | tee os-windows/run.log
+      - name: Audit what it wrote
+        env:
+          LIVE_TEST_EMAIL: ${{ secrets.LIVE_TEST_EMAIL }}
+        run: uv run --frozen python scripts/live_audit.py --log "pipeline=os-windows/run.log" --folder os-windows
+      - name: Note how it ended
+        if: always()
+        env:
+          OUTCOME: ${{ steps.run.outcome }}
+        run: |
+          mkdir -p os-windows
+          echo "$OUTCOME" > os-windows/outcome
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: os-windows
+          path: plugins/job-apply/server/os-windows
+          retention-days: 7
+
+  # The Windows check against the Linux pipeline check of the same run (scripts/nightly_summary.py
+  # --compare-platforms), in the run's summary alone: nothing of it reaches an issue.
+  platforms:
+    needs: [fresh, check, windows]
+    if: always() && needs.windows.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: plugins/job-apply/server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: plugins/job-apply/server/uv.lock
+      - run: uv sync --frozen
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: live-pipeline
+          path: plugins/job-apply/server/live-pipeline
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: os-windows
+          path: plugins/job-apply/server/os-windows
+      - name: Windows against Linux
+        continue-on-error: true
+        run: |
+          {
+            echo "### Windows against Linux (the pipeline check, this run)"; echo; echo '```'
+            uv run --frozen python scripts/nightly_summary.py --compare-platforms live-pipeline os-windows 2>&1 \
+              || echo "(not compared: see the job's log)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   compare:
     needs: [fresh, check]
