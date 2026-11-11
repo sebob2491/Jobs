@@ -68,6 +68,8 @@ MAX_REDIRECTS = 5
 INSTALLER_ARGS = ("/SILENT", "/NOCANCEL", "/CURRENTUSER", "/NORESTART", "/RELAUNCH=1")
 UNDER_WAY = ("downloading", "installing", "updating")
 UPDATED_TO = "updated-to"  # (in `updates`: the version an installer was started for, said once by the desk it opens)
+# (its second line: whether the queue was paused before the update paused it, for a desk the update didn't finish for)
+WAS_PAUSED, WAS_GOING = "queue paused before", "queue going before"
 INSTALLER_SETTLE = 5.0  # seconds the installer is watched before the desk stops for it: one that ended by then didn't
 
 # The sentences: 409s from /api/update/start, and `error` when `progress` is "failed"
@@ -206,6 +208,8 @@ class UpdateCheck:
         self.error: str | None = None
         self.output = ""  # what Claude's commands said last (kept here, written nowhere)
         self.updated_to: str | None = None  # (an installed copy just updated to this: noted)
+        # an update that didn't finish, found at the start, that had paused a queue going before it: the desk resumes it
+        self.unpause_queue = False
         self._kinds: dict[bool, tuple[str, str | None]] = {}
         self._task: asyncio.Task | None = None
 
@@ -326,11 +330,11 @@ class UpdateCheck:
         return None
 
     def start(self, standalone: bool, *, filling: Callable[[], bool], pause: Callable[[], Callable[[], None]],
-              quit: Callable[[], None]) -> None:
+              quit: Callable[[], None], paused: Callable[[], bool] | None = None) -> None:
         """Begin the update for this copy's kind (why_not said nothing against it). It goes on by itself."""
         if self.kind(standalone) == "installed":
             self.progress, self.error = "downloading", None
-            work = self.update_installed(filling=filling, pause=pause, quit=quit)
+            work = self.update_installed(filling=filling, pause=pause, quit=quit, paused=paused)
         else:
             self.progress, self.error = "updating", None
             work = self.update_plugin()
@@ -340,10 +344,11 @@ class UpdateCheck:
         self.progress, self.error = "failed", sentence
 
     async def update_installed(self, *, filling: Callable[[], bool], pause: Callable[[], Callable[[], None]],
-                               quit: Callable[[], None]) -> None:
+                               quit: Callable[[], None], paused: Callable[[], bool] | None = None) -> None:
         """Update an installed copy, in F2's order; any failure stops it, changes nothing, and says why.
         `filling`: is a job being filled; `pause`: the Pause queue button's pause, giving what undoes it; `quit`: stop
-        the desk as Quit does."""
+        the desk as Quit does; `paused`: was the queue paused already (kept in the record beside the version, so the
+        desk an update that didn't finish opens again resumes a queue only the update paused: note_updated)."""
         self.progress, self.error = "downloading", None
         version = self.latest or ""
         folder = updates_folder()
@@ -376,6 +381,7 @@ class UpdateCheck:
             # 5. the queue paused, as Pause queue does (and never while a job is being filled)
             if filling():
                 raise UpdateFailed(FILLING)
+            before = paused() if paused is not None else None
             undo = pause()
             for older in folder.glob(f"{INSTALLER[:-4]}-*.exe"):
                 if older != saved:
@@ -385,7 +391,8 @@ class UpdateCheck:
             # recorded first (the desk may be stopped by it at any moment after it starts)
             self.progress = "installing"
             try:
-                config.write_text_atomic(record, version)
+                config.write_text_atomic(record, version if before is None else
+                                         f"{version}\n{WAS_PAUSED if before else WAS_GOING}\n")
             except OSError as e:
                 raise UpdateFailed(NOT_SAVED) from e
             recorded = True
@@ -504,14 +511,20 @@ class UpdateCheck:
     def note_updated(self) -> None:
         """At the desk's start, the record of an installer an Update button started, said once: done (this copy is its
         version), noted for the queue's notice; not finished (this copy is still older: the installer was cancelled or
-        failed, and opened this desk again), said as the update's failure. The record goes either way."""
+        failed, and opened this desk again), said as the update's failure, and, where the record says the queue was
+        going before the update paused it, `unpause_queue` (the desk resumes it; one paused before, a record that
+        doesn't say, or one that couldn't be removed, stays paused). The record goes either way."""
         record = updates_folder() / UPDATED_TO
         try:
-            version = record.read_text(encoding="utf-8").strip()
+            version, _, rest = record.read_text(encoding="utf-8").strip().partition("\n")
         except (OSError, ValueError):
             return
-        with contextlib.suppress(OSError):
+        version = version.strip()
+        try:
             record.unlink()
+            gone = True
+        except OSError:  # (left: a later start would read it again, by then perhaps after the person's own Pause)
+            gone = False
         if _parts(version) is None:
             return
         current = config.plugin_version()
@@ -519,3 +532,4 @@ class UpdateCheck:
             self.updated_to = version
         elif newer(version, current):
             self._failed(NOT_FINISHED.format(version))
+            self.unpause_queue = gone and rest.strip() == WAS_GOING

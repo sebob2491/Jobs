@@ -474,6 +474,9 @@ class Desk:
                 self._watch_file_atexit = True
                 atexit.register(self._remove_watch_file)
         self.updates.note_updated()  # (an update this desk's Update button started, said once: _state's restored)
+        if self.updates.unpause_queue:  # (one that didn't finish, and had paused a queue going before it)
+            self.updates.unpause_queue = False
+            self.applier.end_update_pause()
         if self._update_task is None or self._update_task.done():
             self._update_task = asyncio.get_running_loop().create_task(self._watch_updates())
         if self._phone_task is None or self._phone_task.done():
@@ -700,7 +703,7 @@ class Desk:
         if why is not None:
             return JSONResponse({"error": why}, status_code=409)
         self.updates.start(self.standalone, filling=self._filling, pause=self._pause_for_update,
-                           quit=self.quitting.set)
+                           quit=self.quitting.set, paused=lambda: self.applier.paused)
         return JSONResponse({"started": True})
 
     def _filling(self) -> bool:
@@ -957,6 +960,12 @@ class Desk:
             return JSONResponse({"cleared": len(self.applier.clear_queue()), "paused": self.applier.paused})
         if action not in ("pause", "resume"):
             return JSONResponse({"error": f"unknown action {action!r}"}, status_code=404)
+        # (while an update holds the applier, its record says whether the queue was paused before it: kept true by
+        # refusing a press that would change that, as a Submit is refused then)
+        try:
+            self.applier.refuse_while_updating()
+        except ValueError as e:
+            return self._bad(e)
         (self.applier.pause_queue if action == "pause" else self.applier.resume_queue)()
         return JSONResponse({"paused": self.applier.paused})
 

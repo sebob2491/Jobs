@@ -1702,7 +1702,7 @@ const profileField = (k) => {
   // a transcript, reference list or certificate the profile names, whose file isn't there (never uploaded)
   const doc = /^documents\.(transcripts|references|certificates) \(file not found: (.*)\)$/.exec(k);
   if (doc) return `your ${{transcripts: "transcripts", references: "reference list", certificates: "certificates"}[doc[1]]} `
-    + `file where documents.${doc[1]} says (nothing is at ${doc[2]})`;
+    + `file (nothing is at ${doc[2]})`;
   // (what to ask Claude for it, after a colon: only with Claude beside the desk, C7)
   const ask = (what) => state && state.standalone ? "" : `: ask Claude to "${what}"`;
   const undated = /^work_history dates: (.*)$/.exec(k);

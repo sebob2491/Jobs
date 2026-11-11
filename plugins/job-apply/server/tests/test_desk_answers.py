@@ -262,6 +262,50 @@ def test_forget_leaves_what_is_between_an_entry_ending_in_a_list_and_the_next(jo
     assert path.read_text(encoding="utf-8") == "answers:\n- match: weekends\n  answer: 'Yes'\n" + between
 
 
+def test_an_answer_saved_from_a_jobs_card_keeps_the_persons_comments_and_other_entries(job_apply_home):
+    """A job's card's answer, "remember" ticked (save_answer), rewrote the whole of answers.yaml: the person's note,
+    comments and hand-written entries' layout went. It's put in the file's own text now, as Change and Forget are: a
+    new one first under "answers:", one answered again cut from where it was and put first; every other line stays."""
+    path = job_apply_home / "answers.yaml"
+    path.write_text(HAND, encoding="utf-8")
+    entries = yaml.safe_load(HAND)["answers"]
+    new = config.save_answer("Are you willing to work nights?", "No")
+    text = path.read_text(encoding="utf-8")
+    assert not text.startswith(HEADER) and text == HAND.replace(
+        "answers:\n", "answers:\n" + yaml.safe_dump([new], sort_keys=False, allow_unicode=True)), text
+    assert yaml.safe_load(text) == {"answers": [new, *entries]}
+    # the weekend question answered again: its entry goes from where it was (the comment above it stays) and comes first
+    again = config.save_answer("Are you willing to work weekends?", "Most weekends", source="Example Fab")
+    text = path.read_text(encoding="utf-8")
+    assert all(c in text for c in COMMENTS) and "  answer: WW123456   # why: the badge number there\n" in text, text
+    assert "  answer: |\n    Line one of the note.\n    Line two of the note.\n" in text and "every" not in text
+    assert yaml.safe_load(text) == {"answers": [again, new, entries[0], *entries[2:]]}
+    assert text.startswith(COMMENTS[0] + "answers:\n- match: "), text
+    # a list dashed further in keeps its dashes; a file with no answers: yet gains one at its end
+    path.write_text("# mine\nanswers:\n  # kept by hand\n  - match: shifts\n    answer: Days\n", encoding="utf-8")
+    config.save_answer("Can you lift 50 pounds?", "Yes")
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith("# mine\nanswers:\n  - match: ") and text.endswith(
+        "  # kept by hand\n  - match: shifts\n    answer: Days\n"), text
+    assert [a["answer"] for a in yaml.safe_load(text)["answers"]] == ["Yes", "Days"]
+    path.write_text("# only a note so far\n", encoding="utf-8")
+    config.save_answer("Can you lift 50 pounds?", "Yes")
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith("# only a note so far\nanswers:\n- match: ") and len(_kept(job_apply_home)) == 1, text
+
+
+def test_an_answer_saved_where_the_edit_wouldnt_read_as_wanted_is_written_anew(job_apply_home):
+    """The read-back guard: two "answers:" keys (YAML reads the last), the new entry put under the first wouldn't be
+    read at all. The edit in place is checked against what was wanted before it's written, so the file is written anew,
+    and the answer kept is the one YAML reads, with the new one."""
+    path = job_apply_home / "answers.yaml"
+    path.write_text("answers:\n- match: first\n  answer: A\nanswers:\n- match: second\n  answer: B\n", encoding="utf-8")
+    new = config.save_answer("Are you willing to work nights?", "No")
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith(HEADER), text
+    assert yaml.safe_load(text) == {"answers": [new, {"match": "second", "answer": "B"}]}
+
+
 def test_a_file_laid_out_so_it_cant_be_edited_in_place_is_written_anew_with_the_change(srv, job_apply_home):
     """A flow list (all on one line): the change can't be made in its text safely, so the file is written as the desk
     writes it, with that change alone."""

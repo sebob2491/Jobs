@@ -338,33 +338,38 @@ _OTHER_FILE = re.compile(_OTHER_DOCUMENT.pattern + r"|\b(?:additional|supporting
                          r"(?:documents?|files?|attachments?)\b", re.I)
 
 
-def _slots_said(files: list[dict[str, Any]], last: bool, folder: Path | None = None) -> str:
-    """Required file boxes for the profile's other documents (autofill.documents_asked) that it has none of, as a
-    stop says them: what each asks for and its words, then the slot to fill in the profile, or the person's attach
-    ("your transcripts (“Please upload your Unofficial Transcripts”): add documents.transcripts to your profile, or
-    attach it in the desk's browser window"); `last`, the stop's own sentence, ending in its Carry on. A slot naming a
-    file that isn't there says so. A reference list's names the references: entries the desk makes a page of; where
-    the profile has them, why there's no page of them (in the job's `folder`: one that ran past a page, or one the
-    desk couldn't make just now, which the next fill makes again)."""
+def _slots_said(files: list[dict[str, Any]], last: bool, folder: Path | None = None, standalone: bool = False) -> str:
+    """Required file boxes for the profile's other documents (autofill.documents_asked) that it has none of, as a stop
+    says them: what each asks for and its words, then where to add it, or the person's attach ("your transcripts
+    (“Please upload your Unofficial Transcripts”): ask Claude to add the file to your profile, or attach it in the
+    desk's browser window"); `last`, the stop's own sentence, ending in its Carry on. The desk's page has no place for
+    these three (Settings, Resume and cover letters holds the resume and the usual cover letter): inside Claude, Claude
+    adds the file to the profile; a desk on its own (`standalone`) has only the attach. Never the profile's key for it
+    (the live run of Nov 11: "add documents.certificates to your profile"). A file the profile names that isn't there
+    says so. A reference list's names the references: entries the desk makes a page of; where the profile has them, why
+    there's no page of them (in the job's `folder`: one that ran past a page, or one the desk couldn't make just now,
+    which the next fill makes again)."""
     prof = config.Profile.load()
     wanted = " and ".join(f"your {' or '.join(config.EXTRA_DOCUMENTS[s] for s in documents_asked(f))} "
                           f"(“{clean_label(f.get('label') or '').rstrip(' .')}”)" for f in files)
     slots = list(dict.fromkeys(s for f in files for s in documents_asked(f)))
-    add = " and ".join(dict.fromkeys(" or ".join(f"documents.{s}" for s in documents_asked(f)) for f in files))
     too_long = folder is not None and any(folder.glob("*References.too-long"))
     entries = "references" in slots and not prof.document_paths("references") and bool(prof.references())
-    refs = (" (or your references under references:, which the desk makes a page of)"
+    refs = (" (or your references, which the desk makes a page of)"
             if "references" in slots and not prof.document_paths("references") and not entries else "")
     why = ("" if not entries else
            " (the references in your profile run past one page, so the desk's page of them isn't sent: shorten "
            "them)" if too_long else
            " (the desk couldn't make its page of the references in your profile just now: Carry on tries again)")
     gone = [s for s in slots if prof.document_paths(s) and not prof.document_files(s)]
-    gone_said = (" (the file your profile names for " + " and ".join(f"documents.{s}" for s in gone)
+    gone_said = (f" (the {'file' if len(gone) == 1 else 'files'} your profile names for "
+                 + " and ".join(f"your {config.EXTRA_DOCUMENTS[s]}" for s in gone)
                  + f" {'is' if len(gone) == 1 else 'are'}n't there)" if gone else "")
     them = "it" if len(files) == 1 else "them"
-    return (f"{wanted}: add {add}{refs} to your profile{gone_said}{why}, or attach {them} in the desk's browser "
-            "window" + (", then press Carry on." if last else ""))
+    where = (f"{gone_said}{why}: attach {them}" if standalone else
+             f": ask Claude to add the {'file' if len(files) == 1 else 'files'}{refs} to your profile{gone_said}{why}, "
+             f"or attach {them}")
+    return f"{wanted}{where} in the desk's browser window" + (", then press Carry on." if last else "")
 
 
 _PASSWORD_USED = re.compile(r"\bpasswords?\b[^.!?\n]{0,40}?\b(?:(?:recently|previously) used|used (?:recently|before|"
@@ -2061,6 +2066,20 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         self._wake.set()
         self._save_queue()
 
+    def end_update_pause(self) -> None:
+        """The desk's start after an update that didn't finish, whose pause was the only one (the queue was going
+        before it: updates.note_updated): the queue as any restart leaves it. Going on; or, with jobs back from before
+        the restart, held for the person's Carry on as those always are, a pause that ends with them (_restore_held),
+        never the person's own Pause queue. Held by any job back (_restore_queue's own test): one waiting for its
+        tailored resume isn't a task yet, and resuming would begin it, Submit for me and all, once its resume came."""
+        if not self.paused:
+            return
+        if self._restored_ids:
+            self._restore_held = True
+            self._save_queue()
+        else:
+            self.resume_queue()
+
     def clearable(self) -> list[int]:
         """The jobs Clear the queue takes out: each the desk never began, waiting its turn or held before its tab opens
         (for its tailored resume, its first cover letter's say, or a check that it may be begun elsewhere), none under
@@ -3371,11 +3390,11 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             self._pause(run, "stuck", ("The form wants a file (" + ", ".join(f["label"] for f in documents)
                                        + ") and your profile doesn't have one. Add it in Settings, under "
                                        "Resume and cover letters, then press Carry on."
-                                       + (f" It also wants {_slots_said(slotted, False, folder)}." if slotted
-                                          else "")
+                                       + (f" It also wants {_slots_said(slotted, False, folder, self.standalone)}."
+                                          if slotted else "")
                                        + (f" It also wants {noplace}: {named}: {attach}." if others else "")
                                        if documents else
-                                       f"The form wants {_slots_said(slotted, True, folder)}"
+                                       f"The form wants {_slots_said(slotted, True, folder, self.standalone)}"
                                        + (f" It also wants {noplace}: {named}: {attach}." if others else "")
                                        if slotted else
                                        f"The form wants {noplace}: {named}. "

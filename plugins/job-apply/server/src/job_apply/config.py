@@ -846,7 +846,10 @@ def vault_unreachable() -> str | None:
     """Why a password can't be made, shown or forgotten just now, in one plain sentence for the page: the computer's
     password vault is there but out of use (vault.status().down: locked, or not answering). None while it answers, and
     on a computer with no vault at all (the file is the store there). It doesn't ask the vault again: the desk's
-    routes do that once a press (vault.try_again)."""
+    routes do that once a press (vault.try_again). Its way back agrees with the page's notice about the vault
+    (vault.DIDNT_ANSWER: "Unlock it, then restart the desk"), shown beside it: a press asks the vault again, and so does
+    a restart; the notice names only the restart, since while the vault is out of use the panel offers no Make, Show
+    or Forget for a password kept in it (it reads "Can't tell right now"), and a desk's own start is the sure way."""
     from . import vault
 
     s = vault.status()
@@ -854,7 +857,7 @@ def vault_unreachable() -> str | None:
         return None
     named = f" ({s.name})" if s.name and s.name != "The password vault" else ""
     return (f"Your password vault{named} isn't answering, so the desk can't read the passwords saved in it. Unlock "
-            "it, then try again.")
+            "it, then try again, or restart the desk.")
 
 
 def forget_secret(name: str) -> bool:
@@ -1409,9 +1412,11 @@ def save_answer(label: str, answer: Any, source: str = "", at: str = "") -> dict
         # (the same question answered again replaces its answer, by its pattern or by its words: a pattern written
         # before question_pattern took markers between words is the same question; one kept for an employer alone,
         # only at that employer: another's ID stays)
-        entries = [a for a in (old if isinstance(old, list) else [])
-                   if not (isinstance(a, dict) and (a.get("match") == match or a.get("question") == label.strip())
-                           and same_scope(a))]
+        listed = old if isinstance(old, list) else []
+        replaced = [i for i, a in enumerate(listed)
+                    if isinstance(a, dict) and (a.get("match") == match or a.get("question") == label.strip())
+                    and same_scope(a)]
+        entries = [a for i, a in enumerate(listed) if i not in replaced]
         entry: dict[str, Any] = {"match": match, "answer": answer, "question": label.strip()}
         core = question_core(label)
         if core != " ".join(label_sentences(label)):  # the question in a longer label: asked in other wording around it
@@ -1420,9 +1425,72 @@ def save_answer(label: str, answer: Any, source: str = "", at: str = "") -> dict
             entry["from"] = source
         if at.strip():
             entry["at"] = at.strip()
-        entries.insert(0, entry)
-        _write_answers(data, entries)
+        _put_answer(data, replaced, entry, [entry, *entries])
     return entry
+
+
+def _put_answer(data: dict[str, Any], replaced: list[int], entry: dict[str, Any], want: list[Any]) -> None:
+    """answers.yaml with the entries at `replaced` cut out and `entry` put first in its answers: list (`want`, the
+    entries as they then are), edited in the file's own text as Change and Forget edit it (_answers_text_edit), so
+    the person's comments, the other entries' order and their text stay as written; written only once the new text
+    reads as `want`. Where it can't be edited so (no file yet, a flow list), the file is written anew as before
+    (_write_answers)."""
+    path = answers_path()
+    try:
+        text = path.read_text(encoding="utf-8")
+        for i in sorted(replaced, reverse=True):
+            cut = _answers_text_edit(text, i, None)
+            if cut is None:
+                raise ValueError("not laid out to be edited")
+            text = cut
+        edited = _answers_text_insert(text, entry) if text.strip() else None
+        reads = (yaml.safe_load(edited) or {}) if edited is not None else None
+        if edited is not None and reads == {**data, "answers": want}:
+            write_text_atomic(path, edited)
+            return
+    except (OSError, ValueError, yaml.YAMLError):
+        pass
+    _write_answers(data, want)
+
+
+def _answers_text_insert(text: str, entry: dict[str, Any]) -> str | None:
+    """`text` (answers.yaml) with `entry` as the first of its answers: list, on the line after "answers:" (a comment
+    above the entry that was first stays with it), dashed as the list's entries are; "answers:" with it added at the
+    end where the file has none. None where the file isn't laid out so (a flow list, a value on the key's line)."""
+    root = yaml.compose(text)
+    lines = text.splitlines(keepends=True)
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    if root is None:  # (comments alone so far)
+        return "".join(lines) + "answers:\n" + _entry_text(entry, 0)
+    if not isinstance(root, yaml.MappingNode):
+        return None
+    pair = next(((k, v) for k, v in root.value if isinstance(k, yaml.ScalarNode) and k.value == "answers"), None)
+    if pair is None:
+        if root.flow_style:
+            return None
+        return "".join(lines) + "answers:\n" + _entry_text(entry, 0)
+    key, seq = pair
+    if isinstance(seq, yaml.SequenceNode) and not seq.flow_style and seq.value:
+        first = seq.value[0].start_mark.line
+        dash = lines[first].find("-")
+        if dash < 0 or lines[first][:dash].strip():
+            return None
+    elif isinstance(seq, yaml.ScalarNode) and seq.tag == "tag:yaml.org,2002:null" and not seq.value:
+        dash = 0  # ("answers:" with nothing under it: its entries forgotten)
+    else:
+        return None
+    after = lines[key.start_mark.line][key.end_mark.column:]
+    if key.start_mark.line != key.end_mark.line or not re.fullmatch(r"\s*:\s*(?:#.*)?\n?", after):
+        return None  # (anything after "answers:" on its line)
+    at = key.start_mark.line + 1
+    return "".join(lines[:at]) + _entry_text(entry, dash) + "".join(lines[at:])
+
+
+def _entry_text(entry: dict[str, Any], dash: int) -> str:
+    """One answers: entry as a block list's item, its dash `dash` spaces in, on lines of its own."""
+    said = yaml.safe_dump([entry], sort_keys=False, allow_unicode=True, width=10**6)
+    return "".join(" " * dash + line for line in said.splitlines(keepends=True))
 
 
 def answer_id(entry: dict[str, Any]) -> str:

@@ -1891,7 +1891,7 @@ def test_within_miles_is_off_and_the_window_says_why_without_a_home_town(srv, jo
     desk.search.update(status="done", at=time.time())
     state = desk.state()
     assert state["listings"][0]["miles"] is None and state["settings"]["within_miles"] == 10
-    assert state["profile"]["home"] is None and "personal.address.city" in state["profile"]["home_problem"]
+    assert state["profile"]["home"] is None and "Settings, Your profile" in state["profile"]["home_problem"]
 
     async def go():
         await desk.start(port=0, open_browser=False)
@@ -1918,8 +1918,8 @@ def test_within_miles_is_off_and_the_window_says_why_without_a_home_town(srv, jo
                                              "town'")
                 await page.click("#area-btn")
                 note = await page.inner_text("#area-home")
-                assert note == ("Within N miles needs your home town, and your profile doesn't say it: add "
-                                "personal.address.city (and personal.address.state) to your profile.")
+                assert note == ("Within N miles needs your home town, and your profile doesn't say it: add your "
+                                "city and state in your profile (Settings, Your profile).")
                 await page.click("[data-act='area-close']")
                 # a town the desk doesn't know: said by its name
                 profile["personal"]["address"]["city"] = "Springfield"

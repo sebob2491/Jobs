@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import httpx
 import pytest
@@ -259,7 +260,7 @@ class Started:
         return self.process
 
 
-def _installed_update(copy, transport, popen=None, filling=lambda: False, steps=None, pause=None):
+def _installed_update(copy, transport, popen=None, filling=lambda: False, steps=None, pause=None, paused=None):
     copy.installed(True)
     steps = [] if steps is None else steps
     popen = popen or Started(steps)
@@ -267,12 +268,15 @@ def _installed_update(copy, transport, popen=None, filling=lambda: False, steps=
                                 run=lambda *a, **k: pytest.fail("no command runs for an installed copy"))
     run(check.refresh(standalone=True))
 
-    def paused():
+    def paused_now():
         steps.append("pause")
         return lambda: steps.append("resume")
 
+    was_paused = paused
+
     async def go():
-        await check.update_installed(filling=filling, pause=pause or paused, quit=lambda: steps.append("quit"))
+        await check.update_installed(filling=filling, pause=pause or paused_now, quit=lambda: steps.append("quit"),
+                                     paused=was_paused)
 
     run(go())
     return check, steps, popen
@@ -989,6 +993,165 @@ def test_an_update_that_didnt_finish_is_said_once_when_the_desk_starts_again(srv
         check = updates.UpdateCheck()
         check.note_updated()
         assert (check.progress, check.updated_to) == (None, None)
+
+
+@pytest.mark.parametrize("before", [False, True], ids=["going", "paused"])
+def test_the_record_says_whether_the_queue_was_paused_before_the_update_paused_it(copy, loop, before):
+    """The record of the update started holds, beside its version, whether the queue was paused before the update's
+    own pause, read before it: what the desk that opens again, should the update not finish, needs to know."""
+    looked = []
+
+    def paused():
+        looked.append(list(steps))
+        return before
+
+    steps: list[str] = []
+    check, steps, popen = _installed_update(copy, _site(), steps=steps, paused=paused)
+    assert steps == ["pause", "installer", "quit"] and looked == [[]]
+    said = updates.WAS_PAUSED if before else updates.WAS_GOING
+    assert popen.records == [f"0.4.4\n{said}\n"]
+    check = updates.UpdateCheck()
+    check.note_updated()  # (this copy is still 0.4.3: it didn't finish)
+    assert (check.progress, check.error, check.unpause_queue) == (
+        "failed", "The update to version 0.4.4 didn't finish. Press Update now to try again.", not before)
+
+
+def _start_after_unfinished(srv, record: str, queue: dict) -> tuple[dict, Desk]:
+    """A desk started with the record of an update that didn't finish (0.4.4, this copy 0.4.3) and the queue it kept:
+    its state, and the desk."""
+    from job_apply import pipeline
+
+    _folder().mkdir(parents=True, exist_ok=True)
+    (_folder() / "updated-to").write_text(record, encoding="utf-8")
+    pipeline.queue_path().parent.mkdir(parents=True, exist_ok=True)
+    pipeline.queue_path().write_text(json.dumps(queue), encoding="utf-8")
+    desk = _desk(srv, updates.UpdateCheck())
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with _client(desk) as c:
+                return (await c.get("/api/state", headers={"x-desk-token": desk.token})).json()
+        finally:
+            await desk.stop()
+
+    return run(go()), desk
+
+
+UNFINISHED = ("failed", "The update to version 0.4.4 didn't finish. Press Update now to try again.")
+
+
+@pytest.mark.parametrize("record, paused", [
+    (f"0.4.4\n{updates.WAS_GOING}\n", False),   # the fix: failed before (still paused, and no "didn't finish")
+    (f"0.4.4\n{updates.WAS_PAUSED}\n", True),   # a guard: the person's own pause is never resumed
+    ("0.4.4", True),                             # a guard: a record from before the queue's line stays paused
+], ids=["going before", "paused before", "a record that doesn't say"])
+def test_a_queue_only_the_unfinished_update_paused_is_resumed_and_one_paused_before_stays(srv, copy, monkeypatch,
+                                                                                         record, paused):
+    """After an update that didn't finish, the queue stayed paused and nothing said so (the update had paused it, and
+    the queue kept says only "paused"). Its record says whether it was going before: going, the desk resumes it; paused
+    before (the person's own Pause queue), or a record from before it said, it stays paused. The update card's "didn't
+    finish" stays either way."""
+    monkeypatch.setenv("JOB_APPLY_NO_UPDATE_CHECK", "1")
+    state, desk = _start_after_unfinished(srv, record, {"paused": True, "jobs": []})
+    assert (state["update"]["progress"], state["update"]["error"]) == UNFINISHED
+    assert state["paused"] is paused and desk.applier.paused is paused
+    assert not (_folder() / "updated-to").exists()
+
+
+def test_after_an_unfinished_update_jobs_back_are_held_as_after_any_restart(srv, copy, monkeypatch):
+    """Jobs back from before the restart: held for the person's Carry on, as after any restart, a hold that ends with
+    them (never the person's own pause); the notice says so. (Failed before: the update's pause was kept as the
+    person's own, _restore_held false.)"""
+    monkeypatch.setenv("JOB_APPLY_NO_UPDATE_CHECK", "1")
+    job = srv.add_job(url="https://example.com/jobs/41", title="Technician", company="Example Fab")["job"]
+    state, desk = _start_after_unfinished(srv, f"0.4.4\n{updates.WAS_GOING}\n",
+                                          {"paused": True, "jobs": [{"id": job["id"], "state": "queued"}]})
+    assert (state["update"]["progress"], state["update"]["error"]) == UNFINISHED
+    assert state["paused"] is True and desk.applier._restore_held is True
+    assert "back in the queue, paused" in (state["restored"] or ""), state["restored"]
+
+
+def test_after_an_unfinished_update_a_job_waiting_for_its_tailored_resume_stays_held(srv, copy, monkeypatch):
+    """The review: a job back from before the restart that waits for its tailored resume is a card (needs_you,
+    tailor), not a task, so the queue was resumed; when its resume came, it began with no Carry on (and Submit for me
+    would have sent it). It's held exactly as after an ordinary restart, and stays held once its resume is there."""
+    from job_apply import pipeline
+    from job_apply.pipeline import Applier
+
+    job_id = srv.add_job(url="https://example.com/jobs/42", title="Technician", company="Example Fab")["job"]["id"]
+
+    def restored(saved_paused: bool) -> Applier:
+        pipeline.queue_path().parent.mkdir(parents=True, exist_ok=True)
+        pipeline.queue_path().write_text(json.dumps({
+            "paused": saved_paused, "jobs": [{"id": job_id, "state": "queued", "tailor": True}],
+            "since": time.time()}), encoding="utf-8")
+        a = Applier(srv, keep_queue=True)
+        a._queue_owner, a.tailor = True, True
+        a._restore_queue()
+        return a
+
+    ordinary = restored(False)  # (a restart with the queue going)
+    updated = restored(True)  # (the update's pause kept, then undone: its record said the queue was going)
+    updated.end_update_pause()
+    for a in (ordinary, updated):
+        assert a.runs[job_id].need == "tailor" and not a.tasks
+        assert (a.paused, a._restore_held, a._restored_ids) == (True, True, {job_id})
+    # its resume arrives: queued, and held for Carry on still
+    monkeypatch.setattr(pipeline, "tailored_ready", lambda job: True)
+    updated._resume_tailored()
+    assert list(updated.tasks) == [("apply", job_id)] and updated._held_back(("apply", job_id)) and updated.paused
+    assert not updated.runs[job_id].started
+
+
+def test_a_record_that_cant_be_removed_never_resumes_the_queue(copy, monkeypatch):
+    """The review: a record left behind (it couldn't be removed) would be read again at a later start, by then perhaps
+    after the person's own Pause queue. The update's failure is said; the queue isn't resumed."""
+    _folder().mkdir(parents=True, exist_ok=True)
+    record = _folder() / "updated-to"
+    record.write_text(f"0.4.4\n{updates.WAS_GOING}\n", encoding="utf-8")
+    real = Path.unlink
+
+    def refuse(self, *args, **kwargs):
+        if self.name == "updated-to":
+            raise PermissionError("held by another program")
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", refuse)
+    check = updates.UpdateCheck()
+    check.note_updated()
+    assert (check.progress, check.error) == UNFINISHED and check.unpause_queue is False and record.exists()
+
+
+def test_while_an_update_holds_the_applier_pause_and_resume_queue_are_refused(srv, copy, monkeypatch):
+    """The review: the record says whether the queue was paused before the update's pause, read as it pauses; a Resume
+    then a Pause meanwhile would leave it saying "going". So, while the update holds the applier, Pause queue and Resume
+    queue answer 400 with the sentence a Submit gets then, and change nothing; once the hold ends they work again."""
+    from job_apply import pipeline
+
+    monkeypatch.setenv("JOB_APPLY_NO_UPDATE_CHECK", "1")
+    desk = _desk(srv, updates.UpdateCheck())
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            h = {"x-desk-token": desk.token}
+            async with _client(desk) as c:
+                undo = desk._pause_for_update()
+                held = []
+                for action in ("resume", "pause"):
+                    answer = await c.post(f"/api/queue/{action}", headers=h, json={})
+                    held.append((answer.status_code, answer.json(), desk.applier.paused))
+                undo()
+                desk.applier.pause_queue()
+                after = await c.post("/api/queue/resume", headers=h, json={})
+                return held, (after.status_code, after.json())
+        finally:
+            await desk.stop()
+
+    held, after = run(go())
+    assert held == [(400, {"error": pipeline.UPDATING}, True)] * 2
+    assert after == (200, {"paused": False})
 
 
 # ------------------------------------------------------------------ updating a plugin copy

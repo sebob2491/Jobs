@@ -16437,8 +16437,10 @@ def test_a_file_the_profile_has_no_place_for_is_named_as_the_persons(srv):
 def test_a_file_for_another_document_of_the_profiles_names_the_slot_to_fill(srv, job_apply_home):
     """NSHE's Workday (UNLV, Nevada State University, College of Southern Nevada) requires an unofficial transcript
     and a reference list, and Las Vegas Valley Water District's asks for transcripts, diplomas or certificates: with
-    none in the profile, the stop said "your profile has no place for" them. It names the slot to fill now
-    (documents.transcripts, .references, .certificates), or the person attaches it."""
+    none in the profile, the stop said "your profile has no place for" them. It names what to add now, asking Claude to
+    add the file to the profile (the desk's page has no place for these), or the person attaches it; never the
+    profile's key (the live run of Nov 11 said "add documents.certificates to your profile"). A desk on its own, with no
+    Claude to ask, says the attach alone."""
     applier = Applier(srv)
     transcripts = {"label": "Please upload your Unofficial Transcripts.*", "kind": "file",
                    "section": "Application Questions 1 of 3"}
@@ -16449,21 +16451,30 @@ def test_a_file_for_another_document_of_the_profiles_names_the_slot_to_fill(srv,
     one = Run(1)
     assert applier._stop_for_what_is_left(one, "", [], [transcripts])
     assert one.need == "stuck" and one.code == "profile_gap" and one.reason == (
-        "The form wants your transcripts (“Please upload your Unofficial Transcripts”): add documents.transcripts to "
+        "The form wants your transcripts (“Please upload your Unofficial Transcripts”): ask Claude to add the file to "
         "your profile, or attach it in the desk's browser window, then press Carry on."), one.reason
     nshe = Run(2)
     assert applier._stop_for_what_is_left(nshe, "", [], [transcripts, refs])
     assert nshe.reason == (
         "The form wants your transcripts (“Please upload your Unofficial Transcripts”) and your reference list "
-        "(“Please upload your Reference Contact Information”): add documents.transcripts and documents.references (or "
-        "your references under references:, which the desk makes a page of) to your profile, or attach them in the "
-        "desk's browser window, then press Carry on."), nshe.reason
+        "(“Please upload your Reference Contact Information”): ask Claude to add the files (or your references, which "
+        "the desk makes a page of) to your profile, or attach them in the desk's browser window, then press Carry "
+        "on."), nshe.reason
     either = Run(3)
     assert applier._stop_for_what_is_left(either, "", [], [lvvwd])
     assert either.reason.startswith(
         "The form wants your transcripts or certificates (“If available, please attach a copy of your transcript(s), "
-        "diploma(s), and/or certificate(s) here”): add documents.transcripts or documents.certificates to your "
-        "profile, or attach it"), either.reason
+        "diploma(s), and/or certificate(s) here”): ask Claude to add the file to your profile, or attach it"), \
+        either.reason
+    # a desk on its own: no Claude to ask, and no place on the page for these, so the attach alone
+    applier.set_standalone(True)
+    alone = Run(5)
+    assert applier._stop_for_what_is_left(alone, "", [], [lvvwd])
+    assert alone.reason == (
+        "The form wants your transcripts or certificates (“If available, please attach a copy of your transcript(s), "
+        "diploma(s), and/or certificate(s) here”): attach it in the desk's browser window, then press Carry on."), \
+        alone.reason
+    applier.set_standalone(False)
     # beside a missing resume, and a file named in the profile that isn't there
     data = yaml.safe_load((job_apply_home / "profile.yaml").read_text(encoding="utf-8"))
     data["documents"]["transcripts"] = str(job_apply_home / "gone.pdf")
@@ -16473,8 +16484,8 @@ def test_a_file_for_another_document_of_the_profiles_names_the_slot_to_fill(srv,
     assert with_resume.reason == (
         "The form wants a file (Resume/CV*) and your profile doesn't have one. Add it in Settings, under Resume and "
         "cover letters, then press Carry on. It also wants your "
-        "transcripts (“Please upload your Unofficial Transcripts”): add documents.transcripts to your profile (the "
-        "file your profile names for documents.transcripts isn't there), or attach it in the desk's browser "
+        "transcripts (“Please upload your Unofficial Transcripts”): ask Claude to add the file to your profile (the "
+        "file your profile names for your transcripts isn't there), or attach it in the desk's browser "
         "window."), with_resume.reason
 
 
@@ -16566,8 +16577,7 @@ def test_with_neither_a_file_nor_entries_the_stop_names_the_slots(srv, job_apply
     assert r.status == "needs_you" and r.code == "profile_gap" and not sent, (r.status, r.need, r.reason, r.log)
     assert r.reason.startswith(
         "The form wants your transcripts (“Please upload your Unofficial Transcripts”) and your reference list "
-        "(“Please upload your Reference Contact Information”): add documents.transcripts and documents.references"), \
-        r.reason
+        "(“Please upload your Reference Contact Information”): ask Claude to add the files"), r.reason
 
 
 def test_a_button_gone_as_it_was_clicked_is_looked_at_again(srv, monkeypatch):

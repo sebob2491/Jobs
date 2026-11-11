@@ -335,7 +335,7 @@ def test_the_desk_says_a_named_document_that_isnt_there(srv, job_apply_home):
             await desk.stop()
 
     said = run(go())
-    assert f"your transcripts file where documents.transcripts says (nothing is at {gone})" in said, said
+    assert f"your transcripts file (nothing is at {gone})" in said and "documents." not in said, said
 
 
 # --- the review of the first round (its probes' cases: a battery of file boxes, the stale page, the scrubber) ------
@@ -511,7 +511,7 @@ def test_the_stop_says_why_there_is_no_page_of_the_references_the_profile_has(sr
     refs = {"label": "Please upload your Reference Contact Information.*", "kind": "file"}
     failed = Run(job["id"])
     assert applier._stop_for_what_is_left(failed, "", [], [refs])
-    assert ("add documents.references to your profile (the desk couldn't make its page of the references in your "
+    assert ("ask Claude to add the file to your profile (the desk couldn't make its page of the references in your "
             "profile just now: Carry on tries again)") in failed.reason, failed.reason
     assert "under references:" not in failed.reason
     Path(job["folder"]).mkdir(parents=True, exist_ok=True)

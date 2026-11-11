@@ -1,7 +1,9 @@
 """Plain wording (the design's "Plain wording", "The test"): no sentence the desk can show sends the person to a file,
 a terminal or a command. This reads every sentence in the files the page's words come from, and fails on one that
-names profile.yaml, answers.yaml, secrets.yaml, desk.json, companies.yaml, a `settings.` key, "terminal",
-"PowerShell" or "/job-apply:", unless that very place is on ALLOWED, the short list of the ones still allowed.
+names profile.yaml, answers.yaml, secrets.yaml, desk.json, companies.yaml, a `settings.` key or another of the
+profile's keys ("documents.certificates", "personal.address.city", "documents.{slot}" built as it's said, "under
+references:", or "add {key} to your profile" with the key spliced in), "terminal", "PowerShell" or "/job-apply:",
+unless that very place is on ALLOWED, the short list of the ones still allowed.
 Version C adds the test with the list as it stands; Versions D and F shorten it (an entry that excuses nothing any more
 fails, so it must leave the list).
 
@@ -13,14 +15,22 @@ from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "job_apply"
 # the files whose sentences are read: the server's (Python) and the page's (HTML)
-CHECKED = ["desk.py", "config.py", "letters.py", "updates.py", *sorted(p.name for p in SRC.glob("pipeline*.py")),
-           "static/desk.html"]
+CHECKED = ["desk.py", "config.py", "letters.py", "updates.py", "places.py",
+           *sorted(p.name for p in SRC.glob("pipeline*.py")), "static/desk.html"]
 # a file whose words are still to be reworded before it's read (the page was, until Version C's page half): none now
 PAGE_LATER: list[str] = []
 
 # (a key as said to the person, "settings.submit_mode": not the page's code reading it, state.settings.dry_run)
+# A profile key as said to the person ("add documents.certificates to your profile", the live run of Nov 11), the
+# desk's page having a place for most of what the profile holds: one written out, one built as it's said
+# ("documents.{}", "documents.${slot}"), a section by its YAML name ("under references:"), or a key built apart and
+# spliced into "add {} to your profile" (how the stop of Nov 11 got past: its "documents.{s}" was made on its own, a
+# key's name and no sentence, then joined in). Not a key of the page's own table (`"personal.email": "your email"`).
+PROFILE_KEYS = r"(?:personal|documents|work_authorization|work_history|education_history|references|background|history)"
 NAMES = re.compile(r"profile\.yaml|answers\.yaml|secrets\.yaml|desk\.json|companies\.yaml|(?<![\w.$])settings\.[a-z_]+|"
-                   r"\b[Tt]erminal\b|PowerShell|/job-apply:")
+                   r"\b[Tt]erminal\b|PowerShell|/job-apply:|"
+                   rf"(?<![\w.$\\]){PROFILE_KEYS}\.(?:[a-z_]+|\{{\}}|\$\{{)(?![\w.]*[\"']\s*:)|"
+                   rf"\bunder {PROFILE_KEYS}:|\b[Aa]dd \{{\}}[^.]{{0,40}}? to your profile\b")
 
 # (file, the offending name with enough of its sentence to be one place): each excuses only the names inside it
 ALLOWED = [
@@ -30,6 +40,10 @@ ALLOWED = [
     ("desk.py", "can't tell until profile.yaml is fixed"),
     ("desk.py", "nothing is filled until profile.yaml is fixed."),
     ("pipeline_mail.py", "The desk can't watch your inbox until profile.yaml reads again: "),
+    # the profile's codes for what it still needs (Profile.missing_required, profile_gaps): data the page puts into
+    # words (desk.html's profileField), never said as they are
+    ("config.py", "documents.resume (file not found: "),
+    ("config.py", "documents.{} (file not found: "),
     # the settings' warnings: a line of the profile that does nothing, said with the key the person wrote
     ("config.py", "Unknown settings.browser_channel "),
     ("config.py", "settings.cover_letter_model should be a model's name"),
@@ -189,6 +203,23 @@ def test_the_test_finds_what_it_looks_for():
         (2, 'const a = "Set it in profile.yaml, then press Carry on.";'),
         (4, "const b = `Open the ${x} desk.json file`;")], joined
     assert NAMES.search("Use settings.submit_mode") and not NAMES.search("Turn it on in Settings. Then press Carry on.")
+    # a profile key, written out, built as it's said, by its section's name, or spliced into "add ... to your profile"
+    # (the stop of Nov 11: "documents.{s}" made apart, a key's name alone, so no sentence; then joined in as "{}")
+    keys = _python_said('a = f"{wanted}: add {add}{refs} to your profile, or attach it."\n'
+                        'b = "Add personal.address.city to your profile."\n'
+                        'c = f"the file your profile names for documents.{slot} isn\'t there"\n'
+                        'd = "your references under references:, which the desk makes a page of"\n'
+                        'e = prof.get(f"documents.{slot}")\n'
+                        'f = "Add it in your profile (Settings, Your profile), then press Carry on."\n')
+    assert [s for _, s in keys if NAMES.search(s)] == ["{}: add {}{} to your profile, or attach it.",
+                                                       "Add personal.address.city to your profile.",
+                                                       "the file your profile names for documents.{} isn't there",
+                                                       "your references under references:, which the desk makes a "
+                                                       "page of"]
+    assert [s for _, s in _page_said("const a = `file where documents.${doc[1]} says`;") if NAMES.search(s)]
+    assert not [s for _, s in _page_said('const T = {\n  "personal.email": "your email", "documents.resume": "your '
+                                         'resume file",\n};\nconst d = /^documents\\.(transcripts) \\(file/;')
+                if NAMES.search(s)]
     assert not NAMES.search("const on = state.settings.auto_submit && s.settings.dry_run;")
     # (every file named is there, and the page is read in one list or the other, never both)
     assert all((SRC / name).is_file() for name in CHECKED + PAGE_LATER)

@@ -3570,7 +3570,7 @@ def test_within_miles_leaves_out_only_openings_surely_farther_from_home(srv, job
     profile = yaml.safe_load((job_apply_home / "profile.yaml").read_text(encoding="utf-8"))
     del profile["personal"]["address"]["city"]
     (job_apply_home / "profile.yaml").write_text(yaml.safe_dump(profile), encoding="utf-8")
-    with pytest.raises(ToolError, match="your profile doesn't say it: add personal.address.city"):
+    with pytest.raises(ToolError, match="your profile doesn't say it: add your city and state in your profile"):
         asyncio.run(server.search_company_jobs("field service", within_miles=25))
     assert len(asyncio.run(server.search_company_jobs("field service"))["results"]) == 7  # (nothing breaks)
 
