@@ -349,7 +349,7 @@ EXPECTED_CODES = {
     "show a picture check": {"account_theirs"},
     "is emailing you a password reset": {"reset_pending"},
     "couldn't be reached, so the page": {"site_unreachable"},
-    "A cookie or privacy banner is in the way": {"no_step_button"},
+    "A cookie or privacy banner is in the way": {"cookie_banner"},
     "Something went wrong": {"site_went_wrong"},
     "The way on is": {"agreement_theirs"},
     "doesn't allow automated": {"submit_not_allowed"},

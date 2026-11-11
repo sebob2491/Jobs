@@ -39,6 +39,7 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   - `updates.py`: whether a newer version is out, and the desk's Update button (the installed copy's download, checksum
     and installer; the plugin copy's two `claude` commands);
   - `fixtures.py`: the scrubber.
+  - `learned.py`: the step buttons learned from the person's presses (`learned.json`).
 - `data/companies.yaml` is the default employer list (`semiconductor-az`), and
   `data/lists/*.yaml` holds the others (`phoenix-metro`, `las-vegas`). A person's own
   `~/.job-apply/companies.yaml` names lists under `lists:`.
@@ -311,3 +312,17 @@ this file says otherwise, it wins.
   answers by itself (as automatic as possible: the owner's call, Oct 21; e.g. "Can you provide
   proof of U.S. citizenship?" from `us_citizen`); it asks only what the profile can't say, and
   never overstates.
+- **Learning from the person:** with `settings.learn_from_me` (on unless the person turns it off; never in
+  practice mode, with `JOB_APPLY_NEVER_SUBMIT=1` or for the live check's test identity) the desk learns only the
+  words of one button the person pressed to move a step on, at a stop where it found none (`no_step_button`), and
+  repeats that press only at the same employer's same page, after the same checks as any press of its own.
+  - The words must be a step's (Next, Continue, Proceed, Save and Continue, Review and the like: an allow-list,
+    `pipeline._may_learn`), in plain English letters, and say nothing of a send, an end, an agreement, a sign-in,
+    an account, a sign-up, a way out of the application, or anything of the person's own.
+  - A press is kept, and counted as having worked, only when the page after it shows a further step of the same
+    application (`pipeline._further_step`: a step's way on beside a box to fill, or a progress bar short of its
+    end; never a page that thanks the person, has a job-alert sign-up on it, or has only a Submit). Without that,
+    nothing is kept, and a learned press is forgotten and the job stops for the person to check whether it was sent.
+  - Never from a stop for a bot check, a CAPTCHA, a sign-in, an emailed code, security questions, a notice, an
+    agreement, an assessment or a submit; never anything typed; never a click the desk or Claude's tools made.
+    Each learned press is logged on the job's card and can be forgotten there or in Settings, Applying.

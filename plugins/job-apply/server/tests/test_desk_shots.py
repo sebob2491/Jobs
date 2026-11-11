@@ -480,3 +480,45 @@ def test_a_picture_of_accounts_and_passwords(srv, job_apply_home, monkeypatch, c
 
     run(go())
     assert path.stat().st_size > 2000
+
+
+@pytest.mark.parametrize("window", ((1440, 900), (390, 2000)), ids=lambda w: f"{w[0]}x{w[1]}")
+@pytest.mark.parametrize("look", LOOKS)
+def test_a_picture_of_what_the_desk_learned_and_a_card_with_its_line(srv, job_apply_home, monkeypatch, look, window):
+    """Settings' Applying panel with two learned entries, and Home's ready card with the line of a press the desk made
+    as the person did, in each look, wide and at a phone's width; saved as learned-applying-<look>-<w>x<h>.png and
+    learned-card-<look>-<w>x<h>.png. Made-up values only."""
+    from test_desk_learned_page import ONE, TWO, _keep, _ready_state
+
+    folder = Path(SHOTS)
+    folder.mkdir(parents=True, exist_ok=True)
+    ids = _keep(ONE, TWO)
+    desk = _canned(srv, monkeypatch, _ready_state("Go to next section", ids[0]))
+    size = f"{look}-{window[0]}x{window[1]}"
+    names = [f"learned-applying-{size}.png", f"learned-card-{size}.png"]
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": window[0], "height": window[1]}, color_scheme=look)
+                await open_desk(page, desk, "settings/applying")
+                await page.wait_for_selector("#learned-list > .setrow >> nth=1")
+                await page.evaluate("() => document.getElementById('learned').scrollIntoView({block: 'center'})")
+                await page.wait_for_timeout(150)
+                await page.screenshot(path=str(folder / names[0]))
+                await open_desk(page, desk, "home")
+                await page.wait_for_selector("#done .task [data-open]")
+                await page.evaluate("() => document.querySelectorAll('[data-open][aria-expanded=false]')"
+                                    ".forEach((b) => b.click())")
+                await page.wait_for_selector("#done .learned-line")
+                await page.evaluate("() => document.querySelector('#done .learned-line')"
+                                    ".scrollIntoView({block: 'center'})")
+                await page.wait_for_timeout(150)
+                await page.screenshot(path=str(folder / names[1]))
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert all((folder / name).stat().st_size > 2000 for name in names)

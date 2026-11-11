@@ -27,6 +27,7 @@ import os
 import re
 import shutil
 import sys
+import unicodedata
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -38,6 +39,7 @@ from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 from . import config, history, mailbox, report, vault
+from . import learned as learned_buttons
 from .search import every_employer
 from .tracker import city_key, title_key
 from .ats import ATS_NAMES, JOB_BOARDS, detect_ats, host_of, shared_system
@@ -45,7 +47,8 @@ from .autofill import (_OTHER_DOCUMENT, clean_label, documents_asked, documents_
                        _CHOICE_KINDS, is_empty_value, kept_documents, norm, phone_digits,
                        profile_entries, resolve_field, unset_choice, polarity, tailored_document,
                        works_there_now)
-from .browser import (_SENDS_TOO, CONFIRMATION_RE, SubmitBlocked, TabClosed, _accepts_cookies, _cookie_setting,
+from .browser import (_SENDS, _SENDS_TOO, CONFIRMATION_RE, FINALISH_RE, NAVIGATION_RE, SUBMIT_RE, SubmitBlocked,
+                      TabClosed, _accepts_cookies, _cookie_setting,
                       confirmations, declines_cookies, final_text, may_accept_cookies, questions_shown)
 from .never import (ANYWHERE, CALLS_OR_TEXTS, EMAILS, FUTURE_ROLES, GATE_OWN, GATE_PAGE, MAIL, NEVER,
                     PARAGRAPH_WORDS, PRECISE, _never_for_them)
@@ -1369,6 +1372,18 @@ class Run:
     letter_text: str = ""
     letter_tried: bool = False
     letter_wait: bool = False
+    # What the desk hears of the person's press at a "no step button" stop (learned.py; the Learning from the person
+    # rule): the stop as it began (its place, job system, page key and its buttons' words and kinds: in memory only),
+    # the words of the last button the person pressed in the tab since (60 characters: never logged, nor in public(),
+    # a report or a stop's record), whether the tab's listener is on, the tab it's bound to, the pages a learned press
+    # was tried on this run, and the learned press this run made (its words and day, for its card)
+    hand_stop: dict[str, Any] | None = None
+    hand_press: str = ""
+    hand_heard: set[str] = field(default_factory=set)  # (every button's words heard at the stop, case aside)
+    hand_listening: bool = False
+    hand_bound: Any = None
+    learned_tried: set[str] = field(default_factory=set)
+    learned_press: dict[str, str] | None = None
     page: Any = None  # its browser tab
     opened_tabs: list[Any] = field(default_factory=list)  # the tabs _open gave it, still open (Skip's)
     updated: float = field(default_factory=time.time)
@@ -1386,7 +1401,8 @@ class Run:
                                 "maybe_shown", "kept_replaced", "once_left", "opened_tabs", "letter_tried",
                                 "letter_text", "letter_wait", "asked_once", "skipped_on", "site_retries",
                                 "fresh_retry", "retry_stop", "retry_mark", "no_retry", "retry_tabs", "email_step",
-                                "seen_sent", "review_retyped")},
+                                "seen_sent", "review_retyped", "hand_stop", "hand_press", "hand_heard",
+                                "hand_listening", "hand_bound", "learned_tried")},
                 # (its try by itself after the site's error, on its card alone: Try now; and a try called off where its
                 # tab said it went in: I submitted it myself first)
                 "retry_at": self.retry_at if self.status == "needs_you" else 0.0,
@@ -1800,6 +1816,9 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         # "Don't wait for me" (desk.json, the owner, Oct 24: the desk left to go through the whole list): no sign-in or
         # emailed code holds the queue for the person's hands; each waits on its card, watched, as after Later
         self.dont_wait = False
+        # "Learn from my presses" (desk.json, default on): the desk hears the button the person presses at a stop where
+        # it found no step button, and presses it itself at the same employer's page (learned.py)
+        self.learn_from_me = True
         self.jobs_at_once: int | None = None  # the desk's own "Jobs at once" (desk.json); None: the profile's setting
         # the jobs under way, each in a task of its own (_run_task), and how many have begun (their order: Run.began)
         self._slots: dict[int, asyncio.Task] = {}
@@ -2222,6 +2241,23 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         run.blocking = False
         self._wake.set()
         return run
+
+    def set_learn_from_me(self, on: bool) -> None:
+        """Learn from my presses, turned on or off (desk.json). Off, nothing more is heard, kept or used; what's kept
+        is left as it is."""
+        self.learn_from_me = on
+
+    def _learning_on(self) -> bool:
+        """May the desk hear, keep and make again the person's presses? Their setting, and never in practice mode
+        (submit_mode: dry_run, or JOB_APPLY_NEVER_SUBMIT=1: the live check and its test identity too): nothing there
+        is theirs, and a press made again there could send what practice mode never sends."""
+        if not self.learn_from_me or config.never_submit():
+            return False
+        try:
+            settings = config.Profile.load().settings
+        except Exception:  # (a profile that doesn't read: nothing learned or used)
+            return False
+        return not settings.dry_run and not settings.test_identity
 
     def set_dont_wait(self, on: bool) -> None:
         """Don't wait for me, turned on or off. On, a job holding the queue for the person now lets go of it (Later),
@@ -3628,6 +3664,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         why, as one of STOP_CODES (the nightly sorts stops by it, never by the reason's words)."""
         if run.status in ("skipped", "submitted"):  # skipped, or marked applied, while it ran
             return
+        run.hand_stop, run.hand_press = None, ""  # (a stop of a kind that hears the person's press says so after this)
+        run.hand_heard = set()
         run.pause_sig = _page_sig(seen) if seen else None
         run.entries_told = {}  # (the card that says a section is short sets it again, after this)
         run.status, run.need, run.reason, run.code = "needs_you", need, reason, code
@@ -3853,6 +3891,9 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         if not run.asked_once:  # (and the questions its cards asked that the person left empty: never asked again)
             _restore_asked_once(srv, run)
         run.status, run.need, run.reason = "running", "", "Working on it"
+        run.learned_press = None
+        if run.hand_stop is not None or run.hand_listening:
+            await self._stop_hearing(run)  # (the stop that listened is over: what was pressed is looked at, first lap)
         if self.tailoring_on() and not run.usual_resume:
             job = srv.tracker().get(run.job_id, with_description=False) or {}
             if not tailored_ready(job):  # before its tab opens: nothing to keep waiting
@@ -3901,6 +3942,8 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             run.page_info = _page_info(data)
             run.url = data["url"]
             run.page = srv.browser.current_tab or run.page
+            if run.hand_stop is not None:
+                await self._learn_from_hand(run, data, text)
             if (run.seen_form and not ps.pressed and (gone := sorted(confirmations(text)))
                     and not _mid_application(data, text)):
                 # Back on a job the desk filled in, before it has pressed anything: the person pressed the
@@ -4939,7 +4982,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             # never picked by the desk (it only declines banners), but never taken for the review page
             self._pause(run, "stuck", "A cookie or privacy banner is in the way, and the desk never "
                         "accepts one for you. Choose in the desk's browser window, then press Carry on.",
-                        code="no_step_button")
+                        code="cookie_banner")
             return _Then.STOP
         if clicked.get("clicked") is False:  # the guard says it's the final submit
             await self._finish(run, lap.data, lap.text)
@@ -5268,9 +5311,150 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                         "reload the page in the desk's browser window (later, if it's still so), then press Carry on.",
                         code="site_went_wrong")
             return _Then.STOP
-        self._pause(run, "stuck", "I couldn't find the button that moves this application on. Press it in the desk's "
-                    "browser window, then press Carry on.", code="no_step_button")
+        # (a learned press, only where learning is on: _press_learned. AGAIN where it took the page on to a step this
+        # pass hadn't been on; a text (a confirmation's words, or "" where the page after it shows no further step of
+        # this application) where it may have sent it, which stops for the person to check, as after a Submit with no
+        # confirmation showing; else the stop as ever)
+        learned = await self._press_learned(run, ps, data) if self._learning_on() else None
+        if learned is _Then.AGAIN:
+            return _Then.AGAIN
+        sent, said = isinstance(learned, str), learned if isinstance(learned, str) else ""
+        pressed = (run.learned_press or {}).get("button", "")
+        self._pause(run, "check_submit" if sent else "stuck",
+                    f"I pressed \u201c{pressed}\u201d, as you did here before, and "
+                    + (f"the page now says \u201c{said}\u201d" if said else "the page after it shows no further step "
+                       "of this application") + ": it may have gone in. Check your email or the site: if it did, "
+                    "press \u201cI submitted it myself\u201d; if it didn't, press Carry on." if sent else
+                    "I couldn't find the button that moves this application on. Press it in the desk's "
+                    "browser window, then press Carry on.", code="check_submit" if sent else "no_step_button")
+        if not sent and run.status == "needs_you" and self._learning_on():
+            await self._listen_for_hand(run, data)
         return _Then.STOP
+
+    async def _press_learned(self, run: Run, ps: _Pass, data: dict[str, Any]) -> _Then | str | None:
+        """Before a "no step button" stop (learning on: _learning_on): the button the person pressed here before, at
+        this employer's page of this shape (learned.py), pressed, once a run a page. Only if exactly one button on the
+        page has its words, it's not greyed, and _may_learn's checks pass for it now (else the entry is forgotten, but
+        for a greyed or doubled one, which may be there another time); the driver's own click then runs every guard
+        again. Then the page is read: one that says the application went in (a confirmation) forgets the entry and
+        gives the confirmation's words (the caller stops for the person to check, and the desk never presses Submit
+        for the job), and so does one that shows no further step of this job's application (_further_step,
+        _own_place), with "" for words; one that is a step this pass hadn't been on is AGAIN (learned.worked); any
+        other is learned.failed, and AGAIN where the page changed at all (the driver's own checks take it from there),
+        None where it didn't (the stop is said as ever)."""
+        srv = self.srv
+        place, key = _learn_place(run, str(data.get("url") or "")), _learn_page_key(data)
+        entry = learned_buttons.lookup(place, key) if place and key and key not in run.learned_tried else None
+        if entry is None:
+            return None
+        run.learned_tried.add(key)
+        words = entry["button"]
+        same = [a for a in data.get("actions") or [] if isinstance(a, dict)
+                and learned_buttons.same_words(a.get("text"), words)]
+        if len(same) != 1 or same[0].get("disabled"):
+            return None
+        if not _may_learn(words, _hand_buttons(data)):
+            learned_buttons.forget(place, key)
+            return None
+        button, looked = same[0], _fingerprint(data)
+        before, been = _step_place(data), {(k[0], k[1], k[4]) for k in ps.pressed if len(k) > 4}
+        run.did("pressed", button)
+        try:
+            clicked = await srv.click(button["id"])
+        except KeyError:  # (gone between looking and clicking: not this press's trouble)
+            return None
+        if clicked.get("clicked") is False:  # a guard of the driver's click refused it: never learned from again
+            learned_buttons.forget(place, key)
+            return None
+        run.learned_press = {"button": words, "on": entry["on"], "id": learned_buttons.entry_id(place, key)}
+        self._log(run, f"pressed \u201c{words}\u201d, as you did here on {_day_said(entry['on'])}")
+        run.page = srv.browser.current_tab or run.page
+        if _fingerprint(clicked) == looked:
+            await self._new_tab_soon(run, NEW_TAB_WAIT)  # (one opened a moment after: read below, as the page now)
+        after, text = await self._look()
+        if gone := sorted(confirmations(text)):
+            # the press sent the application, or may have: never pressed again, and nothing more pressed for the job
+            learned_buttons.forget(place, key)
+            run.pressed_before = True
+            self._log(run, f"after that press the page says \u201c{_short(gone[0])}\u201d")
+            return gone[0]
+        now = _step_place(after)
+        if now == before and self._own_place(run, str(after.get("url") or "")):
+            # the press left the step as it was (a button that does nothing now): counted, and dropped at the second
+            learned_buttons.failed(place, key)
+            return _Then.AGAIN if _fingerprint(after) != looked else None
+        if not _further_step(after, text) or not self._own_place(run, str(after.get("url") or "")):
+            # nothing shows it went on to a further step of this application (a page that thanks the person in words
+            # confirmations() doesn't know, or in another language; another job's or the site's home): taken as one
+            # that may have gone in, as above
+            learned_buttons.forget(place, key)
+            run.pressed_before = True
+            self._log(run, "after that press the page shows no further step of this application")
+            return ""
+        if now not in been:
+            learned_buttons.worked(place, key)
+            ps.stalls = ps.stalled_in_a_row = 0
+            return _Then.AGAIN
+        learned_buttons.failed(place, key)
+        return _Then.AGAIN if _fingerprint(after) != looked else None
+
+    async def _listen_for_hand(self, run: Run, data: dict[str, Any]) -> None:
+        """A "no step button" stop has begun: keep how it was (its place, system, page key and buttons: in memory), and
+        listen in the job's tab for the button the person presses (learned.listen). Not where the page has no shape to
+        know it by (no headings, no labels), nor with no employer known for the job. Whatever goes wrong, nothing is
+        heard."""
+        place, key = _learn_place(run, str(data.get("url") or "")), _learn_page_key(data)
+        if not place or not key or run.page is None or run.status != "needs_you" or run.code != "no_step_button":
+            return
+        run.hand_stop = {"code": run.code, "place": place, "system": detect_ats(str(data.get("url") or "")) or "",
+                         "page": key, "buttons": _hand_buttons(data), "employer": str(run.company or "")}
+        run.hand_press, run.hand_heard = "", set()
+
+        def heard(source: Any, words: Any) -> None:
+            # (only while this run waits at such a stop, only from its own tab, and never a click of the desk's own or
+            # of Claude's tools there: Browser.clicking)
+            try:
+                page = source["page"] if isinstance(source, dict) else getattr(source, "page", None)
+            except (KeyError, TypeError):
+                page = None
+            if (self.learn_from_me and run.status == "needs_you" and run.code == "no_step_button"
+                    and run.hand_stop is not None and run.hand_listening and isinstance(words, str)
+                    and (page is None or page is run.page) and not self.srv.browser.clicking(run.page)
+                    and (said := learned_buttons.words_of(words))):
+                run.hand_press = said
+                run.hand_heard.add(said.casefold())
+        try:
+            run.hand_bound = await learned_buttons.listen(run.page, run.hand_bound, heard)
+            run.hand_listening = True
+        except Exception:
+            logging.getLogger(__name__).debug("couldn't listen in job %s's tab", run.job_id, exc_info=True)
+
+    async def _stop_hearing(self, run: Run) -> None:
+        """The stop ended (the pass begins again): the tab's listener is taken out (learned.mute)."""
+        run.hand_listening = False
+        with contextlib.suppress(Exception):
+            await learned_buttons.mute(run.page)
+
+    async def _learn_from_hand(self, run: Run, data: dict[str, Any], text: str) -> None:
+        """The first look of the pass that follows a "no step button" stop: if the person pressed one button in the tab
+        meanwhile (run.hand_press; two with different words: none is kept, the last may not be the one that moved the
+        step on) and the application is on a different step now, still this job's and at the same place and employer
+        (the _looks_past checks), showing a further step of it (_further_step) and not a page that says it went in,
+        with the run going on (not ended, no Submit
+        pressed), and _may_learn passes for that button as the stop saw the page, its words are kept for this place
+        and the page as it was (learned.remember). Then the stop's record goes, learned or not."""
+        stop, press, heard = run.hand_stop, run.hand_press, run.hand_heard
+        run.hand_stop, run.hand_press, run.hand_heard = None, "", set()
+        if (not stop or not press or len(heard) != 1 or stop.get("code") != "no_step_button"
+                or run.status != "running" or run.pressed_before or run.submit_pressed or confirmations(text)
+                or not _further_step(data, text)
+                or not self._learning_on() or not self._looks_past(run, data, text)
+                or _learn_page_key(data) == stop["page"]
+                or _learn_place(run, str(data.get("url") or "")) != stop["place"]
+                or not _may_learn(press, stop["buttons"])):
+            return
+        learned_buttons.remember(stop["place"], stop["system"], stop["page"], press,
+                                 datetime.now().strftime("%Y-%m-%d"), stop.get("employer") or "")
 
     async def _after_a_stall(self, run: Run, ps: _Pass, data: dict[str, Any], kind: str, key: tuple[Any, ...],
                              looked: tuple[Any, ...], clicked: dict[str, Any]) -> _Then:
@@ -7880,10 +8064,204 @@ def _tab_mark(data: dict[str, Any]) -> int:
                  tuple((f.get("id"), str(f.get("value"))) for f in data.get("fields") or [])))
 
 
+def _page_shape(data: dict[str, Any]) -> tuple[tuple, tuple]:
+    """A page's headings and its boxes' labels (sorted): what it is, without its address."""
+    return (tuple(data.get("headings") or []),
+            tuple(sorted(f.get("label") or "" for f in data.get("fields") or [] if isinstance(f, dict))))
+
+
 def _page_sig(data: dict[str, Any]) -> tuple:
     """What a page is, near enough: its address, headings and the questions on it."""
-    return (_bare(data.get("url") or ""), tuple(data.get("headings") or []),
-            tuple(sorted(f.get("label") or "" for f in data.get("fields") or [] if isinstance(f, dict))))
+    return (_bare(data.get("url") or ""), *_page_shape(data))
+
+
+def _learn_page_key(data: dict[str, Any]) -> str:
+    """_page_sig's headings and labels, without the address, as a short hash (learned.page_key): what a learned press
+    is kept by. Never the headings or labels themselves. "" for a page with neither (nothing to know it by: every such
+    page of a site would be the same one), where nothing is learned or used."""
+    headings, labels = _page_shape(data)
+    if not any(str(h).strip() for h in headings) and not any(str(x).strip() for x in labels):
+        return ""
+    return learned_buttons.page_key(headings, labels)
+
+
+def _learn_place(run: "Run", url: str) -> str:
+    """Where a press is learned and used: the address's place and the job's employer as the tracker names it
+    (learned.place_key). "" with no employer known: nothing is learned or used."""
+    return learned_buttons.place_key(url, run.company)
+
+
+def _step_place(data: dict[str, Any]) -> tuple:
+    """A step as _step_key tells it apart, without the button: its address (steady), its headings and the questions it
+    shows. A learned press that leads to one of the steps pressed on in this pass went nowhere new."""
+    return (_steady_url(data.get("url")), tuple(data.get("headings") or []),
+            questions_shown(data.get("fields") or []))
+
+
+# The reader's facts about a button that keep it from being learned (the person's press at a stop; _may_learn)
+_HAND_FLAGS = ("is_submit", "form_submit", "cookie", "sign_in_form", "account_form", "in_account_form", "site_nav",
+               "aside", "disabled")
+# Words never learned, whatever else holds: an agreement, a sign-in, an account, a check (only these words are new here:
+# the others are browser.SUBMIT_RE, FINALISH_RE, _SENDS, NAVIGATION_RE, this module's _signs_them_up and
+# never._never_for_them, and browser._accepts_cookies)
+_NOT_LEARNED = re.compile(r"agree|accept|consent|\bi understand|acknowledg|sign[\s-]?in|log[\s-]?in|"
+                          r"create (?:an |my |your )?account|register|verify|captcha", re.I)
+# A learned press is allowed, not merely not refused: its words must say it goes on to a step (one of these, as whole
+# words) and none of _REFUSED_WORDS (as a word's start) may be among them
+_STEP_WORDS = re.compile(r"\b(?:next|continue|proceed|forward|go on|go to|section|step|save (?:and|&) continue|"
+                         r"review)\b", re.I)
+_REFUSED_WORDS = re.compile(
+    r"\b(?:"
+    # an end or a send: the application could go in with it (and "application" itself: "Proceed with application")
+    r"done|finish|complet|send|submi|appl(?:y|ies|ied)\b|confirm|place|certif|attest|sign|finali[sz]|final\b|"
+    r"lodge|e-?sign|application|"
+    # a way back, out or past, or something taken away: not the step's way on
+    r"back|previous|cancel|exit|skip|delet|remov|withdraw|discard|clear|reset|"
+    # away from this application: another job, a list, the site's home, later, a sign-out, or past what it asks
+    r"job|opening|position|home|dashboard|later|leave|log ?out|without|anyway|interview|survey|share|forward to\b|"
+    r"career|portal|brows|end\b|last\b|verif|"
+    r"my\b|all\b|list|search|close|menu|"
+    # something added or begun: another block, a file, a test
+    r"add|another|upload|attach|start|begin|test|assessment|"
+    # another site's sign-in, a bot check, an account or the person's own details
+    r"google|linkedin|facebook|apple|indeed|robot|human|log ?in|sign ?in|sign ?up|creat|regist|profile|account|"
+    r"continue as\b|"
+    # a subscription or alerts, and an answer to a question
+    r"subscri|alert|notif|(?:yes|no|ok|okay)\b"
+    r")", re.I)
+# Words that may be the person's own, never kept: an email, a number, a file's or a site's name, a sentence
+_PERSONAL_SHAPE = re.compile(r"@|\d|\.[^\W\d_]")
+_MOST_WORDS = 6
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def _letters(text: Any, shortest: int = 3) -> set[str]:
+    """A text's words of `shortest` letters or more, case aside (a list's: each item's)."""
+    if isinstance(text, (list, tuple)):
+        return set().union(set(), *(_letters(t, shortest) for t in text))
+    return {w for w in re.findall(r"[^\W\d_]+", str(text or "").casefold()) if len(w) >= shortest}
+
+
+# The profile's keys whose words are the person's own: their names (words of two letters or more), and their email's
+# local part, city, employers past and present and schools (three or more)
+_NAME_KEYS = ("personal.first_name", "personal.middle_name", "personal.last_name", "personal.preferred_name",
+              "personal.preferred_last_name")
+_OWN_KEYS = ("personal.address.city", "history.previous_employers", "experience.current_company")
+
+
+def _personal_words() -> set[str]:
+    """The profile's words that are the person's own (_NAME_KEYS, _OWN_KEYS, the email's local part, each work_history
+    entry's company and each education_history entry's school), as whole words. None where the profile doesn't
+    read."""
+    try:
+        prof = config.Profile.load()
+        email = str(prof.get("personal.email") or "")
+        entries = [(e.get("company"), e.get("school")) for k in ("work_history", "education_history")
+                   for e in (prof.get(k) if isinstance(prof.get(k), list) else []) if isinstance(e, dict)]
+        return set().union(*(_letters(prof.get(k), 2) for k in _NAME_KEYS),
+                           *(_letters(prof.get(k)) for k in _OWN_KEYS), _letters(email.split("@")[0]),
+                           *(_letters([c, sch]) for c, sch in entries))
+    except Exception:
+        return set()
+
+
+def _hand_buttons(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """The page's buttons as a learned press is judged on: each one's words and the kinds _HAND_FLAGS name, nothing
+    else (no id, no address)."""
+    return [{"text": str(a.get("text") or ""), **{k: True for k in _HAND_FLAGS if a.get(k)}}
+            for a in data.get("actions") or [] if isinstance(a, dict)]
+
+
+def _may_learn(button_words: str, buttons_seen: list[dict[str, Any]], personal: set[str] | None = None) -> bool:
+    """May a press of this button be learned (kept to be made again), or made again from what was learned? Only a
+    button that is the one on its page with those words (case and spaces aside) and that, as the reader saw it, is no
+    submit (a form's own only where its words are a step's: browser.NAVIGATION_RE), cookie, sign-in or account
+    form's, site navigation, aside or greyed one; whose words say it goes on to a step (_STEP_WORDS) and nothing
+    _REFUSED_WORDS names; that pass the checks a press of the desk's own gets (not a Submit, a Finish or a Send, a
+    sign-up, what the never list refuses, a cookie's accept) and say nothing of agreeing, accepting, consent,
+    understanding, a sign-in, an account, registering, verifying or a CAPTCHA; and that can't be the person's own
+    (no @, digit, file's or site's name, nor more than six words, nor a word of their name, email or city:
+    `personal`, the profile's when not given)."""
+    words = learned_buttons.words_of(button_words)
+    if not words:
+        return False
+    same = [b for b in buttons_seen if isinstance(b, dict) and learned_buttons.same_words(b.get("text"), words)]
+    if len(same) != 1:
+        return False
+    seen = same[0]
+    if any(seen.get(k) for k in _HAND_FLAGS if k != "form_submit"):
+        return False
+    if seen.get("form_submit") and not NAVIGATION_RE.match(str(seen.get("text") or "")):
+        return False
+    if _STEP_WORDS.search(words) is None or _REFUSED_WORDS.search(words) is not None:
+        return False
+    if _PERSONAL_SHAPE.search(words) or len(words.split()) > _MOST_WORDS:
+        return False
+    # (a look-alike letter, a button not in English, or a mark laid over a letter: "Su\u0301bmit")
+    if any((c.isalpha() and not c.isascii()) or unicodedata.category(c).startswith("M") for c in words):
+        return False
+    said = final_text(words)
+    if SUBMIT_RE.search(words) or FINALISH_RE.match(said) or _SENDS.match(said):
+        return False
+    if _signs_them_up({"text": words}) or _never_for_them(said) is not None or _accepts_cookies(words, words, True):
+        return False
+    if _NOT_LEARNED.search(words) is not None:
+        return False
+    return not _letters(words, 2) & (_personal_words() if personal is None else personal)
+
+
+# A sign-up in words _SIDE_BOX doesn't know (the fourth review's): wider here than there, where a wide list would
+# take an application's own boxes for a sign-up's; here a miss only means a press isn't learned
+_LEARN_SIDE = re.compile(r"mailing list|keep me (?:posted|updated|informed)|stay in touch|\bupdates\b|"
+                         r"(?:hear|know) about (?:new |other |future |similar )?(?:roles|jobs|openings|opportunit)|"
+                         r"(?:roles|jobs|openings|opportunities) like this", re.I)
+_BOX_WORDS = ("label", "section", "sublabel")  # (where a box's own words are)
+
+
+def _further_step(data: dict[str, Any], text: str) -> bool:
+    """Does this page show a further step of an application, the positive sign a press went on to one and sent nothing?
+    A step's way on (_FORWARD: Next, Continue, Save and Continue; enabled, no submit, not the site's navigation)
+    beside a box of the application's to fill (_application_boxes: not a job-alert sign-up's, a greyed-out one, a
+    language picker or a search box; Save and Continue even with none), or a progress bar short of its last step.
+    Never a page with a password box or a sign-in or account form's button, one with a sign-up for job alerts or
+    the like on it, or one that thanks the person for applying (whatever it asks next).
+    A box with only a Submit under it is none: a survey after the application went in looks the same
+    as the form's last page, so a press that leads there is not learned. Not proof the page is this job's
+    application: the caller checks that apart (_own_place)."""
+    actions = [a for a in data.get("actions") or [] if isinstance(a, dict)]
+    fields = [f for f in data.get("fields") or [] if isinstance(f, dict)]
+    if any(a.get("sign_in_form") or a.get("account_form") or a.get("in_account_form") for a in actions) or any(
+            f.get("kind") == "password" for f in fields):
+        return False
+    # a sign-up for job alerts, a newsletter or a talent community anywhere on the page (what a page shows once the
+    # application has gone, beside a Continue): no sign of a step, whatever else is there
+    def side(words: str) -> bool:
+        return bool(_SIDE_BOX.search(words) or _LEARN_SIDE.search(words))
+
+    if (any(side(str(h)) for h in data.get("headings") or [])
+            or any(a.get("aside") or side(str(a.get("text") or "")) for a in actions)
+            or any(f.get("aside") or side(" ".join(str(f.get(k) or "") for k in _BOX_WORDS)) for f in fields)):
+        return False
+    if CONFIRMATION_RE.search(text or ""):
+        return False  # (it thanks the person for applying, whatever it asks next: a survey, "check your email")
+    if any(int(m[1]) < int(m[2]) for h in data.get("headings") or [] for m in _STEP_OF.finditer(str(h))):
+        return True
+    ours = {id(f) for f in _app_fields(data)}
+    boxes = [f for f in _application_boxes({**data, "fields": fields, "actions": actions})
+             if id(f) in ours and f.get("kind") != "search"
+             and not re.search(r"\bsearch|\bkeywords?\b", f"{f.get('label') or ''} {f.get('name') or ''}", re.I)]
+    ways = [final_text(str(a.get("text") or "")) for a in actions if not a.get("disabled") and not a.get("is_submit")
+            and not a.get("same_page") and not a.get("site_nav") and not a.get("aside")]
+    return any(_FORWARD.match(t) and (boxes or t.lower().startswith("save")) for t in ways)
+
+
+def _day_said(day: str) -> str:
+    """A learned day ("2026-11-11") as "Nov 11"; the day as it is where it isn't one."""
+    try:
+        year, month, date = (int(x) for x in day.split("-"))
+        return f"{_MONTHS[month - 1]} {date}"
+    except (ValueError, IndexError):
+        return day
 
 
 # A requisition's id at the end of a posting's address (Workday's ".../job/<place>/<title>_R12345", "_JR-0012345")

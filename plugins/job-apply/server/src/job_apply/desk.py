@@ -42,6 +42,7 @@ from starlette.routing import Route
 
 from . import (autofill, config, employment, history, letters, mailbox, outcomes, pay, phone, places, profile_setup,
                report, vault, window, workplace)
+from . import learned as learned_buttons
 from .browser import _cookie_setting
 from .pipeline import (DESK_PASSWORDS, MAIL_WATCH_MAX, QUEUE_NO_LOCK, Applier, _may_accept_notices,
                        _may_manage_accounts, _secret, _test_identity, password_for, placed_key, question_key)
@@ -307,6 +308,7 @@ class Desk:
             if isinstance(saved.get("phone_summary_day"), str):
                 self.phone.summary_day = saved["phone_summary_day"]
             self.applier.dont_wait = saved.get("dont_wait") is True
+            self.applier.learn_from_me = saved.get("learn_from_me") is not False  # (on unless turned off)
             self.troubleshoot = saved.get("troubleshoot") is True and not self.handled_only
             self.applier.hold_submits = self.troubleshoot
             # "Jobs at once" as chosen on the desk, while profile.yaml's settings.jobs_at_once is still as it was
@@ -335,6 +337,7 @@ class Desk:
                                                 "troubleshoot": self.troubleshoot,
                                                 "auto_search": self.auto_search,
                                                 "dont_wait": self.applier.dont_wait,
+                                                "learn_from_me": self.applier.learn_from_me,
                                                 "jobs_at_once": self.applier.jobs_at_once,
                                                 "jobs_at_once_profile": self._at_once_profile,
                                                 "phone_summary_day": self.phone.summary_day,
@@ -431,6 +434,8 @@ class Desk:
             r("/api/profile/save", self.profile_save_view, methods=["POST"]),
             r("/api/profile/settings", self.profile_settings_view, methods=["POST"]),
             r("/api/profile/document", self.profile_document_view, methods=["POST"]),
+            r("/api/learned", self.learned_view),
+            r("/api/learned/forget", self.learned_forget_view, methods=["POST"]),
             r("/api/answers", self.answers_view),
             r("/api/answers/{action}", self.answers_change_view, methods=["POST"]),
             r("/api/mail/test", self.mail_test_view, methods=["POST"]),
@@ -1043,6 +1048,8 @@ class Desk:
             self.auto_search = body["auto_search"] is True
         if "dont_wait" in body:
             self.applier.set_dont_wait(body["dont_wait"] is True)
+        if "learn_from_me" in body:
+            self.applier.set_learn_from_me(body["learn_from_me"] is True)
         if "troubleshoot" in body:
             was, self.troubleshoot = self.troubleshoot, body["troubleshoot"] is True
             self.handled_only = self.handled_only and not self.troubleshoot
@@ -1052,8 +1059,8 @@ class Desk:
                 self._forget_openings()
         self.applier.hold_submits = self.troubleshoot
         if any(k in body for k in ("auto_submit", "tailor_resumes", "cover_letters", "handled_only", "troubleshoot",
-                                   "auto_search", "dont_wait", "jobs_at_once", "min_pay", "posted_within",
-                                   "within_miles", "companies", *CHIP_FILTERS)):
+                                   "auto_search", "dont_wait", "learn_from_me", "jobs_at_once", "min_pay",
+                                   "posted_within", "within_miles", "companies", *CHIP_FILTERS)):
             self._save_settings()
         return JSONResponse({"auto_submit": self.applier.auto_submit, "tailor_resumes": self.applier.tailoring_on(),
                              "cover_letters": self.applier.letters,
@@ -1061,6 +1068,7 @@ class Desk:
                              "min_pay": self.min_pay, "posted_within": self.posted_within,
                              "within_miles": self.within_miles, **self.chips, "companies": self.companies,
                              "auto_search": self.auto_search, "dont_wait": self.applier.dont_wait,
+                             "learn_from_me": self.applier.learn_from_me,
                              "jobs_at_once": self.applier.at_once()})
 
     def _forget_openings(self) -> None:
@@ -1192,6 +1200,33 @@ class Desk:
         except (ValueError, OSError) as e:
             return self._bad(e)
         return JSONResponse({"documents": documents, "version": profile_setup.profile_version()})
+
+    async def learned_view(self, request: Request) -> Response:
+        """The buttons the desk learned from the person's presses (learned.py), newest first: an opaque id, the
+        employer's place (its host, and a tenant on a shared one), the job system's name, the button's words, the day
+        and how many presses of it moved the page on. Never the page's key. Asked by the page alone, never part
+        of /api/state."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        rows = await asyncio.to_thread(learned_buttons.all)
+        return JSONResponse({"learned": [
+            {"id": learned_buttons.entry_id(e["place"], e["page"]),
+             "employer": "an application saved on this computer" if e["place"].startswith("file:")
+             else e.get("employer") or learned_buttons.shown_place(e["place"]),
+             "system": ATS_NAMES.get(e["system"], ""), "button": e["button"], "on": e["on"], "worked": e["worked"]}
+            for e in rows]}, headers={"Cache-Control": "no-store"})
+
+    async def learned_forget_view(self, request: Request) -> Response:
+        """Forget one learned press: {"id": an id /api/learned gave}."""
+        if not self._allowed(request, api=True):
+            return self._forbidden()
+        try:
+            which = (await self._body(request)).get("id")
+            if not isinstance(which, str) or not which:
+                raise ValueError("id should be one /api/learned gave")
+        except ValueError as e:
+            return self._bad(e)
+        return JSONResponse({"forgotten": await asyncio.to_thread(learned_buttons.forget_id, which)})
 
     async def answers_view(self, request: Request) -> Response:
         """The Your answers page's Answers the desk remembers (config.remembered_answers), newest first. Asked by the
@@ -2082,6 +2117,7 @@ class Desk:
                          "min_pay": self.min_pay, "posted_within": self.posted_within,
                          "within_miles": self.within_miles, **self.chips, "companies": self.companies,
                          "auto_search": self.auto_search, "dont_wait": self.applier.dont_wait,
+                         "learn_from_me": self.applier.learn_from_me,
                          "jobs_at_once": self.applier.at_once(),
                          "follow_up_days": settings.follow_up_days,
                          "learn_from_responses": settings.learn_from_responses,
@@ -2283,6 +2319,18 @@ class Desk:
              "Cookie banners are declined; one with no way to decline is accepted for you." if cookies else
              "Cookie banners are declined, or left to you when there's no way to decline: never accepted.",
              applying + "Cookie banners")
+        # what it learns from the person's presses (learned.py): their switch, and never in practice mode
+        learns = tell(a._learning_on)
+        learn_where = applying + "Learn from what I do when the desk is stuck"
+        learn_said = ("Only a step button's words, at that employer's page; never a Submit, an agreement, a sign-in or "
+                      "anything typed.")
+        if learns is None:
+            line("learn_from_me", "Learns from you", unknown, busy, learn_where)
+        elif learns:
+            line("learn_from_me", "Learns from you", "on", learn_said, learn_where)
+        else:
+            line("learn_from_me", "Learns from you", "off in practice mode" if dry and a.learn_from_me else
+                 fix if unread and a.learn_from_me else "off", learn_said, learn_where)
         where = "Settings, Email codes"
         if s.email_codes and not unread:
             line("email_codes", "Emailed codes (Claude)", "on",
