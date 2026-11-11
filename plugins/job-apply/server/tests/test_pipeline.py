@@ -16457,8 +16457,8 @@ def test_a_file_for_another_document_of_the_profiles_names_the_slot_to_fill(srv,
     assert applier._stop_for_what_is_left(nshe, "", [], [transcripts, refs])
     assert nshe.reason == (
         "The form wants your transcripts (“Please upload your Unofficial Transcripts”) and your reference list "
-        "(“Please upload your Reference Contact Information”). Add them (or your references, which the desk makes a "
-        "page of) in Settings, under Resume and documents, or attach them in the desk's browser window, then press "
+        "(“Please upload your Reference Contact Information”). Add them in Settings, under Resume and "
+        "documents, or attach them in the desk's browser window, then press "
         "Carry on."), nshe.reason
     either = Run(3)
     assert applier._stop_for_what_is_left(either, "", [], [lvvwd])
