@@ -701,6 +701,9 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
         self._groups: dict[tuple[str, str], dict[str, str]] = {}  # (_groups_key's: the site, its list's label)
         self.tab_jobs: dict[Page, int] = {}  # the job each tab was opened for
         self._crashed: set[Page] = set()  # tabs whose page crashed (Chrome's "Aw, Snap!")
+        # the tabs a click of the desk's or Claude's tools is under way in (click): a press the Job Desk hears there
+        # meanwhile is that click, never the person's (pipeline._listen_for_hand)
+        self._clicking: dict[Page, int] = {}
         # The tab the person is at for the Job Desk (a sign-in or code that needs their hands, or one of its rounds),
         # if any: a new tab opened by a job filled meanwhile in another tab never stays in front of it
         self.keep_front: Callable[[], Page | None] | None = None
@@ -730,6 +733,10 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
             if (view.page is not None and not view.page.is_closed() and view.page.context is self._ctx
                     and (own.page is None or own.page.is_closed())):
                 own.page, own.job_id = view.page, view.job_id
+
+    def clicking(self, tab: Any) -> bool:
+        """Is a click of the desk's or Claude's tools (click) under way in this tab?"""
+        return self._clicking.get(tab, 0) > 0
 
     def _views(self) -> list[_View]:
         return [self._own, *self._desk_views]
@@ -1855,34 +1862,42 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
         practice mode (_check_clickable). Only the desk's own presses say so, never the click tool."""
         async with self._lock:
             page = await self.page()
-            by_id = (target in self._actions or target in self._fields
-                     or re.fullmatch(r"(f\d+-)?[a-z]*\d+(\.\d+)?", target))
-            loc = self._locator(page, target) if by_id else None
-            text = self._actions[target]["text"] if target in self._actions else "" if by_id else target
-            loc, info = await self._clickable(page, loc, text, allow_submit, target, agreement)
-            before, note = page.url, None
-            # (a new tab from now on is this press's: set under the lock, so a click waiting for it never claims
-            # another's tab, the review of Oct 15)
-            self._follow_until = time.monotonic() + POPUP_FOLLOW
+            marked = page  # (a report of the person's press heard meanwhile in this tab is this click's)
+            self._clicking[marked] = self._clicking.get(marked, 0) + 1
             try:
-                await loc.click(timeout=CLICK_TIMEOUT)
-            except PlaywrightTimeout:
-                present = await self._present(loc)
-                # A page that moved on took the click (a slow navigation can outlast the
-                # timeout); clicking again could act on the next page.
-                if present or page.url == before:
-                    # Knockout/React swapped the button out, or a cookie banner sits on top:
-                    # click it directly, after finding and checking it again.
-                    loc, info = await self._clickable(
-                        page, loc if present else None, info["text"] or text, allow_submit, target, agreement)
-                    await loc.evaluate("el => el.click()", timeout=5000)
-                    note = "clicked directly: the button was covered or replaced"
+                by_id = (target in self._actions or target in self._fields
+                         or re.fullmatch(r"(f\d+-)?[a-z]*\d+(\.\d+)?", target))
+                loc = self._locator(page, target) if by_id else None
+                text = self._actions[target]["text"] if target in self._actions else "" if by_id else target
+                loc, info = await self._clickable(page, loc, text, allow_submit, target, agreement)
+                before, note = page.url, None
+                # (a new tab from now on is this press's: set under the lock, so a click waiting for it never claims
+                # another's tab, the review of Oct 15)
+                self._follow_until = time.monotonic() + POPUP_FOLLOW
+                try:
+                    await loc.click(timeout=CLICK_TIMEOUT)
+                except PlaywrightTimeout:
+                    present = await self._present(loc)
+                    # A page that moved on took the click (a slow navigation can outlast the
+                    # timeout); clicking again could act on the next page.
+                    if present or page.url == before:
+                        # Knockout/React swapped the button out, or a cookie banner sits on top:
+                        # click it directly, after finding and checking it again.
+                        loc, info = await self._clickable(
+                            page, loc if present else None, info["text"] or text, allow_submit, target, agreement)
+                        await loc.evaluate("el => el.click()", timeout=5000)
+                        note = "clicked directly: the button was covered or replaced"
+                    else:
+                        note = "the click timed out but the page moved on, so it wasn't repeated; check the page"
+                await self._settle(page)
+                page = await self.page()  # the click may have opened a new tab
+                summary = await self._summary(page)
+                return {**summary, "note": note} if note else summary
+            finally:
+                if self._clicking.get(marked, 0) > 1:
+                    self._clicking[marked] -= 1
                 else:
-                    note = "the click timed out but the page moved on, so it wasn't repeated; check the page"
-            await self._settle(page)
-            page = await self.page()  # the click may have opened a new tab
-            summary = await self._summary(page)
-            return {**summary, "note": note} if note else summary
+                    self._clicking.pop(marked, None)
 
     async def _clickable(self, page: Page, loc: Locator | None, text: str, allow_submit: bool,
                          target: str, agreement: bool = False) -> tuple[Locator, dict[str, Any]]:
