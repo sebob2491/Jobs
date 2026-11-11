@@ -846,7 +846,10 @@ def vault_unreachable() -> str | None:
     """Why a password can't be made, shown or forgotten just now, in one plain sentence for the page: the computer's
     password vault is there but out of use (vault.status().down: locked, or not answering). None while it answers, and
     on a computer with no vault at all (the file is the store there). It doesn't ask the vault again: the desk's
-    routes do that once a press (vault.try_again)."""
+    routes do that once a press (vault.try_again). Its way back agrees with the page's notice about the vault
+    (vault.DIDNT_ANSWER: "Unlock it, then restart the desk"), shown beside it: a press asks the vault again, and so does
+    a restart; the notice names only the restart, since while the vault is out of use the panel offers no Make, Show
+    or Forget for a password kept in it (it reads "Can't tell right now"), and a desk's own start is the sure way."""
     from . import vault
 
     s = vault.status()
@@ -854,7 +857,7 @@ def vault_unreachable() -> str | None:
         return None
     named = f" ({s.name})" if s.name and s.name != "The password vault" else ""
     return (f"Your password vault{named} isn't answering, so the desk can't read the passwords saved in it. Unlock "
-            "it, then try again.")
+            "it, then try again, or restart the desk.")
 
 
 def forget_secret(name: str) -> bool:

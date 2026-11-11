@@ -36,7 +36,8 @@ NEVER_SHOWN = "That one is never shown."
 FROM_ENVIRONMENT = "This one comes from your computer's own settings, not from the desk."
 SHOWN_ON_ITS_OWN = "Passwords are shown only when the Job Desk is opened on its own, not inside Claude."
 # What the three routes say while the password vault is out of use, after "Your password vault (its name)"
-VAULT_DOWN = " isn't answering, so the desk can't read the passwords saved in it. Unlock it, then try again."
+VAULT_DOWN = (" isn't answering, so the desk can't read the passwords saved in it. Unlock it, then try again, or "
+              "restart the desk.")
 MAKE, SHOW, FORGET = "/api/password/make", "/api/password/show", "/api/password/forget"
 
 
@@ -1172,6 +1173,29 @@ def test_a_vault_that_answers_again_is_used_again_at_the_next_press(srv, job_app
     assert state["vault_problem"] is None and all(state["passwords"][n.removesuffix("_password")] for n in SITE)
     assert state["passwords_made"] == {name: "2026-11-10" for name in SITE[1:]}
     assert not config.secrets_path().exists() or config.read_secrets(config.secrets_path()) == {}
+
+
+def test_the_vault_notice_and_the_panels_refusal_agree(srv, job_apply_home, memory_vault, monkeypatch):
+    """On one screen, the page's notice said "Unlock it, then restart the desk" and the passwords panel's refusal
+    "Unlock it, then try again": both true, but read as a contradiction. The refusal (after a press, which asked the
+    vault again) names the restart too, the notice's way; the notice names no press, since the panel offers none for a
+    password kept in a vault out of use (it can't tell whether one is saved there)."""
+    config.save_site_password("workday_password", "Persons-Own-1")
+    desk = idle_desk(srv)
+
+    async def go():
+        async with serving(desk) as (c, h):
+            locked = put_out_of_use(memory_vault, monkeypatch)
+            state = (await c.get("/api/state", headers=h)).json()
+            answer = await ask(c, h, MAKE, {"name": "workday_password", "replace": True}, 409)
+            locked.answers_again()
+            return state, answer.json()["error"]
+
+    state, refused = run(go())
+    notice = state["vault_problem"]
+    assert "Unlock it, then restart the desk" in notice, notice
+    assert refused.endswith("Unlock it, then try again, or restart the desk."), refused
+    assert state["passwords"]["workday"] is False  # (the row reads "Can't tell right now": no Make, Show or Forget)
 
 
 def test_a_vault_still_locked_is_asked_once_more_per_press_and_refused(srv, job_apply_home, memory_vault,
