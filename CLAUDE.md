@@ -39,6 +39,7 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   - `updates.py`: whether a newer version is out, and the desk's Update button (the installed copy's download, checksum
     and installer; the plugin copy's two `claude` commands);
   - `fixtures.py`: the scrubber.
+  - `learned.py`: the step buttons learned from the person's presses (`learned.json`).
 - `data/companies.yaml` is the default employer list (`semiconductor-az`), and
   `data/lists/*.yaml` holds the others (`phoenix-metro`, `las-vegas`). A person's own
   `~/.job-apply/companies.yaml` names lists under `lists:`.
@@ -311,3 +312,4 @@ this file says otherwise, it wins.
   answers by itself (as automatic as possible: the owner's call, Oct 21; e.g. "Can you provide
   proof of U.S. citizenship?" from `us_citizen`); it asks only what the profile can't say, and
   never overstates.
+- **Learning from the person:** the desk learns only the words of a button the person pressed to move a step on, at a stop where it found none, and repeats that press only at the same employer's site and the same page, after the same checks as any press of its own. It never learns from a stop for a bot check, a CAPTCHA, a sign-in, an emailed code, security questions, a notice, an agreement, an assessment or a submit; never a Submit, an agreement, a sign-up or a cookie button; and never anything typed. Each learned press is logged and can be forgotten on the page.
