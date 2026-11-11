@@ -1,6 +1,6 @@
 {
  "profile": {
-  "documents": {"resume": "resume.pdf", "cover_letter": null},
+  "documents": {"resume": "resume.pdf", "cover_letter": null, "transcripts": [], "references": [], "certificates": []},
   "name": "Sam Rivera",
   "missing": [],
   "gaps": [

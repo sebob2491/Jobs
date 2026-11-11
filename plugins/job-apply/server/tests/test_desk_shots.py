@@ -522,3 +522,36 @@ def test_a_picture_of_what_the_desk_learned_and_a_card_with_its_line(srv, job_ap
 
     run(go())
     assert all((folder / name).stat().st_size > 2000 for name in names)
+
+
+@pytest.mark.parametrize("window", (*WINDOWS, (900, 700), (420, 800)), ids=lambda w: f"{w[0]}x{w[1]}")
+@pytest.mark.parametrize("look", LOOKS)
+def test_a_picture_of_the_documents_panel_with_files_in_each_row(srv, job_apply_home, monkeypatch, look, window):
+    """Settings, Resume and documents with the usual cover letter and files in each of the transcripts, reference list
+    and certificates rows (made-up names), in each look and window size, narrow ones too; saved as
+    settings-documents-files-<look>-<w>x<h>.png."""
+    folder = Path(SHOTS)
+    folder.mkdir(parents=True, exist_ok=True)
+    state = _state("state-openings.json")
+    state["profile"]["documents"] = {
+        "resume": "resume.pdf", "cover_letter": "cover_letter.pdf", "transcripts": ["Example-Transcript.pdf"],
+        "references": ["Example-Reference-List.docx", "Example-Reference-Letter-With-A-Much-Longer-Name.pdf"],
+        "certificates": ["Example-Diploma.pdf", "Example-License.png", "Example-Certificate.jpg"]}
+    desk = _canned(srv, monkeypatch, state)
+    path = folder / f"settings-documents-files-{look}-{window[0]}x{window[1]}.png"
+
+    async def go():
+        await desk.start(port=0, open_browser=False)
+        try:
+            async with person_browser() as browser:
+                page = await browser.new_page(viewport={"width": window[0], "height": window[1]}, color_scheme=look)
+                await open_desk(page, desk, "settings/documents")
+                await page.wait_for_selector("#set-certificates-files .docfile")
+                await page.wait_for_timeout(150)
+                await page.screenshot(path=str(path))
+                await browser.close()
+        finally:
+            await desk.stop()
+
+    run(go())
+    assert path.stat().st_size > 2000
