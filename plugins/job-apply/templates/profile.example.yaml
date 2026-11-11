@@ -236,6 +236,9 @@ settings:
   # empty for the usual one (claude-opus-5-5), or another model's name, e.g. claude-sonnet-5-5 (lighter on
   # your plan's usage).
   cover_letter_model: ~
+  # The model asked whether a new question means the same as one you've answered (Settings, Applying). Leave ~
+  # for the usual small, fast one.
+  similar_model: ~
   # Phone alerts: turned on from the Job Desk's Phone alerts card, under Settings (it makes a private topic for the
   # free ntfy app and keeps it in secrets.yaml). The desk then pushes an alert to your phone when a
   # job needs you or is ready for your Submit, and a summary of the day, while the desk runs. They go

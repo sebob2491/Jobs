@@ -73,14 +73,17 @@ _SELF_ID = re.compile("|".join(f"(?:{pattern})" for name, pattern, *_ in RULES i
                       + r"|\bethnic|\bdisabilit|\bmilitary status\b|\bage\b|\bdate of birth\b|\bbirth ?date\b|"
                         r"\bdob\b|\bhow old\b|\bpronoun|\bbirthday|\b(?:over|under) (?:the age of )?\d+\b|"
                         r"\btransgender|\breligio|\bfaith\b|\bmarital|\bmarried\b|\bspouse|\bnational origin\b|"
-                        r"\bnationalit|\bmedical|\bpregnan|\bhealth condition", re.I)
+                        r"\bnationalit|\bmedical|\bpregnan|\bhealth\b|\bphysical or mental\b|\bchurch|\bworship|"
+                        r"\bsabbath|\bare you single\b|\bsingle or married\b|\bdomestic partner|\bchildren\b|"
+                        r"\bexpecting a\b|\bborn\b|\b(?:native|first) language\b|\bmaiden name\b", re.I)
 # - pay;
 _PAY = re.compile(r"\bsalar|\bcompensation\b|\bpay ?(rate|range|expectations?|requirements?)\b|\bwages?\b|"
                   r"\b(expected|desired|minimum|target|hourly) (pay|rate|salary|wage)|\bhourly rate\b", re.I)
 # - a criminal record and the checks of one, a background check or a drug test
 _RECORD = re.compile(r"\bfelon|\bconvict|\bcrimes?\b|\bcriminal\b|\bmisdemeanou?r|\barrest|\boffen[cs]es?\b|"
                      r"\bcharged\b|\bprobation\b|\bparole\b|\bpending (?:case|charge)|\bguilty\b|\bplea\b|"
-                     r"\bincarcerat|\bjail|\bprison|"
+                     r"\bincarcerat|\bjail|\bprison|\bno contest\b|\bnolo\b|\bDUI\b|\bDWI\b|\bserved time\b|"
+                     r"\bexpunge|\badjudicat|\bcited\b|\bcitations?\b|"
                      r"\bbackground (check|screen|investigation)|\bdrug (test|screen)", re.I)
 # (the profile's values that are no one's own: a choice every form has)
 _EVERYDAY = {"yes", "no", "true", "false", "none", "n a", "na", "other", "mobile", "home", "work", "cell"}
@@ -178,21 +181,31 @@ class Personal:
         return cls(v for v in values if v)
 
     def holds(self, text: str) -> bool:
-        said = _apart(text)
-        if self.words is not None and self.words.search(said):
+        raw = str(text or "")
+        apart = _apart(raw)
+        # (as written and with its run-together words apart: "McKenzie" and "PayPal" are whole only as written,
+        # "Will_Long.pdf" only apart)
+        spaced = re.sub(r"(?<=\w)[_\-.]+(?=\w)", " ", raw)  # (its joins alone taken out: "McKenzie_Resume.pdf")
+        if self.words is not None and any(self.words.search(t) for t in (raw, spaced, apart)):
             return True
         if self.names is not None:
-            for m in self.names.finditer(said):
-                before = said[:m.start()].rstrip()
-                if before and before[-1] not in ".?!:;":  # (not a sentence's first word)
+            # (a file's name, or words run together, "will_resume.pdf", "WillResume": a name there in any letters;
+            # not an everyday compound, "long-term")
+            for token in re.findall(r"\w+(?:[_\-.]+\w+)*", raw):
+                if ("_" in token or re.search(r"\.\w{2,4}$", token) or re.search(r"[a-z][A-Z]", token)) and re.search(
+                        self.names.pattern, _apart(token), re.I):
                     return True
+            for m in self.names.finditer(raw):
+                before, after = raw[:m.start()].rstrip(), raw[m.end():].lstrip()
+                if (before and before[-1] not in ".?!:;") or not after or after[0] in ",(:" or re.match(
+                        "['\u2019]s\\b", after):
+                    return True  # (not a sentence's first word; or all there is; or spoken to, or its owner)
         if self.figures:
-            for run in re.findall(r"\d[\d\s().+\-/]*\d|\d", said):
+            for run in re.findall(r"\d[\d\s().+\-/]*\d|\d", raw):
                 digits = re.sub(r"\D", "", run)
                 if any(f == digits or len(f) >= 7 and f in digits for f in self.figures):
                     return True
         return False
-
 
 def _strings(value: Any, leave: tuple[str, ...] = ()) -> list[str]:
     """Every text in a profile section, however deep (but the keys in `leave`)."""

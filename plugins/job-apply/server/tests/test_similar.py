@@ -697,6 +697,13 @@ SENSITIVE = [
     "What is your marital status?", "What is your national origin?", "What is your nationality?",
     "Do you have a medical condition?", "Are you pregnant?", "Do you identify as transgender?", "Are you over 40?",
     "Is your birthday in the next 30 days?",
+    # the last read's
+    "Have you ever pleaded no contest?", "Have you had a DUI?", "Have you ever served time?",
+    "Has a record of yours been expunged?", "Have you been adjudicated delinquent?", "Do you attend church?",
+    "Can you work on your day of worship?", "Do you keep the sabbath?", "Are you single?",
+    "Do you have a domestic partner?", "Do you plan to have children?", "Are you expecting a child?",
+    "What country were you born in?", "What is your native language?", "Do you have a physical or mental condition?",
+    "Do you have any health issues?", "What is your maiden name?",
 ]
 
 
@@ -915,7 +922,18 @@ def test_a_name_that_is_an_everyday_word_refuses_only_where_it_stands_as_a_name(
     for text in ("Will you relocate?", "How long have you driven?", "Is this long-term work for you? Will you stay?",
                  "Are you willing to work long hours?"):
         assert not held.holds(text), text
-    for text in ("Thanks, Will", "Is Will Long your legal name?", "Resume of WILL LONG", "Will_Long.pdf"):
+    for text in ("Thanks, Will", "Is Will Long your legal name?", "Resume of WILL LONG", "Will_Long.pdf", "Will",
+                 "Will, would you relocate?", "Who referred you? Will", "Will (me)", "Will's resume",
+                 "Will\u2019s resume", "Will: preferred", "will_resume.pdf", "WillResume", "resume-long.docx"):
+        assert held.holds(text), text
+
+
+def test_a_value_whole_only_as_written_is_still_the_persons(job_apply_home):
+    """The last read's: taking run-together words apart must not hide a value that has a capital, a hyphen or a dot
+    inside it."""
+    held = similar.Personal(["McKenzie", "DeVry University", "PayPal", "Jean-Luc", "jean.luc@example.org"])
+    for text in ("McKenzie_Resume.pdf", "McKenzie Resume", "Did you attend DeVry University?", "Worked at PayPal?",
+                 "Jean-Luc, would you relocate?", "Send it to jean.luc@example.org", "JeanLuc-McKenzie.pdf"):
         assert held.holds(text), text
 
 
