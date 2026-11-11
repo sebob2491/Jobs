@@ -198,7 +198,8 @@ LISTEN_JS = """() => {
       if (!window.__jdHandOn || !e.isTrusted || !(e.target instanceof Element)) return;
       const b = e.target.closest('button, input[type="button"], input[type="submit"], a, [role="button"]');
       if (!b) return;
-      const words = clean(b.innerText || b.textContent || b.value || b.getAttribute('aria-label') || '').slice(0, %d);
+      const said = b.innerText || b.textContent || (b.tagName === 'INPUT' ? b.value : '');
+      const words = clean(said || b.getAttribute('aria-label') || '').slice(0, %d);
       if (words && typeof window.%s === 'function') window.%s(words);
     } catch (_) { /* never the page's trouble */ }
   }, true);
