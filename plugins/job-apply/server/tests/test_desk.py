@@ -1133,7 +1133,7 @@ def test_the_tailoring_switch_is_kept_and_its_waiting_jobs_listed(srv, job_apply
                             "min_pay": None, "posted_within": None, "within_miles": None, "requirements": [],
                             "workplace": [], "job_types": [], "systems": [],
                             "auto_search": False, "jobs_at_once": 1,  # (the tests' profile: one at a time)
-                            "dont_wait": False, "companies": []})
+                            "dont_wait": False, "learn_from_me": True, "companies": []})
                 await desk.applier.stop()  # hold the queue still while the waiting job is set up
                 desk.applier.runs[job["id"]] = Run(job["id"], "FSE", "Example Fab", status="needs_you", need="tailor")
                 state = (await c.get("/api/state", headers=h)).json()
