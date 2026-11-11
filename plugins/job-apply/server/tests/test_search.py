@@ -3825,3 +3825,18 @@ def test_the_las_vegas_list_searches_ags_and_googles_henderson_site_through_thei
     assert {"paylocity", "google_careers"} <= set(search_module.CLIENT_SIDE)
     assert search_module.wordings_for("google_careers", "data center technician") == ["data center technician"]
 
+
+def test_the_las_vegas_employers_left_without_a_search_say_what_was_found():
+    """Nov 11, 2026: Zappos' amazon.jobs search can be narrowed to it but had none near Las Vegas; PlayStudios'
+    Dayforce board answered its search call with 403; Insight Global's board reads a sign-in-protected service."""
+    from job_apply.search import employer_lists
+
+    entries = {c["name"]: c for c in yaml.safe_load(
+        employer_lists()["las-vegas"].read_text(encoding="utf-8"))["companies"]}
+    said = {name: " ".join(entries[name]["no_search"].split()) for name in
+            ("Zappos", "PlayStudios", "Insight Global (contract jobs)")}
+    assert all("search" not in entries[name] for name in said)
+    assert "can be narrowed to Zappos" in said["Zappos"] and "no openings near Las Vegas" in said["Zappos"]
+    assert "Dayforce" in said["PlayStudios"] and "403" in said["PlayStudios"]
+    assert "sign-in" in said["Insight Global (contract jobs)"]
+    assert "can't be narrowed" not in said["Zappos"] and "isn't a system" not in said["PlayStudios"]

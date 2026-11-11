@@ -121,7 +121,7 @@ companies:
     ats: custom               # dayforce; playstudios.com/careers links to this Dayforce board
     nv_sites: Las Vegas (HQ; mobile casino games)
     confidence: medium        # page seen, Oct 2026
-    no_search: Dayforce isn't a system the plugin searches
+    no_search: its Dayforce board loads its openings with a search call that answered 403 (HTTP Forbidden) when asked in Nov 2026, so the plugin doesn't read it
   # Data centers, tech, and the airline headquartered here (checked Oct 2026).
   - name: Switch
     careers_url: https://www.switch.com/careers/current-openings/
@@ -151,7 +151,7 @@ companies:
     ats: custom               # jobs.zappos.com opens amazon.jobs' search for Zappos (an Amazon company)
     nv_sites: Las Vegas (HQ downtown)
     confidence: medium        # page seen, Oct 2026
-    no_search: amazon.jobs' search, as the plugin runs it, can't be narrowed to Zappos
+    no_search: amazon.jobs' search can be narrowed to Zappos (its subsidiaries filter with base_query=zappos), and did so on Nov 11, 2026, but it found no openings near Las Vegas, so the plugin has no search for it
   # Utilities, public agencies and schools (checked Oct 2026).
   - name: NV Energy
     careers_url: https://careers.nvenergy.com/
@@ -257,7 +257,7 @@ companies:
     nv_sites: Las Vegas, Henderson, North Las Vegas
     confidence: medium        # page seen, Oct 2026
     # (its iCIMS Jibe site lists only its own staff's jobs: recruiters and account managers)
-    no_search: insightglobal.com's own job search isn't one the plugin reads
+    no_search: insightglobal.com's job board reads its openings from a service that needs a sign-in, so the plugin can't read them
   # Federal and defense IT around Nellis AFB and the Nevada National Security Site (checked Oct 2026).
   - name: Mission Support and Test Services (NNSS)
     careers_url: https://nnss.gov/careers/
