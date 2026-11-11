@@ -606,6 +606,12 @@ button.score:hover { box-shadow: 0 0 0 2px var(--control-line); }
 .q > span { font-size: 14px; }
 .q input[type=text], .q select { width: 100%; }
 .q .remember { font-size: 12px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+/* a suggested answer, above its question (similar.py): one line, filled by similarSync */
+.similar { margin: 10px 0 -4px; }
+.similar + .q { margin-top: 4px; }
+.similar-line { margin: 0; }
+.similar-line .btn { margin: 2px 4px 0 0; }
+.similar-err { color: var(--bad); }
 .log { font-size: 12px; color: var(--muted); margin: 6px 0 8px; padding-left: 16px; }
 .log .when, #week .when { font-variant-numeric: tabular-nums; margin-right: 4px; }
 .counts { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 18px; }
@@ -1183,6 +1189,13 @@ body.stopped > :not(#stopped) { display: none; }
                   <p class="s" id="learn-me-said">When the desk can't find the button that moves a step on and you press it yourself, it remembers that button's words for that employer's page and presses it next time. It never learns a Submit, an agreement, a sign-in or anything you type.</p></div>
                 <input type="checkbox" class="switch" id="learn-me" aria-labelledby="learn-me-name" aria-describedby="learn-me-said">
                 <p class="set-ok" id="learn-me-ok" role="status" hidden>Saved</p>
+              </div>
+              <div class="setrow">
+                <div><p class="t" id="similar-me-name">Suggest answers I've given to similar questions</p>
+                  <p class="s" id="similar-me-said">When a form asks something in new words, the desk asks a model whether it means the same as a question you've answered. Only the questions' words are sent, never your answers or anything about you, and nothing is filled until you say yes.</p>
+                  <p class="s" id="similar-me-by"></p></div>
+                <input type="checkbox" class="switch" id="similar-me" aria-labelledby="similar-me-name" aria-describedby="similar-me-said similar-me-by">
+                <p class="set-ok" id="similar-me-ok" role="status" hidden>Saved</p>
               </div>
               <!-- (what the desk has learned: asked of the desk (/api/learned) when this panel opens and after each Forget,
                    never part of the state; drawn by renderLearned) -->
@@ -2552,7 +2565,10 @@ function question(jobId, q, i, repeated = false, company = "") {
   // (an optional ID's Remember starts unticked: left empty for good at this employer only where it's ticked, by the
   // person; typing their ID ticks it, unless they've ticked or unticked it themselves)
   const ticked = !(consent || forced || q.employer_id);
-  return `<label class="q"${q.employer_id ? ` data-optional-id="1"` : ""}><span>${where}${q.error ? ` <span class="small">(${esc(q.error)})</span>` : ""}</span>${about}${input}
+  // (a suggested answer's line goes above it: an empty slot, filled by similarSync, so a card is drawn the same
+  // whether or not an offer has come)
+  const slot = repeated ? "" : `<div class="similar" data-similar-for="${esc(q.label)}" hidden></div>`;
+  return `${slot}<label class="q"${q.employer_id ? ` data-optional-id="1"` : ""}><span>${where}${q.error ? ` <span class="small">(${esc(q.error)})</span>` : ""}</span>${about}${input}
     ${repeated || q.id_unsure ? "" : `<span class="remember"><input type="checkbox" data-remember="${esc(q.label)}" ${ticked ? "checked" : ""}> ${keep}</span>`}</label>`;
 }
 
@@ -2567,6 +2583,121 @@ document.addEventListener("input", (e) => {
 document.addEventListener("change", (e) => {
   if (e.target.dataset?.remember !== undefined && e.target.closest?.("[data-optional-id]")) e.target.dataset.touched = "1";
 });
+
+// Suggested answers (similar.py): a question the desk found to mean the same as one the person answered before has
+// `similar` in its run. The earlier question and the person's answer come only from /api/similar, asked once per
+// job when a question first shows it (and again when the set of offered questions changes, or the card is drawn
+// anew), and live only in the line drawn above the question: no variable, attribute, storage or state keeps them.
+// "Use it" puts the answer in the form and marks the question (similarUsed: job and label only), so the card's own
+// send posts use_similar for it; nothing is posted by "Use it" itself
+const similarUsed = new Set(), similarAsking = new Set();
+const simKey = (job, label) => `${job}\u0000${label}`;
+const simWords = (t) => String(t || "").replace(/\s+/g, " ").trim().toLowerCase();
+const simForm = (el) => el.closest("form[data-answer]");
+const simSlot = (form, label) => [...form.querySelectorAll("[data-similar-for]")].find((x) => x.dataset.similarFor === label);
+const simControl = (form, label) => [...form.querySelectorAll("[data-q]")].find((x) => x.dataset.q === label);
+function similarDraw(slot, offer) {
+  slot.innerHTML = `<p class="small similar-line" data-similar-offer><span data-similar-said>This looks like one you answered: “<span data-similar-earlier>${
+    esc(offer.earlier)}</span>” Your answer: <span data-similar-answer>${esc(offer.answer)}</span>.</span>`
+    + `<span class="similar-err" role="alert" data-similar-err hidden></span> `
+    + `<button type="button" class="btn sm soft" data-similar-use>Use it</button>`
+    + `<button type="button" class="btn sm ghost" data-similar-no>No, it's different</button></p>`
+    + `<p class="small similar-line" data-similar-using hidden>Using your earlier answer. `
+    + `<button type="button" class="btn sm ghost" data-similar-undo>Undo</button></p>`;
+  slot.hidden = false;
+}
+function similarShow(slot, using) {
+  slot.querySelector("[data-similar-offer]").hidden = using;
+  slot.querySelector("[data-similar-using]").hidden = !using;
+}
+function similarPut(control, answer) {  // (the answer chosen in the card's form, as the person would; never an event)
+  if (control.tagName === "SELECT") {
+    const at = [...control.options].findIndex((o) => simWords(o.value) === simWords(answer));
+    if (at >= 0) control.selectedIndex = at;
+  } else control.value = answer;
+}
+async function similarSync() {
+  if (!state) return;
+  const runs = allRuns(), jobs = new Set();
+  for (const form of document.querySelectorAll("form[data-answer]")) {
+    const job = form.dataset.answer;
+    jobs.add(job);
+    const r = runs.find((x) => String(x.job_id) === job);
+    const want = (r && r.status === "needs_you" ? r.questions || [] : []).filter((q) => q.similar).map((q) => q.label);
+    const key = want.join("\u0000");
+    if ((form.dataset.similarSeen || "") === key) continue;
+    if (!want.length) {  // (declined, or no offer any more: the lines go)
+      form.querySelectorAll("[data-similar-for]").forEach((x) => { x.replaceChildren(); x.hidden = true; });
+      for (const k of [...similarUsed]) if (k.startsWith(job + "\u0000")) similarUsed.delete(k);
+      delete form.dataset.similarSeen;
+      continue;
+    }
+    if (similarAsking.has(job)) continue;
+    similarAsking.add(job);
+    let offers = [];
+    try { offers = (await api(`/api/similar?job_id=${encodeURIComponent(job)}`)).offers || []; } catch (e) { /* (no line: the card is as it was) */ }
+    similarAsking.delete(job);
+    const now = document.querySelector(`form[data-answer="${CSS.escape(job)}"]`);
+    if (!now) continue;
+    for (const o of offers) {
+      const slot = simSlot(now, o.label);
+      if (!slot) continue;
+      similarDraw(slot, o);
+      if (similarUsed.has(simKey(job, o.label))) {  // (the card was drawn again: the choice is put back too)
+        const control = simControl(now, o.label);
+        if (control) similarPut(control, o.answer);
+        similarShow(slot, true);
+      }
+    }
+    now.dataset.similarSeen = want.join("\u0000");
+  }
+  for (const k of [...similarUsed]) if (!jobs.has(k.split("\u0000")[0])) similarUsed.delete(k);
+}
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest?.("[data-similar-use], [data-similar-undo], [data-similar-no]");
+  if (!b || b.disabled) return;
+  const slot = b.closest("[data-similar-for]"), form = simForm(slot), label = slot.dataset.similarFor;
+  const job = form.dataset.answer, control = simControl(form, label), key = simKey(job, label);
+  if (b.matches("[data-similar-use]")) {
+    if (control) similarPut(control, slot.querySelector("[data-similar-answer]").textContent);
+    similarUsed.add(key);
+    similarShow(slot, true);
+    slot.querySelector("[data-similar-undo]").focus();
+  } else if (b.matches("[data-similar-undo]")) {
+    if (control) control.value = "";
+    similarUsed.delete(key);
+    similarShow(slot, false);
+    slot.querySelector("[data-similar-use]").focus();
+  } else {
+    const err = slot.querySelector("[data-similar-err]"), said = slot.querySelector("[data-similar-said]");
+    b.disabled = true;
+    try {
+      await api("/api/similar/decline", {job_id: Number(job), label});
+      similarUsed.delete(key);
+      slot.replaceChildren();
+      slot.hidden = true;
+      control?.focus();
+    } catch (er) {
+      err.textContent = er.message || "That wasn't saved.";
+      err.hidden = false;
+      said.hidden = true;
+      b.disabled = false;
+    }
+  }
+});
+// (an answer changed by hand drops its mark: what's typed or picked is sent as usual)
+function similarChanged(e) {
+  const el = e.target;
+  if (!el.dataset || el.dataset.q === undefined) return;
+  const form = simForm(el);
+  if (!form || !similarUsed.has(simKey(form.dataset.answer, el.dataset.q))) return;
+  const slot = simSlot(form, el.dataset.q), mine = slot && slot.querySelector("[data-similar-answer]");
+  if (mine && simWords(el.value) === simWords(mine.textContent)) return;
+  similarUsed.delete(simKey(form.dataset.answer, el.dataset.q));
+  if (slot && slot.firstChild) similarShow(slot, false);
+}
+document.addEventListener("input", similarChanged);
+document.addEventListener("change", similarChanged);
 
 // A job's buttons, in their order: each one in `which` its card has (with Cover letter and Report a problem after them
 // unless `row`: the one button in the row of a card under Home's lists, drawn as a small button)
@@ -2861,6 +2992,7 @@ function renderSide() {
   renderThisWeek();
   if (arrived) passArrive(arrived);
   tickClocks();
+  similarSync();  // (the suggested answers' lines, filled where the state says there is an offer)
 }
 
 // Working on (C5): each running job's title, company and how long it has run (from its first log_at, written by
@@ -3099,7 +3231,8 @@ function rememberedRow(a, i) {
   const id = esc(a.id), q = `ans-q-${i}`, busy = rememberedBusy === a.id ? " disabled" : "";
   const shown = !a.private || rememberedShown.has(a.id);
   const words = a.private ? rememberedShown.get(a.id) || "" : answerWords(a.answer);
-  const at = a.at ? `<p class="s">Only at ${esc(a.at)}</p>` : "";
+  const at = (a.at ? `<p class="s">Only at ${esc(a.at)}</p>` : "")
+    + (a.matched ? `<p class="s">Matched to: \u201c${esc(a.matched)}\u201d</p>` : "");
   let value, acts;
   if (rememberedEdit && rememberedEdit.id === a.id) {
     value = `<input type="text" data-ans-box="${id}" autocomplete="off" spellcheck="false" aria-labelledby="${q}"${busy}>`;
@@ -3524,6 +3657,10 @@ function renderHeader() {
     : "Off: a sign-in or emailed code holds the other jobs until you're done, or 5 minutes pass.";
   const learnMe = $("learn-me");
   if (document.activeElement !== learnMe && !learnMe.dataset.saving) learnMe.checked = !!s.learn_from_me;
+  const similarMe = $("similar-me");
+  if (document.activeElement !== similarMe && !similarMe.dataset.saving) similarMe.checked = !!s.suggest_similar;
+  const similarBy = s.similar_by ? `Uses ${s.similar_by}.` : "Needs your API key or Claude: with neither, nothing is suggested.";
+  if ($("similar-me-by").textContent !== similarBy) $("similar-me-by").textContent = similarBy;
   const tailor = $("tailor");
   if (document.activeElement !== tailor) tailor.checked = !!s.tailor_resumes;
   tailor.closest("label").hidden = !!state.standalone;  // (only Claude writes a tailored resume: C7)
@@ -5023,7 +5160,7 @@ document.addEventListener("click", (e) => {
   if (jobAct === "fill") {
     const form = document.querySelector(`form[data-answer="${job}"]`);
     const all = [...form.querySelectorAll("[data-q]")].map((el) => ({
-      label: el.dataset.q, value: el.value,
+      label: el.dataset.q, value: el.value, similar: similarUsed.has(simKey(job, el.dataset.q)),
       remember: form.querySelector(`[data-remember="${CSS.escape(el.dataset.q)}"]`)?.checked ?? !el.dataset.q.includes(" | "),
       optional: !!el.closest("[data-optional-id]"),
     }));
@@ -5031,7 +5168,9 @@ document.addEventListener("click", (e) => {
     // then on where it's ticked; and a card that asks only such questions may go on with them all empty. Carry on
     // leaves one empty for this job alone)
     if (!all.some((x) => x.value) && !all.every((x) => x.optional)) { alert("Answer at least one question first."); return; }
-    const answers = all.filter((x) => x.value || x.optional).map(({optional, ...x}) => x);
+    // (a suggested answer the person said yes to goes as use_similar, with no value: the desk takes it from its offer)
+    const answers = all.filter((x) => x.value || x.optional || x.similar)
+      .map(({optional, similar, ...x}) => similar ? {label: x.label, use_similar: true, remember: x.remember} : x);
     act(async () => { const out = await api("/api/answer", {job_id: Number(job), answers}); if (out.note) alert(out.note); });
   } else if (jobAct === "report") {
     makeReport(job);
@@ -5228,6 +5367,14 @@ document.addEventListener("change", (e) => {
     const on = t.checked, ok = $("learn-me-ok");
     ok.hidden = true;
     saveRow(t, () => api("/api/settings", {learn_from_me: on}), () => { t.checked = !on; }).then(() => {
+      const err = t.closest(".setrow").querySelector(":scope > .set-err");
+      ok.hidden = !!(err && !err.hidden);
+    });
+  }
+  if (t.id === "similar-me") {  // (saved like the one above)
+    const on = t.checked, ok = $("similar-me-ok");
+    ok.hidden = true;
+    saveRow(t, () => api("/api/settings", {suggest_similar: on}), () => { t.checked = !on; }).then(() => {
       const err = t.closest(".setrow").querySelector(":scope > .set-err");
       ok.hidden = !!(err && !err.hidden);
     });

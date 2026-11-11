@@ -417,13 +417,13 @@ def test_tab_reaches_each_forget_and_focus_stays_in_the_list_after_one(srv, job_
                 await open_desk(page, desk, "settings/applying")
                 await page.wait_for_selector("#learned[data-loaded]", state="attached")
                 here = "() => document.activeElement.dataset.learnedForget || document.activeElement.id"
-                await page.focus("#learn-me")
+                await page.focus("#similar-me")  # (the row just above the list)
                 order = []
                 for _ in range(3):
                     await page.keyboard.press("Tab")
                     order.append(await page.evaluate(here))
                 # (the ring shows on a control the keyboard reached)
-                await page.focus("#learn-me")
+                await page.focus("#similar-me")  # (the row just above the list)
                 await page.keyboard.press("Tab")
                 ring = await page.evaluate("""() => { const s = getComputedStyle(document.activeElement);
                   return [s.outlineStyle, parseFloat(s.outlineWidth)]; }""")

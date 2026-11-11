@@ -149,7 +149,7 @@ def test_the_keyboard_goes_through_settings_menu_and_into_the_panel_in_reading_o
                       || el.textContent.trim(); }"""
                 await page.focus(".snav a[href='#settings/profile']")
                 order = []
-                for _ in range(len(PANELS) + 15):  # (Learn from what I do's switch is one more stop)
+                for _ in range(len(PANELS) + 16):  # (two switches more: Learn, Suggest)
                     order.append(await page.evaluate(focused))
                     await page.keyboard.press("Tab")
                 # (Shift+Tab back up to Accounts and passwords, the menu's fourth link; Enter: its panel shows, and
@@ -173,7 +173,8 @@ def test_the_keyboard_goes_through_settings_menu_and_into_the_panel_in_reading_o
     order, pressed, ring, then = run(go())
     assert order == [*(f"#settings/{panel}" for panel in PANELS), "set-auto", "set-practice", "set-accounts",
                      "set-notices", "Decline", "Accept if there is no other way", "at-once-1", "at-once-2", "at-once-3",
-                     "at-once-4", "at-once-5", "dont-wait", "learn-me", "safety-btn", "For fixing the desk"], order
+                     "at-once-4", "at-once-5", "dont-wait", "learn-me", "similar-me", "safety-btn",
+                     "For fixing the desk"], order
     assert pressed == "#settings/passwords", pressed
     assert ring == "solid", ring  # (the focus ring shows on a menu link reached by the keyboard)
     # (the panel's first control: Make my passwords, where the job systems' list was: the design's E4)
