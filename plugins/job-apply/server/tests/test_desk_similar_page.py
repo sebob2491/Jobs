@@ -404,6 +404,7 @@ def test_the_last_line_says_what_is_used_or_that_nothing_is_suggested_without_a_
                 await open_desk(page, desk, "settings/applying")
                 first = (await page.evaluate(_SWITCH))["by"]
                 by["words"] = None
+                desk._similar_by_said = None  # (the desk keeps its look for a minute: looked at afresh here)
                 await page.evaluate("() => refresh()")
                 await page.wait_for_function(
                     "(w) => document.getElementById('similar-me-by').textContent === w", arg=NO_MODEL)
