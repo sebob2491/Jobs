@@ -5311,16 +5311,19 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                         code="site_went_wrong")
             return _Then.STOP
         # (a learned press, only where learning is on: _press_learned. AGAIN where it took the page on to a step this
-        # pass hadn't been on; the words of a confirmation where the page after it says the application went in, which
-        # stops for the person to check, as after a Submit with none showing; else the stop as ever)
+        # pass hadn't been on; a text (a confirmation's words, or "" where the page after it shows no further step of
+        # this application) where it may have sent it, which stops for the person to check, as after a Submit with no
+        # confirmation showing; else the stop as ever)
         learned = await self._press_learned(run, ps, data) if self._learning_on() else None
         if learned is _Then.AGAIN:
             return _Then.AGAIN
-        sent, pressed = (learned if isinstance(learned, str) else ""), (run.learned_press or {}).get("button", "")
+        sent, said = isinstance(learned, str), learned if isinstance(learned, str) else ""
+        pressed = (run.learned_press or {}).get("button", "")
         self._pause(run, "check_submit" if sent else "stuck",
-                    f"I pressed \u201c{pressed}\u201d, as you did here before, and the page now says "
-                    f"\u201c{sent}\u201d: this application may have gone in. Check your email or the site: if it "
-                    "did, press \u201cI submitted it myself\u201d; if it didn't, press Carry on." if sent else
+                    f"I pressed \u201c{pressed}\u201d, as you did here before, and "
+                    + (f"the page now says \u201c{said}\u201d" if said else "the page after it shows no further step "
+                       "of this application") + ": it may have gone in. Check your email or the site: if it did, "
+                    "press \u201cI submitted it myself\u201d; if it didn't, press Carry on." if sent else
                     "I couldn't find the button that moves this application on. Press it in the desk's "
                     "browser window, then press Carry on.", code="check_submit" if sent else "no_step_button")
         if not sent and run.status == "needs_you" and self._learning_on():
@@ -5334,9 +5337,10 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         for a greyed or doubled one, which may be there another time); the driver's own click then runs every guard
         again. Then the page is read: one that says the application went in (a confirmation) forgets the entry and
         gives the confirmation's words (the caller stops for the person to check, and the desk never presses Submit
-        for the job); one that is a step this pass hadn't been on is AGAIN (learned.worked); any other is
-        learned.failed, and AGAIN where the page changed at all (the driver's own checks take it from there), None
-        where it didn't (the stop is said as ever)."""
+        for the job), and so does one that shows no further step of this job's application (_further_step,
+        _own_place), with "" for words; one that is a step this pass hadn't been on is AGAIN (learned.worked); any
+        other is learned.failed, and AGAIN where the page changed at all (the driver's own checks take it from there),
+        None where it didn't (the stop is said as ever)."""
         srv = self.srv
         place, key = _learn_place(run, str(data.get("url") or "")), _learn_page_key(data)
         entry = learned_buttons.lookup(place, key) if place and key and key not in run.learned_tried else None
@@ -5373,6 +5377,14 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             run.pressed_before = True
             self._log(run, f"after that press the page says \u201c{_short(gone[0])}\u201d")
             return gone[0]
+        if not _further_step(after) or not self._own_place(run, str(after.get("url") or "")):
+            # nothing shows it went on to a further step of this application (a page that thanks the person in words
+            # confirmations() doesn't know, or in another language; another job's or the site's home): taken as one
+            # that may have gone in, as above
+            learned_buttons.forget(place, key)
+            run.pressed_before = True
+            self._log(run, "after that press the page shows no further step of this application")
+            return ""
         now = _step_place(after)
         if now != before and now not in been:
             learned_buttons.worked(place, key)
@@ -5422,13 +5434,15 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         """The first look of the pass that follows a "no step button" stop: if the person pressed one button in the tab
         meanwhile (run.hand_press; two with different words: none is kept, the last may not be the one that moved the
         step on) and the application is on a different step now, still this job's and at the same place and employer
-        (the _looks_past checks), not on a page that says it went in, with the run going on (not ended, no Submit
+        (the _looks_past checks), showing a further step of it (_further_step) and not a page that says it went in,
+        with the run going on (not ended, no Submit
         pressed), and _may_learn passes for that button as the stop saw the page, its words are kept for this place
         and the page as it was (learned.remember). Then the stop's record goes, learned or not."""
         stop, press, heard = run.hand_stop, run.hand_press, run.hand_heard
         run.hand_stop, run.hand_press, run.hand_heard = None, "", set()
         if (not stop or not press or len(heard) != 1 or stop.get("code") != "no_step_button"
                 or run.status != "running" or run.pressed_before or run.submit_pressed or confirmations(text)
+                or not _further_step(data)
                 or not self._learning_on() or not self._looks_past(run, data, text)
                 or _learn_page_key(data) == stop["page"]
                 or _learn_place(run, str(data.get("url") or "")) != stop["place"]
@@ -8093,10 +8107,14 @@ _STEP_WORDS = re.compile(r"\b(?:next|continue|proceed|forward|go on|go to|sectio
                          r"review)\b", re.I)
 _REFUSED_WORDS = re.compile(
     r"\b(?:"
-    # an end or a send: the application could go in with it
-    r"done|finish|complet|send|submi|appl(?:y|ies|ied)\b|confirm|place|certif|attest|sign|"
+    # an end or a send: the application could go in with it (and "application" itself: "Proceed with application")
+    r"done|finish|complet|send|submi|appl(?:y|ies|ied)\b|confirm|place|certif|attest|sign|finali[sz]|final\b|"
+    r"lodge|e-?sign|application|"
     # a way back, out or past, or something taken away: not the step's way on
     r"back|previous|cancel|exit|skip|delet|remov|withdraw|discard|clear|reset|"
+    # away from this application: another job, a list, the site's home, later, a sign-out, or past what it asks
+    r"job|opening|position|home|dashboard|later|leave|log ?out|without|anyway|interview|survey|share|forward to\b|"
+    r"my\b|all\b|list|search|close|menu|"
     # something added or begun: another block, a file, a test
     r"add|another|upload|attach|start|begin|test|assessment|"
     # another site's sign-in, a bot check, an account or the person's own details
@@ -8111,19 +8129,32 @@ _MOST_WORDS = 6
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
-def _letters(text: Any) -> set[str]:
-    """A text's words of three letters or more, case aside."""
-    return {w for w in re.findall(r"[^\W\d_]+", str(text or "").casefold()) if len(w) >= 3}
+def _letters(text: Any, shortest: int = 3) -> set[str]:
+    """A text's words of `shortest` letters or more, case aside (a list's: each item's)."""
+    if isinstance(text, (list, tuple)):
+        return set().union(set(), *(_letters(t, shortest) for t in text))
+    return {w for w in re.findall(r"[^\W\d_]+", str(text or "").casefold()) if len(w) >= shortest}
+
+
+# The profile's keys whose words are the person's own: their names (words of two letters or more), and their email's
+# local part, city, employers past and present and schools (three or more)
+_NAME_KEYS = ("personal.first_name", "personal.middle_name", "personal.last_name", "personal.preferred_name",
+              "personal.preferred_last_name")
+_OWN_KEYS = ("personal.address.city", "history.previous_employers", "experience.current_company")
 
 
 def _personal_words() -> set[str]:
-    """The profile's words that are the person's own: their first and last name, their email's local part, their city
-    (each word of three letters or more). None where the profile doesn't read."""
+    """The profile's words that are the person's own (_NAME_KEYS, _OWN_KEYS, the email's local part, each work_history
+    entry's company and each education_history entry's school), as whole words. None where the profile doesn't
+    read."""
     try:
         prof = config.Profile.load()
         email = str(prof.get("personal.email") or "")
-        return set().union(*(_letters(prof.get(k)) for k in ("personal.first_name", "personal.last_name",
-                                                            "personal.address.city")), _letters(email.split("@")[0]))
+        entries = [(e.get("company"), e.get("school")) for k in ("work_history", "education_history")
+                   for e in (prof.get(k) if isinstance(prof.get(k), list) else []) if isinstance(e, dict)]
+        return set().union(*(_letters(prof.get(k), 2) for k in _NAME_KEYS),
+                           *(_letters(prof.get(k)) for k in _OWN_KEYS), _letters(email.split("@")[0]),
+                           *(_letters([c, sch]) for c, sch in entries))
     except Exception:
         return set()
 
@@ -8160,6 +8191,8 @@ def _may_learn(button_words: str, buttons_seen: list[dict[str, Any]], personal: 
         return False
     if _PERSONAL_SHAPE.search(words) or len(words.split()) > _MOST_WORDS:
         return False
+    if any(c.isalpha() and not c.isascii() for c in words):  # (a look-alike letter, or a button not in English)
+        return False
     said = final_text(words)
     if SUBMIT_RE.search(words) or FINALISH_RE.match(said) or _SENDS.match(said):
         return False
@@ -8167,7 +8200,25 @@ def _may_learn(button_words: str, buttons_seen: list[dict[str, Any]], personal: 
         return False
     if _NOT_LEARNED.search(words) is not None:
         return False
-    return not _letters(words) & (_personal_words() if personal is None else personal)
+    return not _letters(words, 2) & (_personal_words() if personal is None else personal)
+
+
+def _further_step(data: dict[str, Any]) -> bool:
+    """Does this page show a further step of an application, the positive sign a press went on to one and sent nothing?
+    A box of the application's to fill (_app_fields: not a language picker; not a search box, and none of a sign-in or
+    account form: a password box or a sign-in or account form's button on the page means none counts), or a button
+    pick_next would press as a step's (_STEP: enabled, no submit, not the site's navigation). Not proof the page is this
+    job's application: the caller checks that apart (_own_place)."""
+    actions = [a for a in data.get("actions") or [] if isinstance(a, dict)]
+    fields = [f for f in _app_fields(data) if isinstance(f, dict)]
+    if any(a.get("sign_in_form") or a.get("account_form") or a.get("in_account_form") for a in actions) or any(
+            f.get("kind") == "password" for f in fields):
+        return False
+    boxes = [f for f in fields if f.get("kind") != "search"
+             and not re.search(r"\bsearch|\bkeywords?\b", f"{f.get('label') or ''} {f.get('name') or ''}", re.I)]
+    steps = [a for a in actions if not a.get("disabled") and not a.get("is_submit") and not a.get("same_page")
+             and not a.get("site_nav") and _STEP.match(final_text(str(a.get("text") or "")))]
+    return bool(boxes or steps)
 
 
 def _day_said(day: str) -> str:
