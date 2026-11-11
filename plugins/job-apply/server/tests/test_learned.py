@@ -1035,6 +1035,24 @@ def test_what_counts_as_a_further_step():
                                        "actions": [nxt]}, "")
 
 
+@pytest.mark.parametrize("page, text", [
+    ({"headings": ["Want to hear about roles like this?"], "fields": [{"id": "e", "label": "Email", "kind": "email"}],
+      "actions": [{"text": "Continue"}]}, ""),
+    ({"fields": [{"id": "k", "label": "Keep me posted about new roles", "kind": "checkbox"}],
+      "actions": [{"text": "Next"}]}, ""),
+    ({"headings": ["Join our mailing list"], "fields": [{"id": "e", "label": "Email", "kind": "email"}],
+      "actions": [{"text": "Continue"}]}, ""),
+    ({"fields": [{"id": "c", "label": "Comments", "kind": "textarea"}], "actions": [{"text": "Continue"}]},
+     "Thank you for applying. Please complete the following survey."),
+    ({"headings": ["Step 1 of 3"]}, "Thank you for your application. Please continue to check your email."),
+], ids=["roles like this", "keep me posted", "mailing list", "a thank-you and a survey", "a thank-you and steps"])
+def test_a_sign_up_in_other_words_or_a_thank_you_that_asks_for_more_is_no_further_step(page, text):
+    assert not pipeline._further_step(page, text)
+    how = {"fields": [{"id": "h", "label": "How did you hear about us?", "kind": "select"}],
+           "actions": [{"text": "Next"}]}
+    assert pipeline._further_step(how, "")  # (an application's own question is still one)
+
+
 ALERT_BOX = {"id": "e", "label": "Email", "kind": "email", "required": True}
 SURVEY = [{"id": "q1", "label": "How was applying today?", "kind": "radio", "required": True}]
 

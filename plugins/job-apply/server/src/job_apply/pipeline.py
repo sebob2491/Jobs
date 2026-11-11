@@ -8210,6 +8210,11 @@ def _may_learn(button_words: str, buttons_seen: list[dict[str, Any]], personal: 
     return not _letters(words, 2) & (_personal_words() if personal is None else personal)
 
 
+# A sign-up in words _SIDE_BOX doesn't know (the fourth review's): wider here than there, where a wide list would
+# take an application's own boxes for a sign-up's; here a miss only means a press isn't learned
+_LEARN_SIDE = re.compile(r"mailing list|keep me (?:posted|updated|informed)|stay in touch|\bupdates\b|"
+                         r"(?:hear|know) about (?:new |other |future |similar )?(?:roles|jobs|openings|opportunit)|"
+                         r"(?:roles|jobs|openings|opportunities) like this", re.I)
 _BOX_WORDS = ("label", "section", "sublabel")  # (where a box's own words are)
 
 
@@ -8217,9 +8222,10 @@ def _further_step(data: dict[str, Any], text: str) -> bool:
     """Does this page show a further step of an application, the positive sign a press went on to one and sent nothing?
     A step's way on (_FORWARD: Next, Continue, Save and Continue; enabled, no submit, not the site's navigation)
     beside a box of the application's to fill (_application_boxes: not a job-alert sign-up's, a greyed-out one, a
-    language picker or a search box; Save and Continue even with none), a progress bar short of its last step, or a
-    thank-you that asks the person to go on (_goes_on). Never a page with a password box or a sign-in or account
-    form's button. A box with only a Submit under it is none: a survey after the application went in looks the same
+    language picker or a search box; Save and Continue even with none), or a progress bar short of its last step.
+    Never a page with a password box or a sign-in or account form's button, one with a sign-up for job alerts or
+    the like on it, or one that thanks the person for applying (whatever it asks next).
+    A box with only a Submit under it is none: a survey after the application went in looks the same
     as the form's last page, so a press that leads there is not learned. Not proof the page is this job's
     application: the caller checks that apart (_own_place)."""
     actions = [a for a in data.get("actions") or [] if isinstance(a, dict)]
@@ -8227,16 +8233,19 @@ def _further_step(data: dict[str, Any], text: str) -> bool:
     if any(a.get("sign_in_form") or a.get("account_form") or a.get("in_account_form") for a in actions) or any(
             f.get("kind") == "password" for f in fields):
         return False
-    if _goes_on(text) or any(int(m[1]) < int(m[2]) for h in data.get("headings") or []
-                             for m in _STEP_OF.finditer(str(h))):
-        return True
     # a sign-up for job alerts, a newsletter or a talent community anywhere on the page (what a page shows once the
     # application has gone, beside a Continue): no sign of a step, whatever else is there
-    if (any(_SIDE_BOX.search(str(h)) for h in data.get("headings") or [])
-            or any(a.get("aside") or _SIDE_BOX.search(str(a.get("text") or "")) for a in actions)
-            or any(f.get("aside") or _SIDE_BOX.search(" ".join(str(f.get(k) or "") for k in _BOX_WORDS))
-                   for f in fields)):
+    def side(words: str) -> bool:
+        return bool(_SIDE_BOX.search(words) or _LEARN_SIDE.search(words))
+
+    if (any(side(str(h)) for h in data.get("headings") or [])
+            or any(a.get("aside") or side(str(a.get("text") or "")) for a in actions)
+            or any(f.get("aside") or side(" ".join(str(f.get(k) or "") for k in _BOX_WORDS)) for f in fields)):
         return False
+    if CONFIRMATION_RE.search(text or ""):
+        return False  # (it thanks the person for applying, whatever it asks next: a survey, "check your email")
+    if any(int(m[1]) < int(m[2]) for h in data.get("headings") or [] for m in _STEP_OF.finditer(str(h))):
+        return True
     ours = {id(f) for f in _app_fields(data)}
     boxes = [f for f in _application_boxes({**data, "fields": fields, "actions": actions})
              if id(f) in ours and f.get("kind") != "search"
