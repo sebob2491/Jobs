@@ -27,6 +27,7 @@ import os
 import re
 import shutil
 import sys
+import unicodedata
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -5377,7 +5378,12 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             run.pressed_before = True
             self._log(run, f"after that press the page says \u201c{_short(gone[0])}\u201d")
             return gone[0]
-        if not _further_step(after) or not self._own_place(run, str(after.get("url") or "")):
+        now = _step_place(after)
+        if now == before and self._own_place(run, str(after.get("url") or "")):
+            # the press left the step as it was (a button that does nothing now): counted, and dropped at the second
+            learned_buttons.failed(place, key)
+            return _Then.AGAIN if _fingerprint(after) != looked else None
+        if not _further_step(after, text) or not self._own_place(run, str(after.get("url") or "")):
             # nothing shows it went on to a further step of this application (a page that thanks the person in words
             # confirmations() doesn't know, or in another language; another job's or the site's home): taken as one
             # that may have gone in, as above
@@ -5385,8 +5391,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
             run.pressed_before = True
             self._log(run, "after that press the page shows no further step of this application")
             return ""
-        now = _step_place(after)
-        if now != before and now not in been:
+        if now not in been:
             learned_buttons.worked(place, key)
             ps.stalls = ps.stalled_in_a_row = 0
             return _Then.AGAIN
@@ -5442,7 +5447,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         run.hand_stop, run.hand_press, run.hand_heard = None, "", set()
         if (not stop or not press or len(heard) != 1 or stop.get("code") != "no_step_button"
                 or run.status != "running" or run.pressed_before or run.submit_pressed or confirmations(text)
-                or not _further_step(data)
+                or not _further_step(data, text)
                 or not self._learning_on() or not self._looks_past(run, data, text)
                 or _learn_page_key(data) == stop["page"]
                 or _learn_place(run, str(data.get("url") or "")) != stop["place"]
@@ -8114,6 +8119,7 @@ _REFUSED_WORDS = re.compile(
     r"back|previous|cancel|exit|skip|delet|remov|withdraw|discard|clear|reset|"
     # away from this application: another job, a list, the site's home, later, a sign-out, or past what it asks
     r"job|opening|position|home|dashboard|later|leave|log ?out|without|anyway|interview|survey|share|forward to\b|"
+    r"career|portal|brows|end\b|last\b|verif|"
     r"my\b|all\b|list|search|close|menu|"
     # something added or begun: another block, a file, a test
     r"add|another|upload|attach|start|begin|test|assessment|"
@@ -8191,7 +8197,8 @@ def _may_learn(button_words: str, buttons_seen: list[dict[str, Any]], personal: 
         return False
     if _PERSONAL_SHAPE.search(words) or len(words.split()) > _MOST_WORDS:
         return False
-    if any(c.isalpha() and not c.isascii() for c in words):  # (a look-alike letter, or a button not in English)
+    # (a look-alike letter, a button not in English, or a mark laid over a letter: "Su\u0301bmit")
+    if any((c.isalpha() and not c.isascii()) or unicodedata.category(c).startswith("M") for c in words):
         return False
     said = final_text(words)
     if SUBMIT_RE.search(words) or FINALISH_RE.match(said) or _SENDS.match(said):
@@ -8203,22 +8210,40 @@ def _may_learn(button_words: str, buttons_seen: list[dict[str, Any]], personal: 
     return not _letters(words, 2) & (_personal_words() if personal is None else personal)
 
 
-def _further_step(data: dict[str, Any]) -> bool:
+_BOX_WORDS = ("label", "section", "sublabel")  # (where a box's own words are)
+
+
+def _further_step(data: dict[str, Any], text: str) -> bool:
     """Does this page show a further step of an application, the positive sign a press went on to one and sent nothing?
-    A box of the application's to fill (_app_fields: not a language picker; not a search box, and none of a sign-in or
-    account form: a password box or a sign-in or account form's button on the page means none counts), or a button
-    pick_next would press as a step's (_STEP: enabled, no submit, not the site's navigation). Not proof the page is this
-    job's application: the caller checks that apart (_own_place)."""
+    A step's way on (_FORWARD: Next, Continue, Save and Continue; enabled, no submit, not the site's navigation)
+    beside a box of the application's to fill (_application_boxes: not a job-alert sign-up's, a greyed-out one, a
+    language picker or a search box; Save and Continue even with none), a progress bar short of its last step, or a
+    thank-you that asks the person to go on (_goes_on). Never a page with a password box or a sign-in or account
+    form's button. A box with only a Submit under it is none: a survey after the application went in looks the same
+    as the form's last page, so a press that leads there is not learned. Not proof the page is this job's
+    application: the caller checks that apart (_own_place)."""
     actions = [a for a in data.get("actions") or [] if isinstance(a, dict)]
-    fields = [f for f in _app_fields(data) if isinstance(f, dict)]
+    fields = [f for f in data.get("fields") or [] if isinstance(f, dict)]
     if any(a.get("sign_in_form") or a.get("account_form") or a.get("in_account_form") for a in actions) or any(
             f.get("kind") == "password" for f in fields):
         return False
-    boxes = [f for f in fields if f.get("kind") != "search"
+    if _goes_on(text) or any(int(m[1]) < int(m[2]) for h in data.get("headings") or []
+                             for m in _STEP_OF.finditer(str(h))):
+        return True
+    # a sign-up for job alerts, a newsletter or a talent community anywhere on the page (what a page shows once the
+    # application has gone, beside a Continue): no sign of a step, whatever else is there
+    if (any(_SIDE_BOX.search(str(h)) for h in data.get("headings") or [])
+            or any(a.get("aside") or _SIDE_BOX.search(str(a.get("text") or "")) for a in actions)
+            or any(f.get("aside") or _SIDE_BOX.search(" ".join(str(f.get(k) or "") for k in _BOX_WORDS))
+                   for f in fields)):
+        return False
+    ours = {id(f) for f in _app_fields(data)}
+    boxes = [f for f in _application_boxes({**data, "fields": fields, "actions": actions})
+             if id(f) in ours and f.get("kind") != "search"
              and not re.search(r"\bsearch|\bkeywords?\b", f"{f.get('label') or ''} {f.get('name') or ''}", re.I)]
-    steps = [a for a in actions if not a.get("disabled") and not a.get("is_submit") and not a.get("same_page")
-             and not a.get("site_nav") and _STEP.match(final_text(str(a.get("text") or "")))]
-    return bool(boxes or steps)
+    ways = [final_text(str(a.get("text") or "")) for a in actions if not a.get("disabled") and not a.get("is_submit")
+            and not a.get("same_page") and not a.get("site_nav") and not a.get("aside")]
+    return any(_FORWARD.match(t) and (boxes or t.lower().startswith("save")) for t in ways)
 
 
 def _day_said(day: str) -> str:

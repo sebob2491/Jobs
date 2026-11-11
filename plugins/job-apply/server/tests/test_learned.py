@@ -17,7 +17,8 @@ from job_apply.pipeline import Applier, Run, _may_learn
 needs_browser = pytest.mark.skipif(not browser_available(), reason="no Playwright Chromium installed")
 
 # A step of an application with no step button of the desk's own: its way on is "Go to next section", a plain button
-# (the desk knows Next, Continue and the like). The next section is a step with a Submit, which is the review page
+# (the desk knows Next, Continue and the like). The next section is a step with a box and Next, and after it comes a
+# page with a Submit, which is the review page
 PAGE = """<!doctype html><html><head><title>Apply</title></head><body>
 <h1 id="h">Your experience</h1>
 <div id="one"><p>Tell us about it.</p>
@@ -26,7 +27,9 @@ PAGE = """<!doctype html><html><head><title>Apply</title></head><body>
   document.getElementById('h').textContent='References';document.getElementById('two').hidden=false">{words}</button>
 {extra}</div>
 <div id="two" hidden><label for="r">Reference name</label><input id="r" type="text">
-<button type="submit">Submit application</button></div>
+<button type="button" onclick="document.getElementById('two').hidden=true;
+  document.getElementById('h').textContent='Review';document.getElementById('three').hidden=false">Next</button></div>
+<div id="three" hidden><p>Look it over.</p><button type="submit">Submit application</button></div>
 </body></html>"""
 
 
@@ -153,7 +156,7 @@ CODES = ["bot_check", "captcha", "account_theirs", "sign_in_refused", "email_cod
 NEEDS = {"bot_check": "bot_check", "captcha": "captcha", "email_code": "email_code", "your_submit": "your_submit"}
 # (the step the press led to: a further one of the application, a box to fill on it)
 MOVED = {"url": "https://acme.example/careers/apply", "headings": ["References"],
-         "fields": [{"id": "r", "label": "Reference name", "kind": "text"}], "actions": []}
+         "fields": [{"id": "r", "label": "Reference name", "kind": "text"}], "actions": [{"id": "n", "text": "Next"}]}
 
 
 def _stopped(srv, code="no_step_button"):
@@ -592,6 +595,10 @@ TABLE = {
     "Continue to \u0405ubmit": False, "Sub\u200bmit and continue": False, "Sub\u00admit and continue": False,
     "Continuer": False, "Weiter \u00bb": False, "Siguiente paso": False, "N\u0435xt": False,
     "Next \u00e9tape": False, "Continue \u2192 \u00e9tape suivante": False,
+    # the third review's: more words that leave the application, and a mark laid over a letter
+    "Go to careers": False, "Continue browsing": False, "Continue to careers site": False, "Go to portal": False,
+    "Go to end": False, "Continue to last step": False, "Continue to verification": False,
+    "Continue to Su\u0301bmit": False, "Ne\u0302xt": False,
     # no step word at all, nothing refused either: the allow-list alone keeps these out
     "Learn more": False, "Details": False, "Help": False, "Print": False, "Edit": False,
     "Show more": False, "Expand": False, "Hide": False, "Change": False, "Update": False, "Select": False,
@@ -999,21 +1006,57 @@ def test_a_press_is_kept_only_where_the_page_after_it_shows_a_further_step(srv, 
         page = {**page, "headings": ["Welcome back"], "fields": [{"id": "e", "label": "Email", "kind": "text"},
                                                                  {"id": "p", "label": "Password", "kind": "password"}]}
     elif after == "a step's button":
-        page = {**page, "headings": ["Voluntary disclosures"], "actions": [{"id": "n", "text": "Next"}]}
+        page = {**page, "headings": ["Voluntary disclosures"], "actions": [{"id": "n", "text": "Next"}],
+                "fields": [{"id": "v", "label": "Veteran status", "kind": "select"}]}
     run(applier._learn_from_hand(r, page, "Application sent"))
     assert (learned.lookup(PLACE, "0123456789abcdef") is not None) == (after == "a step's button")
 
 
 def test_what_counts_as_a_further_step():
-    box = {"id": "r", "label": "Reference name", "kind": "text"}
-    assert pipeline._further_step({"fields": [box]})
-    assert pipeline._further_step({"actions": [{"text": "Save and Continue"}]})
-    nav = [{"text": "Back to jobs"}, {"text": "Next", "site_nav": True}]
-    assert not pipeline._further_step({"fields": [], "actions": nav})
-    greyed = [{"text": "Next", "disabled": True}, {"text": "Submit", "is_submit": True}]
-    assert not pipeline._further_step({"actions": greyed})
-    assert not pipeline._further_step({"fields": [box], "actions": [{"text": "Next", "sign_in_form": True}]})
-    assert not pipeline._further_step({"fields": [{"id": "k", "label": "Keywords", "kind": "text"}]})
+    box = {"id": "r", "label": "Reference name", "kind": "text", "required": True}
+    nxt = {"text": "Next"}
+    assert pipeline._further_step({"fields": [box], "actions": [nxt]}, "")
+    assert pipeline._further_step({"fields": [{**box, "required": False}], "actions": [{"text": "Continue"}]}, "")
+    assert pipeline._further_step({"actions": [{"text": "Save and Continue"}]}, "")
+    assert pipeline._further_step({"headings": ["Current step 3 of 6"]}, "")
+    assert not pipeline._further_step({"headings": ["Current step 6 of 6"]}, "")
+    # a box with only a Submit under it (the form's last page, or a survey after it went in), or with no way on at all
+    assert not pipeline._further_step({"fields": [box], "actions": [{"text": "Submit", "is_submit": True}]}, "")
+    assert not pipeline._further_step({"fields": [box]}, "")
+    assert not pipeline._further_step({"actions": [nxt]}, "")  # (a way on with nothing to fill beside it)
+    for flag in ("site_nav", "disabled", "is_submit", "same_page", "aside"):
+        assert not pipeline._further_step({"fields": [box], "actions": [{**nxt, flag: True}]}, ""), flag
+    assert not pipeline._further_step({"fields": [box], "actions": [{"text": "Back to jobs"}]}, "")
+    sign_in = {"text": "Sign in", "sign_in_form": True}
+    assert not pipeline._further_step({"fields": [box], "actions": [nxt, sign_in]}, "")
+    assert not pipeline._further_step({"fields": [box, {"id": "p", "label": "Password", "kind": "password"}],
+                                       "actions": [nxt]}, "")
+    assert not pipeline._further_step({"fields": [{"id": "k", "label": "Keywords", "kind": "text"}],
+                                       "actions": [nxt]}, "")
+
+
+ALERT_BOX = {"id": "e", "label": "Email", "kind": "email", "required": True}
+SURVEY = [{"id": "q1", "label": "How was applying today?", "kind": "radio", "required": True}]
+
+
+@pytest.mark.parametrize("page", [
+    {"headings": ["You're all set", "Get job alerts"], "fields": [ALERT_BOX], "actions": [{"text": "Subscribe"}]},
+    {"headings": ["You're all set"], "fields": [{**ALERT_BOX, "aside": True}],
+     "actions": [{"text": "Subscribe", "aside": True}, {"text": "Continue"}]},
+    {"headings": ["You're all set", "Get job alerts"], "fields": [ALERT_BOX],
+     "actions": [{"text": "Subscribe"}, {"text": "Continue"}]},
+    {"headings": ["You're all set"], "fields": [], "actions": [{"text": "Continue"}]},
+    {"headings": ["Next steps"], "fields": [], "actions": [{"text": "Continue"}]},
+    {"headings": ["You're all set"], "fields": [{"id": "g", "label": "Name", "kind": "text", "disabled": True}],
+     "actions": [{"text": "Continue"}]},
+    {"headings": ["You're all set", "One quick question"], "fields": SURVEY,
+     "actions": [{"text": "Submit", "is_submit": True}]},
+], ids=["a job-alert box", "a job-alert box aside", "a job-alert box and Continue", "a bare Continue",
+        "next steps and Continue", "a greyed box", "a survey"])
+def test_a_page_that_may_follow_a_send_is_no_further_step(page):
+    """The third review: a thank-you in words the desk doesn't know, with a job-alert sign-up, a bare Continue or a
+    greyed-out box beside it, is not a step of the application (the desk's own _mid_application decides)."""
+    assert not pipeline._further_step(page, "You're all set. We'll be in touch.")
 
 
 # A step whose way on, "Continue to next step", sends the application: the page after says so in words confirmations()
@@ -1044,6 +1087,74 @@ def test_a_learned_press_after_which_the_page_shows_no_further_step_stops_for_th
     assert "shows no further step of this application" in r.reason and "I submitted it myself" in r.reason
     assert r.pressed_before and learned.all() == []
     assert srv.tracker().get(job["id"])["status"] != "applied"
+
+
+SENT_WITH_ALERTS = SENDS.replace(
+    "<h1>Thank you for applying</h1><p>Your application has been received.</p>",
+    "<h1>You're all set</h1><p>We'll be in touch.</p><h2>Get job alerts</h2><label for='e'>Email</label>"
+    "<input id='e' type='email' required><button type='button'>Subscribe</button>"
+    "<button type='button'>Continue</button>")
+
+
+@needs_browser
+def test_a_learned_press_that_leads_to_a_thanks_with_a_job_alert_box_stops_for_the_person_to_check(
+        srv, job_apply_home, quick, tmp_path):
+    assert SENT_WITH_ALERTS != SENDS
+    folder = tmp_path / "acme"
+    folder.mkdir()
+    (folder / "apply.html").write_text(SENT_WITH_ALERTS, encoding="utf-8")
+    url = (folder / "apply.html").resolve().as_uri()
+    seed(srv, url, words="Continue to next step")
+    job = job_at(srv, url)
+    applier = Applier(srv)
+
+    async def body(applier):
+        r = applier.enqueue(job["id"])
+        await until(lambda: r.status not in ("queued", "running"), about=state(r))
+        return r
+
+    r = over(applier, body)
+    assert (r.status, r.need, r.code) == ("needs_you", "check_submit", "check_submit"), (r.code, r.reason, r.log)
+    assert r.pressed_before and learned.all() == []
+    assert not any("Subscribe" in line or "job alert" in line.lower() and "filled" in line for line in r.log), r.log
+
+
+# A step whose way on leads to a real further step (a box to fill and Next)
+GOES_ON = SENDS.replace(
+    "<h1>Thank you for applying</h1><p>Your application has been received.</p>",
+    "<h1>References</h1><label for='r'>Reference name</label><input id='r' type='text' required>"
+    "<button type='button'>Next</button>")
+
+
+@needs_browser
+@pytest.mark.parametrize("own", [True, False], ids=["this job's page", "another job's page"])
+def test_a_learned_press_counts_only_where_the_page_after_it_is_still_this_jobs(srv, job_apply_home, quick, tmp_path,
+                                                                                monkeypatch, own):
+    folder = tmp_path / "acme"
+    folder.mkdir()
+    (folder / "apply.html").write_text(GOES_ON, encoding="utf-8")
+    url = (folder / "apply.html").resolve().as_uri()
+    seed(srv, url, words="Continue to next step")
+    job = job_at(srv, url)
+    if not own:
+        real = Applier._own_place
+        # (after the learned press, the page is taken as another job's)
+        monkeypatch.setattr(Applier, "_own_place",
+                            lambda self, run, u, o=None: False if run.learned_press else real(self, run, u, o))
+    applier = Applier(srv)
+
+    async def body(applier):
+        r = applier.enqueue(job["id"])
+        await until(lambda: r.status not in ("queued", "running"), about=state(r))
+        return r
+
+    r = over(applier, body)
+    if own:
+        assert r.code != "check_submit" and not r.pressed_before, (r.code, r.reason, r.log)
+        assert [e["worked"] for e in learned.all()] == [1]
+    else:
+        assert (r.status, r.code) == ("needs_you", "check_submit"), (r.code, r.reason, r.log)
+        assert r.pressed_before and learned.all() == []
 
 
 # -------------------------------------------------------------------- 3: characters that show nothing
