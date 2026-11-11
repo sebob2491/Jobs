@@ -512,16 +512,19 @@ class UpdateCheck:
         """At the desk's start, the record of an installer an Update button started, said once: done (this copy is its
         version), noted for the queue's notice; not finished (this copy is still older: the installer was cancelled or
         failed, and opened this desk again), said as the update's failure, and, where the record says the queue was
-        going before the update paused it, `unpause_queue` (the desk resumes it; one paused before, or a record that
-        doesn't say, stays paused). The record goes either way."""
+        going before the update paused it, `unpause_queue` (the desk resumes it; one paused before, a record that
+        doesn't say, or one that couldn't be removed, stays paused). The record goes either way."""
         record = updates_folder() / UPDATED_TO
         try:
             version, _, rest = record.read_text(encoding="utf-8").strip().partition("\n")
         except (OSError, ValueError):
             return
         version = version.strip()
-        with contextlib.suppress(OSError):
+        try:
             record.unlink()
+            gone = True
+        except OSError:  # (left: a later start would read it again, by then perhaps after the person's own Pause)
+            gone = False
         if _parts(version) is None:
             return
         current = config.plugin_version()
@@ -529,4 +532,4 @@ class UpdateCheck:
             self.updated_to = version
         elif newer(version, current):
             self._failed(NOT_FINISHED.format(version))
-            self.unpause_queue = rest.strip() == WAS_GOING
+            self.unpause_queue = gone and rest.strip() == WAS_GOING

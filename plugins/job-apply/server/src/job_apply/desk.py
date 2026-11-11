@@ -960,6 +960,12 @@ class Desk:
             return JSONResponse({"cleared": len(self.applier.clear_queue()), "paused": self.applier.paused})
         if action not in ("pause", "resume"):
             return JSONResponse({"error": f"unknown action {action!r}"}, status_code=404)
+        # (while an update holds the applier, its record says whether the queue was paused before it: kept true by
+        # refusing a press that would change that, as a Submit is refused then)
+        try:
+            self.applier.refuse_while_updating()
+        except ValueError as e:
+            return self._bad(e)
         (self.applier.pause_queue if action == "pause" else self.applier.resume_queue)()
         return JSONResponse({"paused": self.applier.paused})
 

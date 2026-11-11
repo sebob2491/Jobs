@@ -2070,10 +2070,11 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         """The desk's start after an update that didn't finish, whose pause was the only one (the queue was going
         before it: updates.note_updated): the queue as any restart leaves it. Going on; or, with jobs back from before
         the restart, held for the person's Carry on as those always are, a pause that ends with them (_restore_held),
-        never the person's own Pause queue."""
+        never the person's own Pause queue. Held by any job back (_restore_queue's own test): one waiting for its
+        tailored resume isn't a task yet, and resuming would begin it, Submit for me and all, once its resume came."""
         if not self.paused:
             return
-        if any(kind == "apply" and job_id in self._restored_ids for kind, job_id in self.tasks):
+        if self._restored_ids:
             self._restore_held = True
             self._save_queue()
         else:

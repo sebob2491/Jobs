@@ -294,6 +294,18 @@ def test_an_answer_saved_from_a_jobs_card_keeps_the_persons_comments_and_other_e
     assert text.startswith("# only a note so far\nanswers:\n- match: ") and len(_kept(job_apply_home)) == 1, text
 
 
+def test_an_answer_saved_where_the_edit_wouldnt_read_as_wanted_is_written_anew(job_apply_home):
+    """The read-back guard: two "answers:" keys (YAML reads the last), the new entry put under the first wouldn't be
+    read at all. The edit in place is checked against what was wanted before it's written, so the file is written anew,
+    and the answer kept is the one YAML reads, with the new one."""
+    path = job_apply_home / "answers.yaml"
+    path.write_text("answers:\n- match: first\n  answer: A\nanswers:\n- match: second\n  answer: B\n", encoding="utf-8")
+    new = config.save_answer("Are you willing to work nights?", "No")
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith(HEADER), text
+    assert yaml.safe_load(text) == {"answers": [new, {"match": "second", "answer": "B"}]}
+
+
 def test_a_file_laid_out_so_it_cant_be_edited_in_place_is_written_anew_with_the_change(srv, job_apply_home):
     """A flow list (all on one line): the change can't be made in its text safely, so the file is written as the desk
     writes it, with that change alone."""
