@@ -176,8 +176,8 @@ def miles(a: Place, b: Place) -> float:
     return 2 * EARTH_MILES * math.asin(math.sqrt(min(1.0, h)))
 
 
-NO_HOME = ("Within N miles needs your home town, and your profile doesn't say it: add personal.address.city "
-           "(and personal.address.state) to your profile.")
+NO_HOME = ("Within N miles needs your home town, and your profile doesn't say it: add your city and state in your "
+           "profile (Settings, Your profile).")
 
 
 def _state_code(said: str) -> str:
@@ -204,7 +204,7 @@ def home(prof: Any) -> tuple[Place | None, str]:
     elif not state and towns and (len({t.state for t in towns}) > 1 or towns[0].needs_state):
         # (a name two states have, or another place's or a word too: Paradise, Florence, Miami, Williams)
         return None, (f"Within N miles needs your home state to tell which {city} you mean: add "
-                      "personal.address.state (such as AZ) to your profile.")
+                      "your state (such as AZ) in your profile (Settings, Your profile).")
     elif state:  # (a state it can't read)
         towns = []
     if towns:
@@ -212,7 +212,7 @@ def home(prof: Any) -> tuple[Place | None, str]:
     where = f"{city}, {state}" if state else city
     return None, (f"Within N miles can't tell how far jobs are from {where}: the desk knows where the towns of "
                   "Arizona and the Las Vegas and Reno areas are, and that isn't one of them. Check "
-                  "personal.address.city and personal.address.state in your profile.")
+                  "your city and state in your profile (Settings, Your profile).")
 
 
 def away(home_town: Place, *locations: Any) -> dict[str, Any] | None:

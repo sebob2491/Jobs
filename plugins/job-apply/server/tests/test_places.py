@@ -164,7 +164,7 @@ def test_home_is_the_profiles_town_or_why_not():
     assert home(city="Henderson")[0] == town("Henderson", "NV")  # (a name one state here has)
     assert home(city="Mesa", state="Arizona ")[1] == ""
     none, why = home()
-    assert none is None and why == places.NO_HOME and "personal.address.city" in why
+    assert none is None and why == places.NO_HOME and "Settings, Your profile" in why
     assert places.home(config.Profile({}))[0] is None
     none, why = home(city="Springfield", state="IL")
     assert none is None and "Springfield, IL" in why and "isn't one of them" in why
@@ -175,5 +175,6 @@ def test_home_is_the_profiles_town_or_why_not():
     # (the review, L2) a town whose name is also a word or another place's, with no state: it asks for the state
     for city in ("Tonopah", "Paradise", "Florence", "Miami", "Page", "Douglas", "Williams"):
         none, why = home(city=city)
-        assert none is None and f"which {city} you mean" in why and "personal.address.state" in why, city
+        assert none is None and f"which {city} you mean" in why \
+            and "add your state (such as AZ) in your profile (Settings, Your profile)" in why, city
     assert home(city="Paradise", state="NV")[0] == town("Paradise", "NV")
