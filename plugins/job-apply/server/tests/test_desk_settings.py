@@ -28,6 +28,7 @@ CANT = "That setting can't be changed here."
 NO_PROFILE = "Set up your profile first."
 PORT = "Your own alert server's port is a number from 1 to 65535."
 APP_PASSWORD = "abcd efgh ijkl mnop"  # (a made-up app password, as Gmail shows one)
+NO_EXTRAS = {"transcripts": [], "references": [], "certificates": []}  # (the three other documents: none yet)
 ADDRESS = "sam.rivera@example.com"  # (the tests' profile's)
 
 
@@ -118,7 +119,7 @@ def test_profile_settings_writes_each_key_of_its_table_and_keeps_the_rest(srv, j
                 "cover_letter_model", "phone_alerts_server", "follow_up_days", "learn_from_responses"):
         assert shown[key] == NEW_VALUES[key], key
     assert shown["submit_mode"] == "dry_run"
-    assert state["profile"]["documents"] == {"resume": "resume.pdf", "cover_letter": None}
+    assert state["profile"]["documents"] == {"resume": "resume.pdf", "cover_letter": None, **NO_EXTRAS}
     assert str(job_apply_home) not in json.dumps(state["profile"]["documents"])
 
 
@@ -388,7 +389,8 @@ def test_the_usual_cover_letter_is_kept_as_the_resume_is(srv, job_apply_home):
     said = _calls(_desk(srv), [
         ("POST", "/api/profile/document", {"kind": "cover_letter", "name": "../../My Letter.PDF", "data": _b64(PDF)}),
         ("GET", "/api/state", None)])
-    assert said[0][0] == 200 and said[0][1]["documents"] == {"resume": "resume.pdf", "cover_letter": "cover_letter.pdf"}
+    assert said[0][0] == 200 and said[0][1]["documents"] == {"resume": "resume.pdf", "cover_letter": "cover_letter.pdf",
+                                                             **NO_EXTRAS}
     assert said[1][1]["profile"]["documents"]["cover_letter"] == "cover_letter.pdf"
     assert (home / "cover_letter.pdf").read_bytes() == PDF
     assert config.expand(_profile(home)["documents"]["cover_letter"]) == home / "cover_letter.pdf"
@@ -401,7 +403,7 @@ def test_the_usual_cover_letter_is_kept_as_the_resume_is(srv, job_apply_home):
     assert config.expand(_profile(home)["documents"]["cover_letter"]) == home / "cover_letter.docx"
 
     said = _calls(_desk(srv), [("POST", "/api/profile/document", {"kind": "cover_letter", "remove": True})])
-    assert said == [(200, {"documents": {"resume": "resume.pdf", "cover_letter": None},
+    assert said == [(200, {"documents": {"resume": "resume.pdf", "cover_letter": None, **NO_EXTRAS},
                            "version": profile_setup.profile_version()})]
     assert _profile(home)["documents"]["cover_letter"] == ""
     assert (home / "cover_letter.docx").read_bytes() == DOCX and (home / "cover_letter.pdf").exists()
@@ -422,9 +424,9 @@ def test_the_usual_cover_letter_is_kept_as_the_resume_is(srv, job_apply_home):
      "The file didn't come through whole: pick it again"),
     ({"kind": "cover_letter", "name": "letter.pdf", "data": _b64(PDF + b"x" * 64)},
      "That file is bigger than 0 MB: pick a smaller copy"),
-    ({"kind": "resume", "name": "resume.pdf", "data": _b64(PDF)}, "Only the usual cover letter is saved here."),
-    ({"kind": "transcripts", "remove": True}, "Only the usual cover letter is saved here."),
-    ({"name": "letter.pdf", "data": _b64(PDF)}, "Only the usual cover letter is saved here."),
+    ({"kind": "resume", "name": "resume.pdf", "data": _b64(PDF)}, "That kind of document isn't saved here."),
+    ({"kind": "diplomas", "remove": "a.pdf"}, "That kind of document isn't saved here."),
+    ({"name": "letter.pdf", "data": _b64(PDF)}, "That kind of document isn't saved here."),
 ])
 def test_the_cover_letter_route_refuses_what_save_resume_refuses_and_any_other_kind(srv, job_apply_home, monkeypatch,
                                                                                   body, said):
@@ -500,8 +502,8 @@ def _safety(desk: Desk) -> dict[str, dict]:
 @pytest.mark.parametrize("standalone", [False, True], ids=["with Claude", "without Claude"])
 def test_the_safety_windows_lines_take_their_form_with_claude_and_without(srv, monkeypatch, standalone):
     """"Changed in Version D": the lines on sending, cover letters and passwords, and the email app password's, name
-    Claude only where Claude is there; the cover letter line says what writes the letters, as the Resume and cover
-    letters panel's row does."""
+    Claude only where Claude is there; the cover letter line says what writes the letters, as the Resume and
+    documents panel's row does."""
     monkeypatch.setitem(mailbox.IMAP_HOSTS, "example.com", "imap.example.com")
     config.save_site_password("email_password", APP_PASSWORD)
     desk = _desk(srv)
