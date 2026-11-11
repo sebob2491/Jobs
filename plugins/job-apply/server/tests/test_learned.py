@@ -136,8 +136,8 @@ def test_a_press_at_a_no_step_button_stop_that_moves_the_step_on_is_kept(srv, jo
     assert r.status == "ready", (r.status, r.reason, r.log)
     text = learned_file(job_apply_home).read_text(encoding="utf-8")
     [entry] = json.loads(text)
-    assert set(entry) == {"place", "system", "page", "button", "on", "worked", "failed"}
-    assert (entry["button"], entry["system"]) == (WORDS, "company_site")
+    assert set(entry) == {"place", "system", "page", "button", "on", "worked", "failed", "employer"}
+    assert (entry["button"], entry["system"], entry["employer"]) == (WORDS, "company_site", "Acme")
     assert (entry["worked"], entry["failed"]) == (0, 0)
     assert len(entry["page"]) == 16 and entry["place"].startswith("file:") and entry["on"] == time.strftime("%Y-%m-%d")
     assert entry["place"].endswith("|acme")  # (the employer, as the tracker names it: one host serves many)
@@ -1154,3 +1154,26 @@ def test_each_check_of_learn_from_hand_alone_keeps_a_press_out(srv, job_apply_ho
         r.pause_sig = pipeline._page_sig(MOVED)
     run(applier._learn_from_hand(r, MOVED, ""))
     assert learned.all() == []
+
+
+# -------------------------------------------------------------------- the list names the employer, not its site
+def test_the_list_names_the_employer_where_the_press_was_kept_with_one(srv, job_apply_home):
+    from test_desk_settings import _calls, _desk
+
+    learned.remember("jobs.example|acme", "", "0123456789abcdef", WORDS, DAY, "Acme,\n  Inc.")
+    learned.remember("jobs.example|other", "", "fedcba9876543210", WORDS, "2026-10-04")
+    learned.worked("jobs.example|acme", "0123456789abcdef")  # (a count keeps the name)
+    desk = _desk(srv)
+    [(_, got)] = _calls(desk, [("GET", "/api/learned", None)])
+    assert {e["employer"]: e["worked"] for e in got["learned"]} == {"Acme, Inc.": 1, "jobs.example": 0}
+
+
+def test_an_employers_name_that_isnt_one_is_left_out_and_a_long_one_cut(job_apply_home):
+    learned.remember("jobs.example|acme", "", "0123456789abcdef", WORDS, DAY, "A" * 200)
+    [kept] = learned.all()
+    assert kept["employer"] == "A" * learned.NAME_LONGEST
+    path = config.home() / learned.LEARNED_FILE
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    rows[0]["employer"] = ["not", "a", "name"]
+    path.write_text(json.dumps(rows), encoding="utf-8")
+    assert "employer" not in learned.all()[0]

@@ -1212,7 +1212,7 @@ class Desk:
         return JSONResponse({"learned": [
             {"id": learned_buttons.entry_id(e["place"], e["page"]),
              "employer": "an application saved on this computer" if e["place"].startswith("file:")
-             else learned_buttons.shown_place(e["place"]),
+             else e.get("employer") or learned_buttons.shown_place(e["place"]),
              "system": ATS_NAMES.get(e["system"], ""), "button": e["button"], "on": e["on"], "worked": e["worked"]}
             for e in rows]}, headers={"Cache-Control": "no-store"})
 

@@ -7,7 +7,9 @@ learned.json, in the person's job-apply folder, theirs alone. Each entry holds o
    "system": the job system's key, or "",
    "page": a short hash of the page's headings and its boxes' labels (never the words themselves, nor the address),
    "button": the button's words (60 characters at most),
-   "on": the day, "YYYY-MM-DD", "worked": presses that moved the page on, "failed": ones that didn't}
+   "on": the day, "YYYY-MM-DD", "worked": presses that moved the page on, "failed": ones that didn't,
+   "employer": the employer's name as the tracker has it, for the page's list (an entry kept without one shows its
+               site instead)}
 Never a path or query of an address, a box's value, anything typed, an email or a name.
 
 Every function reads the file again and writes it whole, under one lock, and never raises: a file that is missing,
@@ -34,6 +36,7 @@ LEARNED_FILE = "learned.json"
 MOST = 500  # entries kept: the oldest by day go first
 WORDS_LONGEST = 60  # characters of a button's words kept
 _LOCK = threading.Lock()  # (the desk's jobs at once, the page's routes)
+NAME_LONGEST = 80
 _KEYS = ("place", "system", "page", "button", "on", "worked", "failed")
 _DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 _PAGE = re.compile(r"[0-9a-f]{16}")
@@ -103,6 +106,14 @@ def _valid(entry: Any) -> bool:
             and type(entry.get("worked")) is int and type(entry.get("failed")) is int)
 
 
+def _name(employer: Any) -> str:
+    """An employer's name as kept for the page's list: one line, NAME_LONGEST characters; "" for anything else."""
+    if not isinstance(employer, str):
+        return ""
+    shown = "".join(c for c in employer if unicodedata.category(c) != "Cf")
+    return " ".join(shown.split())[:NAME_LONGEST].strip()
+
+
 def _read() -> list[dict[str, Any]]:
     """The entries as kept (each only its own keys); [] where there's no file or it doesn't read."""
     try:
@@ -111,7 +122,8 @@ def _read() -> list[dict[str, Any]]:
         return []
     if not isinstance(got, list):
         return []
-    return [{k: e[k] for k in _KEYS} for e in got if _valid(e)]
+    return [{k: e[k] for k in _KEYS} | ({"employer": _name(e["employer"])} if _name(e.get("employer")) else {})
+            for e in got if _valid(e)]
 
 
 def _write(entries: list[dict[str, Any]]) -> None:
@@ -124,7 +136,7 @@ def _find(entries: list[dict[str, Any]], place: str, page: str) -> dict[str, Any
     return next((e for e in entries if e["place"] == place and e["page"] == page), None)
 
 
-def remember(place: str, system: str, page: str, button: str, today: str) -> bool:
+def remember(place: str, system: str, page: str, button: str, today: str, employer: str = "") -> bool:
     """Keep that the person pressed `button` to go on from this page at this place, on `today`. The same page's earlier
     entry is replaced (its counts start again when the words differ). False when it wasn't kept: empty words, a place
     or page that isn't one, or the file can't be written."""
@@ -139,7 +151,7 @@ def remember(place: str, system: str, page: str, button: str, today: str) -> boo
         same = old is not None and same_words(old["button"], words)
         entries.append({"place": place, "system": system if isinstance(system, str) else "", "page": page,
                         "button": words, "on": today, "worked": old["worked"] if same and old else 0,
-                        "failed": 0})
+                        "failed": 0} | ({"employer": _name(employer)} if _name(employer) else {}))
         _write(entries)
         return True
     return False

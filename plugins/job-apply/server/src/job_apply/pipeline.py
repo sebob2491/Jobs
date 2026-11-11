@@ -5402,7 +5402,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
         if not place or not key or run.page is None or run.status != "needs_you" or run.code != "no_step_button":
             return
         run.hand_stop = {"code": run.code, "place": place, "system": detect_ats(str(data.get("url") or "")) or "",
-                         "page": key, "buttons": _hand_buttons(data)}
+                         "page": key, "buttons": _hand_buttons(data), "employer": str(run.company or "")}
         run.hand_press, run.hand_heard = "", set()
 
         def heard(source: Any, words: Any) -> None:
@@ -5449,7 +5449,7 @@ class Applier(MailMixin, FillingMixin, AccountsMixin, LettersMixin):
                 or not _may_learn(press, stop["buttons"])):
             return
         learned_buttons.remember(stop["place"], stop["system"], stop["page"], press,
-                                 datetime.now().strftime("%Y-%m-%d"))
+                                 datetime.now().strftime("%Y-%m-%d"), stop.get("employer") or "")
 
     async def _after_a_stall(self, run: Run, ps: _Pass, data: dict[str, Any], kind: str, key: tuple[Any, ...],
                              looked: tuple[Any, ...], clicked: dict[str, Any]) -> _Then:
