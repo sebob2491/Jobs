@@ -209,8 +209,8 @@ def test_the_desks_cards_say_what_they_said(srv, job_apply_home, monkeypatch, ca
     # (every card: Home's six (Version C's This week and Getting started among them), the Openings card, the
     # Applications card (Version B's B6), Your answers' two (D5's Answers the desk remembers) and What's working's,
     # Settings' twelve (Version D's Job search and Applying cards among them, Safety a row of Applying's; D3's Your own
-    # alert server under Phone alerts, the rows of Updates and about, and those of Email codes and of Resume and cover
-    # letters; F2's update card), Help's two)
+    # alert server under Phone alerts, the rows of Updates and about, and those of Email codes and of Resume and
+    # documents; F2's update card), Help's two)
     assert seen.count("\n## ") + 1 == 25, seen
     _compare(how["golden"], seen)
 

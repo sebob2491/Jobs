@@ -160,7 +160,7 @@ MANAGED_MCP = ("Cover letters aren't being written: your organization's Claude C
 
 def no_model(model: str) -> str:
     return (f"Cover letters aren't being written: Claude Code can't use the model {model!r}. Change it in Settings, "
-            "under Resume and cover letters, or empty that box for the usual one." + TAIL)
+            "under Resume and documents, or empty that box for the usual one." + TAIL)
 
 
 def not_started(why: str) -> str:

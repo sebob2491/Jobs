@@ -958,7 +958,7 @@ def test_the_switch_and_the_first_letters_ok_are_kept_and_said_in_safety(srv, mo
         assert said in waiting["said"], said
     desk.applier.letters_approved = True
     assert safety()["value"] == "on" and "first one waits" not in safety()["said"]
-    assert safety()["where"] == ("Settings, Resume and cover letters: Write a cover letter for each job, and Which "
+    assert safety()["where"] == ("Settings, Resume and documents: Write a cover letter for each job, and Which "
                                  "model writes the letters")
 
 

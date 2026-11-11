@@ -322,7 +322,7 @@ The **Phone alerts** card (Settings, Phone alerts) sends a push to your phone th
 #### Cover letters
 
 Turn on **Cover letter** (beside Submit for me, in the bar that shows once a job is ticked; or **Write a
-cover letter for each job** under Settings, Resume and cover letters) and each job you
+cover letter for each job** under Settings, Resume and documents) and each job you
 apply to gets a cover letter of its own, written while the job waits in the queue and
 uploaded wherever its application has a cover letter box:
 
@@ -338,7 +338,7 @@ uploaded wherever its application has a cover letter box:
   If neither works (no key saved and `claude` isn't on this computer or isn't signed in, or the
   key is turned down or out of credit), the desk says so once at the top of the page, and your
   applications go on with your usual cover letter (**Your usual cover letter** under Settings,
-  Resume and cover letters, or `documents.cover_letter` in your profile),
+  Resume and documents, or `documents.cover_letter` in your profile),
   or none.
 - **What it says:** one page from your resume, your profile and the job's posting, using
   only what they say: never a degree, certification, clearance, years of experience or skill
@@ -362,7 +362,7 @@ uploaded wherever its application has a cover letter box:
   they're written, tell Claude in the chat what to change; or press **Turn cover letters
   off**. Each job's log says when its letter was written, and its card's **Cover letter**
   opens it. The letter is saved in the job's folder, and a job tried again keeps it.
-- **Which model writes the letters** (Settings, Resume and cover letters), or
+- **Which model writes the letters** (Settings, Resume and documents), or
   `settings.cover_letter_model` in your profile, picks the model (the usual one is
   `claude-opus-5-5`, at medium effort; `claude-sonnet-5-5` is lighter on your plan's usage).
 
@@ -529,7 +529,7 @@ Updates and about, opens it). Set `JOB_APPLY_HOME` to put it somewhere else.
 | `applications/<id>-<company>-<title>/` | Tailored resume and cover letter, a reference list made for the job, screenshots, submission record, `debug/` snapshots |
 
 Documents in `profile.yaml`: `documents.resume` (and, optionally, `documents.cover_letter`) go up where a form
-asks for a resume or a cover letter (choose them under Settings, Resume and cover letters, too). Three more are optional, each one file or a list of files, for the forms that
+asks for a resume or a cover letter (choose them under Settings, Resume and documents, too). Three more are optional, each one file or a list of files (add them under Settings, Resume and documents, too), for the forms that
 ask for them (schools, cities, counties and other public employers often do): `documents.transcripts` (unofficial
 transcripts), `documents.references` (a reference list) and `documents.certificates` (certificates, licenses or
 diplomas). Only a box asking for one of them gets it: never a box for something else (a letter of reference, a form

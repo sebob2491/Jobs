@@ -511,8 +511,8 @@ def test_the_stop_says_why_there_is_no_page_of_the_references_the_profile_has(sr
     refs = {"label": "Please upload your Reference Contact Information.*", "kind": "file"}
     failed = Run(job["id"])
     assert applier._stop_for_what_is_left(failed, "", [], [refs])
-    assert ("ask Claude to add the file to your profile (the desk couldn't make its page of the references in your "
-            "profile just now: Carry on tries again)") in failed.reason, failed.reason
+    assert ("(the desk couldn't make its page of the references in your profile just now: Carry on tries again). Add "
+            "it in Settings, under Resume and documents") in failed.reason, failed.reason
     assert "under references:" not in failed.reason
     Path(job["folder"]).mkdir(parents=True, exist_ok=True)
     (Path(job["folder"]) / "Sam_Rivera_References.too-long").touch()

@@ -77,7 +77,7 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     asks for it ("ask Claude to add the file to your profile, or attach it in the desk's browser
     window"): set the slot in profile.yaml once the user says where the file is (references only as
     the user gives them, never made up), and they press Carry on (the resume and the usual cover letter
-    they can also choose themselves under Settings, Resume and cover letters; the other three are the
+    they can also choose themselves under Settings, Resume and documents; the other three are the
     file's only);
   - a dialog open over a form, which the user answers in the desk's browser window before pressing
     Carry on (the boxes behind it are filled after that). With `settings.accept_notices` (on
@@ -293,10 +293,10 @@ The desk is a local web page served by this plugin. It does what the `find-jobs`
     it's pasted, run the interview-prep skill for that job.
   - The emails are the ones the track-responses skill logged, read through the Gmail
     connector with `email_tracking` on (**Let Claude look for replies in my email**, Settings, Job search): never with the desk's email app password.
-- **Tailor my resume for each job** (in the apply bar, and under Settings, Resume and cover letters) holds each picked job, before its browser tab
+- **Tailor my resume for each job** (in the apply bar, and under Settings, Resume and documents) holds each picked job, before its browser tab
   opens, until Claude has written a resume for it (see Tailoring resumes). The page
   says how many are waiting. **Use my usual resume** sends one on without.
-- **Cover letter** (a switch in the apply bar, and **Write a cover letter for each job** under Settings, Resume and cover letters) has the desk write each picked job's cover letter by
+- **Cover letter** (a switch in the apply bar, and **Write a cover letter for each job** under Settings, Resume and documents) has the desk write each picked job's cover letter by
   itself, in the background, through the user's own Claude Code sign-in (see Cover letters).
 
 ## The desk's wording
@@ -471,7 +471,7 @@ plan's limit or can't reach Claude, the desk says so once at the top of the page
   `render_document("cover_letter", markdown, job_id)`; the desk uses it and never writes
   over it.
 - `settings.cover_letter_model` picks the model (empty: `claude-opus-5-5`, at medium effort); the user
-  can set it under Settings, Resume and cover letters (**Which model writes the letters**).
+  can set it under Settings, Resume and documents (**Which model writes the letters**).
 
 ## Bot checks
 
