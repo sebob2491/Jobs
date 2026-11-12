@@ -326,6 +326,59 @@ def test_the_shapes_job_compares_in_the_runs_summary_alone():
     assert "awkward" in flow.get("on", flow.get(True))["workflow_dispatch"]["inputs"]["checks"]["description"]
 
 
+# --- the Windows check: the pipeline check on the owner's platform -------------------------------------------------
+
+def test_the_platforms_compare_says_where_windows_got_less_far(tmp_path, capsys):
+    linux, windows = _stand_ins(tmp_path)  # (the stand-ins' records, read as Linux's and Windows')
+    assert ns.main(["--compare-platforms", str(linux), str(windows)]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "platforms: Linux reached the review page at 5 of 6 employers, Windows at 3 of 5",
+        "less far on Windows: 2",
+        "  Amkor: Linux at the review page; Windows crash: TimeoutError: the page never loaded",
+        "  KLA: Linux at the review page; Windows needs_you questions: Degree*: the profile has no degree for this "
+        "school",
+        "not checked on Windows: 1: NXP",
+        "further on Windows: 1",
+        "  onsemi: Windows at the review page; Linux needs_you stuck: The page didn't move on",
+    ]
+    (tmp_path / "empty").mkdir()
+    assert ns.main(["--compare-platforms", str(linux), str(tmp_path / "empty")]) == 1
+    assert "nothing to compare" in capsys.readouterr().err
+
+
+def test_the_windows_check_is_the_pipeline_check_in_practice_with_no_accounts_and_its_own_artifact():
+    flow = _flow()
+    job = flow["jobs"]["windows"]
+    assert job["runs-on"] == "windows-latest" and job["needs"] == "fresh"
+    assert job["env"]["JOB_APPLY_NEVER_SUBMIT"] == "1" and "PYTHONUTF8" not in job["env"]
+    assert job["permissions"] == {"contents": "read"}
+    assert "',windows,'" in job["if"] and "needs.fresh.outputs.go == 'true'" in job["if"]
+    run = next(s for s in job["steps"] if s.get("name") == "Run the check")
+    assert "--pipeline --fake-passwords" in run["run"] and "--out os-windows" in run["run"]
+    for never in ("--test-identity", "--everywhere", "--security-answers", "--plus"):
+        assert never not in run["run"], never
+    # the test inbox's address alone (for the employers that refuse example.com): never a password of the identity's
+    said = json.dumps(job)
+    assert "LIVE_TEST_EMAIL_PASSWORD" not in said and "LIVE_TEST_SITE_PASSWORD" not in said
+    (upload,) = [s for s in job["steps"] if "upload-artifact" in s.get("uses", "")]
+    assert upload["with"]["name"] == "os-windows"  # (never live-*: the compare job downloads live-* alone)
+    assert any("live_audit.py" in s.get("run", "") for s in job["steps"])
+    assert "windows" in flow.get("on", flow.get(True))["workflow_dispatch"]["inputs"]["checks"]["description"]
+
+
+def test_the_platforms_job_compares_in_the_runs_summary_alone():
+    flow = _flow()
+    job = flow["jobs"]["platforms"]
+    assert job["needs"] == ["fresh", "check", "windows"]
+    assert job["if"] == "always() && needs.windows.result != 'skipped'"
+    assert job["permissions"] == {"contents": "read"}  # (no issues: write, so nothing of it reaches an issue)
+    names = [s["with"]["name"] for s in job["steps"] if "download-artifact" in s.get("uses", "")]
+    assert names == ["live-pipeline", "os-windows"]
+    (step,) = [s for s in job["steps"] if "--compare-platforms" in s.get("run", "")]
+    assert "--compare-platforms live-pipeline os-windows" in step["run"] and "GITHUB_STEP_SUMMARY" in step["run"]
+    assert step["continue-on-error"] is True and "gh " not in json.dumps(job)
+
+
 def _bash_step(tmp_path, run, env):
     output, summary = tmp_path / "output", tmp_path / "summary"
     output.unlink(missing_ok=True)

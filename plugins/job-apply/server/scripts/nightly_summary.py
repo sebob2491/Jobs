@@ -29,6 +29,9 @@ whole body or a run's logs.
         # couldn't be checked this week (the site's or the person's), each under its own heading, then each reset
         # tenant's passes, step by step, and each tailored-resume employer's verdict; with --companies, those runs'
         # steps too
+    uv run python scripts/nightly_summary.py --compare-platforms LINUX WINDOWS
+        # the Windows pipeline check (an os-windows artifact) against the Linux one of the same run (live-pipeline):
+        # the employers where Windows got less far
     uv run python scripts/nightly_summary.py --compare-shapes PLAIN AWKWARD
         # Sundays' awkward-profile check (a shape-awkward artifact: live_smoke.py --profile-shape awkward) against the
         # plain pipeline check of the same run (its live-pipeline artifact), zips or folders: the employers where the
@@ -829,6 +832,33 @@ def compare_shapes(plain: Path, awkward: Path) -> list[str] | None:
     return out
 
 
+def compare_platforms(linux: Path, windows: Path) -> list[str] | None:
+    """The Windows pipeline check against the Linux one of the same run (two live_smoke.py --pipeline artifacts, zips
+    or folders): how many employers each took to the review page; the employers where Windows got less far (Linux
+    reached the review page, it didn't), or wasn't checked; and the ones where it got further. None when either holds
+    no employer's record. A site answers two machines differently now and then: one night's difference is noise."""
+    with contextlib.ExitStack() as stack:
+        first = {str(r.get("company")): r for r in records(_as_folder(linux, stack))}
+        second = {str(r.get("company")): r for r in records(_as_folder(windows, stack))}
+    if not first or not second:
+        return None
+    reached = {name for name, rec in first.items() if at_review(rec)}
+    reached_too = {name for name, rec in second.items() if at_review(rec)}
+    less = sorted(n for n in reached if n in second and n not in reached_too)
+    unchecked = sorted(n for n in first if n not in second)
+    further = sorted(n for n in reached_too if n in first and n not in reached)
+    out = [f"platforms: Linux reached the review page at {len(reached)} of {len(first)} employers, Windows at "
+           f"{len(reached_too)} of {len(second)}"]
+    out.append(f"less far on Windows: {len(less)}")
+    out += [f"  {name}: Linux at the review page; Windows {stopped_at(second[name])}" for name in less]
+    if unchecked:
+        out.append(f"not checked on Windows: {len(unchecked)}: {', '.join(unchecked)}")
+    if further:
+        out.append(f"further on Windows: {len(further)}")
+        out += [f"  {name}: Windows at the review page; Linux {stopped_at(first[name])}" for name in further]
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--issue-file", help="a saved copy of the issue (its API JSON), instead of fetching it")
@@ -866,6 +896,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--compare-shapes", type=Path, nargs=2, metavar=("PLAIN", "AWKWARD"),
                     help="the plain pipeline check's artifact and Sundays' awkward-profile check's (zips or folders): "
                     "where the awkward profile got less far, and the values audit's warnings only it drew")
+    ap.add_argument("--compare-platforms", type=Path, nargs=2, metavar=("LINUX", "WINDOWS"),
+                    help="the Linux pipeline check's artifact and the Windows check's (zips or folders): where Windows "
+                    "got less far")
     args = ap.parse_args(argv)
     for stream in (sys.stdout, sys.stderr):  # (Windows' console is cp1252: a pay's "≈" and "–" are replaced, not fatal)
         reconfigure = getattr(stream, "reconfigure", None)
@@ -879,6 +912,17 @@ def main(argv: list[str] | None = None) -> int:
                            unfinished=args.unfinished, logs=[text(p) for p in args.logs], probes_dir=args.probes,
                            run_url=args.run_url)
         print(said, end="")
+        return 0
+    if args.compare_platforms:
+        try:
+            lines = compare_platforms(*args.compare_platforms)
+        except (OSError, ValueError, zipfile.BadZipFile) as e:
+            print(f"the platforms' results can't be read: {e}", file=sys.stderr)
+            return 1
+        if lines is None:
+            print("nothing to compare: an artifact holds no employer's record (did its check run?)", file=sys.stderr)
+            return 1
+        print("\n".join(lines))
         return 0
     if args.compare_shapes:
         try:

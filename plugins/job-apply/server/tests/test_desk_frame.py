@@ -800,7 +800,7 @@ def test_a_narrow_window_keeps_pause_queue_as_an_icon_in_the_menu(srv):
                 await page.wait_for_selector("#pause-btn", state="visible")
                 narrow = await page.evaluate(_NARROW_QUEUE)
                 await page.click("#pause-btn")
-                await _until(lambda: a.paused, "Pause queue reached the desk")
+                await _until(lambda: a.paused, about=lambda: "Pause queue reached the desk")
                 await page.wait_for_selector("#pause-btn[aria-label='Carry on with the queue (4 waiting)']")
                 paused = await page.evaluate(_NARROW_QUEUE)
                 await page.set_viewport_size({"width": 1280, "height": 800})

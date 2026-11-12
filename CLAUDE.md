@@ -189,6 +189,11 @@ the scrubber (`python -m job_apply.fixtures`) before they become test fixtures.
   (and the weekly probes' job) posts it only when an employer went backwards, a check didn't finish, one
   `desk_handled.yaml` lists was out of "all the way" for two runs, the test inbox refused its login or a probe found a
   desk failure. `--changes` reads the newest changes comment, past a digest posted after it.
+- The nightly also runs the pipeline check on a Windows machine (the `windows check` job: the fake profile, no
+  accounts, artifact `os-windows`); the run's summary says where Windows got less far than Linux
+  (`nightly_summary.py --compare-platforms <live-pipeline> <os-windows>`). It isn't written to the issue. One
+  employer less far on one night is a site's noise; the same one on several nights is the desk's on Windows.
+  By hand: run the live-nightly workflow with `checks` set to `windows` (and `companies` for a few).
 - A probe of a few employers on GitHub (where the test identity's secrets are): run the live-nightly
   workflow by hand with `companies` (and `checks`, e.g. `accounts`). It runs only those, in a few minutes,
   and isn't compared or written to the issue: read its artifacts with `nightly_summary.py --artifacts`.
