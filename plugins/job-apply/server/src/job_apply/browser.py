@@ -542,6 +542,7 @@ class PickedAGroup(ValueError):
 
     def __init__(self, group: str, entries: list[str]) -> None:
         super().__init__(f"{group!r} is a group; pick one of its entries: {entries[:30]}")
+        self.group = group
         self.entries = entries
 
 
@@ -1451,6 +1452,8 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
                             field = {**field, "near": item["near"]}
                         if item.get("pick_only"):  # a self-identification answer: picked from the list, never typed
                             field = {**field, "pick_only": True}
+                        if item.get("group_only"):  # a group's own name (a citizenship's country): its entries asked
+                            field = {**field, "group_only": True}
                         if item.get("again"):  # answered again where the page lost it (a date: cleared first)
                             field = {**field, "again": True}
                         if not item.get("again") and await self._holds(page, field, item.get("value")):
@@ -1483,7 +1486,9 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
                     except Exception as e:  # report and keep going; one odd widget shouldn't stop the rest
                         out[i] = {"id": fid, "ok": False,
                                   "error": f"{type(e).__name__}: {str(e).splitlines()[0][:300]}",
-                                  **({"options": e.entries} if isinstance(e, (PickedAGroup, NoMatch)) else {})}
+                                  **({"options": e.entries} if isinstance(e, (PickedAGroup, NoMatch)) else {}),
+                                  # (the group whose entries those are: a citizenship's country, for its statuses)
+                                  **({"group": e.group} if isinstance(e, PickedAGroup) else {})}
                     finally:
                         # a picker this box opened (a date's calendar) closed before the next box: on Eightfold one
                         # left open kept the focus, and Country of Residence took nothing typed (issue #112, note 41)

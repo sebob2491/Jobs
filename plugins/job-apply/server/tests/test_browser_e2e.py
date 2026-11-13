@@ -330,6 +330,64 @@ def test_how_did_you_hear_is_chosen_again_from_a_list_that_drew_late(srv, job_ap
     assert [f["options"] for f in failed] == [["Advertisement", "Acme website", "Job Board"]], failed
 
 
+def _citizenship_profile(home: Path, **said) -> None:
+    """The test profile with its work_authorization's us_citizen and citizenship as given (absent where not)."""
+    import yaml
+
+    path = home / "profile.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data["work_authorization"] = {**data["work_authorization"], **said}
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+
+TWO_LEVEL = "site/workday-two-level-prompt.html"
+
+
+def test_a_citizenship_status_the_profile_cant_answer_is_asked_and_the_persons_answer_goes_in(srv, job_apply_home):
+    """us_citizen false and no citizenship named: nothing is picked; the question is asked with its countries (the
+    card's list to type in or pick), the person's country opens its statuses to choose between, and their status goes
+    in inside it. A country with no statuses ("No Items.") says so."""
+    _citizenship_profile(job_apply_home, us_citizen=False)
+    run(srv.browser.goto(fixture_url(TWO_LEVEL)))
+    result = run(srv.autofill())
+    assert not [f for f in result["filled"] if "itizenship" in (f["label"] or "")], result
+    asked = [f for f in result["needs_input"] if "itizenship" in (f["label"] or "")]
+    assert len(asked) == 1 and "Afghanistan" in asked[0]["options"], result
+    box = by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "citizenship")
+    # a country with nothing in it: the pick that didn't take, and why
+    out = run(srv.fill_form([{"id": box["id"], "value": "Afghanistan"}]))
+    error = out["results"][0]["error"]
+    assert not out["results"][0]["ok"] and "didn't take it" in error and "that list is empty" in error, out
+    # the person's country (past the dozen the list opens on): its statuses, to choose between
+    out = run(srv.fill_form([{"id": box["id"], "value": "Canada"}]))
+    assert not out["results"][0]["ok"] and out["results"][0]["options"] == ["Citizen", "Permanent Resident",
+                                                                              "Work Permit"], out
+    assert out["results"][0]["group"] == "Canada", out
+    out = run(srv.fill_form([{"id": box["id"], "value": "Permanent Resident"}]))
+    assert out["results"][0]["ok"] and out["results"][0]["result"] == "selected Canada > Permanent Resident", out
+    assert by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "citizenship")["value"] == \
+        "Permanent Resident"
+
+
+def test_another_two_level_list_is_asked_with_its_groups_and_the_persons_answer_goes_in(srv, job_apply_home):
+    """A made-up two-level list of the same shape ("Preferred Location": regions, each opening its sites), which the
+    profile doesn't answer: asked with the regions it opens on (the card's list to type in or pick), the region
+    answered (past those, found by searching) opens its sites to choose between, and the site goes in inside it,
+    though a search finds the regions' names alone and the list opens without that region (as U.S. Bank's countries
+    past the first dozen: its group searched for by name)."""
+    run(srv.browser.goto(fixture_url(TWO_LEVEL) + "?list=location"))
+    result = run(srv.autofill())
+    asked = [f for f in result["needs_input"] if "location" in (f["label"] or "").lower()]
+    assert [f["options"] for f in asked] == [["Americas", "Asia Pacific"]], result
+    box = by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "preferred location")
+    out = run(srv.fill_form([{"id": box["id"], "value": "Europe"}]))
+    assert not out["results"][0]["ok"] and out["results"][0]["options"] == ["Dublin", "Eindhoven"], out
+    out = run(srv.fill_form([{"id": box["id"], "value": "Dublin"}]))
+    assert out["results"][0]["ok"] and out["results"][0]["result"] == "selected Europe > Dublin", out
+    assert by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "preferred location")["value"] \
+        == "Dublin"
+
+
 def test_a_list_the_page_draws_is_read_page_by_page(srv):
     """Amkor's career site (SuccessFactors' older pages) draws its job list with a script,
     10 to a page: a bigger page is chosen, then the next-page arrow pressed until it's gone."""

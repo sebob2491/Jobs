@@ -1,0 +1,120 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply - Example Bank</title></head>
+<body>
+<!-- A Workday search prompt whose top level is all groups (U.S. Bank's "Citizenship Status", the live check of
+     Nov 13): each entry has a chevron and opens a list of its own under a header (its back button and title); the
+     prompt opens on its first dozen entries (its list is virtualized), and a search (typed, then Enter) finds the top
+     level's names only. A group with nothing in it lists "No Items.". A leaf picked shows as a pill.
+     ?list=location: "Preferred Location", regions that open their sites (a made-up list of the same shape), its first
+       two drawn on opening
+     ?us=<a,b>: the United States' entries instead of its usual ones (a comma between each) -->
+<h2>My Information</h2>
+<div data-automation-id="formField-phoneNumber">
+  <label for="phone">Phone Number<abbr aria-hidden="true">*</abbr></label>
+  <input id="phone" type="text" aria-required="true">
+</div>
+<h3 id="section">Ireland</h3>
+<div data-automation-id="formField-twoLevel">
+  <label for="prompt--twoLevel"><span id="said">Citizenship Status</span><abbr aria-hidden="true">*</abbr></label>
+  <div data-automation-id="multiSelectContainer" data-uxi-widget-type="multiselect" id="ms">
+    <div data-automation-id="multiselectInputContainer">
+      <div data-automation-id="monikerSearchBox">
+        <input id="prompt--twoLevel" data-uxi-widget-type="selectinput" aria-required="true" autocomplete="off" placeholder="Search">
+        <div data-automation-id="promptSelectionLabel"></div>
+        <div aria-hidden="true" data-automation-id="promptAriaInstruction">0 items selected</div>
+      </div>
+    </div>
+    <div class="chosen"></div>
+    <span aria-hidden="true" data-automation-id="promptIcon">&#9776;</span>
+  </div>
+</div>
+<div data-automation-id="responsiveMonikerPrompt" id="prompt" hidden>
+  <div id="header"></div>
+  <div data-automation-id="activeListContainer" role="listbox" aria-label="Options Expanded" id="popup"></div>
+</div>
+<button type="button" data-automation-id="pageFooterNextButton">Save and Continue</button>
+<script>
+  const params = new URLSearchParams(location.search);
+  const location_ = params.get('list') === 'location';
+  const us = params.has('us') ? params.get('us').split(',') : ['Citizen', 'Permanent Resident', 'Work Visa'];
+  const groups = location_
+    ? {'Americas': ['Chandler, AZ', 'Austin, TX'], 'Asia Pacific': ['Singapore', 'Penang'],
+       'Europe': ['Dublin', 'Eindhoven'], 'Middle East': []}
+    : {'Afghanistan': [], 'Åland Islands': [], 'Albania': [], 'Algeria': [], 'American Samoa': [],
+       'Andorra': [], 'Angola': [], 'Anguilla': [], 'Antigua and Barbuda': [], 'Argentina': [], 'Armenia': [],
+       'Aruba': [], 'Australia': ['Citizen', 'Permanent Resident'], 'Austria': [], 'Belgium': [], 'Brazil': [],
+       'Canada': ['Citizen', 'Permanent Resident', 'Work Permit'], 'France': [], 'Germany': [],
+       'India': ['Citizen'], 'Ireland': ['Citizen', 'EU National', 'Stamp 4'], 'Mexico': [],
+       'United Kingdom': ['Citizen', 'Settled Status'], 'United States Minor Outlying Islands': [],
+       'United States of America': us};
+  if (location_) document.getElementById('said').textContent = 'Preferred Location';
+  const names = Object.keys(groups);
+  const SHOWN = location_ ? 2 : 13;  // (a virtualized list: its first few drawn)
+  const input = document.getElementById('prompt--twoLevel');
+  const prompt = document.getElementById('prompt');
+  const popup = document.getElementById('popup');
+  const header = document.getElementById('header');
+  const chosen = document.querySelector('#ms .chosen');
+  function item(text, chevron) {
+    const opt = document.createElement('div');
+    opt.setAttribute('data-automation-id', 'menuItem');
+    opt.setAttribute('role', 'option');
+    opt.setAttribute('aria-label', text + ' not checked');
+    opt.setAttribute('aria-selected', 'false');
+    opt.innerHTML = '<div data-automation-id="promptLeafNode" data-uxi-widget-type="multiselectlistitem">'
+      + '<div data-automation-id="promptOption">' + text + '</div>'
+      + (chevron ? '<div><span><svg class="wd-icon-chevron-right-small wd-icon" role="presentation"><g></g></svg></span></div>' : '')
+      + '</div>';
+    return opt;
+  }
+  function showTop(list) {
+    header.innerHTML = '';
+    popup.innerHTML = '';
+    for (const name of list) {
+      const opt = item(name, true);
+      opt.addEventListener('click', () => setTimeout(() => inside(name), 100));
+      popup.appendChild(opt);
+    }
+    prompt.hidden = false;
+  }
+  function inside(name) {
+    header.innerHTML = '<button type="button" data-automation-id="backButton">Back</button>'
+      + '<div data-automation-id="promptTitle">' + name + '</div>';
+    header.querySelector('button').addEventListener('click', () => showTop(names.slice(0, SHOWN)));
+    popup.innerHTML = '';
+    if (!groups[name].length) {
+      const none = item('No Items.', false);
+      none.setAttribute('aria-selected', 'true');
+      popup.appendChild(none);
+    }
+    for (const leaf of groups[name]) {
+      const opt = item(leaf, false);
+      opt.addEventListener('click', () => pick(leaf));
+      popup.appendChild(opt);
+    }
+  }
+  function pick(leaf) {
+    chosen.innerHTML = '<ul data-automation-id="selectedItemList" role="listbox"><li role="presentation">'
+      + '<div data-automation-id="selectedItem" role="option" aria-label="' + leaf + ', press delete to clear value.">'
+      + '<p data-automation-id="promptOption">' + leaf + '</p></div></li></ul>';
+    document.querySelector('#ms [data-automation-id="promptAriaInstruction"]').textContent = '1 item selected, ' + leaf;
+    input.value = '';
+    prompt.hidden = true;
+  }
+  input.addEventListener('click', () => setTimeout(() => showTop(names.slice(0, SHOWN)), 150));
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { prompt.hidden = true; return; }
+    if (e.key !== 'Enter') return;
+    const q = input.value.toLowerCase();
+    setTimeout(() => showTop(names.filter((n) => n.toLowerCase().includes(q))), 150);
+  });
+  // a press anywhere else closes the list, as on Workday
+  document.addEventListener('mousedown', (e) => {
+    if (!prompt.contains(e.target) && !document.getElementById('ms').contains(e.target)) prompt.hidden = true;
+  });
+  // typed text that isn't picked is cleared when the prompt loses focus, as on Workday
+  input.addEventListener('blur', () => setTimeout(() => { if (!chosen.textContent.trim()) input.value = ''; }, 100));
+</script>
+</body>
+</html>

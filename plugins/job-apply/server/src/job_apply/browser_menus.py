@@ -3,6 +3,7 @@ picked (inside a group it opens, too), one ticked in a multiselect, and the menu
 
 from __future__ import annotations
 
+import contextlib
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -424,6 +425,22 @@ class MenusMixin:
         groups_key = browser._groups_key(page.url, field)
         group = self._groups.get(groups_key, {}).get(norm(text)) if choice is None and options and groups_key else None
         top = choose_option(group, options, exact_only=True) if group is not None else None
+        if group is not None and top is None:
+            # the group isn't among the entries its list opened on (a Workday list of countries shows its first dozen,
+            # U.S. Bank's "Citizenship Status", run of Nov 13): searched for by its name, and picked from what's found
+            opened = options
+            await loc.fill("")
+            await loc.press_sequentially(browser._search_words(group), delay=30)
+            found = await self._field_options(page, field["id"], loc, browser.LIST_FILTER_WAIT)
+            if (not found or found == opened and await loc.evaluate(browser.WORKDAY_PROMPT_JS)) \
+                    and not await loc.evaluate("el => !!el.form"):
+                await loc.press("Enter")
+                found = await self._new_options(page, field["id"], loc, found, browser.LIST_FILTER_WAIT)
+            top = choose_option(group, found, exact_only=True) if found else None
+            if top is not None:
+                options = found
+            else:
+                await loc.fill("")  # (not found: the answer itself is searched for below, as before)
         if top is not None:
             # An entry inside a group, the person's pick from the entries the group opened before (Hitachi's
             # "Career Website" > "Hitachi Digital Career Site (…)", run 112: a search for the entry found nothing on
@@ -493,12 +510,17 @@ class MenusMixin:
                 await self._clear_search(page, loc)
                 raise ValueError(f"nothing in its list matched {query!r}")
             return "typed (no suggestions appeared)"
+        with contextlib.suppress(PlaywrightError):  # (what its list says after this pick, alone: an empty group)
+            await loc.evaluate("el => el.removeAttribute('data-ja-empty')")
         await self._click_option(page, field["id"], choice)
         try:
             await self._confirm_choice(page, loc, choice)
-        except ValueError:
+        except ValueError as refused:
             inner = await self._new_options(page, field["id"], loc, options, browser.LIST_NEW_WAIT)
-            entry = browser._inner_choice(text, choice, inner, names) if inner and inner != options else None
+            # (a group's own name given, a citizenship's country: never an entry of it taken by those words, which
+            # can name a status the person doesn't have, "Permanent Resident of the United States": its entries asked)
+            entry = (browser._inner_choice(text, choice, inner, names)
+                     if inner and inner != options and not field.get("group_only") else None)
             if entry is not None:  # the answer is in the group it opened (Onto's "ONTO Website" > "ONTO Website")
                 await self._click_option(page, field["id"], entry)
                 await self._confirm_choice(page, loc, entry)
@@ -510,8 +532,21 @@ class MenusMixin:
                     if len(known) + len(inner) <= 500:
                         known.update({norm(e): choice for e in inner})
                 raise browser.PickedAGroup(choice, inner) from None
+            if not inner and await self._said_empty(loc):
+                # a group with no entries in it (U.S. Bank's "Citizenship Status", run of Nov 13: "Afghanistan ›"
+                # opened "No Items."): said so, not only that the pick didn't take, round after round
+                raise ValueError(f"{refused}: {choice!r} opens a list of its own, and that list is empty; "
+                                 "pick another") from None
             raise
         return f"selected {choice}"
+
+    async def _said_empty(self, loc: Locator) -> bool:
+        """Did this box's list say it's empty since it was last cleared of that (FIELD_OPTIONS_JS: Workday's "No
+        Items.")?"""
+        try:
+            return bool(await loc.evaluate("el => el.hasAttribute('data-ja-empty')", timeout=browser.FOCUS_TIMEOUT))
+        except (PlaywrightError, PlaywrightTimeout):
+            return False
 
 
 # browser.py's own names (its waits, page scripts, helpers and exceptions) are read from it as browser.<name> when a
