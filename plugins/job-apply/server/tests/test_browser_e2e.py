@@ -343,6 +343,21 @@ def _citizenship_profile(home: Path, **said) -> None:
 TWO_LEVEL = "site/workday-two-level-prompt.html"
 
 
+def test_a_citizenship_status_is_never_a_status_the_profile_doesnt_say(srv, job_apply_home):
+    """U.S. Bank's Workday "Citizenship Status" (the live check of Nov 13): countries, each opening its own statuses.
+    The profile's citizenship ("United States") picks its country, whose list opens; the status inside it was taken by
+    the country's words ("Permanent Resident of the United States" for a U.S. citizen). A country's statuses are
+    asked, the box left empty."""
+    _citizenship_profile(job_apply_home, us_citizen=True, citizenship="United States")
+    run(srv.browser.goto(fixture_url(TWO_LEVEL) + "?us=Permanent Resident of the United States,Work Visa"))
+    result = run(srv.autofill())
+    asked = [f for f in result["failed"] if "itizenship" in (f["label"] or "")]
+    assert [f["options"] for f in asked] == [["Permanent Resident of the United States", "Work Visa"]], result
+    assert asked[0]["error"].startswith("PickedAGroup: 'United States of America' is a group"), asked
+    assert not [f for f in result["filled"] if "itizenship" in (f["label"] or "")], result
+    assert by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "citizenship")["value"] == ""
+
+
 def test_a_citizenship_status_the_profile_cant_answer_is_asked_and_the_persons_answer_goes_in(srv, job_apply_home):
     """us_citizen false and no citizenship named: nothing is picked; the question is asked with its countries (the
     card's list to type in or pick), the person's country opens its statuses to choose between, and their status goes

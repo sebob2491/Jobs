@@ -1132,6 +1132,9 @@ async def autofill(job_id: int | None = None, overwrite: bool = False, redo: lis
     results = await browser.fill([{"id": f["id"], "value": f["value"], "names": is_name_rule(f.get("rule") or ""),
                                    "near": place_words(f.get("rule") or "", prof),
                                    "pick_only": is_eeo_rule(f.get("rule") or ""),
+                                   # (a citizenship's country, in a list of countries that open their statuses: the
+                                   # country picked, and its statuses chosen among apart, never by the country's name)
+                                   "group_only": f.get("rule") == "citizenship",
                                    # (answered again, where the page lost it, even showing the answer: a date's parts;
                                    # and a draft's date part that shows another than the profile's)
                                    "again": f["id"] in (redo or []) or bool(f.get("again"))}

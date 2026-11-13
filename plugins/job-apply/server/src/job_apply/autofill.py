@@ -805,6 +805,23 @@ def _us_citizen(prof: Profile, job: dict) -> Any:
     return "Yes" if _US_CITIZENSHIP.fullmatch(norm(prof.get("work_authorization.citizenship"))) else None
 
 
+# A choice that is a citizen's status, and nothing more: "Citizen", "U.S. Citizen", "Citizen of the United States"
+_CITIZEN_LEAF = re.compile(r"(?:(?P<before>[a-z ]+?) )?citizen(?: of (?:the )?(?P<after>[a-z ]+))?")
+# A choice that names a status, not a country alone ("Permanent Resident of the United States", "Work Visa")
+_A_STATUS = re.compile(r"\b(citizen\w*|nationals?|nationality|residents?|residence|residency|visas?|permits?|"
+                       r"green card|refugee|asylee|asylum|status|immigra\w*|alien|non|naturali[sz]\w*)\b")
+
+
+def _citizen_leaf(option: str, country: str) -> bool:
+    """Is this choice a citizen's status, of `country` where it names one ("Citizen", "U.S. Citizen" of the United
+    States; never "Non-Citizen", "Dual Citizen" or another country's)?"""
+    m = _CITIZEN_LEAF.fullmatch(norm(option))
+    if m is None or m.group("before") and m.group("after"):
+        return False
+    named = m.group("before") or m.group("after")
+    return not named or same_country(named, country)
+
+
 # A getter's word that the question, though its words matched, isn't its own: the next rule's (_rule_answer)
 _NOT_ASKED = object()
 # "Can you provide proof of U.S. citizenship?", as written once "U.S." has lost its dots (_undotted): if hired, or able
@@ -4338,6 +4355,10 @@ def _choose_from_options(field: dict, prof: Profile, job: dict, ans: Answer, kin
                                 r"united states|usa)\b", norm(o))
                    and not re.search(r"\bnon\b|\bnot\b", norm(o))]
         return Answer(citizen[0], ans.rule) if len(citizen) == 1 else None
+    if ans.rule == "citizenship" and options:
+        named = choose_option(ans.value, options)
+        if named is not None and _A_STATUS.search(norm(named)) and not _citizen_leaf(named, str(ans.value)):
+            return None  # a status the country's name matched ("Permanent Resident of the United States"): theirs
     if ans.rule == "has_degree":
         # a plain "Yes" or "No" among the choices shown: never "No, but I have equivalent experience" or
         # "No, but I'm enrolled", which say more than the profile does; nor where the section allows an equivalent

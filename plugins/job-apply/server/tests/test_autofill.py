@@ -4335,6 +4335,23 @@ def test_a_citizenship_or_clearance_list_whose_choices_are_unseen_is_left_for_th
     assert resolve_field(f("Are you a U.S. citizen?", "combobox", options=["Yes", "No"]), p).value == "Yes"
 
 
+@pytest.mark.parametrize("leaf", ["Permanent Resident", "Work Visa", "Non-Citizen", "Dual Citizen", "Refugee",
+                                  "Citizen of Canada", "Canadian Citizen", "Permanent Resident of the United States",
+                                  "Lawful Permanent Resident of the U.S.", "United States Work Visa"])
+def test_a_citizenship_list_never_takes_a_status_by_the_countrys_name(leaf):
+    """The citizenship rule answers with the profile's country: in a list of statuses (a Workday "Citizenship Status"
+    country's own, U.S. Bank's, the live check of Nov 13; or a list of one level), never a status whose words merely
+    name that country ("Permanent Resident of the United States" for a U.S. citizen): the person's to choose. A country
+    is still the country."""
+    p = Profile({"work_authorization": {"us_citizen": True, "citizenship": "United States"}})
+    for kind in ("select", "combobox"):
+        assert resolve_field(f("Citizenship Status*", kind, options=[leaf, "Other"]), p) is None, kind
+    countries = ["Canada", "United States of America", "United States Minor Outlying Islands"]
+    assert resolve_field(f("Citizenship Status*", "combobox", options=countries), p).value == "United States of America"
+    assert resolve_field(f("Citizenship Status*", "select", options=["Citizen of the United States", "Other"]),
+                         p).value == "Citizen of the United States"  # (a citizen's, of the profile's country)
+
+
 def test_a_question_about_sanctioned_countries_dual_citizenship_or_export_licenses_is_never_answered():
     """The profile can't honestly answer ties to sanctioned countries, a dual citizenship, a denied party list or an
     export license: a text box or a list asking any of them is the person's (or their own answers bank's), never the
