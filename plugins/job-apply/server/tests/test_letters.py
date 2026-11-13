@@ -148,7 +148,17 @@ def no_claude(tmp_path: Path, monkeypatch) -> None:
 
 def runs_of(record: Path) -> list[dict]:
     """The fake claude's runs so far, the first to begin first (fake_claude's folder: a file a run)."""
-    return [json.loads(path.read_text(encoding="utf-8")) for path in sorted(record.glob("*.json"))]
+    def read(path: Path) -> dict:
+        # (a run's file read while the fake is still writing it: Windows refuses the open, and a half-written one
+        # doesn't parse. Seen once on CI's Windows part; read again for up to two seconds)
+        for _ in range(40):
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except (PermissionError, json.JSONDecodeError):
+                time.sleep(0.05)
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    return [read(path) for path in sorted(record.glob("*.json"))]
 
 
 def after(argv: list[str], flag: str) -> str | None:
