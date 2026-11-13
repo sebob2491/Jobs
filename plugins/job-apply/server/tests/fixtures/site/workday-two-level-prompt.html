@@ -8,7 +8,7 @@
      level's names only. A group with nothing in it lists "No Items.". A leaf picked shows as a pill.
      ?list=location: "Preferred Location", regions that open their sites (a made-up list of the same shape), its first
        two drawn on opening
-     ?us=<a,b>: the United States' entries instead of its usual ones (a comma between each) -->
+     ?us=<a,b>, ?ca=<a,b>: the United States' or Canada's entries instead of their usual ones (a comma between each) -->
 <h2>My Information</h2>
 <div data-automation-id="formField-phoneNumber">
   <label for="phone">Phone Number<abbr aria-hidden="true">*</abbr></label>
@@ -38,13 +38,14 @@
   const params = new URLSearchParams(location.search);
   const location_ = params.get('list') === 'location';
   const us = params.has('us') ? params.get('us').split(',') : ['Citizen', 'Permanent Resident', 'Work Visa'];
+  const ca = params.has('ca') ? params.get('ca').split(',') : ['Citizen', 'Permanent Resident', 'Work Permit'];
   const groups = location_
     ? {'Americas': ['Chandler, AZ', 'Austin, TX'], 'Asia Pacific': ['Singapore', 'Penang'],
        'Europe': ['Dublin', 'Eindhoven'], 'Middle East': []}
     : {'Afghanistan': [], 'Åland Islands': [], 'Albania': [], 'Algeria': [], 'American Samoa': [],
        'Andorra': [], 'Angola': [], 'Anguilla': [], 'Antigua and Barbuda': [], 'Argentina': [], 'Armenia': [],
        'Aruba': [], 'Australia': ['Citizen', 'Permanent Resident'], 'Austria': [], 'Belgium': [], 'Brazil': [],
-       'Canada': ['Citizen', 'Permanent Resident', 'Work Permit'], 'France': [], 'Germany': [],
+       'Canada': ca, 'France': [], 'Germany': [],
        'India': ['Citizen'], 'Ireland': ['Citizen', 'EU National', 'Stamp 4'], 'Mexico': [],
        'United Kingdom': ['Citizen', 'Settled Status'], 'United States Minor Outlying Islands': [],
        'United States of America': us};

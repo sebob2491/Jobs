@@ -4352,6 +4352,32 @@ def test_a_citizenship_list_never_takes_a_status_by_the_countrys_name(leaf):
                          p).value == "Citizen of the United States"  # (a citizen's, of the profile's country)
 
 
+@pytest.mark.parametrize("choice, taken", [
+    ("United States (LPR)", False), ("United States - H-1B", False), ("United States - TN", False),
+    ("United States - DACA", False), ("United States - Sponsored", False), ("United States - Dual", False),
+    ("United States - Born", False), ("United States (by birth)", False), ("United States - Pending", False),
+    ("United States Minor Outlying Islands", False), ("Citizen of the United States Minor Outlying Islands", False),
+    ("United States of America", True), ("USA", True), ("United States", True), ("Citizen of the United States", True),
+    ("Citizen or national of the United States", True),
+])
+def test_a_citizenship_list_takes_only_the_country_or_its_plain_citizen(choice, taken):
+    """The review of the two-level lists: the citizenship rule's answer is accepted only as the country alone (its name
+    in any of its spellings) or a plain citizen's choice of that country (a citizen or national of it too: a citizen
+    is one), never anything else the country's words match."""
+    p = Profile({"work_authorization": {"us_citizen": True, "citizenship": "United States"}})
+    ans = resolve_field(f("Citizenship", "select", options=[choice, "Other"]), p)
+    assert (ans.value if ans else None) == (choice if taken else None)
+
+
+def test_a_remembered_citizenship_status_isnt_used():
+    """A citizenship status is the person's status in the country a job is in (U.S. Bank's two-level list): one
+    remembered from another list (a bare "Permanent Resident" given inside Canada's) never answers another."""
+    p = Profile({"answers": [{"match": "citizenship status", "answer": "Permanent Resident",
+                              "question": "Citizenship Status*"}]})
+    assert resolve_field(f("Citizenship Status*", "select", options=["Citizen", "Permanent Resident"]), p) is None
+    assert resolve_field(f("What is your citizenship status?", "combobox", options=["Permanent Resident"]), p) is None
+
+
 def test_a_question_about_sanctioned_countries_dual_citizenship_or_export_licenses_is_never_answered():
     """The profile can't honestly answer ties to sanctioned countries, a dual citizenship, a denied party list or an
     export license: a text box or a list asking any of them is the person's (or their own answers bank's), never the

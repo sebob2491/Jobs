@@ -35,7 +35,8 @@ from playwright.async_api import (
 
 from . import config
 from .ats import detect_ats
-from .autofill import choose_option, choose_place, date_form, is_empty_value, norm, polarity
+from .autofill import (asks_citizenship_status, choose_option, choose_place, date_form, is_empty_value, names_a_status,
+                       norm, polarity)
 from .browser_blocks import BlocksMixin
 from .browser_dates import DatesMixin
 from .browser_menus import MenusMixin
@@ -367,6 +368,9 @@ def _inner_choice(value: Any, picked: str, inner: list[str], names: bool = False
     """The choice to pick in the list a choice opened: the answer, if it's there; else the one named as
     the choice picked; else the only one (Workday's "<employer> website ›" opens a list of one, named
     alike: live test 2, issue #112, note 15)."""
+    # (never an entry naming a status the answer's words merely match: "Canada" isn't "Citizen of Canada" or
+    # "Permanent Resident of Canada", the review of the two-level lists; only one that is the answer word for word)
+    inner = [o for o in inner if not names_a_status(o) or norm(o) == norm(value)]
     entry = choose_option(value, inner, names=names)
     if entry is not None:
         return entry
@@ -1452,8 +1456,12 @@ class BrowserSession(TabsMixin, MenusMixin, DatesMixin, UploadsMixin, BlocksMixi
                             field = {**field, "near": item["near"]}
                         if item.get("pick_only"):  # a self-identification answer: picked from the list, never typed
                             field = {**field, "pick_only": True}
-                        if item.get("group_only"):  # a group's own name (a citizenship's country): its entries asked
+                        if item.get("group_only") or asks_citizenship_status(field.get("label")):
+                            # a group's own name (a citizenship status's country, whoever's answer it is: the
+                            # profile's, a remembered one, the person's on the card): its entries asked
                             field = {**field, "group_only": True}
+                        if item.get("unremembered"):  # (a group it opens isn't kept as its entries' group)
+                            field = {**field, "unremembered": True}
                         if item.get("again"):  # answered again where the page lost it (a date: cleared first)
                             field = {**field, "again": True}
                         if not item.get("again") and await self._holds(page, field, item.get("value")):

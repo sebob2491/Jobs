@@ -422,6 +422,9 @@ class MenusMixin:
             options = await choices_come(options)
         choice = (browser._choose(text, options, field, exact_only=len(options) > browser.SHORT_MENU and not pick_only)
                   if options else None)
+        if choice is not None and field.get("group_only") and browser.names_a_status(choice) \
+                and norm(choice) != norm(text):
+            choice = None  # (a citizenship status: never a status its words merely match, "...of the United States")
         groups_key = browser._groups_key(page.url, field)
         group = self._groups.get(groups_key, {}).get(norm(text)) if choice is None and options and groups_key else None
         top = choose_option(group, options, exact_only=True) if group is not None else None
@@ -437,9 +440,8 @@ class MenusMixin:
                 await loc.press("Enter")
                 found = await self._new_options(page, field["id"], loc, found, browser.LIST_FILTER_WAIT)
             top = choose_option(group, found, exact_only=True) if found else None
-            if top is not None:
-                options = found
-            else:
+            options = found  # (the list showing now, which the answer's own search below is told from)
+            if top is None:
                 await loc.fill("")  # (not found: the answer itself is searched for below, as before)
         if top is not None:
             # An entry inside a group, the person's pick from the entries the group opened before (Hitachi's
@@ -483,6 +485,9 @@ class MenusMixin:
                 await loc.press("Enter")
                 options = await self._new_options(page, field["id"], loc, options, browser.LIST_FILTER_WAIT)
             choice = browser._choose(text, options, field)
+            if choice is not None and field.get("group_only") and browser.names_a_status(choice) \
+                    and norm(choice) != norm(text):
+                choice = None  # (a citizenship status's search: never a status its words merely match)
         if choice is None:
             if options:
                 await self._clear_search(page, loc)
@@ -527,7 +532,7 @@ class MenusMixin:
                 return f"selected {choice} > {entry}"
             await self._close_menus(page)
             if inner and inner != options:
-                if groups_key:
+                if groups_key and not field.get("unremembered"):
                     known = self._groups.setdefault(groups_key, {})
                     if len(known) + len(inner) <= 500:
                         known.update({norm(e): choice for e in inner})
