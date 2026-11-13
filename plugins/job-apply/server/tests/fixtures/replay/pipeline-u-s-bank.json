@@ -1,0 +1,41 @@
+{
+  "file": "pipeline-u-s-bank.html",
+  "address": "https://usbank.wd1.myworkdayjobs.com/en-US/US_Bank_Careers/job/Loughlinstown%2C-Ireland/HR-Graduate_2026-0034177/apply/applyManually",
+  "applicant": "the live check's test applicant",
+  "refused": 0,
+  "page": "form",
+  "next": "Save and Continue",
+  "captcha": false,
+  "security_asked": false,
+  "account_and_application": false,
+  "job_search": false,
+  "errors": [],
+  "buttons": [
+    "Home",
+    "Candidate Home",
+    "main menu",
+    "Back to Job Posting",
+    "Back",
+    "Save and Continue",
+    "Facebook"
+  ],
+  "dialogs": [],
+  "boxes": [
+    {
+      "label": "Citizenship Status*",
+      "kind": "combobox",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    },
+    {
+      "label": "I confirm that I have read and acknowledge the U.S. Bank Privacy Notice applicable to my location.*",
+      "kind": "checkbox",
+      "required": true,
+      "plan": "ask",
+      "why": "no answer in the profile"
+    }
+  ],
+  "agreement": null,
+  "notice": null
+}
