@@ -6346,3 +6346,18 @@ def test_an_entry_naming_a_status_is_kept_out_only_of_a_citizenship_statuss_list
     assert _inner_choice("Canada", "Canada ›", statuses, no_status=True) is None
     assert _inner_choice("Canada", "Canada ›", ["Permanent Resident of Canada"], no_status=True) is None
     assert _inner_choice("Citizen of Canada", "Canada ›", statuses, no_status=True) == "Citizen of Canada"
+
+
+@pytest.mark.parametrize("label, asks", [
+    ("Citizenship Status*", True), ("Citizenship Status", True), ("Immigration status", True), ("Citizen status", True),
+    ("Immigration / Visa Status", True), ("Legal status", True), ("Ireland | Citizenship Status*", True),
+    # a yes-or-no question with such words in it, and questions about something else: answered and remembered as before
+    ("Do you have legal status to work in the US?", False),
+    ("Do you require a change in immigration status to work?", False),
+    ("Are you a citizen?", False), ("Citizenship", False), ("Country of citizenship", False),
+    ("Work authorization status", False), ("Veteran status", False), ("Marital status", False),
+])
+def test_what_asks_a_citizenship_status(label, asks):
+    from job_apply.autofill import asks_citizenship_status
+
+    assert asks_citizenship_status(label) is asks

@@ -1114,7 +1114,6 @@ def forget_presets(job_id: int) -> None:
     _TWO_LEVEL_SEEN.pop(job_id, None)
 
 
-@tool(drives=True)
 def _citizenship_opened_a_group(result: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> bool:
     """Did the profile's citizenship, filled into a list, pick a group that opened its own entries (a two-level
     citizenship status: the country applied in, then the status there)?"""
@@ -1122,6 +1121,7 @@ def _citizenship_opened_a_group(result: dict[str, Any], by_id: dict[str, dict[st
             and by_id.get(str(result.get("id")), {}).get("rule") == "citizenship")
 
 
+@tool(drives=True)
 async def autofill(job_id: int | None = None, overwrite: bool = False, redo: list[str] | None = None,
                    refresh: bool = False, keep: list[str] | None = None) -> dict[str, Any]:
     """Fill every field on the current page that the profile answers with confidence

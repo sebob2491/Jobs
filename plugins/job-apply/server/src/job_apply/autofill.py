@@ -832,14 +832,19 @@ def names_a_status(choice: Any) -> bool:
 # A citizenship status's question (U.S. Bank's Workday "Citizenship Status", the live check of Nov 13: the country
 # applied in, then the person's status there)
 _STATUS_OF_CITIZENSHIP = re.compile(r"\bcitizenship status(es)?\b|\bstatus of (your )?citizenship\b|"
-                                    r"\b(citizenship|immigration|residency|legal) status\b")
+                                    r"\b(citizenship|citizen|immigration|residency|legal) status\b|"
+                                    r"\bimmigration visa status\b")
+# (a yes-or-no question that only has such words in it asks something else: "Do you have legal status to work in the
+# US?", "Do you require a change in immigration status to work?": answered and remembered as any other)
+_YES_NO_OPENING = re.compile(r"^(do|does|did|are|is|have|has|will|would|can|could|should|may)\b")
 
 
 def asks_citizenship_status(label: Any) -> bool:
     """Does this question ask the person's citizenship status ("Citizenship Status*")? Its answer is the person's
     alone, for that list: never picked by a country's words inside a group (the fill's group_only), never remembered
     for another list (Desk.answer), never another list's remembered answer (resolve_field)."""
-    return bool(_STATUS_OF_CITIZENSHIP.search(norm(clean_label(str(label or "")))))
+    said = norm(clean_label(str(label or "")))
+    return bool(_STATUS_OF_CITIZENSHIP.search(said)) and not _YES_NO_OPENING.match(said)
 
 
 # A getter's word that the question, though its words matched, isn't its own: the next rule's (_rule_answer)
