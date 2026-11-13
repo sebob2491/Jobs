@@ -6332,3 +6332,17 @@ def test_formerly_worked_for_is_never_the_employer_they_are_at_now(label):
     assert _nnss(label, now, kind="combobox", options=options, job={"company": "Example Fab"}) is None
     assert _nnss(label, left, kind="combobox", options=options, job={"company": "Example Fab"}) == \
         "Jacobs Engineering Group Inc."
+
+
+def test_an_entry_naming_a_status_is_kept_out_only_of_a_citizenship_statuss_list():
+    """The review's fix kept a status's entry out of every two-level list; a How Did You Hear group's entries are
+    as they were."""
+    from job_apply.browser import _inner_choice
+
+    heard = ["National job board", "Resident referral", "Other"]
+    assert _inner_choice("National job board", "Job Board ›", heard) == "National job board"
+    assert _inner_choice("job board", "Job Board ›", ["National job board"]) == "National job board"
+    statuses = ["Citizen of Canada", "Permanent Resident of Canada"]
+    assert _inner_choice("Canada", "Canada ›", statuses, no_status=True) is None
+    assert _inner_choice("Canada", "Canada ›", ["Permanent Resident of Canada"], no_status=True) is None
+    assert _inner_choice("Citizen of Canada", "Canada ›", statuses, no_status=True) == "Citizen of Canada"

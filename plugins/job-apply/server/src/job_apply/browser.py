@@ -364,13 +364,16 @@ def _bare_choice(text: str) -> str:
     return re.sub(r"\s*[\u203a>\u276f\u25b8\u25b6]+\s*$", "", text or "").strip()
 
 
-def _inner_choice(value: Any, picked: str, inner: list[str], names: bool = False) -> str | None:
+def _inner_choice(value: Any, picked: str, inner: list[str], names: bool = False,
+                  no_status: bool = False) -> str | None:
     """The choice to pick in the list a choice opened: the answer, if it's there; else the one named as
     the choice picked; else the only one (Workday's "<employer> website ›" opens a list of one, named
     alike: live test 2, issue #112, note 15)."""
-    # (never an entry naming a status the answer's words merely match: "Canada" isn't "Citizen of Canada" or
-    # "Permanent Resident of Canada", the review of the two-level lists; only one that is the answer word for word)
-    inner = [o for o in inner if not names_a_status(o) or norm(o) == norm(value)]
+    # (`no_status`, a citizenship status's list: never an entry naming a status the answer's words merely match,
+    # "Canada" isn't "Citizen of Canada" or "Permanent Resident of Canada"; only one that is the answer word for
+    # word. Any other list's entries are as they were: "National job board", "Resident referral")
+    if no_status:
+        inner = [o for o in inner if not names_a_status(o) or norm(o) == norm(value)]
     entry = choose_option(value, inner, names=names)
     if entry is not None:
         return entry

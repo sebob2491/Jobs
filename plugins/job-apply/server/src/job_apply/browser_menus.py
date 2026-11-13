@@ -226,7 +226,8 @@ class MenusMixin:
                 # a choice that opened a list of its own (Workday's "How Did You Hear About Us?": "<employer>
                 # website ›" > "<employer> website", live test 2, issue #112, note 15): picked inside it
                 inner = await self._new_options(page, field["id"], loc, options, browser.LIST_NEW_WAIT)
-                entry = browser._inner_choice(value, choice, inner, names) if inner and inner != options else None
+                entry = (browser._inner_choice(value, choice, inner, names, bool(field.get("group_only")))
+                         if inner and inner != options else None)
                 if entry is not None:
                     await self._click_option(page, field["id"], entry)
                     await self._confirm_choice(page, loc, entry)
