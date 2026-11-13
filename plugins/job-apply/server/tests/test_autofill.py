@@ -4335,6 +4335,49 @@ def test_a_citizenship_or_clearance_list_whose_choices_are_unseen_is_left_for_th
     assert resolve_field(f("Are you a U.S. citizen?", "combobox", options=["Yes", "No"]), p).value == "Yes"
 
 
+@pytest.mark.parametrize("leaf", ["Permanent Resident", "Work Visa", "Non-Citizen", "Dual Citizen", "Refugee",
+                                  "Citizen of Canada", "Canadian Citizen", "Permanent Resident of the United States",
+                                  "Lawful Permanent Resident of the U.S.", "United States Work Visa"])
+def test_a_citizenship_list_never_takes_a_status_by_the_countrys_name(leaf):
+    """The citizenship rule answers with the profile's country: in a list of statuses (a Workday "Citizenship Status"
+    country's own, U.S. Bank's, the live check of Nov 13; or a list of one level), never a status whose words merely
+    name that country ("Permanent Resident of the United States" for a U.S. citizen): the person's to choose. A country
+    is still the country."""
+    p = Profile({"work_authorization": {"us_citizen": True, "citizenship": "United States"}})
+    for kind in ("select", "combobox"):
+        assert resolve_field(f("Citizenship Status*", kind, options=[leaf, "Other"]), p) is None, kind
+    countries = ["Canada", "United States of America", "United States Minor Outlying Islands"]
+    assert resolve_field(f("Citizenship Status*", "combobox", options=countries), p).value == "United States of America"
+    assert resolve_field(f("Citizenship Status*", "select", options=["Citizen of the United States", "Other"]),
+                         p).value == "Citizen of the United States"  # (a citizen's, of the profile's country)
+
+
+@pytest.mark.parametrize("choice, taken", [
+    ("United States (LPR)", False), ("United States - H-1B", False), ("United States - TN", False),
+    ("United States - DACA", False), ("United States - Sponsored", False), ("United States - Dual", False),
+    ("United States - Born", False), ("United States (by birth)", False), ("United States - Pending", False),
+    ("United States Minor Outlying Islands", False), ("Citizen of the United States Minor Outlying Islands", False),
+    ("United States of America", True), ("USA", True), ("United States", True), ("Citizen of the United States", True),
+    ("Citizen or national of the United States", True),
+])
+def test_a_citizenship_list_takes_only_the_country_or_its_plain_citizen(choice, taken):
+    """The review of the two-level lists: the citizenship rule's answer is accepted only as the country alone (its name
+    in any of its spellings) or a plain citizen's choice of that country (a citizen or national of it too: a citizen
+    is one), never anything else the country's words match."""
+    p = Profile({"work_authorization": {"us_citizen": True, "citizenship": "United States"}})
+    ans = resolve_field(f("Citizenship", "select", options=[choice, "Other"]), p)
+    assert (ans.value if ans else None) == (choice if taken else None)
+
+
+def test_a_remembered_citizenship_status_isnt_used():
+    """A citizenship status is the person's status in the country a job is in (U.S. Bank's two-level list): one
+    remembered from another list (a bare "Permanent Resident" given inside Canada's) never answers another."""
+    p = Profile({"answers": [{"match": "citizenship status", "answer": "Permanent Resident",
+                              "question": "Citizenship Status*"}]})
+    assert resolve_field(f("Citizenship Status*", "select", options=["Citizen", "Permanent Resident"]), p) is None
+    assert resolve_field(f("What is your citizenship status?", "combobox", options=["Permanent Resident"]), p) is None
+
+
 def test_a_question_about_sanctioned_countries_dual_citizenship_or_export_licenses_is_never_answered():
     """The profile can't honestly answer ties to sanctioned countries, a dual citizenship, a denied party list or an
     export license: a text box or a list asking any of them is the person's (or their own answers bank's), never the
@@ -6289,3 +6332,32 @@ def test_formerly_worked_for_is_never_the_employer_they_are_at_now(label):
     assert _nnss(label, now, kind="combobox", options=options, job={"company": "Example Fab"}) is None
     assert _nnss(label, left, kind="combobox", options=options, job={"company": "Example Fab"}) == \
         "Jacobs Engineering Group Inc."
+
+
+def test_an_entry_naming_a_status_is_kept_out_only_of_a_citizenship_statuss_list():
+    """The review's fix kept a status's entry out of every two-level list; a How Did You Hear group's entries are
+    as they were."""
+    from job_apply.browser import _inner_choice
+
+    heard = ["National job board", "Resident referral", "Other"]
+    assert _inner_choice("National job board", "Job Board ›", heard) == "National job board"
+    assert _inner_choice("job board", "Job Board ›", ["National job board"]) == "National job board"
+    statuses = ["Citizen of Canada", "Permanent Resident of Canada"]
+    assert _inner_choice("Canada", "Canada ›", statuses, no_status=True) is None
+    assert _inner_choice("Canada", "Canada ›", ["Permanent Resident of Canada"], no_status=True) is None
+    assert _inner_choice("Citizen of Canada", "Canada ›", statuses, no_status=True) == "Citizen of Canada"
+
+
+@pytest.mark.parametrize("label, asks", [
+    ("Citizenship Status*", True), ("Citizenship Status", True), ("Immigration status", True), ("Citizen status", True),
+    ("Immigration / Visa Status", True), ("Legal status", True), ("Ireland | Citizenship Status*", True),
+    # a yes-or-no question with such words in it, and questions about something else: answered and remembered as before
+    ("Do you have legal status to work in the US?", False),
+    ("Do you require a change in immigration status to work?", False),
+    ("Are you a citizen?", False), ("Citizenship", False), ("Country of citizenship", False),
+    ("Work authorization status", False), ("Veteran status", False), ("Marital status", False),
+])
+def test_what_asks_a_citizenship_status(label, asks):
+    from job_apply.autofill import asks_citizenship_status
+
+    assert asks_citizenship_status(label) is asks

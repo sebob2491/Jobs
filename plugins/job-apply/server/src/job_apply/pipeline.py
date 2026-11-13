@@ -6691,7 +6691,8 @@ def _pending(result: dict[str, Any], once_failed: dict[str, dict[str, Any]],
     pending += [{"label": f.get("label") or "", "kind": f.get("kind") or ("combobox" if f.get("options") else "text"),
                  "required": True, "error": f.get("error"),
                  **({"options": f["options"]} if f.get("options") else {}),
-                 **{k: f[k] for k in ("section", "sublabel", "role") if f.get(k)}, **turned_down(f), "id": f["id"]}
+                 **{k: f[k] for k in ("section", "sublabel", "role", "group") if f.get(k)}, **turned_down(f),
+                 "id": f["id"]}
                 for f in result["failed"] if f.get("required", True)]
     # an answer of theirs the page turned down is asked again, even when the box isn't empty
     # (words left in a picker's search box read as an answer), unless the profile's answer

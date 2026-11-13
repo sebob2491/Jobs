@@ -1,0 +1,16 @@
+{
+  "page": "form",
+  "next": "Save and Continue",
+  "captcha": false,
+  "security_asked": false,
+  "account_and_application": false,
+  "job_search": false,
+  "fields": {
+    "Citizenship Status* (combobox)": "asked",
+    "I confirm that I have read and acknowledge the U.S. Bank Privacy Notice applicable to my location.* (checkbox)": "asked"
+  },
+  "run": {
+    "need": "questions",
+    "reason": "1 question your profile doesn't answer. Answer it here: the desk fills it in, an"
+  }
+}

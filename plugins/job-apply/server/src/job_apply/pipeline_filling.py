@@ -94,7 +94,9 @@ class FillingMixin:
                                                                           "options")
                                           if fields[r["id"]].get(k) not in (None, [])},
                                        "error": r.get("error") or "didn't take",
-                                       **({"options": r["options"]} if r.get("options") else {})}
+                                       **({"options": r["options"]} if r.get("options") else {}),
+                                       # (the group those are the entries of: the card says whose they are)
+                                       **({"group": r["group"]} if r.get("group") else {})}
                       for r in out.get("results", []) if not r.get("ok") and r.get("id") in fields}
             filled |= {by_id[f["id"]] for f in fills} - set(failed)
             for key in {by_id[f["id"]] for f in fills} - set(failed):

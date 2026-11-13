@@ -1101,12 +1101,24 @@ _NOT_IN_LIST = re.compile(r"doesn't match any (suggestion|option)|nothing in its
 # job: a pick since is the person's, however the page draws the list again (a mark on the element goes with it: the
 # review of 0.3.196). By job (or page, filled with none), by autofill.preset_key.
 _PRESETS_SEEN: dict[Any, set[str]] = {}
+# The citizenship status lists each job's pages showed to be two-level (the country applied in, then the status there:
+# U.S. Bank's Workday, the live check of Nov 13), by their labels: the profile's citizenship isn't tried on them again
+# (each try opened its country, and the entries the person's own country opened were taken for that one's). By job
+_TWO_LEVEL_SEEN: dict[Any, set[str]] = {}
 
 
 def forget_presets(job_id: int) -> None:
     """The job's application opened again in a new tab: a fresh form, whose preset country lists are the site's again
     (the review of 0.3.196: closed unsaved and opened again, Workday showed Mexico again, and it stayed)."""
     _PRESETS_SEEN.pop(job_id, None)
+    _TWO_LEVEL_SEEN.pop(job_id, None)
+
+
+def _citizenship_opened_a_group(result: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> bool:
+    """Did the profile's citizenship, filled into a list, pick a group that opened its own entries (a two-level
+    citizenship status: the country applied in, then the status there)?"""
+    return (not result.get("ok") and str(result.get("error") or "").startswith("PickedAGroup")
+            and by_id.get(str(result.get("id")), {}).get("rule") == "citizenship")
 
 
 @tool(drives=True)
@@ -1129,9 +1141,24 @@ async def autofill(job_id: int | None = None, overwrite: bool = False, redo: lis
     seen = _PRESETS_SEEN.setdefault(job.get("id") or data.get("url"), set())
     plan = plan_autofill(data["fields"], prof, job, overwrite=overwrite, redo=set(redo or []), presets_done=seen,
                          refresh=refresh, keep=set(keep or []))
+    two_level = _TWO_LEVEL_SEEN.setdefault(job.get("id") or data.get("url"), set())
+    held = [f for f in plan["to_fill"] if f.get("rule") == "citizenship" and norm(f.get("label") or "") in two_level]
+    if held:  # (asked, as its first try left it: the whole question, the country applied in then the status there)
+        on_page = {f["id"]: f for f in data["fields"]}
+        plan["to_fill"] = [f for f in plan["to_fill"] if f not in held]
+        plan["needs_input"] = [*plan["needs_input"], *[
+            {k: on_page[f["id"]][k] for k in ("id", "kind", "label", "required", "options", "section", "sublabel",
+                                              "role") if on_page.get(f["id"], {}).get(k) not in (None, [], "")}
+            for f in held if f["id"] in on_page]]
     results = await browser.fill([{"id": f["id"], "value": f["value"], "names": is_name_rule(f.get("rule") or ""),
                                    "near": place_words(f.get("rule") or "", prof),
                                    "pick_only": is_eeo_rule(f.get("rule") or ""),
+                                   # (a citizenship's country, in a list of countries that open their statuses: the
+                                   # country picked, and its statuses chosen among apart, never by the country's name)
+                                   "group_only": f.get("rule") == "citizenship",
+                                   # (and the entries it opens aren't remembered as that group's: the person's own
+                                   # country, picked on the card, is the group of the status they give after)
+                                   "unremembered": f.get("rule") == "citizenship",
                                    # (answered again, where the page lost it, even showing the answer: a date's parts;
                                    # and a draft's date part that shows another than the profile's)
                                    "again": f["id"] in (redo or []) or bool(f.get("again"))}
@@ -1155,6 +1182,9 @@ async def autofill(job_id: int | None = None, overwrite: bool = False, redo: lis
     for r in results:
         if r["ok"] or not r.get("options") or r["id"] not in fields:
             continue
+        if _citizenship_opened_a_group(r, by_id):
+            two_level.add(norm(fields[r["id"]].get("label") or ""))
+            continue  # (the country applied in is the person's: never a status picked inside it from the profile)
         # (any other answer a list had no match for stays that: the fill looked at the same entries)
         if (str(r.get("error") or "").startswith("NoMatch")
                 and not is_how_heard(by_id.get(r["id"], {}).get("rule") or "", fields[r["id"]].get("label") or "")):
@@ -1192,6 +1222,13 @@ async def autofill(job_id: int | None = None, overwrite: bool = False, redo: lis
             # (those of the group picked, when the answer was a group of entries)
             field = fields.get(r["id"], {})
             options = r.get("options") or field.get("options")
+            if _citizenship_opened_a_group(r, by_id):
+                # a two-level citizenship status (U.S. Bank's Workday, the live check of Nov 13): its first level is the
+                # country applied in, never the profile's citizenship. That pick dropped, the whole question is asked:
+                # the country, then that country's statuses
+                options = field.get("options")
+                r = {**r, "error": "ValueError: this list asks the country you're applying in, then your status "
+                                   "there; your profile's citizenship isn't its answer"}
             failed.append({**entry, "error": r["error"], "kind": field.get("kind"),
                            "required": bool(field.get("required", True)), **({"options": options} if options else {}),
                            **{k: field[k] for k in ("section", "sublabel", "role") if field.get(k)}})

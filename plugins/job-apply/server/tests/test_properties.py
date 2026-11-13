@@ -85,18 +85,19 @@ FUZZ_WORDS = ["Master's", "PhD", "Doctorate", "MBA", "Bachelor's", "Associate", 
               "Top Secret", "TS/SCI", "active", "veteran", "disability", "gender", "salary", "desired", "expected",
               "current", "employer", "manager", "supervisor", "name", "phone", "email", "date", "start", "available",
               "relocate", "travel", "shift", "night", "weekend", "overtime", "sponsorship", "visa", "authorized",
-              "U.S.", "citizen", "citizenship", "18", "age", "felony", "convicted", "drug", "test", "background",
-              "check", "signature", "GPA", "major", "school", "graduation", "year", "month", "city", "state", "zip",
-              "country", "address", "LinkedIn", "website", "portfolio", "reference", "how did you hear", "referral",
-              "employee ID", "SSN", "Social Security", "passport", "driver's", "work", "lift", "50 lbs", "stand",
-              "hours", "willing", "able", "have you", "do you", "are you", "please", "describe", "explain", "why",
-              "*", "(Required)", "?"]
+              "U.S.", "citizen", "citizenship", "status", "18", "age", "felony", "convicted", "drug", "test",
+              "background", "check", "signature", "GPA", "major", "school", "graduation", "year", "month", "city",
+              "state", "zip", "country", "address", "LinkedIn", "website", "portfolio", "reference", "how did you hear",
+              "referral", "employee ID", "SSN", "Social Security", "passport", "driver's", "work", "lift", "50 lbs",
+              "stand", "hours", "willing", "able", "have you", "do you", "are you", "please", "describe", "explain",
+              "why", "*", "(Required)", "?"]
 LEVELS = ["High School", "Some College", "Associate's Degree", "Bachelor's Degree", "Master's Degree", "Doctorate",
           "MBA"]
 YES_NO = ["Yes", "No"]
 OPTION_SETS = [LEVELS, YES_NO, ["Yes", "No", "Prefer not to say"], [str(n) for n in range(11)] + ["10+"],
                ["Less than 1 year", "1-3 years", "3-5 years", "5-10 years", "10+ years"],
-               ["Day", "Night", "Weekend", "Any"], ["Male", "Female", "Decline to self-identify"]]
+               ["Day", "Night", "Weekend", "Any"], ["Male", "Female", "Decline to self-identify"],
+               ["Citizen", "Permanent Resident of the United States", "Work Visa"]]
 KINDS = ["text", "text", "textarea", "select", "radio", "checkbox"]
 FUZZ_LABELS = 4000
 

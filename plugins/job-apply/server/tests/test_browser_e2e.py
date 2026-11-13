@@ -330,6 +330,142 @@ def test_how_did_you_hear_is_chosen_again_from_a_list_that_drew_late(srv, job_ap
     assert [f["options"] for f in failed] == [["Advertisement", "Acme website", "Job Board"]], failed
 
 
+def _citizenship_profile(home: Path, **said) -> None:
+    """The test profile with its work_authorization's us_citizen and citizenship as given (absent where not)."""
+    import yaml
+
+    path = home / "profile.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data["work_authorization"] = {**data["work_authorization"], **said}
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+
+TWO_LEVEL = "site/workday-two-level-prompt.html"
+
+
+def test_a_citizenship_status_is_never_a_status_the_profile_doesnt_say(srv, job_apply_home):
+    """U.S. Bank's Workday "Citizenship Status" (the live check of Nov 13): countries, each opening its own statuses.
+    The profile's citizenship ("United States") picks its country, whose list opens; the status inside it was taken by
+    the country's words ("Permanent Resident of the United States" for a U.S. citizen). A country's statuses are
+    asked, the box left empty."""
+    _citizenship_profile(job_apply_home, us_citizen=True, citizenship="United States")
+    run(srv.browser.goto(fixture_url(TWO_LEVEL) + "?us=Permanent Resident of the United States,Work Visa"))
+    result = run(srv.autofill())
+    asked = [f for f in result["failed"] if "itizenship" in (f["label"] or "")]
+    assert len(asked) == 1 and "Afghanistan" in asked[0]["options"], result  # (the whole question: see below)
+    assert not [f for f in result["filled"] if "itizenship" in (f["label"] or "")], result
+    assert by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "citizenship")["value"] == ""
+
+
+def test_a_two_level_citizenship_status_is_the_persons_the_country_applied_in_then_the_status(srv, job_apply_home):
+    """U.S. Bank's page says "Please select firstly the country you are applying for and then provide your legal status
+    there." (the live check of Nov 13): the first level is the country applied in, never the profile's citizenship.
+    The profile's country, once it opens a list of its own, is dropped and the whole question asked (its countries,
+    the card's list to type in or pick), and not tried on that list again; the person's country then opens its
+    statuses, and their status goes in inside the country they picked, not the profile's."""
+    _citizenship_profile(job_apply_home, us_citizen=True, citizenship="United States")
+    run(srv.browser.goto(fixture_url(TWO_LEVEL)))
+    result = run(srv.autofill())
+    assert not [f for f in result["filled"] if "itizenship" in (f["label"] or "")], result
+    asked = [f for f in result["failed"] if "itizenship" in (f["label"] or "")]
+    assert len(asked) == 1 and asked[0]["options"][:2] == ["Afghanistan", "\u00c5land Islands"], result
+    assert "the country you're applying in, then your status there" in asked[0]["error"], asked
+    box = by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "citizenship")
+    assert box["value"] == ""
+    out = run(srv.fill_form([{"id": box["id"], "value": "Canada"}]))  # (the person's, on the card)
+    assert out["results"][0]["options"] == ["Citizen", "Permanent Resident", "Work Permit"], out
+    again = run(srv.autofill())  # (the next round: the profile's country isn't tried on it again)
+    assert [f["label"] for f in again["needs_input"] if "itizenship" in (f["label"] or "")] == ["Citizenship Status*"]
+    assert not [f for f in again["failed"] + again["filled"] if "itizenship" in (f["label"] or "")], again
+    out = run(srv.fill_form([{"id": box["id"], "value": "Citizen"}]))
+    assert out["results"][0]["ok"] and out["results"][0]["result"] == "selected Canada > Citizen", out
+
+
+@pytest.mark.parametrize("how", ["fill_form", "remembered", "once"])
+def test_a_country_given_for_a_citizenship_status_never_takes_a_status_by_its_words(srv, job_apply_home, how,
+                                                                                   monkeypatch):
+    """The review of the two-level lists: a country given for "Citizenship Status*" by the person (on the card: the
+    fill_form tool, or the desk's answers for this application, Run.once) or remembered from before opened its
+    statuses, and the one its words matched was taken ("Canada" > "Permanent Resident of Canada", with no question).
+    Its statuses are asked; a remembered one isn't used at all (another list's answer)."""
+    from job_apply import pipeline
+    from job_apply.pipeline import Applier, Run, question_key
+
+    run(srv.browser.goto(fixture_url(TWO_LEVEL) + "?ca=Permanent Resident of Canada"))
+    box = by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "citizenship")
+    if how == "fill_form":
+        out = run(srv.fill_form([{"id": box["id"], "value": "Canada"}]))["results"][0]
+        assert not out["ok"] and out["options"] == ["Permanent Resident of Canada"] and out["group"] == "Canada", out
+    elif how == "remembered":
+        config.save_answer("Citizenship Status*", "Canada")
+        result = run(srv.autofill())
+        assert not [f for f in result["filled"] if "itizenship" in (f["label"] or "")], result
+        assert [f["label"] for f in result["needs_input"] if "itizenship" in (f["label"] or "")] == [box["label"]]
+    else:
+        monkeypatch.setattr(pipeline, "ONCE_SETTLE", 0)
+        applier = Applier(srv)
+
+        async def look(**kw):
+            return await srv.inspect_form(include_dropdown_options=False), ""
+
+        applier._look = look
+        r = Run(1, "Graduate", "Example Bank")
+        r.once[question_key("Citizenship Status*")] = "Canada"
+        failed = run(applier._fill_once(r, run(srv.inspect_form(include_dropdown_options=False))))
+        said = failed[question_key("Citizenship Status*")]
+        assert said["options"] == ["Permanent Resident of Canada"] and said["group"] == "Canada", failed
+        # the card's question says whose statuses they are
+        pending, _ = pipeline._pending({"needs_input": [], "failed": [], "filled": []}, failed)
+        assert [(q["label"], q["group"], q["options"]) for q in pending] == [
+            ("Citizenship Status*", "Canada", ["Permanent Resident of Canada"])], pending
+    assert by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "citizenship")["value"] == ""
+
+
+def test_a_citizenship_status_the_profile_cant_answer_is_asked_and_the_persons_answer_goes_in(srv, job_apply_home):
+    """us_citizen false and no citizenship named: nothing is picked; the question is asked with its countries (the
+    card's list to type in or pick), the person's country opens its statuses to choose between, and their status goes
+    in inside it. A country with no statuses ("No Items.") says so."""
+    _citizenship_profile(job_apply_home, us_citizen=False)
+    run(srv.browser.goto(fixture_url(TWO_LEVEL)))
+    result = run(srv.autofill())
+    assert not [f for f in result["filled"] if "itizenship" in (f["label"] or "")], result
+    asked = [f for f in result["needs_input"] if "itizenship" in (f["label"] or "")]
+    assert len(asked) == 1 and "Afghanistan" in asked[0]["options"], result
+    box = by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "citizenship")
+    # a country with nothing in it: the pick that didn't take, and why
+    out = run(srv.fill_form([{"id": box["id"], "value": "Afghanistan"}]))
+    error = out["results"][0]["error"]
+    assert not out["results"][0]["ok"] and "didn't take it" in error and "that list is empty" in error, out
+    # the person's country (past the dozen the list opens on): its statuses, to choose between
+    out = run(srv.fill_form([{"id": box["id"], "value": "Canada"}]))
+    assert not out["results"][0]["ok"] and out["results"][0]["options"] == ["Citizen", "Permanent Resident",
+                                                                              "Work Permit"], out
+    assert out["results"][0]["group"] == "Canada", out
+    out = run(srv.fill_form([{"id": box["id"], "value": "Permanent Resident"}]))
+    assert out["results"][0]["ok"] and out["results"][0]["result"] == "selected Canada > Permanent Resident", out
+    assert by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "citizenship")["value"] == \
+        "Permanent Resident"
+
+
+def test_another_two_level_list_is_asked_with_its_groups_and_the_persons_answer_goes_in(srv, job_apply_home):
+    """A made-up two-level list of the same shape ("Preferred Location": regions, each opening its sites), which the
+    profile doesn't answer: asked with the regions it opens on (the card's list to type in or pick), the region
+    answered (past those, found by searching) opens its sites to choose between, and the site goes in inside it,
+    though a search finds the regions' names alone and the list opens without that region (as U.S. Bank's countries
+    past the first dozen: its group searched for by name)."""
+    run(srv.browser.goto(fixture_url(TWO_LEVEL) + "?list=location"))
+    result = run(srv.autofill())
+    asked = [f for f in result["needs_input"] if "location" in (f["label"] or "").lower()]
+    assert [f["options"] for f in asked] == [["Americas", "Asia Pacific"]], result
+    box = by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "preferred location")
+    out = run(srv.fill_form([{"id": box["id"], "value": "Europe"}]))
+    assert not out["results"][0]["ok"] and out["results"][0]["options"] == ["Dublin", "Eindhoven"], out
+    out = run(srv.fill_form([{"id": box["id"], "value": "Dublin"}]))
+    assert out["results"][0]["ok"] and out["results"][0]["result"] == "selected Europe > Dublin", out
+    assert by_label(run(srv.inspect_form(include_dropdown_options=False))["fields"], "preferred location")["value"] \
+        == "Dublin"
+
+
 def test_a_list_the_page_draws_is_read_page_by_page(srv):
     """Amkor's career site (SuccessFactors' older pages) draws its job list with a script,
     10 to a page: a bigger page is chosen, then the next-page arrow pressed until it's gone."""

@@ -985,6 +985,31 @@ def test_an_id_on_the_card_is_remembered_for_its_employer_alone_or_left_once(srv
         (wwid, "EXAMPLE-12345678", "Example Fab")]
 
 
+def test_a_citizenship_status_given_on_the_card_is_for_that_application_only(srv, job_apply_home):
+    """A citizenship status is the person's status in the country the job is in, picked inside that country's own list
+    where it has two levels (U.S. Bank's, the live check of Nov 13): neither the country nor the status alone is
+    another employer's or another country's answer. Given on the card with Remember ticked, it's used for that
+    application only, and said so: never filled at another employer, nor into a flat list of U.S. statuses."""
+    from job_apply import autofill
+    from job_apply.pipeline import Run, question_key
+
+    desk = Desk(srv)
+    label = "Citizenship Status*"
+    job = srv.add_job(url="https://example.com/c", title="Graduate", company="Example Bank")["job"]
+    desk.applier.runs[job["id"]] = Run(job["id"], "Graduate", "Example Bank", status="needs_you", need="questions",
+                                       questions=[{"id": "c", "kind": "combobox", "label": label, "required": True,
+                                                   "group": "Canada", "options": ["Citizen", "Permanent Resident"]}])
+    note = desk.answer(job["id"], [{"label": label, "value": "Permanent Resident", "remember": True}])
+    assert note and "this application only" in note, note
+    assert config.saved_answers() == []
+    assert desk.applier.runs[job["id"]].once == {question_key(label): "Permanent Resident"}
+    prof = config.Profile.load()
+    for company, options in (("Other Bank", ["Citizen", "Permanent Resident"]),
+                             ("Example Bank", ["U.S. Citizen", "Permanent Resident", "Work Visa"])):
+        box = {"id": "c", "kind": "select", "label": label, "options": options}
+        assert autofill.resolve_field(box, prof, {"company": company}) is None, company
+
+
 def test_an_id_left_empty_with_remember_ticked_isnt_asked_at_that_employer_again(srv, job_apply_home):
     """The review's LOW 1: an optional ID box left empty on a questions card with its Remember ticked and Fill these in
     pressed (the person's own choice) is kept in answers.yaml as left empty at that employer, so it's never asked there

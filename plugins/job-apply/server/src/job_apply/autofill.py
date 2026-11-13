@@ -805,6 +805,48 @@ def _us_citizen(prof: Profile, job: dict) -> Any:
     return "Yes" if _US_CITIZENSHIP.fullmatch(norm(prof.get("work_authorization.citizenship"))) else None
 
 
+# A choice that is a citizen's status, and nothing more: "Citizen", "U.S. Citizen", "Citizen of the United States",
+# "Citizen or National of the United States" (a citizen is one)
+_CITIZEN_LEAF = re.compile(r"(?:(?P<before>[a-z ]+?) )?citizen(?: or (?:an? )?national)?"
+                           r"(?: of (?:the )?(?P<after>[a-z ]+))?")
+# A choice that names a status, not a country alone ("Permanent Resident of the United States", "Work Visa")
+_A_STATUS = re.compile(r"\b(citizen\w*|nationals?|nationality|residents?|residence|residency|visas?|permits?|"
+                       r"green card|refugee|asylee|asylum|status|immigra\w*|alien|non|naturali[sz]\w*)\b")
+
+
+def _citizen_leaf(option: str, country: str) -> bool:
+    """Is this choice a citizen's status, of `country` where it names one ("Citizen", "U.S. Citizen" of the United
+    States; never "Non-Citizen", "Dual Citizen" or another country's)?"""
+    m = _CITIZEN_LEAF.fullmatch(norm(option))
+    if m is None or m.group("before") and m.group("after"):
+        return False
+    named = m.group("before") or m.group("after")
+    return not named or same_country(named, country)
+
+
+def names_a_status(choice: Any) -> bool:
+    """Does a list's choice name a status (a citizen's, a resident's, a visa), not a place alone?"""
+    return bool(_A_STATUS.search(norm(choice)))
+
+
+# A citizenship status's question (U.S. Bank's Workday "Citizenship Status", the live check of Nov 13: the country
+# applied in, then the person's status there)
+_STATUS_OF_CITIZENSHIP = re.compile(r"\bcitizenship status(es)?\b|\bstatus of (your )?citizenship\b|"
+                                    r"\b(citizenship|citizen|immigration|residency|legal) status\b|"
+                                    r"\bimmigration visa status\b")
+# (a yes-or-no question that only has such words in it asks something else: "Do you have legal status to work in the
+# US?", "Do you require a change in immigration status to work?": answered and remembered as any other)
+_YES_NO_OPENING = re.compile(r"^(do|does|did|are|is|have|has|will|would|can|could|should|may)\b")
+
+
+def asks_citizenship_status(label: Any) -> bool:
+    """Does this question ask the person's citizenship status ("Citizenship Status*")? Its answer is the person's
+    alone, for that list: never picked by a country's words inside a group (the fill's group_only), never remembered
+    for another list (Desk.answer), never another list's remembered answer (resolve_field)."""
+    said = norm(clean_label(str(label or "")))
+    return bool(_STATUS_OF_CITIZENSHIP.search(said)) and not _YES_NO_OPENING.match(said)
+
+
 # A getter's word that the question, though its words matched, isn't its own: the next rule's (_rule_answer)
 _NOT_ASKED = object()
 # "Can you provide proof of U.S. citizenship?", as written once "U.S." has lost its dots (_undotted): if hired, or able
@@ -3955,6 +3997,10 @@ def resolve_field(field: dict, prof: Profile, job: dict | None = None, file_inpu
         ans = _dated(field, _answer_bank(prof, _without_notes(label), job, common=True, field=field))
         if ans is not None and kind == "textarea" and polarity(str(ans.value)) is not None:
             ans = None  # (a bare yes or no in a text area: a free answer, "Two weeks after an offer", goes in)
+    if ans is not None and ans.rule.startswith("answers[") and asks_citizenship_status(label):
+        # (a citizenship status remembered before is another list's: a status in the country applied in there, maybe
+        # another country's or a group's entry. Asked: Desk.answer keeps it for its application alone)
+        return None
     return ans
 
 
@@ -4338,6 +4384,13 @@ def _choose_from_options(field: dict, prof: Profile, job: dict, ans: Answer, kin
                                 r"united states|usa)\b", norm(o))
                    and not re.search(r"\bnon\b|\bnot\b", norm(o))]
         return Answer(citizen[0], ans.rule) if len(citizen) == 1 else None
+    if ans.rule == "citizenship" and options:
+        # only the country itself (its name, in any of its spellings) or a plain citizen's choice of that country: never
+        # one the country's words merely match ("Permanent Resident of the United States", "United States (LPR)",
+        # "United States Minor Outlying Islands" for a U.S. citizen): theirs to choose
+        named = choose_option(ans.value, options)
+        if named is not None and not (same_country(named, ans.value) or _citizen_leaf(named, str(ans.value))):
+            return None
     if ans.rule == "has_degree":
         # a plain "Yes" or "No" among the choices shown: never "No, but I have equivalent experience" or
         # "No, but I'm enrolled", which say more than the profile does; nor where the section allows an equivalent

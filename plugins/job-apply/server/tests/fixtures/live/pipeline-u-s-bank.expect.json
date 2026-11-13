@@ -1,0 +1,19 @@
+{
+  "source_url": "https://usbank.wd1.myworkdayjobs.com/en-US/US_Bank_Careers/job/Loughlinstown%2C-Ireland/HR-Graduate_2026-0034177/apply/applyManually",
+  "note": "live pipeline: U.S. Bank",
+  "fields": [
+    {
+      "label": "Citizenship Status*",
+      "kind": "combobox",
+      "required": true
+    },
+    {
+      "label": "I confirm that I have read and acknowledge the U.S. Bank Privacy Notice applicable to my location.*",
+      "kind": "checkbox",
+      "required": true
+    }
+  ],
+  "actions": [
+    "Save and Continue"
+  ]
+}

@@ -1959,6 +1959,16 @@ class Desk:
                 # would go into their own ID's box. A list or a tick box is remembered as any other question. Any other
                 # answer naming this employer ("Acme website") is remembered as "Company Website", or not at all: it
                 # isn't the answer at another employer's
+                if autofill.asks_citizenship_status(label):
+                    # a citizenship status is the person's status in the country this job is in, picked in that
+                    # country's own list where the list has two levels ("Canada", then "Permanent Resident"): neither
+                    # answer alone is another employer's, or another country's, so it's for this application only
+                    said = (f'Your answer to "{label}" is used for this application only: a citizenship status is '
+                            "asked for the country the job is in.")
+                    if said not in (problem or ""):
+                        problem = f"{problem} {said}" if problem else said
+                    run.once[question_key(label)] = value
+                    continue
                 employer = {"company": run.company}
                 card_box = on_card.get(question_key(label)) or {"label": label}
                 id_box = autofill.employer_id_box(card_box, employer, prof) is True
