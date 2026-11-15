@@ -234,3 +234,22 @@ def test_a_round_waits_out_the_desks_try_after_the_sites_error():
     assert got["status"] == "ready" and got["waited"] >= 1.1, got
     assert got["plain"] is None and got["env"] == "60", got
     assert got["kept"] == [["needs_you", True]], got  # (once, at the stop the try comes after)
+
+
+def test_the_live_checks_answer_for_a_list_under_a_section_naming_a_choice_is_that_choice():
+    """The runs of Nov 13 and 15, U.S. Bank's "Citizenship Status" under the section "Ireland": a list of countries
+    where any but the job's own opens an empty list of statuses. The first choice, and then the next, were picked round
+    after round; the section's own country is the answer a person gives."""
+    countries = ["Afghanistan", "\u00c5land Islands", "Ireland", "United States of America"]
+    refused = "ValueError: Picked 'Afghanistan' but the field didn't take it: 'Afghanistan' opens a list of its own"
+    qs = [{"label": "Citizenship Status*", "kind": "combobox", "section": "Ireland", "options": countries},
+          {"label": "Citizenship Status*", "kind": "combobox", "section": " ireland ", "options": countries,
+           "error": refused},
+          # no such choice, or no section: as before (the first, or the one after a refused one)
+          {"label": "Citizenship Status*", "kind": "combobox", "section": "Personal", "options": countries},
+          {"label": "Citizenship Status*", "kind": "combobox", "options": countries, "error": refused}]
+    out = subprocess.run([sys.executable, "-c", RUN_FAKE, json.dumps(qs)], cwd=SERVER, capture_output=True, text=True,
+                         encoding="utf-8", timeout=120)
+    assert out.returncode == 0, out.stderr[-600:]
+    got = json.loads(next(line for line in out.stdout.splitlines() if line.startswith("RESULT "))[7:])
+    assert [g[0] for g in got] == ["Ireland", "Ireland", "Afghanistan", "\u00c5land Islands"]
