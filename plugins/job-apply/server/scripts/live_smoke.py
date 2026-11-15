@@ -1474,6 +1474,11 @@ def fake_answer(q: dict[str, Any]) -> Any:
     # Country and State, run 160: "Test answer" matched nothing, round after round)
     if not options and (tried := re.search(r"'([^']+)' doesn't match any option: \[\]", str(q.get("error") or ""))):
         return tried.group(1)
+    # a list of countries under a section that names one (U.S. Bank's Workday "Citizenship Status", the runs of Nov
+    # 13 and 15: the country applied in, then the status there; any other country opens an empty list): that country
+    section = " ".join(str(q.get("section") or "").split()).casefold()
+    if section and (named := next((o for o in options if o.casefold() == section), None)):
+        return named
     if options:
         # not a choice the site just refused (a Workday source that opens a list of its own, HonorHealth's and
         # Microchip's, the probe of Oct 12: picked again and again)
