@@ -1479,6 +1479,10 @@ def fake_answer(q: dict[str, Any]) -> Any:
     section = " ".join(str(q.get("section") or "").split()).casefold()
     if section and (named := next((o for o in options if o.casefold() == section), None)):
         return named
+    # (the list drawn only as far as its first dozen, the probe of Nov 15: the section's country wasn't among them, and
+    # "Afghanistan" then "\u00c5land Islands" opened empty lists for eight rounds; the box takes a typed country)
+    if section and "opens a list of its own, and that list is empty" in str(q.get("error") or ""):
+        return " ".join(str(q["section"]).split())
     if options:
         # not a choice the site just refused (a Workday source that opens a list of its own, HonorHealth's and
         # Microchip's, the probe of Oct 12: picked again and again)
@@ -2473,8 +2477,9 @@ async def check_pipeline(company: dict[str, Any], out: Path, rec: dict[str, Any]
                 **({"retried": retried} if retried else {}),
                 "status": run.status, "need": run.need, "code": _stop_code(run), "reason": run.reason, "url": run.url,
                 "log": list(run.log),
-                "questions": [{k: q.get(k) for k in ("label", "kind", "required", "options", "error", "account")
-                               if k != "account" or q.get(k)} for q in run.questions],
+                "questions": [{k: q.get(k)
+                               for k in ("label", "kind", "required", "section", "options", "error", "account")
+                               if k not in ("account", "section") or q.get(k)} for q in run.questions],
                 # each asked-about field's markup, to see what kind of control it is
                 "markup": await _question_markup(run),
                 # and the words just above each, for one with none of its own

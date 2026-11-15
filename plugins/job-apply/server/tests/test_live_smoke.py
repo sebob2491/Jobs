@@ -247,9 +247,15 @@ def test_the_live_checks_answer_for_a_list_under_a_section_naming_a_choice_is_th
            "error": refused},
           # no such choice, or no section: as before (the first, or the one after a refused one)
           {"label": "Citizenship Status*", "kind": "combobox", "section": "Personal", "options": countries},
-          {"label": "Citizenship Status*", "kind": "combobox", "options": countries, "error": refused}]
+          {"label": "Citizenship Status*", "kind": "combobox", "options": countries, "error": refused},
+          # the list drawn only as far as its first few (the probe of Nov 15): the section, once a country opened an
+          # empty list; never before one did (a section is seldom a choice)
+          {"label": "Citizenship Status*", "kind": "combobox", "section": "Ireland", "options": countries[:2],
+           "error": refused + ", and that list is empty; pick another"},
+          {"label": "Citizenship Status*", "kind": "combobox", "section": "Ireland", "options": countries[:2]}]
     out = subprocess.run([sys.executable, "-c", RUN_FAKE, json.dumps(qs)], cwd=SERVER, capture_output=True, text=True,
                          encoding="utf-8", timeout=120)
     assert out.returncode == 0, out.stderr[-600:]
     got = json.loads(next(line for line in out.stdout.splitlines() if line.startswith("RESULT "))[7:])
-    assert [g[0] for g in got] == ["Ireland", "Ireland", "Afghanistan", "\u00c5land Islands"]
+    assert [g[0] for g in got] == ["Ireland", "Ireland", "Afghanistan", "\u00c5land Islands", "Ireland",
+                                    "Afghanistan"]
