@@ -1326,6 +1326,11 @@ async def _talemetry(client: httpx.AsyncClient, cfg: Any, query: str, limit: int
     for page in range(1, TALEMETRY_PAGES + 1):
         url = f"{base}/jobs/search?" + urlencode({"q": query, "page": page})
         r = await _send(client, "GET", url)
+        # (an AWS WAF challenge, Valleywise's since Nov 17: a bot check, never got around; what was read stays)
+        if r.status_code == 202 or r.headers.get("x-amzn-waf-action"):
+            if out:
+                break
+            raise SearchError(f"{base} answered with a bot check; search it on its own page")
         _raise_for(r, url)
         rows = parse_talemetry(r.text, base)
         if page == 1 and not rows and not _TALEMETRY_FOUND.search(

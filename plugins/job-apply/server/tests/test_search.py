@@ -3365,6 +3365,21 @@ def test_a_talemetry_search_that_finds_nothing_says_so_and_a_changed_page_is_sai
                                      "(neither openings nor how many it found)"}
 
 
+def test_a_talemetry_site_that_answers_with_a_bot_check_is_said_and_asked_once():
+    """Valleywise Health's job site, the runs of Nov 17 to 20: an AWS WAF challenge (202, no page, the header
+    x-amzn-waf-action) was reported as a job list that had changed. It's a bot check: said so, never asked again."""
+    asked = []
+
+    def challenge(request):
+        asked.append(str(request.url))
+        return httpx.Response(202, text="", headers={"x-amzn-waf-action": "challenge"})
+
+    out = one_search("talemetry", "https://jobs.vwco.org", challenge)
+    assert out["errors"] == {"X Co": "SearchError: https://jobs.vwco.org answered with a bot check; "
+                                     "search it on its own page"}
+    assert len(asked) == 1, asked
+
+
 def test_randstads_page_without_its_search_results_is_said():
     empty = (RANDSTAD_PAGE.split('"searchResults"')[0]
              + '"searchResults":{"totalSize":0,"hits":[]}};</script></body></html>')
