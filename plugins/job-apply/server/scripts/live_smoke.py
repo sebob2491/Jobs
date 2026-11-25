@@ -1326,7 +1326,7 @@ async def main() -> int:
                 await asyncio.wait_for(check_careers_page(company, rec), 60)
         except Exception as e:
             rec["crash"] = f"{type(e).__name__}: {str(e)[:300]}"
-            rec["trace"] = traceback.format_exc()[-1500:]
+            rec["trace"] = crash_trace(traceback.format_exc())
             rec["page_at_crash"] = await page_state()
             await server.close_browser()  # start the next company with a fresh browser
         rec["seconds"] = round(time.time() - started, 1)
@@ -1457,6 +1457,18 @@ _ACKNOWLEDGES = re.compile(r"\backnowledg|\b(?:have )?read\b|\bcertif|\bagree|\b
 def asks_ssn(q: dict[str, Any]) -> bool:
     """Does the question ask for a Social Security Number (_SSN)?"""
     return bool(_SSN.search(str(q.get("label") or "")))
+
+
+def crash_trace(text: str) -> str:
+    """A crash's traceback as the record keeps it: the desk's and the check's own frames (where in job_apply or
+    scripts it was, each with its line of code), then the traceback's last 1,500 characters. The tail alone was all
+    Playwright's and asyncio's when a 45-minute hang at Boeing was cut off (the run of Nov 25): not which call hung."""
+    lines = text.splitlines()
+    own = [f"{line.strip()} | {lines[i + 1].strip() if i + 1 < len(lines) else ''}"
+           for i, line in enumerate(lines)
+           if line.lstrip().startswith("File ") and re.search(r"[\\/](job_apply|scripts)[\\/][^\\/]+\.py", line)
+           and "site-packages" not in line]
+    return "\n".join([*own[-25:], "...", text[-1500:]]) if own else text[-1500:]
 
 
 def fake_answer(q: dict[str, Any]) -> Any:
@@ -2709,7 +2721,7 @@ async def pipeline_main(companies: list[dict[str, Any]], out: Path, fixtures: bo
             await asyncio.wait_for(check_pipeline(company, out, rec, fixtures), wait)
         except Exception as e:
             rec["crash"] = f"{type(e).__name__}: {str(e)[:300]}"
-            rec["trace"] = traceback.format_exc()[-1500:]
+            rec["trace"] = crash_trace(traceback.format_exc())
             await server.close_browser()
         rec["seconds"] = round(time.time() - started, 1)
         records.append(rec)
