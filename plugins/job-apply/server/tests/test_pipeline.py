@@ -6459,7 +6459,9 @@ def test_a_sites_error_on_the_applications_steps_after_its_sign_in_is_tried_agai
     r, (code, email_step, log), submits, visits = run(go())
     assert code == "site_went_wrong" and not email_step, (code, log)
     assert any("Sign In" in line for line in log), log  # (signed in on the way to the step that went wrong)
-    assert visits == "2" and sum("Sign In" in line for line in r.log) >= 2, (visits, r.log)  # (and again for the try)
+    # (and again for the try; the try's own end said first: a failure here on CI, Nov 25, showed only the log's start)
+    assert visits == "2" and sum("Sign In" in line for line in r.log) >= 2, (visits, r.status, r.code, r.reason,
+                                                                             r.log[-12:])
     assert r.status == "ready" and r.reason.endswith(pipeline._RETRY_HELD_SAYS) and submits is None, \
         (r.status, r.reason, r.log)
 

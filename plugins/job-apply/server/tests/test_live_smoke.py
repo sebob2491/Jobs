@@ -259,3 +259,28 @@ def test_the_live_checks_answer_for_a_list_under_a_section_naming_a_choice_is_th
     got = json.loads(next(line for line in out.stdout.splitlines() if line.startswith("RESULT "))[7:])
     assert [g[0] for g in got] == ["Ireland", "Ireland", "Afghanistan", "\u00c5land Islands", "Ireland",
                                     "Afghanistan"]
+
+
+def test_a_crashs_record_keeps_the_desks_own_frames_not_only_the_tracebacks_tail():
+    """The run of Nov 25: the check was cut off after 45 minutes at Boeing, and the record's trace (its last 1,500
+    characters) was all Playwright's and asyncio's: not which of the desk's calls had hung."""
+    code = ("import sys, json; sys.argv = ['live_smoke.py']; import live_smoke as ls; "
+            "print('RESULT ' + json.dumps(ls.crash_trace(sys.stdin.read())))")
+    deep = "".join(f'  File "/x/.venv/lib/python3.13/site-packages/playwright/_impl/_c{n}.py", line {n}, in f\n'
+                   f"    return await cb()\n" for n in range(40))
+    text = ("Traceback (most recent call last):\n"
+            '  File "/home/runner/work/Jobs/Jobs/plugins/job-apply/server/src/job_apply/pipeline_accounts.py", '
+            "line 812, in _verify\n    await page.wait_for_url(there)\n"
+            + deep + "asyncio.exceptions.CancelledError\n\n"
+            '  File "C:\\a\\Jobs\\plugins\\job-apply\\server\\scripts\\live_smoke.py", line 2709, in pipeline_main\n'
+            "    await asyncio.wait_for(check_pipeline(company, out, rec, fixtures), wait)\nTimeoutError\n")
+    out = subprocess.run([sys.executable, "-c", code], cwd=SERVER / "scripts", input=text, capture_output=True,
+                         text=True, encoding="utf-8", timeout=120)
+    assert out.returncode == 0, out.stderr[-600:]
+    got = json.loads(next(line for line in out.stdout.splitlines() if line.startswith("RESULT "))[7:])
+    assert "pipeline_accounts.py\", line 812, in _verify | await page.wait_for_url(there)" in got, got[:400]
+    assert "live_smoke.py\", line 2709" in got and got.endswith("TimeoutError\n")
+    assert "_c3.py" not in got.split("...")[0]  # (none of Playwright's among the desk's own)
+    assert json.loads(subprocess.run([sys.executable, "-c", code], cwd=SERVER / "scripts", input="ValueError: x",
+                                     capture_output=True, text=True, encoding="utf-8",
+                                     timeout=120).stdout.split("RESULT ")[1]) == "ValueError: x"
