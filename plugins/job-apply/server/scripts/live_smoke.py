@@ -1514,6 +1514,11 @@ def fake_answer(q: dict[str, Any]) -> Any:
     if re.search(r"salary|pay requirement|compensation|desired pay|wage|earnings", label, re.I):  # (Taylor Morrison's
         # "Desired Annual Earnings" refused "Test answer" five rounds running, run 49)
         return "50000"
+    # a phone number asked in so many words (Edward Jones's "... enter the phone number you would like to use to
+    # receive your code(s) ... ###-###-####", the run of Nov 28: "0", for the word "number", was refused round after
+    # round): the fake applicant's, which is written that way
+    if re.search(r"\bphone number\b", label, re.I) and not options:
+        return str(FAKE_PROFILE["personal"]["phone"])
     if re.search(r"year|salary|number|how many|zip|postal|\bgpa\b", q.get("label") or "", re.I):
         return "0"
     # a box that keeps only a number (UKG Pro's, the form reader's `numeric`; an <input type="number">): one
