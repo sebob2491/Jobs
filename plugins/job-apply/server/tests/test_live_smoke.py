@@ -5,6 +5,7 @@ live_smoke sets the environment it runs in. Nothing in a role is anyone's."""
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -284,3 +285,18 @@ def test_a_crashs_record_keeps_the_desks_own_frames_not_only_the_tracebacks_tail
     assert json.loads(subprocess.run([sys.executable, "-c", code], cwd=SERVER / "scripts", input="ValueError: x",
                                      capture_output=True, text=True, encoding="utf-8",
                                      timeout=120).stdout.split("RESULT ")[1]) == "ValueError: x"
+
+
+def test_the_live_checks_answer_for_a_phone_number_asked_in_words_is_the_fake_applicants():
+    """Edward Jones's BrassRing, the run of Nov 28: "... Please enter the phone number in the following format:
+    ###-###-####" got "0" (for the word "number"), and the page said "Please enter a valid value" round after round."""
+    qs = [{"label": "Please enter the phone number you would like to use to receive your code(s) in the field below. "
+                    "Please enter the phone number in the following format: ###-###-####.", "kind": "text"},
+          {"label": "How many phone numbers do you have?", "kind": "text"},  # (a count, as before)
+          {"label": "Number of years", "kind": "text"}]
+    out = subprocess.run([sys.executable, "-c", RUN_FAKE, json.dumps(qs)], cwd=SERVER, capture_output=True, text=True,
+                         encoding="utf-8", timeout=120)
+    assert out.returncode == 0, out.stderr[-600:]
+    got = json.loads(next(line for line in out.stdout.splitlines() if line.startswith("RESULT "))[7:])
+    assert re.fullmatch(r"\d{3}-\d{3}-\d{4}", got[0][0]), got
+    assert [g[0] for g in got[1:]] == ["0", "0"], got
